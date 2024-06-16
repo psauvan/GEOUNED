@@ -8,9 +8,119 @@ import re
 logger = logging.getLogger("general_logger")
 
 mostinner = re.compile(r"\([^\(^\)]*\)")  # identify most inner parentheses
+number = re.compile(r"(?P<value>[-+]?\d+)")  # identify signed integer and record its value in <value>
 mix = re.compile(r"(?P<value>([-+]?\d+|\[0+\]))")  # identify signed integer or [000...] pattern. Record the value.
-TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern including F,T,X, or o sequence ( in any order).
+TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern incluinding F,T,X, or o sequence ( in any order).
+PValue = re.compile(r"P\d+")  # identify pattern "P" + integer pattern (e.g. P3915).
+NValue = re.compile(r"N\d+")  # identify pattern "N" + integer pattern (e.g. N3358).
+conversion = {
+    "T": True,
+    "F": False,
+    "X": None,
+}  # associate "T", "F", "X" with associated Boolean value (or None for X)
 
+class bsurface(int):
+   """Boolean Surface class """
+   def __new__(cls,label:int,s1:int=None,s2:int=None,op:str=None):
+      return super(bsurface, cls).__new__(cls,label) 
+   
+   def __neg__(self):
+      if self.bool :
+          bs = self.copy()
+          bs.s1 = not bs.s1
+          bs.label = -bs.label
+          return bs
+      elif self.s2 is None:
+         return bsurface(-self.label,-self.s1)
+      else:   
+         return bsurface(-self.label,-self.s1,-self.s2,self.op_comp())
+   
+   def __pos__(self):
+      return self
+   
+   def __abs__(self):
+       if self.label >= 0 :
+           return self.copy()
+       else:
+           return -self.copy()
+   
+   def __str__(self):
+      if self.s2 is None:
+         return str(f' {self.s1}')
+      else:
+         if self.op == 'AND':
+            return f'AND[{self.s1} {self.s2}]'
+         else:
+            return f'OR[{self.s1} {self.s2}]'
+   
+   def __init__(self,label:int,s1:int=None,s2:int=None,op:str=None):
+      
+      self.label = label
+      if s1 is None:
+          self.s1 = label
+      else:
+          self.s1 = s1
+          
+      self.s2 = s2
+      self.op = op
+      self.bool = False
+
+      if self.s2 is not None:
+         assert self.s2 !=0, 's2 must not be zero'
+         assert self.op in ('OR','AND'),'operator should be "OR" or "AND"'
+      else:
+         self.op = None    
+   
+   def compare(self,s):
+       if abs(self.s1) != abs(s.s1): return (False,False)
+       if self.s2 is None and s.s2 is None:  return (True, self.s1 != s.s1)
+
+       if abs(self.s2) != abs(s.s2) : return(False,False) 
+
+       if (self.s1 == s.s1) and (self.s2 == s.s2) and (self.op == s.op) : return (True,False)
+       scomp = -s
+       if (self.s1 == scomp.s1) and (self.s2 == scomp.s2) and (self.op == scomp.op) : return (True,True)
+       return (False,False)
+ 
+   def copy(self):
+       if self.bool:
+          bs = bsurface(self.label)
+          if self.s1 :
+              bs.set_true()
+              return bs
+          else:
+              bs.set_false()
+              return bs
+          
+       elif self.s2 is None :
+          return bsurface(self.label,self.s1)
+       else: 
+          return bsurface(self.label,self.s1,self.s2,self.op) 
+   
+   def set_true(self):
+       self.bool = True
+       self.s1 = True
+       self.s2 = None
+       self.op = None
+
+   def set_false(self):
+       self.bool = True
+       self.s1 = False
+       self.s2 = None
+       self.op = None    
+
+   def op_comp(self):
+      return 'AND' if self.op=='OR' else 'OR'
+       
+
+   def add_surface(self,s2:int,op:str):
+      
+      assert op in ('OR','AND'),'operator should be "OR" or "AND"'
+      assert s2 !=0, 's2 must not be zero'
+
+      self.s2 = s2
+      self.op = op
+ 
 
 class BoolSequence:
     """Class storing Boolean expression and operating on it"""
@@ -29,10 +139,7 @@ class BoolSequence:
         if type(self.elements) is bool:
             return " True " if self.elements else " False "
         for e in self.elements:
-            if type(e) is int or type(e) is bool or type(e) is str:
-                out += f" {e} "
-            else:
-                out += e.__str__()
+            out += e.__str__()
 
         out += "] "
         return out
@@ -41,20 +148,18 @@ class BoolSequence:
         """Append a BoolSequence Objects. seq may be :
         - An iterable containing allowed BoolSequence Objects
         - A BoolSequence object
-        - An integer value
-        - A Boolean value"""
+        - A bsurface object"""
+
         for s in seq:
-            if type(s) is int:
-                level = -1
-                if s in self.elements:
-                    continue
-                elif -s in self.elements:
-                    self.level = -1
-                    if self.operator == "AND":
-                        self.elements = False
-                    else:
-                        self.elements = True
-                    return
+            if type(s) is bsurface:
+                if not s.bool :
+                   level = -1
+                   if s in self.elements:
+                      continue
+                   elif -s in self.elements:
+                      self.level = -1
+                      self.elements = True if self.operator == "OR" else False
+                      return                      
             elif type(s) is bool:
                 if self.operator == "AND" and s or self.operator == "OR" and not s:
                     continue
@@ -124,10 +229,7 @@ class BoolSequence:
             cp.elements = self.elements
         else:
             for e in self.elements:
-                if type(e) is int:
-                    cp.elements.append(e)
-                else:
-                    cp.elements.append(e.copy())
+               cp.elements.append(e.copy())
         return cp
 
     # TODO rename to snake case, care as multiple functions with same name
@@ -180,10 +282,9 @@ class BoolSequence:
         newNames = surf_names
         for val_name in surf_names:
             if val_name in newNames:
-
                 if CT is None:
-                    true_set = {abs(val_name): True}
-                    false_set = {abs(val_name): False}
+                    true_set = {val_name: True}
+                    false_set = {val_name: False}
                 else:
                     true_set, false_set = CT.get_constraint_set(val_name)
 
@@ -194,7 +295,7 @@ class BoolSequence:
                     return
                 newNames = self.get_surfaces_numbers()
 
-    def do_factorize(self, val_name, true_set, false_set):
+    def do_factorize(self, val_name:bsurface, true_set:dict, false_set:dict):
         """For level 0 sequence check if the factorization would lead to a simplification."""
         if self.level > 0:
             return True
@@ -267,23 +368,14 @@ class BoolSequence:
             for e in reversed(self.elements):
                 e.check()
                 if type(e.elements) is bool:
-                    res = e.elements
+                    bres = self.bool_element_value(e.elements)
+                    if bres is None :
+                       self.elements.remove(e) 
+                    else:
+                       return bres
                 else:
-                    res = None
-
-                if res is None:
                     none_val = True
-                elif self.operator == "AND" and res is False:
-                    self.level = -1
-                    self.elements = False
-                    return False
-                elif self.operator == "OR" and res is True:
-                    self.level = -1
-                    self.elements = True
-                    return True
-                else:
-                    self.elements.remove(e)
-
+   
             if none_val:
                 return None
             elif self.operator == "AND":
@@ -307,31 +399,25 @@ class BoolSequence:
         ic = len(self.elements)
         for e in reversed(self.elements):
             ic -= 1
-            if type(e) is int:
-                if abs(e) == name:
-                    if type(val) is int:
-                        if name == e:
-                            self.elements[ic] = val
-                        else:
-                            self.elements[ic] = -val
+            if type(e) is bsurface:
+                if not e.bool :
+                   if abs(e) == name:
+                       if type(val) is bsurface :
+                           if name == e:
+                               self.elements[ic] = val
+                           else:
+                               self.elements[ic] = -val
+                       else:
+                           if name == e:
+                               bool_value = val
+                           else:
+                               bool_value = not val
 
-                    else:
-                        if name == e:
-                            bool_value = val
-                        else:
-                            bool_value = not val
-
-                        if self.operator == "AND" and not bool_value:
-                            self.elements = False
-                            self.level = -1
-                            return
-                        elif self.operator == "OR" and bool_value:
-                            self.elements = True
-                            self.level = -1
-                            return
-                        else:
-                            self.elements.remove(e)
-
+                           bres = self.bool_element_value(bool_value)
+                           if bres is None:
+                               self.elements.remove(e)
+                           else:
+                               return
             else:
                 e.substitute(var, val)
 
@@ -349,28 +435,29 @@ class BoolSequence:
         if type(self.elements) is bool:
             return self.elements
         for e in reversed(self.elements):
-            if type(e) is int:
-                continue
+            if type(e) is bsurface:
+                if not e.bool :
+                   continue
+                else:
+                    bres = self.bool_element_value(e.s1)
+                    if bres is None:
+                        self.elements.remove(e)
+                        continue
+                    else:
+                        return bres
+                    
             eVal = e if self_level else e.clean()
             if type(eVal) is not bool:
                 eVal = eVal.elements
-
-            if type(eVal) is bool:
-                if eVal and self.operator == "OR":
-                    self.elements = True
-                    self.level = -1
-                    return True
-                elif not eVal and self.operator == "AND":
-                    self.elements = False
-                    self.level = -1
-                    return False
-                self.elements.remove(e)
-
-        if self.elements == []:
-            if self.operator == "OR":
-                self.elements = False
             else:
-                self.elements = True
+                bres = self.bool_element_value(eVal)
+                if bres is None:
+                    self.elements.remove(e)
+                else:
+                    return bres
+                
+        if self.elements == []:
+            self.elements = True if self.operator == "AND" else False
             self.level = -1
             return self.elements
         else:
@@ -430,7 +517,7 @@ class BoolSequence:
     def get_sub_sequence(self, setIn):
         if type(setIn) is set:
             val_set = setIn
-        elif type(setIn) is int:
+        elif type(setIn) is bsurface:
             val_set = {setIn}
         else:
             val_set = set(setIn.keys())
@@ -455,7 +542,7 @@ class BoolSequence:
 
         return subList, subSeq
 
-    def factorize(self, valname, true_set, false_set):
+    def factorize(self, valname:bsurface, true_set:dict, false_set:dict):
         """Make the factorization of the Sequence on variable valname using Shannon's theorem."""
         if true_set is None:  # valname cannot take True value
             falseFunc = self.evaluate(false_set)
@@ -571,8 +658,9 @@ class BoolSequence:
         for t in terms:
             if is_integer(t):
                 val = int(t.strip("(").strip(")"))
-                lev0Seq.add(val)
-                lev0SeqAbs.add(abs(val))
+                bval = bsurface(val)
+                lev0Seq.add(bval)
+                lev0SeqAbs.add(abs(bval))
                 # self.elements.append(int(t.strip('(').strip(')')))
             else:
                 x = BoolSequence(t)
@@ -600,7 +688,7 @@ class BoolSequence:
             return
         group = []
         for e in reversed(self.elements):
-            if type(e) is int:
+            if type(e) is bsurface:
                 group.append(e)
                 self.elements.remove(e)
             elif e.level == 0 and len(e.elements) == 1:
@@ -621,10 +709,10 @@ class BoolSequence:
             return tuple()
         surf = set()
         for e in self.elements:
-            if type(e) is int:
-                surf.add(abs(e))
+            if type(e) is bsurface:
+               surf.add(abs(e))
             else:
-                surf.update(e.get_surfaces_numbers())
+               surf.update(e.get_surfaces_numbers())
         return surf
 
     def level_update(self):
@@ -635,12 +723,26 @@ class BoolSequence:
 
         self.level = 0
         for e in self.elements:
-            if type(e) is int:
-                continue
+            if type(e) is bsurface:
+                if not e.bool:
+                   continue
             e.level_update()
             self.level = max(e.level + 1, self.level)
 
+    def bool_element_value(self,b:bool):
+        """return the self.elements value when surface value is True or False ."""
+        if b and self.operator == "OR":
+           self.elements = True
+           self.level = -1
+           return True
+        elif not b and self.operator == "AND":
+           self.elements = False
+           self.level = -1
+           return False
+        else:
+           return None 
 
+    
 def insert_in_sequence(Seq, trgt, nsrf, operator):
     """Substitute the variable trgt by the sequence "(trgt:nsrg)" or "(trgt nsf)" in the
     BoolSequence Seq"""
@@ -658,8 +760,8 @@ def substitute_integer_element(Seq, target, newElement):
     """Substitute the variable target by the sequence newElement in the
     BoolSequence Seq"""
     for i, e in enumerate(Seq.elements):
-        if type(e) is int:
-            if e == target:
+        if type(e) is bsurface:
+            if not e.bool and e == target:
                 Seq.elements[i] = newElement
         else:
             substitute_integer_element(e, target, newElement)
@@ -762,10 +864,21 @@ def redundant(m, geom):
     else:
         return False
 
-
 def is_integer(x):
     try:
         int(x.strip("(").strip(")"))
         return True
     except:
         return False
+
+
+a = bsurface(1,-10,11,'OR')
+b = bsurface(2)
+c = bsurface(-3)
+
+bf = BoolSequence(operator='OR')
+bf.append(b,c)
+
+print(bf)
+bf.simplify()
+print(bf)
