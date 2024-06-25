@@ -567,17 +567,6 @@ class CadToCsg:
 
         print_warning_solids(warnSolids, warnEnclosures)
 
-        # add plane definition to cone
-        process_cones(
-            self.meta_list,
-            coneInfo,
-            self.Surfaces,
-            self.geometry_bounding_box,
-            self.options,
-            self.tolerances,
-            self.numeric_format,
-        )
-
         logger.info("Process finished")
         logger.info(datetime.now() - startTime)
 
@@ -660,41 +649,6 @@ def update_comment(meta, idLabel):
         return
     newLabel = (idLabel[i] for i in meta.__commentInfo__[1])
     meta.set_comments(void.void_comment_line((meta.__commentInfo__[0], newLabel)))
-
-
-def process_cones(MetaList, coneInfo, Surfaces, UniverseBox, options, tolerances, numeric_format):
-    cellId = tuple(coneInfo.keys())
-    for m in MetaList:
-        if m.__id__ not in cellId and not m.Void:
-            continue
-
-        if m.Void and m.__commentInfo__ is not None:
-            if m.__commentInfo__[1] is None:
-                continue
-            cones = set()
-            for Id in m.__commentInfo__[1]:
-                if Id in cellId:
-                    cones.update(-x for x in coneInfo[Id])
-            Conv.add_cone_plane(
-                m.Definition,
-                cones,
-                Surfaces,
-                UniverseBox,
-                options,
-                tolerances,
-                numeric_format,
-            )
-        elif not m.Void:
-            Conv.add_cone_plane(
-                m.Definition,
-                coneInfo[m.__id__],
-                Surfaces,
-                UniverseBox,
-                options,
-                tolerances,
-                numeric_format,
-            )
-
 
 def print_warning_solids(warnSolids, warnEnclosures):
 

@@ -17,7 +17,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
     sign_plane,
 )
-from ..utils.boolean_function import BoolSequence, insert_in_sequence
+from ..utils.boolean_function import BoolSequence, bsurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
 from ..utils.functions import GeounedSurface
 
@@ -503,7 +503,7 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
     del_list = []
 
     piece_def = BoolSequence(operator="OR")
-    iece_obj = []
+    piece_obj = []
     cones = set()
     for isol, solid in enumerate(solids):
         surf_piece = []
@@ -536,14 +536,15 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
             if "Sphere" in surface_type:
                 surface_type = "Sphere"
 
-            # cone additional plane is added afterward
             if surface_type in ("<Cylinder object>", "<Cone object>", "Sphere") and orient == "Reversed":
-                # cone additional plane is added afterward
                 id_face = get_id(face.Surface, surfaces, options, tolerances, numeric_format)
                 if surface_type == "<Cone object>":
-                    cones.add(id_face)
-                if str(id_face) not in surf_piece:
-                    surf_piece.append(str(id_face))
+                   id_face = add_cone_plane(face.Surface, id_face, surfaces, universe_box, options, tolerances, numeric_format)
+                else:
+                   id_face = bsurface(id_face) 
+                
+                if id_face not in surf_piece:
+                    surf_piece.append(id_face)
                     surf_obj.append(face)
 
                 try:
@@ -570,11 +571,11 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     id *= sign
 
                     if id_face not in extra_plane_reverse.keys():
-                        extra_plane_reverse[id_face] = [str(id)]
+                        extra_plane_reverse[id_face] = [bsurface(id)]
                         surf_obj.append(p.shape)
                     else:
-                        if str(id) not in extra_plane_reverse[id_face]:
-                            extra_plane_reverse[id_face].append(str(id))
+                        if id not in extra_plane_reverse[id_face]:
+                            extra_plane_reverse[id_face].append(bsurface(id))
                             surf_obj.append(p.shape)
 
             elif surface_type == "<Toroid object>":
@@ -606,7 +607,7 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                                 id1 = -id1
 
                         if plane2 is None:
-                            u_var = "%i" % id1
+                            u_var = id1
                         else:
                             plane = GeounedSurface(("Plane", plane2), universe_box, Face="Build")
                             id2, exist = surfaces.add_plane(plane, options, tolerances, numeric_format, False)
@@ -614,21 +615,22 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                                 p = surfaces.get_surface(id2)
                                 if is_opposite(plane.Surf.Axis, p.Surf.Axis, tolerances.pln_angle):
                                     id2 = -id2
-
-                            u_var = "(%i : %i)" % (id1, id2) if ORop else "%i %i" % (id1, id2)
+                            op = 'OR' if ORop else 'AND'
+                            u_var = bsurface(id1,id1,id2,op)
 
                     else:
-                        u_var = ""
+                        u_var = None
 
                     # add if necesary additional surface following V variable
                     if orient == "Forward":
-                        v_var = "-%i" % idT
+                        torus_var = bsurface(-idT)
 
                     else:
                         index, Vparams = solid_gu.TorusVParams[iface]
                         VClosed, VminMax = Vparams
                         if VClosed:
-                            v_var = "%i" % idT
+                            torus_var = bsurface(idT)
+                            v_var = None
                         else:
                             surf_params, surf_type, in_surf = gen_torus_annex_v_surface(
                                 face, VminMax, tolerances, options.forceCylinder
@@ -658,18 +660,24 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                                     ):
                                         id2 = -id2
 
-                            v_var = "%i %i" % (idT, -id2 if in_surf else id2)
+                            v_var = -id2 if in_surf else id2
 
-                    var = v_var if u_closed else " ".join((v_var, u_var))
-                    if var not in surf_piece:
-                        surf_piece.append(var)
+                    if u_var is None:
+                        if type(v_var) is int:
+                            torus_var.add_surface(v_var,'AND') 
+                    else:
+                        if type(v_var) is int:
+                            torus_var.add_surface(bsurface(v_var,v_var,u_var,'AND'),'AND')
+                        else:    
+                            torus_var.add_surface(u_var,'AND') 
+                    
+                    if torus_var not in surf_piece:
+                        surf_piece.append(torus_var)
                         surf_obj.append(face)
                 else:
                     logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")
             else:
                 id = get_id(face.Surface, surfaces, options, tolerances, numeric_format)
-                if surface_type == "<Cone object>":
-                    cones.add(-id)
 
                 surf = face
                 if id == 0:
@@ -709,16 +717,22 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     var = id
                 elif orient == "Forward":
                     var = -id
-
-                if surface_type == "<Plane object>":
+                
+                if surface_type == "<Cone object>":
+                    var = add_cone_plane(face.Surface, var, surfaces, universe_box, options, tolerances, numeric_format)
+                
+                elif surface_type == "<Plane object>":
                     s = surfaces.get_surface(id)
                     if is_opposite(face.Surface.Axis, s.Surf.Axis, tolerances.pln_angle):
                         var = -var
-
-                if str(var) in surf_piece:
+                    var = bsurface(var)
+                else :        
+                    var = bsurface(var)
+                
+                if var in surf_piece:
                     continue
 
-                surf_piece.append(str(var))
+                surf_piece.append(var)
                 surf_obj.append(surf)
 
         if extra_plane_reverse:
@@ -727,9 +741,12 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     if extra[0] not in surf_piece:
                         surf_piece.append(extra[0])
                 else:
-                    surf_piece.append(f"({':'.join(extra)})")
+                    orSeq = BoolSequence(operator='OR')
+                    orSeq.append(*extra)
+                    surf_piece.append(orSeq)
 
-        surf_piece_bool = BoolSequence(" ".join(surf_piece))
+        surf_piece_bool = BoolSequence(operator='AND')
+        surf_piece_bool.append(*surf_piece)
         # possible expresion for e
         #  i1
         #  i1 i2surf_piece
@@ -750,14 +767,14 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
 
         if surf_piece_bool.elements:
             piece_def.append(surf_piece_bool)
-            iece_obj.append(surf_obj)
+            piece_obj.append(surf_obj)
         else:
             del_list.append(isol)
 
     for isol in reversed(del_list):
         del meta_obj.Solids[isol]
     meta_obj.set_definition(piece_def)
-    meta_obj.set_faces(iece_obj)
+    meta_obj.set_faces(piece_obj)
     return tuple(cones)
 
 
@@ -886,33 +903,31 @@ def no_overlapping_cell(metaList, surfaces, options):
             m.Definition.level_update()
 
 
-def add_cone_plane(definition, cones_list, surfaces, universe_box, options, tolerances, numeric_format):
+def add_cone_plane(cone, cid, surfaces, universe_box, options, tolerances, numeric_format):
     x_axis = FreeCAD.Vector(1, 0, 0)
     y_axis = FreeCAD.Vector(0, 1, 0)
     z_axis = FreeCAD.Vector(0, 0, 1)
 
-    for cid in cones_list:
-        cone = surfaces.get_surface(abs(cid))
-        if (
-            is_parallel(cone.Surf.Axis, x_axis, tolerances.angle)
-            or is_parallel(cone.Surf.Axis, y_axis, tolerances.angle)
-            or is_parallel(cone.Surf.Axis, z_axis, tolerances.angle)
-        ):
-            continue
+    if (
+        is_parallel(cone.Surf.Axis, x_axis, tolerances.angle)
+        or is_parallel(cone.Surf.Axis, y_axis, tolerances.angle)
+        or is_parallel(cone.Surf.Axis, z_axis, tolerances.angle)
+    ):
+        return bsurface(cid)
 
-        plane = GeounedSurface(
-            ("Plane", (cone.Surf.Apex, cone.Surf.Axis, 1, 1)),
-            universe_box,
-            Face="Build",
-        )
-        pid, exist = surfaces.add_plane(plane, options, tolerances, numeric_format, False)
+    plane = GeounedSurface(
+        ("Plane", (cone.Surf.Apex, cone.Surf.Axis, 1, 1)),
+        universe_box,
+        Face="Build",
+    )
+    pid, exist = surfaces.add_plane(plane, options, tolerances, numeric_format, False)
 
-        if exist:
-            p = surfaces.get_surface(pid)
-            if is_opposite(plane.Surf.Axis, p.Surf.Axis, tolerances.pln_angle):
-                pid = -pid
-
-        if cid > 0:
-            insert_in_sequence(definition, cid, -pid, "OR")
-        else:
-            insert_in_sequence(definition, cid, pid, "AND")
+    if exist:
+        p = surfaces.get_surface(pid)
+        if is_opposite(plane.Surf.Axis, p.Surf.Axis, tolerances.pln_angle):
+            pid = -pid
+      
+    if cid > 0:
+        return bsurface(cid,cid,-pid, "OR")
+    else:
+        return bsurface(cid,cid,-pid, "AND")

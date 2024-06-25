@@ -4,6 +4,7 @@ import re
 import FreeCAD
 
 from ..utils import q_form as q_form
+from ..utils.boolean_function import bsurface
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
 from .string_functions import remove_redundant
 
@@ -127,7 +128,7 @@ def write_openmc_region(definition, options, w_type="XML"):
         return write_sequence_omc_py(definition, options)
 
 
-def write_sequence_mcnp(Seq):
+def write_sequence_mcnp_old(Seq):
     if Seq.level == 0:
         if Seq.operator == "AND":
             line = f"({' '.join(map(str, Seq.elements))})"
@@ -148,8 +149,58 @@ def write_sequence_mcnp(Seq):
 
     return line
 
+def mcnp_bsurf(bs:bsurface):
+    if bs.s2 is None:
+        return str(bs.s1)
+    elif type(bs.s2) is int :
+        if bs.op == 'AND':
+           return f'{bs.s1} {bs.s2}'
+        else:  
+           return f'({bs.s1}:{bs.s2})'
+    else:    
+        s2str = mcnp_bsurf(bs.s2) 
+        if bs.op == 'AND':
+            return f'{bs.s1} {s2str}'
+        else:
+            return f'({bs.s1}:{s2str})'
+        
+def omc_bsurf(bs:bsurface,andc=' ',prefix='S'):
+    
+    if andc == ' ':
+      strSurf = lambda surf: f'{surf}' 
+    else:
+      strSurf = lambda surf: (f"-{prefix}{-surf}" if surf < 0 else f"+{prefix}{surf}")
 
-def write_sequence_serpent(seq):
+    if bs.s2 is None:
+        return strSurf(bs.s1)
+    elif type(bs.s2) is int :
+        if bs.op == 'AND':
+           return f'{strSurf(bs.s1)}{andc}{strSurf(bs.s2)}'
+        else:  
+           return f'({strSurf(bs.s1)} | {strSurf(bs.s2)})'
+    else:    
+        s2str = omc_bsurf(bs.s2,andc,prefix) 
+        if bs.op == 'AND':
+            return f'{strSurf(bs.s1)}{andc}{s2str}'
+        else:
+            return f'({strSurf(bs.s1)} | {s2str})'        
+        
+def write_sequence_mcnp(Seq):
+    terms = []
+    for e in Seq.elements:
+        if type(e) is bsurface:
+            terms.append(mcnp_bsurf(e))
+        else:
+            terms.append(write_sequence_mcnp(e))
+
+    if Seq.operator == "AND":
+        line = f"({' '.join(terms)})"
+    else:
+        line = f"({':'.join(terms)})"
+
+    return line
+
+def write_sequence_serpent_old(seq):
     if seq.level == 0:
         if seq.operator == "AND":
             line = f"({' '.join(map(str, seq.elements))})"
@@ -170,8 +221,22 @@ def write_sequence_serpent(seq):
 
     return line
 
+def write_sequence_serpent(Seq):
+    terms = []
+    for e in Seq.elements:
+        if type(e) is bsurface:
+            terms.append(mcnp_bsurf(e))
+        else:
+            terms.append(write_sequence_serpent(e))
 
-def write_sequence_phits(seq):
+    if Seq.operator == "AND":
+        line = f"({' '.join(terms)})"
+    else:
+        line = f"({':'.join(terms)})"
+
+    return line
+
+def write_sequence_phits_old(seq):
     if seq.level == 0:
         if seq.operator == "AND":
             line = f"({' '.join(map(str, seq.elements))})"
@@ -192,8 +257,23 @@ def write_sequence_phits(seq):
 
     return line
 
+def write_sequence_phits(Seq):
+    terms = []
+    for e in Seq.elements:
+        if type(e) is bsurface:
+            terms.append(mcnp_bsurf(e))
+        else:
+            terms.append(write_sequence_phits(e))
 
-def write_sequence_omc_xml(seq):
+    if Seq.operator == "AND":
+        line = f"({' '.join(terms)})"
+    else:
+        line = f"({':'.join(terms)})"
+
+    return line
+
+
+def write_sequence_omc_xml_old(seq):
     if seq.level == 0:
         if seq.operator == "AND":
             line = f"({' '.join(map(str, seq.elements))})"
@@ -213,8 +293,22 @@ def write_sequence_omc_xml(seq):
             line = f"({' | '.join(terms)})"
     return line
 
+def write_sequence_omc_xml(Seq):
+    terms = []
+    for e in Seq.elements:
+        if type(e) is bsurface:
+            terms.append(omc_bsurf(e,' '))
+        else:
+            terms.append(write_sequence_omc_xml(e))
 
-def write_sequence_omc_py(seq, options, prefix="S"):
+    if Seq.operator == "AND":
+        line = f"({' '.join(terms)})"
+    else:
+        line = f"({' | '.join(terms)})"
+
+    return line
+
+def write_sequence_omc_py_old(seq, options, prefix="S"):
 
     strSurf = lambda surf: (f"-{prefix}{-surf}" if surf < 0 else f"+{prefix}{surf}")
 
@@ -237,6 +331,19 @@ def write_sequence_omc_py(seq, options, prefix="S"):
             line = f"({' | '.join(terms)})"
     return line
 
+def write_sequence_omc_py(seq, prefix="S"):
+    terms = []
+    for e in seq.elements:
+        if type(e) is int:
+            terms.append(omc_bsurf(e,' & ',prefix))
+        else:
+            terms.append(write_sequence_omc_py(e))
+
+    if seq.operator == "AND":
+        line = f"({' & '.join(terms)})"
+    else:
+        line = f"({' | '.join(terms)})"
+    return line
 
 def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
     mcnp_def = ""

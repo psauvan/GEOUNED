@@ -742,31 +742,6 @@ class BoolSequence:
         else:
            return None 
 
-    
-def insert_in_sequence(Seq, trgt, nsrf, operator):
-    """Substitute the variable trgt by the sequence "(trgt:nsrg)" or "(trgt nsf)" in the
-    BoolSequence Seq"""
-    if operator == "OR":
-        newSeq = BoolSequence(f"{trgt}:{nsrf}")
-    else:
-        newSeq = BoolSequence(f"{trgt} {nsrf}")
-
-    substitute_integer_element(Seq, trgt, newSeq)
-    Seq.level_update()
-    # Seq.join_operators()
-
-
-def substitute_integer_element(Seq, target, newElement):
-    """Substitute the variable target by the sequence newElement in the
-    BoolSequence Seq"""
-    for i, e in enumerate(Seq.elements):
-        if type(e) is bsurface:
-            if not e.bool and e == target:
-                Seq.elements[i] = newElement
-        else:
-            substitute_integer_element(e, target, newElement)
-
-
 def outer_terms(expression, value="number"):
     """Return the list and the boolean operator of the outter terms of the expression."""
     if value == "number":
@@ -870,15 +845,3 @@ def is_integer(x):
         return True
     except:
         return False
-
-
-a = bsurface(1,-10,11,'OR')
-b = bsurface(2)
-c = bsurface(-3)
-
-bf = BoolSequence(operator='OR')
-bf.append(b,c)
-
-print(bf)
-bf.simplify()
-print(bf)
