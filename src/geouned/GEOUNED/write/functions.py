@@ -90,7 +90,7 @@ def change_surf_sign(surf, Seq):
                 Seq.elements[i] = -Seq.elements[i]
     else:
         for i, e in enumerate(Seq.elements):
-            if type(e) is int:
+            if type(e) is bsurface:
                 if surf == abs(e):
                     Seq.elements[i] = -Seq.elements[i]
             else:
@@ -126,28 +126,6 @@ def write_openmc_region(definition, options, w_type="XML"):
         return write_sequence_omc_xml(definition)
     if w_type == "PY":
         return write_sequence_omc_py(definition, options)
-
-
-def write_sequence_mcnp_old(Seq):
-    if Seq.level == 0:
-        if Seq.operator == "AND":
-            line = f"({' '.join(map(str, Seq.elements))})"
-        else:
-            line = f"({':'.join(map(str, Seq.elements))})"
-    else:
-        terms = []
-        for e in Seq.elements:
-            if type(e) is int:
-                terms.append(str(e))
-            else:
-                terms.append(write_sequence_mcnp(e))
-
-        if Seq.operator == "AND":
-            line = f"({' '.join(terms)})"
-        else:
-            line = f"({':'.join(terms)})"
-
-    return line
 
 def mcnp_bsurf(bs:bsurface):
     if bs.s2 is None:
@@ -200,27 +178,6 @@ def write_sequence_mcnp(Seq):
 
     return line
 
-def write_sequence_serpent_old(seq):
-    if seq.level == 0:
-        if seq.operator == "AND":
-            line = f"({' '.join(map(str, seq.elements))})"
-        else:
-            line = f"({':'.join(map(str, seq.elements))})"
-    else:
-        terms = []
-        for e in seq.elements:
-            if type(e) is int:
-                terms.append(str(e))
-            else:
-                terms.append(write_sequence_mcnp(e))
-
-        if seq.operator == "AND":
-            line = f"({' '.join(terms)})"
-        else:
-            line = f"({':'.join(terms)})"
-
-    return line
-
 def write_sequence_serpent(Seq):
     terms = []
     for e in Seq.elements:
@@ -233,27 +190,6 @@ def write_sequence_serpent(Seq):
         line = f"({' '.join(terms)})"
     else:
         line = f"({':'.join(terms)})"
-
-    return line
-
-def write_sequence_phits_old(seq):
-    if seq.level == 0:
-        if seq.operator == "AND":
-            line = f"({' '.join(map(str, seq.elements))})"
-        else:
-            line = f"({':'.join(map(str, seq.elements))})"
-    else:
-        terms = []
-        for e in seq.elements:
-            if type(e) is int:
-                terms.append(str(e))
-            else:
-                terms.append(write_sequence_phits(e))
-
-        if seq.operator == "AND":
-            line = f"({' '.join(terms)})"
-        else:
-            line = f"({':'.join(terms)})"
 
     return line
 
@@ -273,26 +209,6 @@ def write_sequence_phits(Seq):
     return line
 
 
-def write_sequence_omc_xml_old(seq):
-    if seq.level == 0:
-        if seq.operator == "AND":
-            line = f"({' '.join(map(str, seq.elements))})"
-        else:
-            line = f"({' | '.join(map(str, seq.elements))})"
-    else:
-        terms = []
-        for e in seq.elements:
-            if type(e) is int:
-                terms.append(str(e))
-            else:
-                terms.append(write_sequence_omc_xml(e))
-
-        if seq.operator == "AND":
-            line = f"({' '.join(terms)})"
-        else:
-            line = f"({' | '.join(terms)})"
-    return line
-
 def write_sequence_omc_xml(Seq):
     terms = []
     for e in Seq.elements:
@@ -308,33 +224,10 @@ def write_sequence_omc_xml(Seq):
 
     return line
 
-def write_sequence_omc_py_old(seq, options, prefix="S"):
-
-    strSurf = lambda surf: (f"-{prefix}{-surf}" if surf < 0 else f"+{prefix}{surf}")
-
-    if seq.level == 0:
-        if seq.operator == "AND":
-            line = f"({' & '.join(map(strSurf, seq.elements))})"
-        else:
-            line = f"({' | '.join(map(strSurf, seq.elements))})"
-    else:
-        terms = []
-        for e in seq.elements:
-            if type(e) is int:
-                terms.append(strSurf(e))
-            else:
-                terms.append(write_sequence_omc_py(e, options))
-
-        if seq.operator == "AND":
-            line = f"({' & '.join(terms)})"
-        else:
-            line = f"({' | '.join(terms)})"
-    return line
-
 def write_sequence_omc_py(seq, prefix="S"):
     terms = []
     for e in seq.elements:
-        if type(e) is int:
+        if type(e) is bsurface:
             terms.append(omc_bsurf(e,' & ',prefix))
         else:
             terms.append(write_sequence_omc_py(e))

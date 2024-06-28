@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from ..loadfile import load_functions as LF
 from ..utils.basic_functions_part1 import is_opposite
-from ..utils.boolean_function import BoolSequence
+from ..utils.boolean_function import BoolSequence, bsurface
 from ..utils.functions import GeounedSolid, GeounedSurface
 from . import void_functions as VF
 from .void_box_class import VoidBox
@@ -217,13 +217,13 @@ def get_universe_complementary(Universe, Surfaces, options, tolerances, numeric_
     for p in Universe.get_bound_planes():
         id, exist = Surfaces.add_plane(p, options, tolerances, numeric_format, False)
         if not exist:
-            Def.elements.append(-id)
+            Def.elements.append(bsurface(-id))
         else:
             s = Surfaces.get_surface(id)
             if is_opposite(p.Surf.Axis, s.Surf.Axis):
-                Def.elements.append(id)
+                Def.elements.append(bsurface(id))
             else:
-                Def.elements.append(-id)
+                Def.elements.append(bsurface(-id))
     return Def
 
 

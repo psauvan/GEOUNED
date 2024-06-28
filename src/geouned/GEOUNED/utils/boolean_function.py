@@ -420,7 +420,13 @@ class BoolSequence:
                                return
             else:
                 e.substitute(var, val)
-
+                if type(e.elements) is bool :
+                   bres = self.bool_element_value(e.elements)
+                   if bres is None:
+                       self.elements.remove(e)
+                   else:
+                       return
+                        
         if self.elements == []:
             self.elements = True if self.operator == "AND" else False
             self.level = -1
@@ -445,7 +451,9 @@ class BoolSequence:
                         continue
                     else:
                         return bres
-                    
+            elif type(e) is bool :
+                continue
+
             eVal = e if self_level else e.clean()
             if type(eVal) is not bool:
                 eVal = eVal.elements
@@ -461,6 +469,10 @@ class BoolSequence:
             self.level = -1
             return self.elements
         else:
+            if len(self.elements) == 1:
+                if type(self.elements[0]) is bool :
+                    self.elements = self.elements[0]
+                    self.level = -1
             return self
 
     # TODO rename to snake case, care as multiple functions with same name
@@ -470,9 +482,10 @@ class BoolSequence:
             return
         self.clean(self_level=True)
         self.level_update()
-        if self.level == 0:
-            return
         self.group_single()
+        if self.level < 1:
+            return
+
         ANDop = []
         ORop = []
 
@@ -681,22 +694,61 @@ class BoolSequence:
 
     def group_single(self):
         """group integers found in Sequence with level > 1.
-        (e.g. change AND[1 2 3 OR[2 4]] to AND[ AND[1 2 3] OR[2 3]] )."""
+
+                (e.g. change AND[1 2 3 OR[2 4]] to AND[ AND[1 2 3] OR[2 3]] )."""
         if self.level == 0:
+            if len(self.elements) == 1:
+               if type(self.elements[0]) is bool:
+                   self.elements = self.elements[0]
+                   self.level = -1 
             return
         if type(self.elements) is bool:
             return
         group = []
         for e in reversed(self.elements):
             if type(e) is bsurface:
-                group.append(e)
+                if e.bool :
+                  if e.s1 and self.operator == 'OR' :
+                     group = True
+                     break
+                  elif not e.s1 and self.operator == 'AND' :
+                     group = False
+                     break     
+                else:    
+                   group.append(e)
                 self.elements.remove(e)
-            elif e.level == 0 and len(e.elements) == 1:
-                group.append(e.elements[0])
+            
+            elif type(e.elements) is bool :
+                if e.elements and self.operator == 'OR' :
+                   group = True
+                   break
+                elif not e.elements and self.operator == 'AND' :
+                   group = False
+                   break 
                 self.elements.remove(e)
 
-        if not group:
+            elif e.level == 0 and len(e.elements) == 1:
+                   if type(e.elements[0]) is bool :
+                       group = e.elements[0]
+                       break
+                   else:   
+                       group.append(e.elements[0])
+                       self.elements.remove(e)
+
+        if type(group) is bool :
+            self.elements = group
+            self.level = -1
             return
+        
+        elif len(group) == 0 :
+            if len(self.elements) == 0 :
+               self.level = -1
+               if self.operator == 'AND' :
+                   self.elements = True
+               else:
+                   self.elements = False   
+            return
+        
         seq = BoolSequence()
         seq.elements.extend(group)
         seq.operator = self.operator
@@ -718,16 +770,14 @@ class BoolSequence:
     def level_update(self):
         """Update the level value of the BoolSequence."""
         if type(self.elements) is bool:
-            self.level = 0
+            self.level = -1
             return
 
         self.level = 0
         for e in self.elements:
-            if type(e) is bsurface:
-                if not e.bool:
-                   continue
-            e.level_update()
-            self.level = max(e.level + 1, self.level)
+            if type(e) is BoolSequence:
+               e.level_update()
+               self.level = max(e.level + 1, self.level)
 
     def bool_element_value(self,b:bool):
         """return the self.elements value when surface value is True or False ."""
