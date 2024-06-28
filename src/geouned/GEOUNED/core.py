@@ -645,6 +645,7 @@ def update_comment(meta, idLabel):
     newLabel = (idLabel[i] for i in meta.__commentInfo__[1])
     meta.set_comments(void.void_comment_line((meta.__commentInfo__[0], newLabel)))
 
+
 def print_warning_solids(warnSolids, warnEnclosures):
 
     solids_logger = logging.getLogger("solids_logger")

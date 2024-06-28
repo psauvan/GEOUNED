@@ -176,7 +176,7 @@ class VoidBox:
                     if is_opposite(p.Surf.Axis, s.Surf.Axis):
                         id = -id
                 if is_opposite(p.Surf.Axis, p.Surf.Position - center):
-                    boxDef.elements.append (bsurface(id))
+                    boxDef.elements.append(bsurface(id))
                 else:
                     boxDef.elements.append(bsurface(-id))
                 enclosure = False

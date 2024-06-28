@@ -19,108 +19,114 @@ conversion = {
     "X": None,
 }  # associate "T", "F", "X" with associated Boolean value (or None for X)
 
+
 class bsurface(int):
-   """Boolean Surface class """
-   def __new__(cls,label:int,s1:int=None,s2:int=None,op:str=None):
-      return super(bsurface, cls).__new__(cls,label) 
-   
-   def __neg__(self):
-      if self.bool :
-          bs = self.copy()
-          bs.s1 = not bs.s1
-          bs.label = -bs.label
-          return bs
-      elif self.s2 is None:
-         return bsurface(-self.label,-self.s1)
-      else:   
-         return bsurface(-self.label,-self.s1,-self.s2,self.op_comp())
-   
-   def __pos__(self):
-      return self
-   
-   def __abs__(self):
-       if self.label >= 0 :
-           return self.copy()
-       else:
-           return -self.copy()
-   
-   def __str__(self):
-      if self.s2 is None:
-         return str(f' {self.s1}')
-      else:
-         if self.op == 'AND':
-            return f'AND[{self.s1} {self.s2}]'
-         else:
-            return f'OR[{self.s1} {self.s2}]'
-   
-   def __init__(self,label:int,s1:int=None,s2:int=None,op:str=None):
-      
-      self.label = label
-      if s1 is None:
-          self.s1 = label
-      else:
-          self.s1 = s1
-          
-      self.s2 = s2
-      self.op = op
-      self.bool = False
+    """Boolean Surface class"""
 
-      if self.s2 is not None:
-         assert self.s2 !=0, 's2 must not be zero'
-         assert self.op in ('OR','AND'),'operator should be "OR" or "AND"'
-      else:
-         self.op = None    
-   
-   def compare(self,s):
-       if abs(self.s1) != abs(s.s1): return (False,False)
-       if self.s2 is None and s.s2 is None:  return (True, self.s1 != s.s1)
+    def __new__(cls, label: int, s1: int = None, s2: int = None, op: str = None):
+        return super(bsurface, cls).__new__(cls, label)
 
-       if abs(self.s2) != abs(s.s2) : return(False,False) 
+    def __neg__(self):
+        if self.bool:
+            bs = self.copy()
+            bs.s1 = not bs.s1
+            bs.label = -bs.label
+            return bs
+        elif self.s2 is None:
+            return bsurface(-self.label, -self.s1)
+        else:
+            return bsurface(-self.label, -self.s1, -self.s2, self.op_comp())
 
-       if (self.s1 == s.s1) and (self.s2 == s.s2) and (self.op == s.op) : return (True,False)
-       scomp = -s
-       if (self.s1 == scomp.s1) and (self.s2 == scomp.s2) and (self.op == scomp.op) : return (True,True)
-       return (False,False)
- 
-   def copy(self):
-       if self.bool:
-          bs = bsurface(self.label)
-          if self.s1 :
-              bs.set_true()
-              return bs
-          else:
-              bs.set_false()
-              return bs
-          
-       elif self.s2 is None :
-          return bsurface(self.label,self.s1)
-       else: 
-          return bsurface(self.label,self.s1,self.s2,self.op) 
-   
-   def set_true(self):
-       self.bool = True
-       self.s1 = True
-       self.s2 = None
-       self.op = None
+    def __pos__(self):
+        return self
 
-   def set_false(self):
-       self.bool = True
-       self.s1 = False
-       self.s2 = None
-       self.op = None    
+    def __abs__(self):
+        if self.label >= 0:
+            return self.copy()
+        else:
+            return -self.copy()
 
-   def op_comp(self):
-      return 'AND' if self.op=='OR' else 'OR'
-       
+    def __str__(self):
+        if self.s2 is None:
+            return str(f" {self.s1}")
+        else:
+            if self.op == "AND":
+                return f"AND[{self.s1} {self.s2}]"
+            else:
+                return f"OR[{self.s1} {self.s2}]"
 
-   def add_surface(self,s2:int,op:str):
-      
-      assert op in ('OR','AND'),'operator should be "OR" or "AND"'
-      assert s2 !=0, 's2 must not be zero'
+    def __init__(self, label: int, s1: int = None, s2: int = None, op: str = None):
 
-      self.s2 = s2
-      self.op = op
- 
+        self.label = label
+        if s1 is None:
+            self.s1 = label
+        else:
+            self.s1 = s1
+
+        self.s2 = s2
+        self.op = op
+        self.bool = False
+
+        if self.s2 is not None:
+            assert self.s2 != 0, "s2 must not be zero"
+            assert self.op in ("OR", "AND"), 'operator should be "OR" or "AND"'
+        else:
+            self.op = None
+
+    def compare(self, s):
+        if abs(self.s1) != abs(s.s1):
+            return (False, False)
+        if self.s2 is None and s.s2 is None:
+            return (True, self.s1 != s.s1)
+
+        if abs(self.s2) != abs(s.s2):
+            return (False, False)
+
+        if (self.s1 == s.s1) and (self.s2 == s.s2) and (self.op == s.op):
+            return (True, False)
+        scomp = -s
+        if (self.s1 == scomp.s1) and (self.s2 == scomp.s2) and (self.op == scomp.op):
+            return (True, True)
+        return (False, False)
+
+    def copy(self):
+        if self.bool:
+            bs = bsurface(self.label)
+            if self.s1:
+                bs.set_true()
+                return bs
+            else:
+                bs.set_false()
+                return bs
+
+        elif self.s2 is None:
+            return bsurface(self.label, self.s1)
+        else:
+            return bsurface(self.label, self.s1, self.s2, self.op)
+
+    def set_true(self):
+        self.bool = True
+        self.s1 = True
+        self.s2 = None
+        self.op = None
+
+    def set_false(self):
+        self.bool = True
+        self.s1 = False
+        self.s2 = None
+        self.op = None
+
+    def op_comp(self):
+        return "AND" if self.op == "OR" else "OR"
+
+    def add_surface(self, s2: int, op: str):
+
+        assert op in ("OR", "AND"), 'operator should be "OR" or "AND"'
+        assert s2 != 0, "s2 must not be zero"
+
+        self.s2 = s2
+        self.op = op
+
 
 class BoolSequence:
     """Class storing Boolean expression and operating on it"""
@@ -152,14 +158,14 @@ class BoolSequence:
 
         for s in seq:
             if type(s) is bsurface:
-                if not s.bool :
-                   level = -1
-                   if s in self.elements:
-                      continue
-                   elif -s in self.elements:
-                      self.level = -1
-                      self.elements = True if self.operator == "OR" else False
-                      return                      
+                if not s.bool:
+                    level = -1
+                    if s in self.elements:
+                        continue
+                    elif -s in self.elements:
+                        self.level = -1
+                        self.elements = True if self.operator == "OR" else False
+                        return
             elif type(s) is bool:
                 if self.operator == "AND" and s or self.operator == "OR" and not s:
                     continue
@@ -229,7 +235,7 @@ class BoolSequence:
             cp.elements = self.elements
         else:
             for e in self.elements:
-               cp.elements.append(e.copy())
+                cp.elements.append(e.copy())
         return cp
 
     # TODO rename to snake case, care as multiple functions with same name
@@ -295,7 +301,7 @@ class BoolSequence:
                     return
                 newNames = self.get_surfaces_numbers()
 
-    def do_factorize(self, val_name:bsurface, true_set:dict, false_set:dict):
+    def do_factorize(self, val_name: bsurface, true_set: dict, false_set: dict):
         """For level 0 sequence check if the factorization would lead to a simplification."""
         if self.level > 0:
             return True
@@ -369,13 +375,13 @@ class BoolSequence:
                 e.check()
                 if type(e.elements) is bool:
                     bres = self.bool_element_value(e.elements)
-                    if bres is None :
-                       self.elements.remove(e) 
+                    if bres is None:
+                        self.elements.remove(e)
                     else:
-                       return bres
+                        return bres
                 else:
                     none_val = True
-   
+
             if none_val:
                 return None
             elif self.operator == "AND":
@@ -400,33 +406,33 @@ class BoolSequence:
         for e in reversed(self.elements):
             ic -= 1
             if type(e) is bsurface:
-                if not e.bool :
-                   if abs(e) == name:
-                       if type(val) is bsurface :
-                           if name == e:
-                               self.elements[ic] = val
-                           else:
-                               self.elements[ic] = -val
-                       else:
-                           if name == e:
-                               bool_value = val
-                           else:
-                               bool_value = not val
+                if not e.bool:
+                    if abs(e) == name:
+                        if type(val) is bsurface:
+                            if name == e:
+                                self.elements[ic] = val
+                            else:
+                                self.elements[ic] = -val
+                        else:
+                            if name == e:
+                                bool_value = val
+                            else:
+                                bool_value = not val
 
-                           bres = self.bool_element_value(bool_value)
-                           if bres is None:
-                               self.elements.remove(e)
-                           else:
-                               return
+                            bres = self.bool_element_value(bool_value)
+                            if bres is None:
+                                self.elements.remove(e)
+                            else:
+                                return
             else:
                 e.substitute(var, val)
-                if type(e.elements) is bool :
-                   bres = self.bool_element_value(e.elements)
-                   if bres is None:
-                       self.elements.remove(e)
-                   else:
-                       return
-                        
+                if type(e.elements) is bool:
+                    bres = self.bool_element_value(e.elements)
+                    if bres is None:
+                        self.elements.remove(e)
+                    else:
+                        return
+
         if self.elements == []:
             self.elements = True if self.operator == "AND" else False
             self.level = -1
@@ -442,8 +448,8 @@ class BoolSequence:
             return self.elements
         for e in reversed(self.elements):
             if type(e) is bsurface:
-                if not e.bool :
-                   continue
+                if not e.bool:
+                    continue
                 else:
                     bres = self.bool_element_value(e.s1)
                     if bres is None:
@@ -451,7 +457,7 @@ class BoolSequence:
                         continue
                     else:
                         return bres
-            elif type(e) is bool :
+            elif type(e) is bool:
                 continue
 
             eVal = e if self_level else e.clean()
@@ -463,14 +469,14 @@ class BoolSequence:
                     self.elements.remove(e)
                 else:
                     return bres
-                
+
         if self.elements == []:
             self.elements = True if self.operator == "AND" else False
             self.level = -1
             return self.elements
         else:
             if len(self.elements) == 1:
-                if type(self.elements[0]) is bool :
+                if type(self.elements[0]) is bool:
                     self.elements = self.elements[0]
                     self.level = -1
             return self
@@ -555,7 +561,7 @@ class BoolSequence:
 
         return subList, subSeq
 
-    def factorize(self, valname:bsurface, true_set:dict, false_set:dict):
+    def factorize(self, valname: bsurface, true_set: dict, false_set: dict):
         """Make the factorization of the Sequence on variable valname using Shannon's theorem."""
         if true_set is None:  # valname cannot take True value
             falseFunc = self.evaluate(false_set)
@@ -695,60 +701,60 @@ class BoolSequence:
     def group_single(self):
         """group integers found in Sequence with level > 1.
 
-                (e.g. change AND[1 2 3 OR[2 4]] to AND[ AND[1 2 3] OR[2 3]] )."""
+        (e.g. change AND[1 2 3 OR[2 4]] to AND[ AND[1 2 3] OR[2 3]] )."""
         if self.level == 0:
             if len(self.elements) == 1:
-               if type(self.elements[0]) is bool:
-                   self.elements = self.elements[0]
-                   self.level = -1 
+                if type(self.elements[0]) is bool:
+                    self.elements = self.elements[0]
+                    self.level = -1
             return
         if type(self.elements) is bool:
             return
         group = []
         for e in reversed(self.elements):
             if type(e) is bsurface:
-                if e.bool :
-                  if e.s1 and self.operator == 'OR' :
-                     group = True
-                     break
-                  elif not e.s1 and self.operator == 'AND' :
-                     group = False
-                     break     
-                else:    
-                   group.append(e)
+                if e.bool:
+                    if e.s1 and self.operator == "OR":
+                        group = True
+                        break
+                    elif not e.s1 and self.operator == "AND":
+                        group = False
+                        break
+                else:
+                    group.append(e)
                 self.elements.remove(e)
-            
-            elif type(e.elements) is bool :
-                if e.elements and self.operator == 'OR' :
-                   group = True
-                   break
-                elif not e.elements and self.operator == 'AND' :
-                   group = False
-                   break 
+
+            elif type(e.elements) is bool:
+                if e.elements and self.operator == "OR":
+                    group = True
+                    break
+                elif not e.elements and self.operator == "AND":
+                    group = False
+                    break
                 self.elements.remove(e)
 
             elif e.level == 0 and len(e.elements) == 1:
-                   if type(e.elements[0]) is bool :
-                       group = e.elements[0]
-                       break
-                   else:   
-                       group.append(e.elements[0])
-                       self.elements.remove(e)
+                if type(e.elements[0]) is bool:
+                    group = e.elements[0]
+                    break
+                else:
+                    group.append(e.elements[0])
+                    self.elements.remove(e)
 
-        if type(group) is bool :
+        if type(group) is bool:
             self.elements = group
             self.level = -1
             return
-        
-        elif len(group) == 0 :
-            if len(self.elements) == 0 :
-               self.level = -1
-               if self.operator == 'AND' :
-                   self.elements = True
-               else:
-                   self.elements = False   
+
+        elif len(group) == 0:
+            if len(self.elements) == 0:
+                self.level = -1
+                if self.operator == "AND":
+                    self.elements = True
+                else:
+                    self.elements = False
             return
-        
+
         seq = BoolSequence()
         seq.elements.extend(group)
         seq.operator = self.operator
@@ -762,9 +768,9 @@ class BoolSequence:
         surf = set()
         for e in self.elements:
             if type(e) is bsurface:
-               surf.add(abs(e))
+                surf.add(abs(e))
             else:
-               surf.update(e.get_surfaces_numbers())
+                surf.update(e.get_surfaces_numbers())
         return surf
 
     def level_update(self):
@@ -776,21 +782,22 @@ class BoolSequence:
         self.level = 0
         for e in self.elements:
             if type(e) is BoolSequence:
-               e.level_update()
-               self.level = max(e.level + 1, self.level)
+                e.level_update()
+                self.level = max(e.level + 1, self.level)
 
-    def bool_element_value(self,b:bool):
+    def bool_element_value(self, b: bool):
         """return the self.elements value when surface value is True or False ."""
         if b and self.operator == "OR":
-           self.elements = True
-           self.level = -1
-           return True
+            self.elements = True
+            self.level = -1
+            return True
         elif not b and self.operator == "AND":
-           self.elements = False
-           self.level = -1
-           return False
+            self.elements = False
+            self.level = -1
+            return False
         else:
-           return None 
+            return None
+
 
 def outer_terms(expression, value="number"):
     """Return the list and the boolean operator of the outter terms of the expression."""
@@ -888,6 +895,7 @@ def redundant(m, geom):
         return True
     else:
         return False
+
 
 def is_integer(x):
     try:
