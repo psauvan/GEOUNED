@@ -397,7 +397,6 @@ class CadToCsg:
 
         warnSolids = []
         warnEnclosures = []
-        coneInfo = dict()
         tempTime0 = datetime.now()
         if not self.options.Facets:
 
@@ -416,7 +415,7 @@ class CadToCsg:
                 if m.IsEnclosure:
                     continue
                 logger.info(f"Building cell: {j+1}")
-                cones = Conv.cellDef(
+                Conv.cellDef(
                     m,
                     self.Surfaces,
                     self.geometry_bounding_box,
@@ -424,8 +423,6 @@ class CadToCsg:
                     self.tolerances,
                     self.numeric_format,
                 )
-                if cones:
-                    coneInfo[m.__id__] = cones
                 if j in warningSolidList:
                     warnSolids.append(m)
                 if not m.Solids:
@@ -456,7 +453,7 @@ class CadToCsg:
         if self.settings.voidGen and self.enclosure_list:
             for j, m in enumerate(self.enclosure_list):
                 logger.info(f"Building Enclosure Cell: {j + 1}")
-                cones = Conv.cellDef(
+                Conv.cellDef(
                     m,
                     self.Surfaces,
                     self.geometry_bounding_box,
@@ -464,8 +461,6 @@ class CadToCsg:
                     self.tolerances,
                     self.numeric_format,
                 )
-                if cones:
-                    coneInfo[m.__id__] = cones
                 if j in warningEnclosureList:
                     warnEnclosures.append(m)
 

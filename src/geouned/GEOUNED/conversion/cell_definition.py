@@ -504,7 +504,6 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
 
     piece_def = BoolSequence(operator="OR")
     piece_obj = []
-    cones = set()
     for isol, solid in enumerate(solids):
         surf_piece = []
         surf_obj = []
@@ -775,7 +774,7 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
         del meta_obj.Solids[isol]
     meta_obj.set_definition(piece_def)
     meta_obj.set_faces(piece_obj)
-    return tuple(cones)
+    return
 
 
 def get_surf_value(definition, reverse=False):
