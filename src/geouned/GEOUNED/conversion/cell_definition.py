@@ -623,8 +623,10 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     # add if necesary additional surface following V variable
                     if orient == "Forward":
                         torus_var = bsurface(-idT)
+                        v_var = None
 
                     else:
+                        torus_var = bsurface(idT)
                         index, Vparams = solid_gu.TorusVParams[iface]
                         VClosed, VminMax = Vparams
                         if VClosed:
@@ -745,7 +747,11 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     surf_piece.append(orSeq)
 
         surf_piece_bool = BoolSequence(operator="AND")
-        surf_piece_bool.append(*surf_piece)
+        for p in surf_piece:
+            surf_piece_bool.append(p.get_BoolSequence())
+        surf_piece_bool.join_operators()
+        surf_piece_bool.simplify()
+
         # possible expresion for e
         #  i1
         #  i1 i2surf_piece
@@ -908,14 +914,14 @@ def add_cone_plane(cone, cid, surfaces, universe_box, options, tolerances, numer
     z_axis = FreeCAD.Vector(0, 0, 1)
 
     if (
-        is_parallel(cone.Surf.Axis, x_axis, tolerances.angle)
-        or is_parallel(cone.Surf.Axis, y_axis, tolerances.angle)
-        or is_parallel(cone.Surf.Axis, z_axis, tolerances.angle)
+        is_parallel(cone.Axis, x_axis, tolerances.angle)
+        or is_parallel(cone.Axis, y_axis, tolerances.angle)
+        or is_parallel(cone.Axis, z_axis, tolerances.angle)
     ):
         return bsurface(cid)
 
     plane = GeounedSurface(
-        ("Plane", (cone.Surf.Apex, cone.Surf.Axis, 1, 1)),
+        ("Plane", (cone.Apex, cone.Axis, 1, 1)),
         universe_box,
         Face="Build",
     )

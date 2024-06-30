@@ -23,7 +23,7 @@ conversion = {
 class bsurface(int):
     """Boolean Surface class"""
 
-    def __new__(cls, label: int, s1: int = None, s2: int = None, op: str = None):
+    def __new__(cls, label: int, s1: int = None, s2: int = None, op: str = None, aux: bool = False):
         return super(bsurface, cls).__new__(cls, label)
 
     def __neg__(self):
@@ -33,9 +33,9 @@ class bsurface(int):
             bs.label = -bs.label
             return bs
         elif self.s2 is None:
-            return bsurface(-self.label, -self.s1)
+            return bsurface(-self.label, -self.s1, aux=self.aux)
         else:
-            return bsurface(-self.label, -self.s1, -self.s2, self.op_comp())
+            return bsurface(-self.label, -self.s1, -self.s2, self.op_comp(), aux=self.aux)
 
     def __pos__(self):
         return self
@@ -55,7 +55,7 @@ class bsurface(int):
             else:
                 return f"OR[{self.s1} {self.s2}]"
 
-    def __init__(self, label: int, s1: int = None, s2: int = None, op: str = None):
+    def __init__(self, label: int, s1: int = None, s2: int = None, op: str = None, aux: bool = False):
 
         self.label = label
         if s1 is None:
@@ -65,6 +65,7 @@ class bsurface(int):
 
         self.s2 = s2
         self.op = op
+        self.aux = False
         self.bool = False
 
         if self.s2 is not None:
@@ -100,9 +101,9 @@ class bsurface(int):
                 return bs
 
         elif self.s2 is None:
-            return bsurface(self.label, self.s1)
+            return bsurface(self.label, self.s1, aux=self.aux)
         else:
-            return bsurface(self.label, self.s1, self.s2, self.op)
+            return bsurface(self.label, self.s1, self.s2, self.op, aux=self.aux)
 
     def set_true(self):
         self.bool = True
@@ -126,6 +127,24 @@ class bsurface(int):
 
         self.s2 = s2
         self.op = op
+
+    def get_BoolSequence(self, aux=False):
+        if self.s2 is None:
+            return self
+
+        seq = BoolSequence(self.op)
+        seq.append(bsurface(self.s1, aux=aux))
+
+        if type(self.s2) is int:
+            seq.append(bsurface(self.s2, aux=True))
+
+        else:
+            subSeq = self.s2.get_BoolSequence(aux=True)
+            seq.append(subSeq)
+
+        seq.group_single()
+        seq.simplify()
+        return seq
 
 
 class BoolSequence:
@@ -275,6 +294,9 @@ class BoolSequence:
             if self.level > levIn and depth < 10:
                 self.simplify(CT, depth + 1)
 
+        if self.level == 0:
+            self.elements = list(set(self.elements))
+
     def simplify_sequence(self, CT=None):
         """Carry out the simplification process of the BoolSequence."""
         if self.level < 1 and CT is None:
@@ -288,7 +310,7 @@ class BoolSequence:
         newNames = surf_names
         for val_name in surf_names:
             if val_name in newNames:
-                if CT is None:
+                if CT is None or val_name.aux:
                     true_set = {val_name: True}
                     false_set = {val_name: False}
                 else:
