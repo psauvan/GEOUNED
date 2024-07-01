@@ -65,7 +65,7 @@ class bsurface(int):
 
         self.s2 = s2
         self.op = op
-        self.aux = False
+        self.aux = aux
         self.bool = False
 
         if self.s2 is not None:
@@ -317,7 +317,7 @@ class BoolSequence:
         newNames = surf_names
         for val_name in surf_names:
             if val_name in newNames:
-                if CT is None or val_name.aux:
+                if CT is None:
                     true_set = {val_name: True}
                     false_set = {val_name: False}
                 else:
