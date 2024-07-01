@@ -173,7 +173,6 @@ class BoolSequence:
         """Append a BoolSequence Objects. seq may be :
         - An iterable containing allowed BoolSequence Objects
         - A BoolSequence object
-        - An integer value
         - A Boolean value
         - A bsurface object"""
 
