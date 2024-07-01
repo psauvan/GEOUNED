@@ -182,7 +182,10 @@ class ConstraintTable(dict):
         if self.diagonal:
             seqValues = dict()
             for s in surfs:
-                val = BoolVals[self[s][s].val]
+                if s.aux:
+                    val = None
+                else:
+                    val = BoolVals[self[s][s].val]
                 if val is not None:
                     seqValues[s] = val
             # if evaluate   None  : Box intersection Cell != 0      Part of the cell in the box
@@ -192,7 +195,12 @@ class ConstraintTable(dict):
             return res if type(res) is bool else None
 
         else:
-            trueSet, falseSet = self.get_constraint_set(surfs[0])
+            if surfs[0].aux:
+                trueSet = {surfs[0]: True}
+                falseSet = {surfs[0]: False}
+            else:
+                trueSet, falseSet = self.get_constraint_set(surfs[0])
+
             if trueSet is not None:
                 trueVal = Seq.evaluate(trueSet)
                 trueVal = trueVal if type(trueVal) is bool else None
@@ -249,6 +257,13 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options):
     else:
         surfaces = SurfInfo.Surfaces
         surfaceList = SurfInfo.surfaceList
+
+    newList = []
+    for s in surfaceList:
+        if s.aux:
+            continue
+        newList.append(s)
+    surfaceList = newList
 
     if type(surfaces[surfaceList[0]]) is GeounedSurface:
         for s in surfaceList:
