@@ -173,7 +173,14 @@ class BoolSequence:
         """Append a BoolSequence Objects. seq may be :
         - An iterable containing allowed BoolSequence Objects
         - A BoolSequence object
+        - An integer value
+        - A Boolean value
         - A bsurface object"""
+
+        if type(self.elements) is bool:
+            if (self.elements and self.operator == "AND") or (not self.elements and self.operator == "OR"):
+                self.assign(seq)
+            return
 
         for s in seq:
             if type(s) is bsurface:
