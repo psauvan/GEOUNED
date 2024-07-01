@@ -880,6 +880,7 @@ def no_overlapping_cell(metaList, surfaces, options):
                 (tuple(t_def.get_surfaces_numbers()), Surfs),
                 "diag",
                 options=options,
+                excludeAux=True,
             )
 
             new_def = remove_extra_surfaces(t_def, CT)
@@ -890,6 +891,7 @@ def no_overlapping_cell(metaList, surfaces, options):
                 (tuple(new_def.get_surfaces_numbers()), Surfs),
                 "full",
                 options=options,
+                excludeAux=True,
             )
 
             if new_def.operator == "AND":
