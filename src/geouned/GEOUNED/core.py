@@ -504,7 +504,7 @@ class CadToCsg:
                     continue
                 logger.info(f"simplify cell {c.__id__}")
                 Box = UF.get_box(c, self.options.enlargeBox)
-                CT = build_c_table_from_solids(Box, (c.Surfaces, Surfs), "full", options=self.options)
+                CT = build_c_table_from_solids(Box, (c.Surfaces, Surfs), "full", options=self.options, excludeAux=True)
                 c.Definition.simplify(CT)
                 c.Definition.clean()
                 if type(c.Definition.elements) is bool:
