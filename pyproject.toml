@@ -43,13 +43,13 @@ tests = [
 ]
 docs = [
   "sphinx",
-  "sphinx_rtd_theme",
+  "pydata-sphinx-theme",
   "sphinx_autodoc_typehints",
-  "sphinx_rtd_theme",
 ]
 
 [project.scripts]
 geouned_cadtocsg = "geouned.GEOUNED.scripts.geouned_cadtocsg:main"
+geouned_csgtocad = "geouned.GEOReverse.scripts.geouned_csgtocad:main"
 
 [tool.black]
 line-length = 128

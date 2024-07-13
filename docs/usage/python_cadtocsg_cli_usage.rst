@@ -1,7 +1,7 @@
-Command Line Tool Usage
-=======================
+Command Line Tool Usage, CAD to CSG conversion
+==============================================
 
-GEOUNED can be used in the command line.
+GEOUNED CAD to CSG conversion can be performed in the command line.
 
 These examples assumes you have a CAD STEP file in the current working directory of the terminal called "cuboid.stp"
 
@@ -12,7 +12,9 @@ First create a JSON file called "config.json" containing the following.
 .. code-block:: json
 
     {
-        "stepFile": "cuboid.stp"
+        "load_step_file": {
+            "filename":"cuboid.stp"
+        }
     }
 
 Then execute the command line interface tool to convert your STEP file to CSG files with the default configuration.
@@ -32,7 +34,10 @@ Here is a complete JSON file specification
 .. code-block:: json
 
     {
-        "stepFile": "cuboid.stp",
+        "load_step_file": {
+            "filename": "cuboid.stp",
+            "skip_solids": []
+        },
         "Options": {
             "forceCylinder": false,
             "newSplitPlane": true,
@@ -85,7 +90,6 @@ Here is a complete JSON file specification
             "debug": false,
             "compSolids": true,
             "simplify": "no",
-            "cellRange": [],
             "exportSolids": "",
             "minVoidSize": 200.0,
             "maxSurf": 50,
@@ -102,12 +106,14 @@ Here is a complete JSON file specification
             "outFormat": ["openmc_xml", "openmc_py", "serpent", "phits", "mcnp"],
             "volSDEF": false,
             "volCARD": true,
+            "UCARD": null,
             "dummyMat": false,
             "cellCommentFile": false,
             "cellSummaryFile": true
         }
     }
 
+Note that JSON requires ```null``` to be passed in which gets translated to ```None``` in Python.
 This is converted in the same way as the minimal JSON config file
 
 .. code-block:: bash
