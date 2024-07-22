@@ -215,12 +215,13 @@ class GeounedSurface:
 
     def build_surface(self):
 
+        diagonal = self.__boundBox__.DiagonalLength
         if self.Type == "Plane":
 
             normal = self.Surf.Axis
             p0 = normal.dot(self.Surf.Position)
             Box = FreeCAD.BoundBox(self.__boundBox__)
-            Box.enlarge(10)
+            Box.enlarge(0.1*diagonal)
 
             pointEdge = []
             for i in range(12):
@@ -272,8 +273,8 @@ class GeounedSurface:
                 dmin = min(d, dmin)
                 dmax = max(d, dmax)
 
-            pnt = pnt + (dmin - 5) * dir
-            length = dmax - dmin + 10
+            pnt = pnt + (dmin - 0.05*diagonal) * dir
+            length = dmax - dmin + 0.1*diagonal
             self.shape = Part.makeCylinder(rad, length, pnt, dir, 360.0)
             return
 
@@ -293,7 +294,7 @@ class GeounedSurface:
                 dmax = max(d, dmax)
 
             if dmax > 0:
-                length = dmax + 10
+                length = dmax + 0.1*diagonal
                 rad = tan * length
                 self.shape = Part.makeCone(0.0, rad, length, apex, axis, 360.0)
             else:
@@ -585,17 +586,28 @@ def split_bop(solid, tools, tolerance, options, scale=0.1):
 
     if tolerance >= 0.1:
         compSolid = BOPTools.SplitAPI.slice(solid, tools, "Split", tolerance=tolerance)
-
+        if abs((compSolid.Volume - solid.Volume)/solid.Volume) > 1e-5 : 
+                # split return solids but some parts from original solid has been lost
+                logger.info("Solid not split correclty. Original solid returned")
+                compSolid = solid
+        
     elif tolerance < 1e-12:
         if options.scaleUp:
             tol = 1e-13 if options.splitTolerance == 0 else options.splitTolerance
             compSolid = split_bop(solid, tools, tol / scale, options, 1.0 / scale)
         else:
             compSolid = BOPTools.SplitAPI.slice(solid, tools, "Split", tolerance=tolerance)
+            if abs((compSolid.Volume - solid.Volume)/solid.Volume) > 1e-5 : 
+                # split return solids but some parts from original solid has been lost
+                logger.info("Solid not split correclty. Original solid returned")
+                compSolid = solid
 
     else:
         try:
             compSolid = BOPTools.SplitAPI.slice(solid, tools, "Split", tolerance=tolerance)
+            if abs((compSolid.Volume - solid.Volume)/solid.Volume) > 1e-5 : 
+                # split return solids but some parts from original solid has been lost
+                compSolid = split_bop(solid, tools, tolerance * scale, options, scale)
         except:
             compSolid = split_bop(solid, tools, tolerance * scale, options, scale)
 

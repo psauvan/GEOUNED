@@ -56,23 +56,77 @@ def joinEnvelopes(meta_list):
         fuse_meta_obj(meta_list, id_list[0], id_list[-1] + 1)
 
 
-def fuse_meta_obj(meta_list, init, end):
-    if end - init == 1:
-        meta_list[init].__id__ = init + 1
-        return
-    solids = []
-    for m in meta_list[init:end]:
-        solids.extend(m.Solids)
+def fuse_meta_obj(meta_list, init, end, bad_solids):
 
+    if end - init == 1 and bad_solids == []:
+        meta_list[init].__id__ = init + 1
+        return 1
+
+      
+    solids = []
+    ncount = 0
+    end_list = False
+
+    if bad_solids:
+       ic = init
+       for m in meta_list[init:end]:
+           if ic != bad_solids[ncount]:
+              solids.extend(m.Solids)
+           else:
+              if not end_list : ncount += 1
+              # if end of bad_solid list is reached index ncount stays at the last element
+              # until the loop ends. At next passing bad_solids list will be empty.
+              if ncount == len(bad_solids):
+                ncount = len(bad_solids) - 1
+                end_list = True     
+           ic += 1
+    else:      
+        for m in meta_list[init:end]:   
+           solids.extend(m.Solids)
+    
+    if end_list : ncount += 1
+    del bad_solids[0:ncount]
+    del meta_list[init:end]
+    
+    if ncount == end-init :   
+        delta_bad = end-init
+        for i in range(len(bad_solids)):
+            bad_solids[i] = bad_solids[i] - delta_bad
+        return 0
+
+    if bad_solids:
+       delta_bad = end-init-1
+       for i in range(len(bad_solids)):
+            bad_solids[i] = bad_solids[i] - delta_bad
+    
     new_meta = GeounedSolid(init + 1, solids)
     new_meta.EnclosureID = meta_list[init].EnclosureID
     new_meta.ParentEnclosureID = meta_list[init].ParentEnclosureID
     new_meta.IsEnclosure = meta_list[init].IsEnclosure
     new_meta.CellType = meta_list[init].CellType
 
-    del meta_list[init:end]
     meta_list.insert(init, new_meta)
+    return 1
 
+def remove_meta_obj(meta_list, init, nsolids, bad_solids):
+    "Remove bad solids in meta_list objects"
+    
+    if bad_solids == [] : return nsolids 
+
+    ncount = 0
+    for ic in range(init,init+nsolids) :
+        if ic == bad_solids[ncount]:
+           ncount += 1    
+
+    for ic in reversed(bad_solids[0:ncount]):
+        del meta_list[ic] 
+    del bad_solids[0:ncount]
+    
+    delta_bad = ncount
+    for i in range(len(bad_solids)):
+        bad_solids[i] = bad_solids[i] - delta_bad
+    
+    return nsolids-ncount
 
 # Paco mod
 # TODO check if this function is actually used in to code

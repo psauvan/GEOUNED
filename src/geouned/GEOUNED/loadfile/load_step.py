@@ -53,10 +53,34 @@ def load_cad(filename, settings, options):
     s.read(filename)
     Solids = s.Solids
     meta_list = []
-    for i, s in enumerate(Solids):
-        meta_list.append(UF.GeounedSolid(i + 1, s))
+    bad_solids = []
+    bad_solid_label = []
+
+    if settings.badSolids == "ignore":
+        for i, s in enumerate(Solids):
+           meta_list.append(UF.GeounedSolid(i + 1, s))
+    else: 
+        for i, s in enumerate(Solids):      
+           try:
+               s.check(True)
+           except:   
+               bad_solids.append(i)
+           meta_list.append(UF.GeounedSolid(i + 1, s))
+
+    if settings.badSolids == "ignore": 
+       bad_comment = []   
+    else:
+       bad_comment = bad_solids[:]
+       bad_comment.reverse()
+          
+    if settings.badSolids != "remove":
+        bad_solids = []
 
     i_solid = 0
+    i_loop = 0
+    i_end  = 0
+    i_com = bad_comment.pop() if bad_comment else None
+    
     missing_mat = set()
 
     doc_objects = cad_simplificado_doc.Objects
@@ -117,13 +141,24 @@ def load_cad(filename, settings, options):
                 # compSolid Diferent solid of the same cell are stored in the same metaObject (compSolid)
                 # enclosures and envelopes are always stored as compound
                 if settings.compSolids or encl_label or envel_label:
-
                     init = i_solid
                     end = i_solid + len(elem.Shape.Solids)
-                    LF.fuse_meta_obj(meta_list, init, end)
-                    n_solids = 1
+                    # n_solids = 1 is not all solids are bad else n_solids = 0
+                    n_solids = LF.fuse_meta_obj(meta_list, init, end, bad_solids)
                 else:
-                    n_solids = len(elem.Shape.Solids)
+                    n_solids = LF.remove_meta_obj(meta_list, i_solid, len(elem.Shape.Solids), bad_solids)
+
+                if i_com is not None:
+                   i_end += len(elem.Shape.Solids)
+                   while i_end > i_com:
+                        ind = i_com - i_loop + 1
+                        bad_solid_label.append(f"solid: {ind}, {comment}")
+                        if bad_comment:
+                           i_com = bad_comment.pop()
+                        else:
+                           i_com = None
+                           break    
+                   i_loop = i_end    
 
                 for i in range(n_solids):
                     meta_list[i_solid].set_comments(f"{comment}{i + 1}")
@@ -162,6 +197,15 @@ def load_cad(filename, settings, options):
                         meta_list[i_solid].IsEnclosure = True
                         meta_list[i_solid].CellType = "envelope"
                     i_solid += 1
+
+    if bad_solid_label:
+      for label in bad_solid_label:
+          logger.warning(label)        
+      if settings.badSolids == "stop":
+         print(" execution stopped because bad solids found in geometry")
+         exit()
+      else:
+         print(" warning. Bad solids found in geometry")
 
     LF.joinEnvelopes(meta_list)
     if missing_mat:

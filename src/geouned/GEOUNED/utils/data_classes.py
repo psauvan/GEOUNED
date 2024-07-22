@@ -594,7 +594,13 @@ class Settings:
     """Settings for changing the way the CAD to CSG conversion is done
 
     Args:
-        matFile (str, optional): _description_. Defaults to "".
+        matFile (str, optional): Filename of the filen in which material 
+            density informatin is provided. Defaults to "".
+        badSolids (str, optional): Option to check is solids read in stp 
+            file are valid. Available options are: "ignore" no check is 
+            performed, "warn" display warning if bad solids are found, 
+            "remove" remove bad solids and continue translation, "stop"
+            stop the simulation if bad solids are found. Defaults to "warn". 
         voidGen (bool, optional): Generate voids of the geometry. Defaults
             to True.
         debug (bool, optional): Write step files of original and decomposed
@@ -639,6 +645,7 @@ class Settings:
     def __init__(
         self,
         matFile: str = "",
+        badSolids: str = "warn",
         voidGen: bool = True,
         debug: bool = False,
         compSolids: bool = False,
@@ -655,6 +662,7 @@ class Settings:
     ):
 
         self.matFile = matFile
+        self.badSolids = badSolids
         self.voidGen = voidGen
         self.debug = debug
         self.compSolids = compSolids
@@ -678,6 +686,18 @@ class Settings:
         if not isinstance(matFile, str):
             raise TypeError(f"geouned.Settings.matFile should be a str, not a {type(matFile)}")
         self._matFile = matFile
+
+    @property
+    def badSolids(self):
+        return self._badSolids
+
+    @badSolids.setter
+    def badSolids(self, badSolids: str):
+        if not isinstance(badSolids, str):
+            raise TypeError(f"geouned.Settings.badSolids should be a str, not a {type(badSolids)}")
+        elif badSolids not in ("warn","ignore","remove","stop"):
+            raise TypeError("allowed values for geouned.Settings.badSolids are \"warn\", \"ignore\", \"remove\" or \"stop\"")
+        self._badSolids = badSolids
 
     @property
     def voidGen(self):
@@ -717,6 +737,8 @@ class Settings:
     def simplify(self, simplify: str):
         if not isinstance(simplify, str):
             raise TypeError(f"geouned.Settings.simplify should be a str, not a {type(simplify)}")
+        elif simplify not in ("no","full","voidfull"):
+            raise TypeError("allowed values for geouned.Settings.simplify are \"no\", \"full\" or \"voidfull\"")
         self._simplify = simplify
 
     @property
