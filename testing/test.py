@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parents[1] / "src"))
-#sys.path.append("/opt/geouned/v1.2.0/src/")
 sys.path.append("/usr/lib64/freecad/lib64/")
 import geouned
 
