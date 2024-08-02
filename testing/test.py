@@ -4,12 +4,43 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parents[1] / "src"))
+#sys.path.append("/opt/geouned/v1.2.0/src/")
 sys.path.append("/usr/lib64/freecad/lib64/")
+import geouned
 
 from geouned import CadToCsg
 
+def setInputs():
+    test_settings = geouned.Settings(
+      voidGen=True,
+      debug=False ,
+      compSolids=False,
+      simplify="full",
+      minVoidSize=100.0,
+     )
 
-def setInput(inName, inpDir, outDir):
+    test_options = geouned.Options(
+      forceCylinder=False,
+      newSplitPlane=True,
+      nPlaneReverse=0,
+      splitTolerance=0,
+      )
+
+    test_export = {
+      'title' : 'Input Test',
+      'outFormat' : ('mcnp',), 
+      'volSDEF' : True,
+      'volCARD' : True,
+      'dummyMat' : True,
+      'cellSummaryFile' : False,
+      'cellCommentFile' : False
+      }
+
+    return test_settings, test_options, test_export
+
+   
+
+def getNames(inName, inpDir, outDir):
 
     if inName.endswith(".step"):
         filename = inName[0:-5]
@@ -23,37 +54,9 @@ def setInput(inName, inpDir, outDir):
     if outDir == "":
         outDir = "."
 
-    inName = f"{inpDir}/{inName}"
-    outName = f"{outDir}/{filename}"
+    return f'{inpDir}/{inName}', f'{outDir}/{filename}'
 
-    template = """[Files]
-title    = Input Test
-stepFile = {}
-geometryName = {}
 
-[Parameters]
-compSolids = False
-volCARD    = False
-volSDEF    = True
-voidGen    = True
-dummyMat    = True
-minVoidSize =  100
-cellSummaryFile = False
-cellCommentFile = False
-debug       = False
-simplify   = full
-
-[Options]
-forceCylinder = False
-splitTolerance = 0
-newSplitPlane = True
-nPlaneReverse = 0
-""".format(
-        inName, outName
-    )
-
-    with open(file="config.ini", mode="w", encoding="utf-8") as outfile:
-        outfile.write(template)
 
 
 def getInputList(folder, ext=None):
@@ -151,12 +154,23 @@ def printResults(f, res, lost):
     print(line)
 
 
-def mkGEOInp(inpDir, outDir):
-    for f in getInputList(inpDir, ("stp", "step")):
-        setInput(f, inpDir, outDir)
-        GEO = CadToCsg()
-        GEO.set_configuration(inifile)
-        GEO.Start()
+def mkGEOInp(inpDir, outDir, file=None):
+    sets, opts, exp =  setInputs()
+    if file is None:
+       files = getInputList(inpDir, ("stp", "step"))
+    else:
+       files = (file,)
+
+    for f in files:
+        inFile, outFile = getNames(f,inpDir,outDir) 
+        exp['geometryName']  = outFile
+
+        print('translate: ',inFile)
+        print('translate: ',outFile)
+        GEO = CadToCsg(settings = sets, options = opts)
+        GEO.load_step_file(inFile)
+        GEO.start()
+        GEO.export_csg(**exp)
         del GEO
 
 

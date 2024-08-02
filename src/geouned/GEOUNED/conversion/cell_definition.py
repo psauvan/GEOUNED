@@ -746,11 +746,15 @@ def cellDef(meta_obj, surfaces, universe_box, options, tolerances, numeric_forma
                     orSeq.append(*extra)
                     surf_piece.append(orSeq)
 
-        surf_piece_bool = BoolSequence(operator="AND")
-        for p in surf_piece:
-            surf_piece_bool.append(p.get_BoolSequence())
-        surf_piece_bool.join_operators()
-        surf_piece_bool.simplify()
+        if surf_piece:
+            surf_piece_bool = BoolSequence(operator="AND")
+            for p in surf_piece:
+                surf_piece_bool.append(p.get_BoolSequence())
+            surf_piece_bool.join_operators()
+            surf_piece_bool.simplify()
+        else:
+            del_list.append(isol)
+            continue
 
         # possible expresion for e
         #  i1

@@ -132,7 +132,7 @@ class bsurface(int):
         if self.s2 is None:
             return self
 
-        seq = BoolSequence(self.op)
+        seq = BoolSequence(operator=self.op)
         seq.append(bsurface(self.s1, aux=aux))
 
         if type(self.s2) is int:
