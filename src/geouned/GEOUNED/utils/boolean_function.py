@@ -11,6 +11,55 @@ mostinner = re.compile(r"\([^\(^\)]*\)")  # identify most inner parentheses
 mix = re.compile(r"(?P<value>([-+]?\d+|\[0+\]))")  # identify signed integer or [000...] pattern. Record the value.
 TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern including F,T,X, or o sequence ( in any order).
 
+class BoolRegion(int):
+
+    def __new__(cls, *args, **kwrds):
+        label = args[0]
+        return super(BoolRegion,cls).__new__(cls,label)
+
+    def __init__(self,label,definition=None):
+        if definition is None :
+            self.definition = BoolSequence(str(label))
+        else:
+            self.definition = definition
+        self.surfaces = self.definition.get_surfaces_numbers(self)    
+
+    def __neg__(self):
+        return BoolRegion(-self.__int__(),self.definition.get_complementary())
+
+    def __pos__(self):
+        return self
+
+    def __abs__(self):
+        if self >= 0:
+            return self
+        else:
+            return -self
+
+    def __add__(self,def2):
+        newdef = BoolSequence(operator='OR')
+        newdef.append(self.definition,def2.definition)
+        newdef.group_single()
+        return BoolRegion(0,newdef)
+    
+    def __sub__(self,def2):
+        newdef = BoolSequence(operator='OR')
+        newdef.append(self.definition,def2.definition.get_complementary())
+        newdef.group_single()
+        return BoolRegion(0,newdef)
+
+    def __mul__(self,def2):
+        newdef = BoolSequence(operator='AND')
+        newdef.append(self.definition,def2)
+        newdef.group_single()
+        return BoolRegion(0,newdef)
+            
+    def setDef(self,definition):
+        self.definition = definition
+        self.surfaces = self.definition.get_surfaces_numbers(self)
+
+    def copy(self,newname):
+        return BoolRegion(newname,self.definition)
 
 class BoolSequence:
     """Class storing Boolean expression and operating on it"""
