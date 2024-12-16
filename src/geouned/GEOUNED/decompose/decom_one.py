@@ -131,11 +131,13 @@ def gen_plane(pos, normal, diag):
     return plane_center
 
 
-def other_face_edge(current_edge, current_face, Faces):
+def other_face_edge(current_edge, current_face, Faces, outer_only=False):
     for face in Faces:
         if face.isSame(current_face):
             continue
-        for edge in face.Edges:
+
+        Edges = face.OuterWire.Edges if outer_only else face.Edges
+        for edge in Edges:
             if current_edge.isSame(edge):
                 return face
 
@@ -356,26 +358,40 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
 def contiguous_face(face1, face2, tolerances):
     return face1.distToShape(face2)[0] < tolerances.distance
 
+
 def get_metaplanes(solid):
     planes = []
-    for f in solid.Faces :
+    for f in solid.Faces:
         if type(f.Surface) is Part.plane:
             planes.append(f)
-    
+
     metaplane_list = []
     for p in planes:
         loop = False
         for mp in metaplane_list:
             if p in mp:
                 loop = True
-        if loop : continue        
-        metap = metaplane(p,planes)
+        if loop:
+            continue
+        metap = [p]
+        meta_loop([p], metap, planes)
         if len(metap) != 1:
             metaplane_list.append(metap)
-    
-    return metaplane_list        
 
-def metaplane(p,planes):   
+    return metaplane_list
+
+
+def meta_loop(adjacents, metalist, planes):
+    for p in adjacents:
+        new_adjacents = metaplane(p, planes)
+        for ap in reversed(new_adjacents):
+            if ap in metalist:
+                new_adjacents.remove(ap)
+        metalist.extend(new_adjacents)
+        meta_loop(new_adjacents, metalist, planes)
+
+
+def metaplane(p, planes):
     Edges = p.OuterWire.Edges
     addplane = [p]
     for e in Edges:
@@ -383,23 +399,26 @@ def metaplane(p,planes):
             curve = str(e.Curve)
         except:
             curve = "none"
+        if curve is not "line":
+            continue
 
-        adjacent_plane = other_face_edge(e, p, planes)
+        adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
         if adjacent_plane is not None:
-            sign = region_sign(p,adjacent_plane,e)
-            if sign == 'OR':
+            sign = region_sign(p, adjacent_plane, e)
+            if sign == "OR":
                 addplane.append(adjacent_plane)
-    return addplane        
+    return addplane
 
-def region_sign(p1,p2,e):
+
+def region_sign(p1, p2, e):
     normal1 = p1.Surface.Axis
-    if p1.Orientation == 'Reversed':
+    if p1.Orientation == "Reversed":
         normal1 = -normal1
-    ecenter = (e.Vertexes[1]+e.Vertexes[0])*0.5    
+    ecenter = (e.Vertexes[1] + e.Vertexes[0]) * 0.5
     vect = p2.CenterofMass - ecenter
-    return 'OR' if vect.dot(normal1) < 0 else 'AND'  
+    return "OR" if vect.dot(normal1) < 0 else "AND"
 
-  
+
 def same_faces(Faces, tolerances):
     Connection = OrderedDict()
     if len(Faces) == 1:
