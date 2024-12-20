@@ -47,7 +47,11 @@ def split_full_cylinder(solid, options, tolerances, numeric_format):
 
 def cut_full_cylinder(solid, options, tolerances, numeric_format):
     solid_gu = GU.SolidGu(solid, tolerances=tolerances)
-    surfaces = UF.SurfacesDict()
+    surfaces = UF.SurfacesDict(options=options,
+                                tolerances=tolerances,
+                                numeric_format=numeric_format
+                                )
+    
     flag_inv = CD.is_inverted(solid_gu.solid)
     universe_box = solid.BoundBox
 
@@ -70,12 +74,12 @@ def cut_full_cylinder(solid, options, tolerances, numeric_format):
                 dim_l = face.ParameterRange[3] - face.ParameterRange[2]
                 cylinder = UF.GeounedSurface(("Cylinder", (orig, dir, rad, dim_l)), universe_box)
                 cylinder.build_surface()
-                surfaces.add_cylinder(cylinder, options, tolerances, numeric_format, False)
+                surfaces.add_cylinder(cylinder, False)
 
                 # add planes if cylinder axis is cut by a plane (plane quasi perpedicular to axis)
                 for p in cyl_bound_planes(solid_gu, face, universe_box):
                     p.build_surface()
-                    surfaces.add_plane(p, options, tolerances, numeric_format, False)
+                    surfaces.add_plane(p, False)
                 break
 
     planes = []
@@ -260,7 +264,7 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                 plane = UF.GeounedSurface(("Plane", (pos, normal, dim1, dim2)), universe_box)
                 if MakeObj:
                     plane.build_surface()
-                surfaces.add_plane(plane, options, tolerances, numeric_format, fuzzy)
+                surfaces.add_plane(plane, fuzzy)
 
             elif surf == "<Cylinder object>":
                 dir = face.Surface.Axis
@@ -271,14 +275,14 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                     cylinder = UF.GeounedSurface(("Cylinder", (orig, dir, rad, dim_l)), universe_box)
                     if MakeObj:
                         cylinder.build_surface()
-                    surfaces.add_cylinder(cylinder, options, tolerances, numeric_format, fuzzy)
+                    surfaces.add_cylinder(cylinder, fuzzy)
 
                 if kind in ["Planes", "All"]:
                     # add planes if cylinder axis is cut by a plane (plane quasi perpedicular to axis)
                     for p in cyl_bound_planes(solid_GU, face, universe_box):
                         if MakeObj:
                             p.build_surface()
-                        surfaces.add_plane(p, options, tolerances, numeric_format, False)
+                        surfaces.add_plane(p, False)
 
             elif surf == "<Cone object>":
                 dir = face.Surface.Axis
@@ -290,13 +294,13 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                     cone = UF.GeounedSurface(("Cone", (apex, dir, half_angle, dim_l, dimR)), universe_box)
                     if MakeObj:
                         cone.build_surface()
-                    surfaces.add_cone(cone, tolerances)
+                    surfaces.add_cone(cone)
 
                 if kind in ["Planes", "All"]:
                     for p in cyl_bound_planes(solid_GU, face, universe_box):
                         if MakeObj:
                             p.build_surface()
-                        surfaces.add_plane(p, options, tolerances, numeric_format, False)
+                        surfaces.add_plane(p, False)
 
             elif surf[0:6] == "Sphere" and kind in ["Sph", "All"]:
                 rad = face.Surface.Radius
@@ -304,13 +308,13 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                 sphere = UF.GeounedSurface(("Sphere", (pnt, rad)), universe_box)
                 if MakeObj:
                     sphere.build_surface()
-                surfaces.add_sphere(sphere, tolerances)
+                surfaces.add_sphere(sphere)
 
                 if kind in ["Planes", "All"]:
                     for p in cyl_bound_planes(solid_GU, face, universe_box):
                         if MakeObj:
                             p.build_surface()
-                        surfaces.add_plane(p, options, tolerances, numeric_format, False)
+                        surfaces.add_plane(p, False)
 
             elif surf == "<Toroid object>":
                 if kind in ["Tor", "All"]:
@@ -321,13 +325,13 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                     torus = UF.GeounedSurface(("Torus", (center, dir, radMaj, radMin)), universe_box)
                     if MakeObj:
                         torus.build_surface()
-                    surfaces.add_torus(torus, tolerances)
+                    surfaces.add_torus(torus)
 
                 if kind in ["Planes", "All"]:
                     for p in torus_bound_planes(solid_GU, face, universe_box, tolerances):
                         if MakeObj:
                             p.build_surface()
-                        surfaces.add_plane(p, options, tolerances, numeric_format, False)
+                        surfaces.add_plane(p, False)
 
             elif surf == "<Plane object>" and kind == "Plane3Pts":
                 pos = face.CenterOfMass
@@ -339,7 +343,7 @@ def extract_surfaces(solid, kind, universe_box, options, tolerances, numeric_for
                 plane = UF.GeounedSurface(("Plane3Pts", (pos, normal, dim1, dim2, points)), universe_box)
                 if MakeObj:
                     plane.build_surface()
-                surfaces.add_plane(plane, options, tolerances, numeric_format, fuzzy)
+                surfaces.add_plane(plane, fuzzy)
 
     return surfaces
 

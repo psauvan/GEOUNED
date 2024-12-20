@@ -21,9 +21,14 @@ class BoolRegion(int):
     def __init__(self, label, definition=None):
         if definition is None:
             self.definition = BoolSequence(str(label))
+            self.level = 0
         else:
             self.definition = definition
-        self.surfaces = self.definition.get_surfaces_numbers(self)
+            self.level = definition.level
+        self.surfaces = self.definition.get_surfaces_numbers()
+
+    def __str__(self):
+        return self.definition.__str__()    
 
     def __neg__(self):
         return BoolRegion(-self.__int__(), self.definition.get_complementary())
@@ -57,7 +62,11 @@ class BoolRegion(int):
 
     def setDef(self, definition):
         self.definition = definition
-        self.surfaces = self.definition.get_surfaces_numbers(self)
+        self.surfaces = self.definition.get_surfaces_numbers()
+        self.level = definition.level
+
+    def level_update(self):
+        pass    
 
     def copy(self, newname):
         return BoolRegion(newname, self.definition)
@@ -80,7 +89,7 @@ class BoolSequence:
         if type(self.elements) is bool:
             return " True " if self.elements else " False "
         for e in self.elements:
-            if type(e) is int or type(e) is bool or type(e) is str:
+            if isinstance(e, (bool,int)):
                 out += f" {e} "
             else:
                 out += e.__str__()
@@ -92,16 +101,17 @@ class BoolSequence:
         """Append a BoolSequence Objects. seq may be :
         - An iterable containing allowed BoolSequence Objects
         - A BoolSequence object
-        - An integer value
+        - An BoolRegion object
+        - An integer
         - A Boolean value"""
 
-        if type(self.elements) is bool:
+        if isinstance(self.elements, bool):
             if (self.elements and self.operator == "AND") or (not self.elements and self.operator == "OR"):
                 self.assign(seq)
             return
 
         for s in seq:
-            if type(s) is int:
+            if isinstance(s,(int,BoolRegion)):
                 level = -1
                 if s in self.elements:
                     continue
@@ -112,16 +122,16 @@ class BoolSequence:
                     else:
                         self.elements = True
                     return
-            elif type(s) is bool:
+            elif isinstance(s, bool):
                 if self.operator == "AND" and s or self.operator == "OR" and not s:
                     continue
                 else:
                     self.elements = s
                     self.level = -1
-                    return
+                    return    
             else:
                 level = s.level
-                if type(s.elements) is bool:
+                if isinstance(s.elements, bool):
                     if self.operator == "AND" and not s.elements or self.operator == "OR" and s.elements:
                         self.level = -1
                         self.elements = s.elements
@@ -130,11 +140,11 @@ class BoolSequence:
                         continue
 
             self.elements.append(s)
-            self.level = max(self.level, level + 1)
+        self.level_update()
 
     def assign(self, seq):
         """Assign the BoolSequence Seq to the self instance BoolSequence"""
-        if type(seq) is bool:
+        if isinstance(seq, bool):
             self.operator == "AND"
             self.elements = seq
             self.level = -1
@@ -158,7 +168,7 @@ class BoolSequence:
         for i in reversed(indexes):
             del base.elements[i]
 
-        if type(seq.elements) is bool:
+        if isinstance(seq.elements, bool):
             base.elements = seq.elements
             base.level = -1
         else:
@@ -177,11 +187,11 @@ class BoolSequence:
         cp = BoolSequence()
         cp.operator = self.operator
         cp.level = self.level
-        if type(self.elements) is bool:
+        if isinstance(self.elements, bool):
             cp.elements = self.elements
         else:
             for e in self.elements:
-                if type(e) is int:
+                if isinstance(e, int):
                     cp.elements.append(e)
                 else:
                     cp.elements.append(e.copy())
@@ -692,7 +702,7 @@ class BoolSequence:
 
         self.level = 0
         for e in self.elements:
-            if type(e) is int:
+            if isinstance(e, int):
                 continue
             e.level_update()
             self.level = max(e.level + 1, self.level)

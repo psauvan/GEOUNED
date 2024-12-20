@@ -391,7 +391,11 @@ class CadToCsg:
         # sets self.geometry_bounding_box with default padding
         self._get_geometry_bounding_box()
 
-        self.Surfaces = UF.SurfacesDict(offset=self.settings.startSurf - 1)
+        self.Surfaces = UF.SurfacesDict(offset=self.settings.startSurf - 1,
+                                        options=self.options,
+                                        tolerances=self.tolerances,
+                                        numeric_format=self.numeric_format
+                                        )
 
         warnSolids = []
         warnEnclosures = []
@@ -641,9 +645,6 @@ class CadToCsg:
                     self.numeric_format,
                     MakeObj=True,
                 ),
-                self.options,
-                self.tolerances,
-                self.numeric_format,
             )
             m.set_cad_solid()
             m.update_solids(comsolid.Solids)
