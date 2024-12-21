@@ -18,11 +18,13 @@ from .basic_functions_part1 import (
     PlaneParams,
     SphereParams,
     TorusParams,
+    MetaPlanesParams,
     is_parallel,
 )
 from . import basic_functions_part2 as BF
 
 from .data_classes import NumericFormat, Options, Tolerances
+
 
 def get_box(comp, enlargeBox):
     bb = FreeCAD.BoundBox(comp.BoundBox)
@@ -208,6 +210,9 @@ class GeounedSurface:
         elif params[0] == "Torus":
             self.Type = params[0]
             self.Surf = TorusParams(params[1])
+        elif params[0] == "MetaP":
+            self.Type = params[0]
+            self.Surf = MetaPlanesParams(params[1])
 
         self.shape = Face
 
@@ -321,18 +326,27 @@ class GeounedSurface:
             torus = Part.makeTorus(majorR, minorR, center, axis)
             self.shape = torus.Faces[0]
             return
+        elif self.type == "MetaP":
+            planes = self.Surf.Planes
+            vertexes = self.Surf.Vertexes
+            metaplanes = makeMetaPlane(planes, vertexes, self.__boundBox__)
+            self.shape = metaplanes
+
         else:
             logger.error(f"Type {self.Type} is not defined")
             return
 
 
 class SurfacesDict(dict):
-    def __init__(self, surfaces=None, offset: int = 0, 
+    def __init__(
+        self,
+        surfaces=None,
+        offset: int = 0,
         options: Options = Options(),
         tolerances: Tolerances = Tolerances(),
         numeric_format: NumericFormat = NumericFormat(),
-        ):
-        
+    ):
+
         self.IndexOffset = offset
         self.options = options
         self.tolerance = tolerances
@@ -404,8 +418,6 @@ class SurfacesDict(dict):
             self.add_sphere(s)
         for s in surface["Tor"]:
             self.add_torus(s)
-
-
 
     def add_plane(self, plane, fuzzy):
         ex = FreeCAD.Vector(1, 0, 0)
@@ -625,6 +637,7 @@ class SurfacesDict(dict):
             return mp.Index, False
         else:
             return index, True
+
 
 def split_bop(solid, tools, tolerance, options, scale=0.1):
 
