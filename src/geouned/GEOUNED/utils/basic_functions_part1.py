@@ -198,17 +198,16 @@ class TorusParams:
         return outstr
 
 
-class MetaPlanesParams:
+class MultiPlanesParams:
     def __init__(self, params):
         self.PlaneNumber = len(params[0])
         self.Planes = []
         self.Edges = params[1]
-        self.Vertexes = params[2]
-        for pm in params[0]:
-            self.Planes.append(PlaneParams(pm))
+        self.Vertexes = params[2] 
+        self.Planes = params[0][:]
 
     def __str__(self):
-        outstr = f"""Metaplane :\n"""
+        outstr = f"""Multiplane :\n"""
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr

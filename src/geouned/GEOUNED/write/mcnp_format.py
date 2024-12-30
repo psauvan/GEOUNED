@@ -22,9 +22,6 @@ class McnpInput:
         self,
         Meta,
         Surfaces,
-        options,
-        tolerances,
-        numeric_format,
         title,
         volSDEF,
         volCARD,
@@ -38,9 +35,9 @@ class McnpInput:
         self.U0CARD = UCARD
         self.dummyMat = dummyMat
         self.Cells = Meta
-        self.options = options
-        self.tolerances = tolerances
-        self.numeric_format = numeric_format
+        self.options = Surfaces.options
+        self.tolerances = Surfaces.tolerances
+        self.numeric_format = Surfaces.numeric_format
         self.Options = {
             "Volume": self.VolCARD,
             "Particle": ("n", "p"),
@@ -53,9 +50,9 @@ class McnpInput:
             self.step_filename = "; ".join(self.step_filename)
 
         self.get_surface_table()
-        self.simplify_planes(Surfaces)
+        self.simplify_planes(Surfaces.primitive_surfaces)
 
-        self.Surfaces = self.sorted_surfaces(Surfaces)
+        self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
 
         return
@@ -166,7 +163,7 @@ C **************************************************************
 
         mcnpcell = "{}{}\n{}{}".format(
             cellHeader,
-            self.cell_format(cell.Definition, offset=len(cellHeader)),
+            self.cell_format(cell.Definition.expand_regions(), offset=len(cellHeader)),
             self.option_format(cell),
             self.comment_format(cell.Comments, cell.MatInfo),
         )

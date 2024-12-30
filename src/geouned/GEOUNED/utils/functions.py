@@ -18,12 +18,23 @@ from .basic_functions_part1 import (
     PlaneParams,
     SphereParams,
     TorusParams,
-    MetaPlanesParams,
-    is_parallel,
+    MultiPlanesParams,
 )
 from . import basic_functions_part2 as BF
 
+from .geometry_gu import PlaneGu
+
 from .data_classes import NumericFormat, Options, Tolerances
+from .multi_planes import plane_index
+from .boolean_function import BoolRegion
+from .multi_planes import (
+    commonVertex, 
+    commonEdge, 
+    multiplane_loop,
+    no_convex, 
+    makeMultiPlanes,
+    ) 
+from .basic_functions_part1 import is_parallel, is_opposite
 
 
 def get_box(comp, enlargeBox):
@@ -42,7 +53,6 @@ def get_box(comp, enlargeBox):
 
 
 class GeounedSolid:
-
     def __init__(self, id, comsolid=None):
         refine = True
         if not comsolid:
@@ -76,6 +86,7 @@ class GeounedSolid:
         self.label = None
         self.Definition = []
         self.Faces = []
+        self.Edges = []
         self.Comments = ""
         self.Density = 0
         self.Dilution = 1
@@ -210,9 +221,9 @@ class GeounedSurface:
         elif params[0] == "Torus":
             self.Type = params[0]
             self.Surf = TorusParams(params[1])
-        elif params[0] == "MetaP":
+        elif params[0] == "MultiPlane":
             self.Type = params[0]
-            self.Surf = MetaPlanesParams(params[1])
+            self.Surf = MultiPlanesParams(params[1])
 
         self.shape = Face
 
@@ -326,16 +337,229 @@ class GeounedSurface:
             torus = Part.makeTorus(majorR, minorR, center, axis)
             self.shape = torus.Faces[0]
             return
-        elif self.type == "MetaP":
+        
+        elif self.type == "MultiPlane":
             planes = self.Surf.Planes
             vertexes = self.Surf.Vertexes
-            metaplanes = makeMetaPlane(planes, vertexes, self.__boundBox__)
+            metaplanes = makeMultiPlanes(planes, vertexes, self.__boundBox__)
             self.shape = metaplanes
 
         else:
             logger.error(f"Type {self.Type} is not defined")
             return
 
+class MetaSurfIndex:
+    def __init__(self,index,surfaces):
+        self.index = index
+        self.surfaces = surfaces
+        self.single_surface = isinstance(surfaces,int)
+
+class MetaSurfacesDict(dict):
+    def __init__(
+        self,
+        surfaces=None,
+        offset: int = 0,
+        options: Options = Options(),
+        tolerances: Tolerances = Tolerances(),
+        numeric_format: NumericFormat = NumericFormat(),
+    ):
+
+        self.IndexOffset = offset
+        self.options = options
+        self.tolerances = tolerances
+        self.numeric_format = numeric_format
+        
+
+        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor","MultiP","OpenCyl"]
+        for name in surfname:
+            self[name] = []
+
+        self.__surfIndex__ = dict()
+
+        if surfaces is not None:
+            for key in surfaces.keys():
+                self[key] = surfaces[key][:]
+                self.__surfIndex__[key] = surfaces.__surfIndex__[key][:]
+            self.surfaceNumber = surfaces.surfaceNumber
+            self.options = surfaces.options
+            self.tolerances = surfaces.tolerances
+            self.numeric_format = surfaces.numeric_format
+            self.__last_obj__ = (surfaces.__last_obj__[0], surfaces.__last_obj__[1])
+            self.primitive_surfaces = SurfacesDict(surfaces.primitive_surfaces)
+        else:
+            self.primitive_surfaces = SurfacesDict(options=self.options,tolerances=self.tolerances,numeric_format=self.numeric_format)
+            self.surfaceNumber = 0
+            self.__last_obj__ = ("", -1)
+            for key in surfname:
+                self.__surfIndex__[key] = []
+        return
+
+    def get_surface(self, index):
+        return self.primitive_surfaces.get_surface(index)
+
+    def del_surface(self, index):
+        self.primitive_surfaces.del_surface(index)
+
+    def extend(self, surface):
+        self.primitive_surfaces.extend(surface)
+
+    def add_plane(self, plane, fuzzy):
+        pid,exist = self.primitive_surfaces.add_plane(plane,fuzzy)
+        same_dir = True
+        if exist :
+            p_in = self.primitive_surfaces.get_surface(pid)
+            same_dir = not is_opposite(plane.Surf.Axis,p_in.Surf.Axis)
+
+            found = False
+            for i, p in enumerate(self["Planes"]):
+                if pid in p.surfaces:
+                    self.__last_obj__ = ("Planes", i)
+                    found = True
+                    break
+            if found :
+                    return -p if (p.reverse == same_dir) else p
+                    # Equivalent to : 
+                    # if p.reverse and same_dir :
+                    #     return -p
+                    # if p.reverse and not same_dir:
+                    #    return p 
+                    # if not p.reverse and same_dir :
+                    #    return p
+                    # if not p.reverse and not same_dir :
+                    #    return -p
+    
+        self.surfaceNumber += 1
+        if not same_dir :
+            pid = -pid
+        plane = BoolRegion(self.surfaceNumber,str(pid), reverse= not same_dir )
+        self.__last_obj__ = ("Planes", len(self["Planes"]))
+        self["Planes"].append(plane)
+        self.__surfIndex__["Planes"].append(plane.__int__())
+        return plane
+
+    def add_cylinder(self, cyl, orientation, fuzzy=False):
+        pid,exist = self.primitive_surfaces.add_cylinder(cyl,fuzzy)
+        if exist :
+            found = False
+            for i, cyl in enumerate(self["Cyl"]):
+                if pid in cyl.surfaces:
+                    self.__last_obj__ = ("Cyl", i)
+                    found = True
+                    break
+            if found : return -cyl if (cyl.reverse == (orientation == "Forward")) else cyl
+    
+        self.surfaceNumber += 1
+        if orientation == "Forward":
+            pid = -pid
+            reverse = False
+        else:
+            reverse = True     
+        cylinder = BoolRegion(self.surfaceNumber,str(pid),reverse=reverse)
+        self.__last_obj__ = ("Cyl", len(self["Cyl"]))
+        self["Cyl"].append(cylinder)
+        self.__surfIndex__["Cyl"].append(cylinder.__int__())
+        return cylinder
+
+    def add_cone(self, cone, orientation):
+        pid,exist = self.primitive_surfaces.add_cone(cone)
+        if exist :
+            found = False
+            for i, kne in enumerate(self["Cone"]):
+                if pid in kne.surfaces:
+                    self.__last_obj__ = ("Cone", i)
+                    found = True
+                    break
+            if found : return -kne if (kne.reverse == (orientation == "Forward")) else kne
+    
+        self.surfaceNumber += 1
+        if orientation == "Forward":
+            pid = -pid
+            reverse = False
+        else:
+            reverse = True     
+        kne = BoolRegion(self.surfaceNumber,str(pid),reverse=reverse)
+        self.__last_obj__ = ("Cone", len(self["Cone"]))
+        self["Cone"].append(kne)
+        self.__surfIndex__["Cone"].append(kne.__int__())
+        return kne
+
+    def add_sphere(self, sphere, orientation):
+        pid,exist = self.primitive_surfaces.add_sphere(sphere)
+        if exist :
+            found = False
+            for i, sph in enumerate(self["Sph"]):
+                if pid in sph.surfaces:
+                    self.__last_obj__ = ("Sph", i)
+                    found = True
+                    break
+            if found :
+                return -sph if (sph.reverse == (orientation == "Forward")) else sph 
+    
+        self.surfaceNumber += 1
+        if orientation == "Forward":
+            pid = -pid
+            reverse = False
+        else:
+            reverse = True     
+        
+        sph = BoolRegion(self.surfaceNumber,str(pid),reverse=reverse)
+        self.__last_obj__ = ("Sph", len(self["Sph"]))
+        self["Sph"].append(sph)
+        self.__surfIndex__["Sph"].append(sph.__int__())
+        return sph
+
+    def add_torus(self, torus, orientation):
+        pid,exist = self.primitive_surfaces.add_torus(torus)
+        if exist :
+            found = False
+            for i, tor in enumerate(self["Tor"]):
+                if pid in tor.surfaces:
+                    self.__last_obj__ = ("Tor", i)
+                    found = True
+                    break
+            if found : 
+                return -tor if (tor.reverse == (orientation == "Forward")) else tor
+        
+        self.surfaceNumber += 1
+        if orientation == "Forward":
+            pid = -pid
+            reverse = False
+        else:
+            reverse = True     
+
+        tor = BoolRegion(self.surfaceNumber,str(pid),reverse=reverse)
+        self.__last_obj__ = ("Tor", len(self["Tor"]))
+        self["Tor"].append(tor)
+        self.__surfIndex__["Tor"].append(tor.__int__())
+        return tor
+
+    def add_multiPlane(self, multiP):
+        multiP_surfaces = []
+        for mp in multiP.Surf.Planes:
+            pid,exist = self.primitive_surfaces.add_plane(mp,True)
+            if exist:
+                p = self.primitive_surfaces.get_surface(pid)     
+                if is_opposite(mp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid 
+            multiP_surfaces.append(str(pid))
+        multiP_region = BoolRegion(0,':'.join(multiP_surfaces))    
+        
+        add_multiP = True
+        for i, mp in enumerate(self["MultiP"]):
+            if mp == multiP_region:
+                add_multiP = False
+                self.__last_obj__ = ("MultiP", i)
+                break
+            
+        if add_multiP:
+            self.surfaceNumber += 1
+            multiP_region = multiP_region.copy(self.surfaceNumber)
+            self.__last_obj__ = ("MultiP", len(self["MultiP"]))
+            self["MultiP"].append(multiP_region)
+            self.__surfIndex__["MultiP"].append(multiP_region.__int__())
+            return multiP_region
+        else:  
+            return mp
 
 class SurfacesDict(dict):
     def __init__(
@@ -349,7 +573,7 @@ class SurfacesDict(dict):
 
         self.IndexOffset = offset
         self.options = options
-        self.tolerance = tolerances
+        self.tolerances = tolerances
         self.numeric_format = numeric_format
 
         surfname = ["PX", "PY", "PZ", "P", "Cyl", "Cone", "Sph", "Tor"]
@@ -365,7 +589,7 @@ class SurfacesDict(dict):
             self.surfaceNumber = surfaces.surfaceNumber
             self.metaSurfaceNumber = surfaces.metaSurfaceNumber
             self.options = surfaces.options
-            self.tolerance = surfaces.tolerance
+            self.tolerances = surfaces.tolerances
             self.numeric_format = surfaces.numeric_format
             self.__last_obj__ = (surfaces.__last_obj__[0], surfaces.__last_obj__[1])
         else:
@@ -613,31 +837,68 @@ class SurfacesDict(dict):
             return tor.Index, False
         else:
             return index, True
+        
+    def get_id(self,facein):
+        
+        if facein.Type == "Plane":
+            if is_parallel(facein.Surf.Axis, FreeCAD.Vector(1, 0, 0), self.tolerances.pln_angle):
+                p = "PX"
+            elif is_parallel(facein.Surf.Axis, FreeCAD.Vector(0, 1, 0), self.tolerances.pln_angle):
+                p = "PY"
+            elif is_parallel(facein.Surf.Axis, FreeCAD.Vector(0, 0, 1), self.tolerances.pln_angle):
+                p = "PZ"
+            else:
+                p = "P"
 
-    def add_metaplane(self, mp, fuzzy=False):
-        add_metap = True
-        for i, s in enumerate(self["Metap"]):
-            if BF.is_same_metaplane(
-                mp,
-                s,
-                dtol=self.tolerances.tor_distance,
-                atol=self.tolerances.tor_angle,
-                rel_tol=self.tolerances.relativeTol,
-            ):
-                add_metap = False
-                index = s.Index
-                self.__last_obj__ = ("Tor", i)
-                break
-        if add_metap:
-            self.surfaceNumber += 1
-            mp.Index = self.surfaceNumber + self.IndexOffset
-            self.__last_obj__ = ("Metap", len(self["Metap"]))
-            self["Metap"].append(mp)
-            self.__surfIndex__["Metap"].append(mp.Index)
-            return mp.Index, False
-        else:
-            return index, True
+            for s in self[p]:
+                if BF.is_same_plane(
+                    facein.Surf,
+                    s.Surf,
+                    options=self.options,
+                    tolerances=self.tolerances,
+                    numeric_format=self.numeric_format,
+                ):
+                    return s.Index
 
+        elif facein.Type == "Cylinder":
+            for s in self["Cyl"]:
+                if BF.is_same_cylinder(
+                    facein.Surf,
+                    s.Surf,
+                    options=self.options,
+                    tolerances=self.tolerances,
+                    numeric_format=self.numeric_format,
+                ):
+                    return s.Index
+
+        elif facein.Type == "Cone":
+            for s in self["Cone"]:
+                if BF.is_same_cone(
+                    facein.Surf,
+                    s.Surf,
+                    dtol=self.tolerances.kne_distance,
+                    atol=self.tolerances.kne_angle,
+                    rel_tol=self.tolerances.relativeTol,
+                ):
+                    return s.Index
+
+        elif facein.Type == "Sphere":
+            for s in self["Sph"]:
+                if BF.is_same_sphere(facein.Surf, s.Surf, self.tolerances.sph_distance, rel_tol=self.tolerances.relativeTol):
+                    return s.Index
+
+        elif facein.Type == "Torus":
+            for s in self["Tor"]:
+                if BF.is_same_torus(
+                    facein.Surf,
+                    s.Surf,
+                    dtol=self.tolerances.tor_distance,
+                    atol=self.tolerances.tor_angle,
+                    rel_tol=self.tolerances.relativeTol,
+                ):
+                    return s.Index
+
+        return 0
 
 def split_bop(solid, tools, tolerance, options, scale=0.1):
 
@@ -658,3 +919,80 @@ def split_bop(solid, tools, tolerance, options, scale=0.1):
             compSolid = split_bop(solid, tools, tolerance * scale, options, scale)
 
     return compSolid
+
+def get_multiplanes(solid, BoundBox = None):
+    """ identify and return all multiplanes in the solid.
+    """
+    planes = []
+    for i,f in enumerate(solid.Faces):
+        if isinstance(f.Surface, PlaneGu) :
+            planes.append(plane_index(f,i))
+
+    multiplane_list = []
+    multiplane_objects = []
+    plane_index_set = set()
+    for p in planes:
+        loop = False
+        for mp in multiplane_list:
+            if p in mp:
+                loop = True
+                break
+        if loop:
+            continue
+        mplanes = [p]
+        multiplane_loop([p], mplanes, planes)
+        if len(mplanes) != 1:
+            if no_convex(mplanes):
+                mp_params = build_multip_params(mplanes)
+                mp = GeounedSurface(
+                    ("MultiPlane", mp_params),
+                    BoundBox,
+                    Face= 'Build' if BoundBox is not None else None,
+                )
+                for pp in mplanes:
+                    plane_index_set.add(pp.index)
+                multiplane_list.append(mplanes)
+                multiplane_objects.append(mp)
+    return multiplane_objects,plane_index_set
+
+def build_multip_params(plane_list):
+
+    planeparams = []
+    edges = []
+    vertexes = []
+
+    for p in plane_list:
+        #plane = PlaneGu(p)
+        #planeparams.append((plane.Position, plane.Axis, plane.dim1, plane.dim2))
+        normal = p.plane.Surface.Axis if p.plane.Orientation == "Forward" else -p.plane.Surface.Axis
+        gp = GeounedSurface(("Plane", (p.plane.Surface.Position, normal, 1., 1.)), None,None)
+        planeparams.append(gp)
+
+    
+    ajdacent_planes = [[] for i in range(len(plane_list))]
+    for i, p1 in enumerate(plane_list):
+        for j, p2 in enumerate(plane_list[i + 1 :]):
+            e = commonEdge(p1.plane, p2.plane)
+            if e is not None:
+                edges.append(e)
+                ajdacent_planes[i].append((j, e))
+                ajdacent_planes[j].append((i, e))
+
+    vertex_list = []
+    for i, e1 in enumerate(edges):
+
+        for e2 in edges[i + 1 :]:
+            vertex_list.extend(commonVertex(e1, e2))
+
+    vertexes = []
+    while len(vertex_list) > 0:
+        v = vertex_list.pop()
+        n = 0
+        for vi in reversed(vertex_list):
+            if v.Point == vi.Point:
+                n += 1
+                vertex_list.remove(vi)
+        if n > 0:
+            vertexes.append((v, n + 1))
+
+    return (planeparams, edges, vertexes)

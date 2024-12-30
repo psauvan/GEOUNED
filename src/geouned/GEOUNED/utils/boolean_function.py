@@ -18,20 +18,28 @@ class BoolRegion(int):
         label = args[0]
         return super(BoolRegion, cls).__new__(cls, label)
 
-    def __init__(self, label, definition=None):
+    def __init__(self, label, definition=None, reverse = False):
         if definition is None:
             self.definition = BoolSequence(str(label))
             self.level = 0
-        else:
+        elif isinstance(definition,str):
+            self.definition = BoolSequence(definition)
+            self.definition.level_update()
+            self.level = self.definition.level
+        elif isinstance(definition,BoolSequence):
             self.definition = definition
-            self.level = definition.level
+            self.level = self.definition.level
+        else:
+            raise ('Boolean region : bad Boolean definition') 
+           
+        self.reverse = reverse   
         self.surfaces = self.definition.get_surfaces_numbers()
 
-    def __str__(self):
-        return self.definition.__str__()    
+#    def __str__(self)
+#        return self.definition.__str__()    
 
     def __neg__(self):
-        return BoolRegion(-self.__int__(), self.definition.get_complementary())
+        return BoolRegion(-self.__int__(), self.definition.get_complementary(),reverse=self.reverse)
 
     def __pos__(self):
         return self
@@ -45,20 +53,26 @@ class BoolRegion(int):
     def __add__(self, def2):
         newdef = BoolSequence(operator="OR")
         newdef.append(self.definition, def2.definition)
-        newdef.group_single()
+        newdef.join_operators()
+        #newdef.group_single()
         return BoolRegion(0, newdef)
 
     def __sub__(self, def2):
         newdef = BoolSequence(operator="OR")
         newdef.append(self.definition, def2.definition.get_complementary())
-        newdef.group_single()
+        #newdef.group_single()
+        newdef.join_operators()
         return BoolRegion(0, newdef)
 
     def __mul__(self, def2):
         newdef = BoolSequence(operator="AND")
-        newdef.append(self.definition, def2)
-        newdef.group_single()
+        newdef.append(self.definition, def2.definition)
+        newdef.join_operators()
+        #newdef.group_single()
         return BoolRegion(0, newdef)
+    
+    def __eq__(self,def2):
+        return self.definition == def2.definition
 
     def setDef(self, definition):
         self.definition = definition
@@ -66,11 +80,26 @@ class BoolRegion(int):
         self.level = definition.level
 
     def level_update(self):
-        pass    
+        self.definition.level_update()
+        self.level = self.definition.level    
 
-    def copy(self, newname):
-        return BoolRegion(newname, self.definition)
+    def copy(self, newname:int):
+        return BoolRegion(newname, self.definition, reverse=self.reverse)
 
+    def mult(a,b,label=0):
+        newdef = BoolSequence(operator="AND")
+        newdef.append(a.definition, b.definition)
+      #  newdef.group_single()
+        newdef.join_operators()
+ 
+        return BoolRegion(label, newdef)
+    
+    def add(a,b,label=0):
+        newdef = BoolSequence(operator="OR")
+        newdef.append(a.definition, b.definition)
+        newdef.join_operators()
+        #newdef.group_single()
+        return BoolRegion(label, newdef)
 
 class BoolSequence:
     """Class storing Boolean expression and operating on it"""
@@ -93,9 +122,41 @@ class BoolSequence:
                 out += f" {e} "
             else:
                 out += e.__str__()
-
         out += "] "
         return out
+    
+    def __eq__(self,def2):
+        if type(self) != type(def2):
+            return False
+        if self.level != def2.level :
+            return False
+        if self.operator != def2.operator:
+            return False
+        if len(self.elements) != len(def2.elements):
+            return False
+        if self.level == 0:
+            set1 = self.get_lev0_surfaces()
+            set2 = def2.get_lev0_surfaces()
+            return len(set1-set2) == 0
+        else:
+            if len(self.elements) != len(def2.elements):
+                return False
+            equals = 0
+            temp = def2.elements[:]
+            for e1 in self.elements:
+                for e2 in reversed(temp):
+                    if e1 == e2:
+                        temp.remove(e2)
+                        equals += 1
+                        break
+            return equals == len(self.elements)  
+
+    def get_lev0_surfaces(self):
+        if self.level > 1 : return None
+        surf = set()
+        for e in self.elements:
+            surf.add(e)
+        return surf    
 
     def append(self, *seq):
         """Append a BoolSequence Objects. seq may be :
@@ -217,6 +278,14 @@ class BoolSequence:
             return "OR"
         else:
             return "AND"
+        
+    def expand_regions(self):
+        for i,e in enumerate(self.elements):
+            if isinstance(e,BoolRegion):
+                self.elements[i] = e.definition
+            elif isinstance(e,BoolSequence):
+                e.expand_regions() 
+        self.join_operators()          
 
     def simplify(self, CT=None, depth=0):
         """Simplification by recursive calls to the inner BoolSequence objects."""
