@@ -186,13 +186,13 @@ def set_graveyard_cell(Surfaces, UniverseBox, options, tolerances, numeric_forma
     center = UniverseBox.Center
     radius = 0.51 * UniverseBox.DiagonalLength
     sphere = GeounedSurface(("Sphere", (center, radius)), UniverseBox)
-    id, exist = Surfaces.add_sphere(sphere, tolerances)
+    sph_region = Surfaces.add_sphere(sphere, "Forward")
 
-    sphdef = BoolSequence(str(-id))
-    sphdef.operator = "AND"
-    sphdef.append(externalBox)
+    sphdef = BoolSequence(operator="AND")
+    sphdef.append(sph_region, externalBox)
 
-    notsph = BoolSequence(str(id))
+    notsph = BoolSequence(operator="AND")
+    notsph.append(-sph_region)
 
     mVoidSphIn = GeounedSolid(0)
     mVoidSphIn.Void = True
@@ -215,15 +215,8 @@ def set_graveyard_cell(Surfaces, UniverseBox, options, tolerances, numeric_forma
 def get_universe_complementary(Universe, Surfaces, options, tolerances, numeric_format):
     Def = BoolSequence(operator="OR")
     for p in Universe.get_bound_planes():
-        id, exist = Surfaces.add_plane(p, options, tolerances, numeric_format, False)
-        if not exist:
-            Def.elements.append(-id)
-        else:
-            s = Surfaces.get_surface(id)
-            if is_opposite(p.Surf.Axis, s.Surf.Axis):
-                Def.elements.append(id)
-            else:
-                Def.elements.append(-id)
+        p_region = Surfaces.add_plane(p, False)
+        Def.append(-p_region)
     return Def
 
 

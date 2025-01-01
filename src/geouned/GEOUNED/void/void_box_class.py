@@ -170,22 +170,15 @@ class VoidBox:
             center = self.BoundBox.Center
             bBox = self.BoundBox
             for p in self.get_bound_planes():
-                id, exist = Surfaces.add_plane(p, options, tolerances, numeric_format, False)
-                if exist:
-                    s = Surfaces.get_surface(id)
-                    if is_opposite(p.Surf.Axis, s.Surf.Axis):
-                        id = -id
-                if is_opposite(p.Surf.Axis, p.Surf.Position - center):
-                    boxDef.elements.append(id)
-                else:
-                    boxDef.elements.append(-id)
+                plane_region = Surfaces.add_plane(p, False)
+                boxDef.elements.append(plane_region)
                 enclosure = False
             d = options.enlargeBox
 
         else:
             UniverseBox = self.PieceEnclosure.BoundBox
             TempPieceEnclosure = GeounedSolid(None, self.PieceEnclosure)
-            comsolid, err = Decom.SplitSolid(
+            comsolid, err = Decom.main_split(
                 Part.makeCompound(TempPieceEnclosure.Solids),
                 UniverseBox,
                 options,

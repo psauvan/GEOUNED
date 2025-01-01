@@ -23,7 +23,7 @@ from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
 
 logger = logging.getLogger("general_logger")
-#logger.info(f"GEOUNED version {version('geouned')}")
+# logger.info(f"GEOUNED version {version('geouned')}")
 logger.info(f"FreeCAD version {'.'.join(FreeCAD.Version()[:3])}")
 
 
@@ -391,11 +391,12 @@ class CadToCsg:
         # sets self.geometry_bounding_box with default padding
         self._get_geometry_bounding_box()
 
-        self.Surfaces = UF.SurfacesDict(offset=self.settings.startSurf - 1,
-                                        options=self.options,
-                                        tolerances=self.tolerances,
-                                        numeric_format=self.numeric_format
-                                        )
+        self.Surfaces = UF.SurfacesDict(
+            offset=self.settings.startSurf - 1,
+            options=self.options,
+            tolerances=self.tolerances,
+            numeric_format=self.numeric_format,
+        )
 
         warnSolids = []
         warnEnclosures = []
@@ -414,20 +415,15 @@ class CadToCsg:
 
             # start Building CGS cells phase
 
+            self.Surfaces = UF.MetaSurfacesDict(
+                options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format
+            )
             for j, m in enumerate(tqdm(self.meta_list, desc="Translating solid cells")):
                 if m.IsEnclosure:
                     continue
                 logger.info(f"Building cell: {j+1}")
-                cones = Conv.cellDef(
-                    m,
-                    self.Surfaces,
-                    self.geometry_bounding_box,
-                    self.options,
-                    self.tolerances,
-                    self.numeric_format,
-                )
-                if cones:
-                    coneInfo[m.__id__] = cones
+                Conv.build_definition(m, self.Surfaces)
+
                 if j in warningSolidList:
                     warnSolids.append(m)
                 if not m.Solids:
@@ -458,16 +454,7 @@ class CadToCsg:
         if self.settings.voidGen and self.enclosure_list:
             for j, m in enumerate(self.enclosure_list):
                 logger.info(f"Building Enclosure Cell: {j + 1}")
-                cones = Conv.cellDef(
-                    m,
-                    self.Surfaces,
-                    self.geometry_bounding_box,
-                    self.options,
-                    self.tolerances,
-                    self.numeric_format,
-                )
-                if cones:
-                    coneInfo[m.__id__] = cones
+                Conv.build_definition(m, self.Surfaces)
                 if j in warningEnclosureList:
                     warnEnclosures.append(m)
 
@@ -569,17 +556,6 @@ class CadToCsg:
 
         print_warning_solids(warnSolids, warnEnclosures)
 
-        # add plane definition to cone
-        process_cones(
-            self.meta_list,
-            coneInfo,
-            self.Surfaces,
-            self.geometry_bounding_box,
-            self.options,
-            self.tolerances,
-            self.numeric_format,
-        )
-
         logger.info("Process finished")
         logger.info(datetime.now() - startTime)
 
@@ -610,9 +586,8 @@ class CadToCsg:
                 else:
                     m.Solids[0].exportStep(str(debug_output_folder / f"origSolid_{i}.stp"))
 
-            comsolid, err = Decom.SplitSolid(
+            comsolid, err = Decom.main_split(
                 Part.makeCompound(m.Solids),
-                self.geometry_bounding_box,
                 self.options,
                 self.tolerances,
                 self.numeric_format,
@@ -635,17 +610,7 @@ class CadToCsg:
                     comsolid.exportStep(str(debug_output_folder / f"compEnclosure_{i}.stp"))
                 else:
                     comsolid.exportStep(str(debug_output_folder / f"compSolid_{i}.stp"))
-            self.Surfaces.extend(
-                Decom.extract_surfaces(
-                    comsolid,
-                    "All",
-                    self.geometry_bounding_box,
-                    self.options,
-                    self.tolerances,
-                    self.numeric_format,
-                    MakeObj=True,
-                ),
-            )
+
             m.set_cad_solid()
             m.update_solids(comsolid.Solids)
 
@@ -659,40 +624,6 @@ def update_comment(meta, idLabel):
         return
     newLabel = (idLabel[i] for i in meta.__commentInfo__[1])
     meta.set_comments(void.void_comment_line((meta.__commentInfo__[0], newLabel)))
-
-
-def process_cones(MetaList, coneInfo, Surfaces, UniverseBox, options, tolerances, numeric_format):
-    cellId = tuple(coneInfo.keys())
-    for m in MetaList:
-        if m.__id__ not in cellId and not m.Void:
-            continue
-
-        if m.Void and m.__commentInfo__ is not None:
-            if m.__commentInfo__[1] is None:
-                continue
-            cones = set()
-            for Id in m.__commentInfo__[1]:
-                if Id in cellId:
-                    cones.update(-x for x in coneInfo[Id])
-            Conv.add_cone_plane(
-                m.Definition,
-                cones,
-                Surfaces,
-                UniverseBox,
-                options,
-                tolerances,
-                numeric_format,
-            )
-        elif not m.Void:
-            Conv.add_cone_plane(
-                m.Definition,
-                coneInfo[m.__id__],
-                Surfaces,
-                UniverseBox,
-                options,
-                tolerances,
-                numeric_format,
-            )
 
 
 def print_warning_solids(warnSolids, warnEnclosures):

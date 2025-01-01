@@ -55,9 +55,6 @@ def write_geometry(
         MCNPfile = McnpInput(
             MetaList,
             Surfaces,
-            options,
-            tolerances,
-            numeric_format,
             title,
             volSDEF,
             volCARD,

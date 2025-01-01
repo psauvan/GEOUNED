@@ -203,7 +203,7 @@ class MultiPlanesParams:
         self.PlaneNumber = len(params[0])
         self.Planes = []
         self.Edges = params[1]
-        self.Vertexes = params[2] 
+        self.Vertexes = params[2]
         self.Planes = params[0][:]
 
     def __str__(self):

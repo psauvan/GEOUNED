@@ -15,62 +15,69 @@ from ..utils.functions import GeounedSurface
 
 logger = logging.getLogger("general_logger")
 
-def auxillary_plane(plane,Surfaces):
-    pid,exist = Surfaces.primitive_surfaces.add_plane(plane,True)  
+
+def auxillary_plane(plane, Surfaces):
+    pid, exist = Surfaces.primitive_surfaces.add_plane(plane, True)
     if exist:
-        p = Surfaces.primitive_surfaces.get_surface(pid)     
+        p = Surfaces.primitive_surfaces.get_surface(pid)
         if is_opposite(plane.Surf.Axis, p.Surf.Axis, Surfaces.tolerances.pln_angle):
-            pid = -pid  
-    return BoolRegion(0,str(pid))        
+            pid = -pid
+    return BoolRegion(0, str(pid))
+
 
 def gen_plane(face, orientation):
     normal = face.Surface.Axis
     if orientation == "Forward":
-            normal = -normal
+        normal = -normal
     pos = face.CenterOfMass
-    return GeounedSurface(("Plane", (pos, normal, 1, 1)), None)
-    
+    return GeounedSurface(("Plane", (pos, normal, 1, 1)))
+
+
 def gen_cylinder(face):
     Axis = face.Surface.Axis
     Center = face.Surface.Center
     Radius = face.Surface.Radius
-    return GeounedSurface(("Cylinder", (Center, Axis, Radius, 1)), None)    
+    return GeounedSurface(("Cylinder", (Center, Axis, Radius, 1)))
+
 
 def gen_cone(face):
     Axis = face.Surface.Axis
     Apex = face.Surface.Apex
     SemiAngle = face.Surface.SemiAngle
-    return GeounedSurface(("Cone", (Apex, Axis, SemiAngle, 1, 1)), None)
+    return GeounedSurface(("Cone", (Apex, Axis, SemiAngle, 1, 1)))
+
 
 def gen_sphere(face):
     Center = face.Surface.Center
     Radius = face.Surface.Radius
-    return GeounedSurface(("Sphere", (Center, Radius)), None)
+    return GeounedSurface(("Sphere", (Center, Radius)))
 
-def gen_torus(face,tolerances):
+
+def gen_torus(face, tolerances):
     Center = face.Surface.Center
     Axis = face.Surface.Axis
     MajorRadius = face.Surface.MajorRadius
     MinorRadius = face.Surface.MinorRadius
     if (
-        is_parallel(Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle) or
-        is_parallel(Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle) or
-        is_parallel(Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
-        ):
-        return GeounedSurface(("Torus", (Center, Axis, MajorRadius, MinorRadius)), None)
+        is_parallel(Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle)
+        or is_parallel(Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
+        or is_parallel(Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
+    ):
+        return GeounedSurface(("Torus", (Center, Axis, MajorRadius, MinorRadius)))
     else:
         return None
-    
-def cone_apex_plane(cone,orientation,tolerances):
+
+
+def cone_apex_plane(cone, orientation, tolerances):
     if (
         is_parallel(cone.Surf.Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle)
         or is_parallel(cone.Surf.Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
         or is_parallel(cone.Surf.Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
     ):
         return None
-    
+
     normal = cone.Axis if orientation == "Forward" else -cone.Axis
-    return GeounedSurface(("Plane", (cone.Apex, normal, 1, 1)),None)
+    return GeounedSurface(("Plane", (cone.Apex, normal, 1, 1)))
 
 
 def V_torus_surfaces(face, v_params, Surfaces):
@@ -95,7 +102,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
         p_mid = face.valueAt(0, v_mid) - face.Surface.Center
         if p_mid.dot(axis) < z1:
             axis = -axis
-        plane = GeounedSurface(("Plane", (center, axis, 1, 1)),None)
+        plane = GeounedSurface(("Plane", (center, axis, 1, 1)))
         return auxillary_plane(plane, Surfaces)
 
     elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.force_cylinder:
@@ -120,12 +127,12 @@ def V_torus_surfaces(face, v_params, Surfaces):
             else:
                 in_surf = False
 
-        cylinder = GeounedSurface(("Cylinder", (center, axis, radius, 1)),None)
-        pid,exist = Surfaces.primitive_surfaces.add_cylinder(cylinder,True)
-        if in_surf :
+        cylinder = GeounedSurface(("Cylinder", (center, axis, radius, 1)))
+        pid, exist = Surfaces.primitive_surfaces.add_cylinder(cylinder, True)
+        if in_surf:
             pid = -pid
 
-        return BoolRegion(0,str(pid))
+        return BoolRegion(0, str(pid))
 
     else:
         surf_type = "Cone"
@@ -143,24 +150,25 @@ def V_torus_surfaces(face, v_params, Surfaces):
         d_cone = d1 * (z_mid - za) / (z1 - za)
         in_surf = True if d_mid < d_cone else False
 
-        cone = GeounedSurface(("Cone", (apex, cone_axis, semi_angle, 1, 1)),None)
-        pid,exist = Surfaces.primitive_surfaces.add_cone(cone)   
+        cone = GeounedSurface(("Cone", (apex, cone_axis, semi_angle, 1, 1)))
+        pid, exist = Surfaces.primitive_surfaces.add_cone(cone)
 
-        if in_surf :
+        if in_surf:
             pid = -pid
-            aux_plane_region = cone_apex_plane(cone,"Forward",Surfaces.tolerances)
-            aux_cone_region = BoolRegion(0,str(pid))
+            aux_plane_region = cone_apex_plane(cone, "Forward", Surfaces.tolerances)
+            aux_cone_region = BoolRegion(0, str(pid))
             if aux_plane_region:
                 return aux_cone_region * aux_plane_region
             else:
                 return aux_cone_region
-        else:    
-            aux_plane_region = cone_apex_plane(cone,"Reversed",Surfaces.tolerances)
-            aux_cone_region = BoolRegion(0,str(pid))
+        else:
+            aux_plane_region = cone_apex_plane(cone, "Reversed", Surfaces.tolerances)
+            aux_cone_region = BoolRegion(0, str(pid))
             if aux_plane_region:
                 return aux_cone_region + aux_plane_region
             else:
                 return aux_cone_region
+
 
 def U_torus_planes(face, u_params, Surfaces):
 
@@ -182,9 +190,8 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        plane = GeounedSurface(("Plane", (center, d, 1, 1)),None)
+        plane = GeounedSurface(("Plane", (center, d, 1, 1)))
         return auxillary_plane(plane, Surfaces)
-        
 
     elif u_params[1] - u_params[0] < math.pi:
         d = axis.cross(p2 - p1)
@@ -192,7 +199,7 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        plane = GeounedSurface(("Plane", (center, d, 1, 1)),None)
+        plane = GeounedSurface(("Plane", (center, d, 1, 1)))
         return auxillary_plane(plane, Surfaces)
 
     else:
@@ -206,60 +213,10 @@ def U_torus_planes(face, u_params, Surfaces):
         if d2.dot(pmid - center) < 0:
             d2 = -d2
 
-        plane1 = GeounedSurface(("Plane", (center, d1, 1, 1)),None)
-        plane2 = GeounedSurface(("Plane", (center, d2, 1, 1)),None)
+        plane1 = GeounedSurface(("Plane", (center, d1, 1, 1)))
+        plane2 = GeounedSurface(("Plane", (center, d2, 1, 1)))
         return auxillary_plane(plane1, Surfaces) + auxillary_plane(plane2, Surfaces)
 
-
-def is_inverted(solid):
-
-    face = solid.Faces[0]
-
-    # u=(face.Surface.bounds()[0]+face.Surface.bounds()[1])/2.0 # entre 0 y 2pi si es completo
-    # v=face.Surface.bounds()[0]+(face.Surface.bounds()[3]-face.Surface.bounds()[2])/3.0 # a lo largo del eje
-    parameter_range = face.ParameterRange
-    u = (parameter_range[1] + parameter_range[0]) / 2.0
-    v = (parameter_range[3] + parameter_range[2]) / 2.0
-
-    if isinstance(face.Surface,Part.Cylinder) :
-        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Center, face.Surface.Axis)
-        dist2 = (
-            face.Surface.value(u, v)
-            .add(face.Surface.normal(u, v).multiply(1.0e-6))
-            .distanceToLine(face.Surface.Center, face.Surface.Axis)
-        )
-        if (dist2 - dist1) < 0.0:
-            # The normal of the cylinder is going inside
-            return True
-        
-    elif isinstance(face.Surface,Part.Cone):
-        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Apex, face.Surface.Axis)
-        dist2 = (
-            face.Surface.value(u, v)
-            .add(face.Surface.normal(u, v).multiply(1.0e-6))
-            .distanceToLine(face.Surface.Apex, face.Surface.Axis)
-        )
-        if (dist2 - dist1) < 0.0:
-            # The normal of the cylinder is going inside
-            return True
-    # MIO
-    elif isinstance(face.Surface,Part.Sphere):
-        # radii = point - center
-        radii = face.Surface.value(u, v).add(face.Surface.Center.multiply(-1))
-        radii_b = face.Surface.value(u, v).add(face.Surface.normal(u, v).multiply(1.0e-6)).add(face.Surface.Center.multiply(-1))
-        # radii_b  = radii.add( face.Surface.normal(u,v).multiply(1.0e-6) )
-        if (radii_b.Length - radii.Length) < 0.0:
-            # An increasing of the radii vector in the normal direction decreases the radii: oposite normal direction
-            return True
-
-    elif isinstance(face.Surface,Part.Plane):
-        dist1 = face.CenterOfMass.distanceToPoint(solid.BoundBox.Center)
-        dist2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6)).distanceToPoint(solid.BoundBox.Center)
-        point2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6))
-        if solid.isInside(point2, 1e-7, False):
-            return True
-
-    return False   
 
 def gen_plane_sphere(face, solid, Surfaces):
     same_faces = []
@@ -289,7 +246,7 @@ def gen_plane_sphere(face, solid, Surfaces):
 
     if dmin > 1e-6:
         center = face.Surface.Center + 0.95 * dmin * normal
-        plane = GeounedSurface(("Plane", (center, normal, 1, 1)),None)
+        plane = GeounedSurface(("Plane", (center, normal, 1, 1)))
         return auxillary_plane(plane, Surfaces)
     else:
         return None
@@ -340,11 +297,12 @@ def gen_plane_cylinder(face, solid, Surfaces):
 
     normal = p2.sub(p1).cross(face.Surface.Axis)
     normal.normalize()
-    if normal.dot(face.CenterOfMass-p1) < 0 :
+    if normal.dot(face.CenterOfMass - p1) < 0:
         normal = -normal
 
-    plane = GeounedSurface(("Plane", (p1, normal, 1, 1)),None)
+    plane = GeounedSurface(("Plane", (p1, normal, 1, 1)))
     return auxillary_plane(plane, Surfaces)
+
 
 def gen_plane_cone(face, solid, Surfaces):
 
@@ -386,15 +344,16 @@ def gen_plane_cone(face, solid, Surfaces):
         logger.error("in the additional place definition")
         return None
 
-    v1 = p1-face.Surface.Apex
-    v2 = p2-face.Surface.Apex
+    v1 = p1 - face.Surface.Apex
+    v2 = p2 - face.Surface.Apex
     normal = v1.cross(v2)
     normal.normalize()
-    if normal.dot(face.CenterOfMass-face.Surface.Apex) < 0:
+    if normal.dot(face.CenterOfMass - face.Surface.Apex) < 0:
         normal = -normal
 
-    plane = GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)),None)
+    plane = GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
     return auxillary_plane(plane, Surfaces)
+
 
 def get_u_value_boundary(solid, face_index, my_index):
 
@@ -405,8 +364,9 @@ def get_u_value_boundary(solid, face_index, my_index):
     for face_u_range in face_u_ranges:
         if my_index in face_u_range[2]:
             u_min, u_max = face_u_range[0:2]
-            return u_min, u_max  
-        
+            return u_min, u_max
+
+
 def get_closed_ranges(solid, face_index):
 
     u_nodes = []
@@ -439,7 +399,8 @@ def get_closed_ranges(solid, face_index):
                 closed_face = False
     else:
         closed_face = False
-    return closed_range, closed_face    
+    return closed_range, closed_face
+
 
 def get_intervals(u_nodes):
     closed_ranges = []
@@ -486,4 +447,4 @@ def get_intervals(u_nodes):
                 index.add(interval[1])
         closed_range.append(index)
 
-    return closed_ranges    
+    return closed_ranges

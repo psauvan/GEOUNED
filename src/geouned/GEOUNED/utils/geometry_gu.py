@@ -166,10 +166,11 @@ class SolidGu:
         self.Edges = solid.Edges
         self.TorusVParams = {}
         self.TorusUParams = {}
+        self.inverted = is_inverted(solid)
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
-            if type(face.Surface) is TorusGu:
+            if isinstance(face.Surface, TorusGu):
                 toroidIndex.append(i)
 
         if len(toroidIndex) != 0:
@@ -360,3 +361,54 @@ def define_surface(face, plane3Pts):
         logger.info(f"bad Surface type {kind_surf}")
         Surf_GU = None
     return Surf_GU
+
+
+def is_inverted(solid):
+
+    face = solid.Faces[0]
+
+    # u=(face.Surface.bounds()[0]+face.Surface.bounds()[1])/2.0 # entre 0 y 2pi si es completo
+    # v=face.Surface.bounds()[0]+(face.Surface.bounds()[3]-face.Surface.bounds()[2])/3.0 # a lo largo del eje
+    parameter_range = face.ParameterRange
+    u = (parameter_range[1] + parameter_range[0]) / 2.0
+    v = (parameter_range[3] + parameter_range[2]) / 2.0
+
+    if isinstance(face.Surface, Part.Cylinder):
+        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Center, face.Surface.Axis)
+        dist2 = (
+            face.Surface.value(u, v)
+            .add(face.Surface.normal(u, v).multiply(1.0e-6))
+            .distanceToLine(face.Surface.Center, face.Surface.Axis)
+        )
+        if (dist2 - dist1) < 0.0:
+            # The normal of the cylinder is going inside
+            return True
+
+    elif isinstance(face.Surface, Part.Cone):
+        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Apex, face.Surface.Axis)
+        dist2 = (
+            face.Surface.value(u, v)
+            .add(face.Surface.normal(u, v).multiply(1.0e-6))
+            .distanceToLine(face.Surface.Apex, face.Surface.Axis)
+        )
+        if (dist2 - dist1) < 0.0:
+            # The normal of the cylinder is going inside
+            return True
+    # MIO
+    elif isinstance(face.Surface, Part.Sphere):
+        # radii = point - center
+        radii = face.Surface.value(u, v).add(face.Surface.Center.multiply(-1))
+        radii_b = face.Surface.value(u, v).add(face.Surface.normal(u, v).multiply(1.0e-6)).add(face.Surface.Center.multiply(-1))
+        # radii_b  = radii.add( face.Surface.normal(u,v).multiply(1.0e-6) )
+        if (radii_b.Length - radii.Length) < 0.0:
+            # An increasing of the radii vector in the normal direction decreases the radii: oposite normal direction
+            return True
+
+    elif isinstance(face.Surface, Part.Plane):
+        dist1 = face.CenterOfMass.distanceToPoint(solid.BoundBox.Center)
+        dist2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6)).distanceToPoint(solid.BoundBox.Center)
+        point2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6))
+        if solid.isInside(point2, 1e-7, False):
+            return True
+
+    return False

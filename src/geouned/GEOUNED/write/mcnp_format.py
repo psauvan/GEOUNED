@@ -163,7 +163,7 @@ C **************************************************************
 
         mcnpcell = "{}{}\n{}{}".format(
             cellHeader,
-            self.cell_format(cell.Definition.expand_regions(), offset=len(cellHeader)),
+            self.cell_format(cell.Definition, offset=len(cellHeader)),
             self.option_format(cell),
             self.comment_format(cell.Comments, cell.MatInfo),
         )
@@ -296,6 +296,7 @@ C **************************************************************
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
+            CellObj.Definition.expand_regions()
             surf = CellObj.Definition.get_surfaces_numbers()
             if not CellObj.Void:
                 self.__solidCells__ += 1

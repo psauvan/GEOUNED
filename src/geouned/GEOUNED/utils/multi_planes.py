@@ -2,11 +2,13 @@ import FreeCAD
 import Part
 import numpy
 
-class plane_index():
-    def __init__(self,plane,index):
+
+class plane_index:
+    def __init__(self, plane, index, orientation):
         self.plane = plane
         self.index = index
-        
+        self.orientation = orientation
+
 
 def multiplane_loop(adjacents, multi_list, planes):
     for p in adjacents:
@@ -61,8 +63,7 @@ def convex_wire(p):
 
 
 def multiplane(p, planes):
-    """Found planes adjacent to "p". Region delimited by plane is concanve.
-    """
+    """Found planes adjacent to "p". Region delimited by plane is concanve."""
     Edges = p.plane.OuterWire.Edges
     addplane = [p]
     for e in Edges:
@@ -106,9 +107,6 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
                 return face
 
 
-
-
-
 def commonVertex(e1, e2):
     if e1.distToShape(e2)[0] > 0:
         return []
@@ -140,9 +138,8 @@ def commonEdge(face1, face2, outer_only=True):
     return None
 
 
-def makeBoxFaces(box:list):
-    """ Build faces of a box.  
-    """
+def makeBoxFaces(box: list):
+    """Build faces of a box."""
     if isinstance(box[0], (int, float)):
         xmin, ymin, zmin, xmax, ymax, zmax = box
         v0 = FreeCAD.Vector(xmin, ymin, zmin)
@@ -166,14 +163,14 @@ def makeBoxFaces(box:list):
 
     faces = []
     for f in faces_points:
-        if len(f) < 3 : continue
+        if len(f) < 3:
+            continue
         faces.append(Part.Face(Part.makePolygon(f, True)))
     return faces
 
 
-def cut_face(face:Part.Face, plane:Part.Plane):
-    """Cut the "face" with the "plane". Remaining part is portion in "plane" normal direction.
-    """
+def cut_face(face: Part.Face, plane: Part.Plane):
+    """Cut the "face" with the "plane". Remaining part is portion in "plane" normal direction."""
     line = face.Surface.intersect(plane)
     inter = []
     if len(line) > 0:
@@ -187,7 +184,7 @@ def cut_face(face:Part.Face, plane:Part.Plane):
 
     newpoints = inter[:]
     for v in face.Vertexes:
-        if plane.Axis.dot(v.Point-plane.Position) > 0:
+        if plane.Axis.dot(v.Point - plane.Position) > 0:
             newpoints.append(v.Point)
     if len(newpoints) == 0:
         return None, None
@@ -196,9 +193,8 @@ def cut_face(face:Part.Face, plane:Part.Plane):
         return sorted, inter
 
 
-def cut_box(faces:list, plane:Part.Plane):
-    """ Cut the box make of planar faces with "plane"
-    """
+def cut_box(faces: list, plane: Part.Plane):
+    """Cut the box make of planar faces with "plane" """
     updatedfaces = []
     newface_points = []
     for f in faces:
@@ -215,9 +211,8 @@ def cut_box(faces:list, plane:Part.Plane):
     return updatedfaces
 
 
-def sort_points(point_list:list, normal:FreeCAD.Vector):
-    """ Sort the points of the polygon face in anti-clock wise with respect vector "normal". 
-    """
+def sort_points(point_list: list, normal: FreeCAD.Vector):
+    """Sort the points of the polygon face in anti-clock wise with respect vector "normal"."""
     if len(point_list) == 0:
         return []
 
@@ -243,59 +238,48 @@ def sort_points(point_list:list, normal:FreeCAD.Vector):
     return points
 
 
-def remove_box_faces(point_face_list:list, faces:list, boxlim:list):
-    """Remove the remaing initial BoundBox faces from the multplane faces produced
-    """
+def remove_box_faces(point_face_list: list, faces: list, boxlim: list):
+    """Remove the remaing initial BoundBox faces from the multplane faces produced"""
     tol = 1e-8
     plane_points = []
     for i, face in enumerate(faces):
         if abs(face.Surface.Axis.dot(FreeCAD.Vector(1, 0, 0)) - 1) < tol and abs(boxlim[0] - face.Surface.Position.x) < tol:
             continue
-        elif (
-            abs(face.Surface.Axis.dot(FreeCAD.Vector(-1, 0, 0)) - 1) < tol
-            and abs(boxlim[3] - face.Surface.Position.x) < tol
-        ):
+        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(-1, 0, 0)) - 1) < tol and abs(boxlim[3] - face.Surface.Position.x) < tol:
             continue
-        elif (
-            abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 1, 0)) - 1) < tol and abs(boxlim[1] - face.Surface.Position.y) < tol
-        ):
+        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 1, 0)) - 1) < tol and abs(boxlim[1] - face.Surface.Position.y) < tol:
             continue
-        elif (
-            abs(face.Surface.Axis.dot(FreeCAD.Vector(0, -1, 0)) - 1) < tol
-            and abs(boxlim[4] - face.Surface.Position.y) < tol
-        ):
+        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, -1, 0)) - 1) < tol and abs(boxlim[4] - face.Surface.Position.y) < tol:
             continue
-        elif (
-            abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, 1)) - 1) < tol and abs(boxlim[2] - face.Surface.Position.z) < tol
-        ):
+        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, 1)) - 1) < tol and abs(boxlim[2] - face.Surface.Position.z) < tol:
             continue
-        elif (
-            abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, -1)) - 1) < tol
-            and abs(boxlim[5] - face.Surface.Position.z) < tol
-        ):
+        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, -1)) - 1) < tol and abs(boxlim[5] - face.Surface.Position.z) < tol:
             continue
         plane_points.append(point_face_list[i])
 
     return plane_points
 
-def fix_same_points(points_inplane:list):
-    """ Replace all point separated by distance < tol, by the same point.
+
+def fix_same_points(points_inplane: list):
+    """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
     tol = 1e-8
     remove = []
     for i, p1 in enumerate(points_inplane):
-        if i in remove : continue
-        for p2 in points_inplane[i+1:]:
+        if i in remove:
+            continue
+        for p2 in points_inplane[i + 1 :]:
             r = p1 - p2
             if r.Length < tol:
                 remove.append(i)
 
     for ind in reversed(remove):
-        del (points_inplane[ind])  
+        del points_inplane[ind]
 
-def fix_points(point_plane_list:list, vertex_list:list):
-    """ Replace all point separated by distance < tol, by the same point.
+
+def fix_points(point_plane_list: list, vertex_list: list):
+    """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
     tol = 1e-8
@@ -307,7 +291,7 @@ def fix_points(point_plane_list:list, vertex_list:list):
                     if r.Length < tol:
                         planepts[j] = point
 
-    for v,ord in vertex_list:
+    for v, ord in vertex_list:
         for planepts in point_plane_list:
             for i in range(len(planepts)):
                 r = v.Point - planepts[i]
@@ -315,13 +299,12 @@ def fix_points(point_plane_list:list, vertex_list:list):
                     planepts[i] = v.Point
 
 
-def makeMultiPlanes(plane_list:list, vertex_list:list, box:FreeCAD.BoundBox):
-    """build CAD object (FreeCAD Shell) of the multiplane surface
-    """
+def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox):
+    """build CAD object (FreeCAD Shell) of the multiplane surface"""
     boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
     cutfaces = makeBoxFaces(boxlim)
     for p in plane_list:
-        plane = Part.Plane(*p)
+        plane = Part.Plane(p.Surf.Position, -p.Surf.Axis)  # for mutliplane shape construction planes direction must be inverted
         newbox_points = cut_box(cutfaces, plane)
         cutfaces = makeBoxFaces(newbox_points)
 
