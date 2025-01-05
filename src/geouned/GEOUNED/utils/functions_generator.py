@@ -3,7 +3,7 @@
 #
 import logging
 
-import FreeCAD
+import FreeCAD 
 import Part
 
 logger = logging.getLogger("general_logger")
@@ -12,8 +12,8 @@ from .geometry_gu import PlaneGu, CylinderGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import commonVertex, commonEdge, multiplane_loop, no_convex, get_revcan_surfaces
-
 from .basic_functions_part2 import is_same_plane
+
 
 
 
@@ -32,7 +32,7 @@ def get_box(comp, enlargeBox):
     )
 
 
-def get_multiplanes(solid):
+def next_multiplanes(solid,plane_index_set):
     """identify and return all multiplanes in the solid."""
     planes = []
     for f in solid.Faces:
@@ -40,8 +40,6 @@ def get_multiplanes(solid):
             planes.append(f)
 
     multiplane_list = []
-    multiplane_objects = []
-    plane_index_set = set()
     for p in planes:
         loop = False
         for mp in multiplane_list:
@@ -59,14 +57,12 @@ def get_multiplanes(solid):
                 for pp in mplanes:
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)
-                multiplane_objects.append(mp)
-    return multiplane_objects, plane_index_set
+                yield mp
 
-def get_reverseCan(solid):
+
+def next_reverseCan(solid,canface_index):
     """identify and return all can type in the solid."""
 
-    can_list = []
-    canface_index = set()
     for f in solid.Faces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in canface_index:
@@ -75,10 +71,10 @@ def get_reverseCan(solid):
                 cs, surfindex = get_revcan_surfaces(f, solid)
                 if cs is not None:
                     gc = GeounedSurface(("ReverseCan", build_revcan_params(cs)))
-                    can_list.append(gc)
                     canface_index.update(surfindex)
+                    yield gc
 
-    return can_list, canface_index
+    return None
 
 
 def build_revcan_params(cs):

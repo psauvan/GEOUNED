@@ -13,9 +13,11 @@ from tqdm import tqdm
 from .code_version import *
 from .conversion import cell_definition as Conv
 from .cuboid.translate import translate
-from .decompose import decom_one as Decom
+#from .decompose.decom_one import main_split
+from .decompose.decom_one_generators import main_split
 from .loadfile import load_step as Load
-from .utils import functions as UF
+from .utils.geouned_classes import GeounedSolid, SurfacesDict, MetaSurfacesDict
+from .utils.functions import get_box
 from .utils.boolean_solids import build_c_table_from_solids
 from .utils.data_classes import NumericFormat, Options, Settings, Tolerances
 from .void import void as void
@@ -391,7 +393,7 @@ class CadToCsg:
         # sets self.geometry_bounding_box with default padding
         self._get_geometry_bounding_box()
 
-        self.Surfaces = UF.SurfacesDict(
+        self.Surfaces = SurfacesDict(
             offset=self.settings.startSurf - 1,
             options=self.options,
             tolerances=self.tolerances,
@@ -415,7 +417,7 @@ class CadToCsg:
 
             # start Building CGS cells phase
 
-            self.Surfaces = UF.MetaSurfacesDict(
+            self.Surfaces = MetaSurfacesDict(
                 options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format
             )
             for j, m in enumerate(tqdm(self.meta_list, desc="Translating solid cells")):
@@ -497,7 +499,7 @@ class CadToCsg:
                 if c.Definition.level == 0 or c.IsEnclosure:
                     continue
                 logger.info(f"simplify cell {c.__id__}")
-                Box = UF.get_box(c, self.options.enlargeBox)
+                Box = get_box(c, self.options.enlargeBox)
                 CT = build_c_table_from_solids(Box, (c.Surfaces, Surfs), "full", options=self.options)
                 c.Definition.simplify(CT)
                 c.Definition.clean()
@@ -537,7 +539,7 @@ class CadToCsg:
 ##########################################################
              VOID CELLS
 ##########################################################"""
-            mc = UF.GeounedSolid(None)
+            mc = GeounedSolid(None)
             mc.Comments = lineComment
             self.meta_list.append(mc)
 
@@ -586,14 +588,14 @@ class CadToCsg:
                 else:
                     m.Solids[0].exportStep(str(debug_output_folder / f"origSolid_{i}.stp"))
 
-            comsolid, err = Decom.main_split(
+            comsolid = main_split(
                 Part.makeCompound(m.Solids),
                 self.options,
                 self.tolerances,
-                self.numeric_format,
+#                self.numeric_format, #not used with generators
             )
 
-            if err != 0:
+            if False: #todo decomposition error information 
                 sus_output_folder = Path("suspicious_solids")
                 sus_output_folder.mkdir(parents=True, exist_ok=True)
                 if m.IsEnclosure:
@@ -655,7 +657,7 @@ def print_warning_solids(warnSolids, warnEnclosures):
         solids_logger.info(lines)
 
 
-def join_meta_lists(MList) -> typing.List[UF.GeounedSolid]:
+def join_meta_lists(MList) -> typing.List[GeounedSolid]:
 
     newMetaList = MList[0]
     if MList[0]:
@@ -703,7 +705,7 @@ def sort_enclosure(MetaList, meta_void, offSet=0):
             lineComment = f"""##########################################################
              ENCLOSURE {m.EnclosureID}
 ##########################################################"""
-            mc = UF.GeounedSolid(None)
+            mc = GeounedSolid(None)
             mc.Comments = lineComment
             newMeta.append(mc)
             for e in newList[m.EnclosureID]:
@@ -716,7 +718,7 @@ def sort_enclosure(MetaList, meta_void, offSet=0):
             lineComment = f"""##########################################################
             END  ENCLOSURE {m.EnclosureID}
 ##########################################################"""
-            mc = UF.GeounedSolid(None)
+            mc = GeounedSolid(None)
             mc.Comments = lineComment
             newMeta.append(mc)
 
@@ -730,7 +732,7 @@ def sort_enclosure(MetaList, meta_void, offSet=0):
 ##########################################################
              VOID CELLS 
 ##########################################################"""
-    mc = UF.GeounedSolid(None)
+    mc = GeounedSolid(None)
     mc.Comments = lineComment
     newMeta.append(mc)
 

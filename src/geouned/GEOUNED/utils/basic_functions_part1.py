@@ -201,13 +201,25 @@ class TorusParams:
 class MultiPlanesParams:
     def __init__(self, params):
         self.PlaneNumber = len(params[0])
-        self.Planes = []
         self.Edges = params[1]
         self.Vertexes = params[2]
         self.Planes = params[0][:]
 
     def __str__(self):
         outstr = f"""Multiplane :\n"""
+        for p in self.Planes:
+            outstr += f"{p.__str__()} \n"
+        return outstr
+
+class ReverseCanParams:
+    def __init__(self, params):
+        self.PlaneNumber = len(params)-1
+        self.Planes = params[1:]
+        self.Cylinder = params[0]
+
+    def __str__(self):
+        outstr = f"""ReverseCan :\n"""
+        outstr += f"{self.Cylinder.__str__()} \n"
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr

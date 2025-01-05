@@ -1,141 +1,170 @@
-import FreeCAD
 import Part
+import FreeCAD
 import numpy
 
-
-class plane_index:
-    def __init__(self, plane, index, orientation):
-        self.plane = plane
-        self.index = index
-        self.orientation = orientation
+from .split_function import split_bop
+from .data_classes import Options
 
 
-def multiplane_loop(adjacents, multi_list, planes):
-    for p in adjacents:
-        new_adjacents = multiplane(p, planes)
-        for ap in reversed(new_adjacents):
-            if ap in multi_list:
-                new_adjacents.remove(ap)
-        multi_list.extend(new_adjacents)
-        multiplane_loop(new_adjacents, multi_list, planes)
+def makePlane(normal, position, Box):
+
+    p0 = normal.dot(position)
+
+    pointEdge = []
+    for i in range(12):
+        edge = Box.getEdge(i)
+        p1 = normal.dot(edge[0])
+        p2 = normal.dot(edge[1])
+        d0 = p0 - p1
+        d1 = p2 - p1
+        if d1 != 0:
+            a = d0 / d1
+            if a >= 0 and a <= 1:
+                pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
+
+    if len(pointEdge) == 0:
+        return None  # Plane does not cross box
+
+    s = FreeCAD.Vector((0, 0, 0))
+    for v in pointEdge:
+        s = s + v
+    s = s / len(pointEdge)
+
+    vtxvec = []
+    for v in pointEdge:
+        vtxvec.append(v - s)
+
+    X0 = vtxvec[0]
+    Y0 = normal.cross(X0)
+
+    orden = []
+    for i, v in enumerate(vtxvec):
+        phi = numpy.arctan2(v.dot(Y0), v.dot(X0))
+        orden.append((phi, i))
+    orden.sort()
+
+    return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
 
 
-def no_convex(mplane_list):
-    planes = mplane_list[:]
-    while len(planes) > 1:
-        p = planes.pop()
-        Edges = p.plane.OuterWire.Edges
-        for e in Edges:
-            try:
-                type_curve = type(e.Curve)
-            except:
-                type_curve = None
-            if type_curve is not Part.Line:
-                continue
-            adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
-            if adjacent_plane is not None:
-                sign = region_sign(p.plane, adjacent_plane.plane, e)
-                if sign == "AND":
-                    return False
-    return True
+def makeCylinder(axis, center, radius, Box):
+    dmin = axis.dot((Box.getPoint(0) - center))
+    dmax = dmin
+    for i in range(1, 8):
+        d = axis.dot((Box.getPoint(i) - center))
+        dmin = min(d, dmin)
+        dmax = max(d, dmax)
+
+    center = center + (dmin - 5) * axis
+    length = dmax - dmin + 10
+    return Part.makeCylinder(radius, length, center, axis, 360.0)
 
 
-def convex_wire(p):
-    Edges = p.OuterWire.Edges
-    for e in Edges:
-        if type(e.Curve) != Part.Line:
-            return []
+def makeCone(axis, apex, tan, Box):
+    dmax = axis.dot((Box.getPoint(0) - apex))
+    for i in range(1, 8):
+        d = axis.dot((Box.getPoint(i) - apex))
+        dmax = max(d, dmax)
 
-    normal = p.Surface.Axis
-    v0 = Edges[0].Curve.Direction.cross(p.Surface.Axis)
-    if Edges[0].Orientation == "Forward":
-        v0 = -v0
-
-    for e in Edges[1:]:
-        v1 = e.Curve.Direction.cross(p.Surface.Axis)
-        if e.Orientation == "Forward":
-            v1 = -v1
-        if normal.dot(v0.cross(v1)) < 0:
-            return []
-        v0 = v1
-
-    return Edges
-
-
-def multiplane(p, planes):
-    """Found planes adjacent to "p". Region delimited by plane is concanve."""
-    Edges = p.plane.OuterWire.Edges
-    addplane = [p]
-    for e in Edges:
-        try:
-            type_curve = type(e.Curve)
-        except:
-            type_curve = None
-        if type_curve is not Part.Line:
-            continue
-
-        adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
-        if adjacent_plane is not None:
-            sign = region_sign(p.plane, adjacent_plane.plane, e)
-            if sign == "OR":
-                addplane.append(adjacent_plane)
-    return addplane
-
-
-def region_sign(p1, p2, e1):
-    normal1 = p1.Surface.Axis
-    direction = e1.Curve.Direction
-    if e1.Orientation == "Forward":
-        direction = -direction
-    vect = direction.cross(normal1)  # toward inside the face. For vect, p1 face orientation doesn't matter.
-
-    normal2 = p2.Surface.Axis
-    if p2.Orientation == "Forward":
-        normal2 = -normal2
-
-    return "OR" if vect.dot(normal2) < 0 else "AND"
-
-
-def other_face_edge(current_edge, current_face, Faces, outer_only=False):
-    for face in Faces:
-        if face.plane.isSame(current_face.plane):
-            continue
-
-        Edges = face.plane.OuterWire.Edges if outer_only else face.plane.Edges
-        for edge in Edges:
-            if current_edge.isSame(edge):
-                return face
-
-
-def commonVertex(e1, e2):
-    if e1.distToShape(e2)[0] > 0:
-        return []
-
-    common = []
-    if e1.Vertexes[0].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[0])
-    elif e1.Vertexes[0].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[0])
-
-    if e1.Vertexes[1].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[1])
-    elif e1.Vertexes[1].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[1])
-
-    return common
-
-
-def commonEdge(face1, face2, outer_only=True):
-    if face1.distToShape(face2)[0] > 0:
+    if dmax > 0:
+        length = dmax + 10
+        rad = tan * length 
+        return Part.makeCone(0.0, rad, length, apex, axis, 360.0)
+    else:
         return None
 
-    Edges1 = face1.OuterWire.Edges if outer_only else face1.Edges
-    Edges2 = face2.OuterWire.Edges if outer_only else face2.Edges
-    for e1 in Edges1:
-        for e2 in Edges2:
-            if e1.isSame(e2):
-                return e1
-    return None
+
+def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox):
+    """build CAD object (FreeCAD Shell) of the multiplane surface"""
+    boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
+    cutfaces = makeBoxFaces(boxlim)
+    for p in plane_list:
+        plane = Part.Plane(p.Surf.Position, -p.Surf.Axis)  # for mutliplane shape construction planes direction must be inverted
+        newbox_points = cut_box(cutfaces, plane)
+        cutfaces = makeBoxFaces(newbox_points)
+
+    plane_points = remove_box_faces(newbox_points, cutfaces, boxlim)
+    fix_points(plane_points, vertex_list)
+
+    return Part.makeShell(makeBoxFaces(plane_points))
+
+
+def makeReverseCan(cylinder, plane_list, Box):
+
+    radius = cylinder.Surf.Radius
+    axis = cylinder.Surf.Axis
+    center = cylinder.Surf.Center
+    plane1 = plane_list[0]
+    normal1 = plane1.Surf.Axis
+    pos1 = plane1.Surf.Position
+    if len(plane_list) == 2:
+        plane2 = plane_list[1]
+        normal2 = plane2.Surf.Axis
+        pos2 = plane2.Surf.Position
+
+    options = Options()
+
+    g1 = (pos1 - center).dot(normal1) / normal1.dot(axis)
+    pt1 = center + g1 * axis
+
+    axisnorm = axis.dot(normal1)
+    orto = abs(axisnorm) > 1 - 1e-8
+    if len(plane_list) == 2 and orto:
+        orto = abs(axis.dot(normal2)) > 1 - 1e-8
+
+    if not orto:
+        dmin = axis.dot(Box.getPoint(0) - pt1)
+        dmax = dmin
+        for i in range(1, 8):
+            d = axis.dot(Box.getPoint(i) - pt1)
+            dmin = min(d, dmin)
+            dmax = max(d, dmax)
+
+        height = dmax - dmin
+        dmin -= 0.1 * height
+        dmax += 0.1 * height
+        height = dmax - dmin
+
+        point = pt1 + dmin * axis
+        cylshape = Part.makeCylinder(radius, height, point, axis, 360)
+        planeshape1 = makePlane(normal1, pt1, Box)
+
+        if len(plane_list) == 1:
+            comsolid = split_bop(cylshape, [planeshape1], options.splitTolerance, options)
+            s1, s2 = comsolid.Solids
+            v1 = s1.CenterOfMass - pt1
+            if v1.dot(normal1) > 0:
+                return s2
+            else:
+                return s1
+        else:
+            g2 = (pos2 - center).dot(normal2) / normal2.dot(axis)
+            pt2 = center + g2 * axis
+            planeshape2 = makePlane(normal2, pt2, Box)
+            comsolid = split_bop(cylshape, [planeshape1, planeshape2], options.splitTolerance, options)
+            s1, s2, s3 = comsolid.Solids
+            v1 = s1.CenterOfMass - pt1
+            v2 = s1.CenterOfMass - pt2
+            if v1.dot(v2) < 0:
+                return s1
+            v1 = s2.CenterOfMass - pt1
+            v2 = s2.CenterOfMass - pt2
+            if v1.dot(v2) < 0:
+                return s2
+            return s3
+
+    else:
+        if len(plane_list) == 1:
+            if axisnorm > 0:
+                height = -dmin
+                axis = -axis
+            else:
+                height = dmax
+            return Part.makeCylinder(radius, height, pt1, axis, 360)
+        else:
+            g2 = (plane2.Surf.Position - center).dot(plane2.Surf.Axis) / plane2.Surf.Axis.dot(axis)
+            if g1 > g2:
+                axis = -axis
+            return Part.makeCylinder(radius, abs(g2 - g1), pt1, axis, 360)
 
 
 def makeBoxFaces(box: list):
@@ -297,18 +326,3 @@ def fix_points(point_plane_list: list, vertex_list: list):
                 r = v.Point - planepts[i]
                 if r.Length < tol:
                     planepts[i] = v.Point
-
-
-def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox):
-    """build CAD object (FreeCAD Shell) of the multiplane surface"""
-    boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
-    cutfaces = makeBoxFaces(boxlim)
-    for p in plane_list:
-        plane = Part.Plane(p.Surf.Position, -p.Surf.Axis)  # for mutliplane shape construction planes direction must be inverted
-        newbox_points = cut_box(cutfaces, plane)
-        cutfaces = makeBoxFaces(newbox_points)
-
-    plane_points = remove_box_faces(newbox_points, cutfaces, boxlim)
-    fix_points(plane_points, vertex_list)
-
-    return Part.makeShell(makeBoxFaces(plane_points))

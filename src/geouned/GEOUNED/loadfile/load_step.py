@@ -9,7 +9,7 @@ import FreeCAD
 import Part
 from FreeCAD import Import
 
-from ..utils import functions as UF
+from ..utils.geouned_classes import GeounedSolid
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -54,7 +54,7 @@ def load_cad(filename, settings, options):
     Solids = s.Solids
     meta_list = []
     for i, s in enumerate(Solids):
-        meta_list.append(UF.GeounedSolid(i + 1, s))
+        meta_list.append(GeounedSolid(i + 1, s))
 
     i_solid = 0
     missing_mat = set()

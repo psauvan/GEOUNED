@@ -5,9 +5,8 @@ import Part
 from tqdm import tqdm
 
 from ..loadfile import load_functions as LF
-from ..utils.basic_functions_part1 import is_opposite
 from ..utils.boolean_function import BoolSequence
-from ..utils.functions import GeounedSolid, GeounedSurface
+from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from . import void_functions as VF
 from .void_box_class import VoidBox
 

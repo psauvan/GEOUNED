@@ -11,7 +11,8 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.boolean_function import BoolRegion
-from ..utils.functions import GeounedSurface
+from ..utils.geouned_classes import GeounedSurface
+from ..utils.geometry_gu import FaceGu,CylinderGu
 
 logger = logging.getLogger("general_logger")
 
@@ -218,11 +219,11 @@ def U_torus_planes(face, u_params, Surfaces):
         return auxillary_plane(plane1, Surfaces) + auxillary_plane(plane2, Surfaces)
 
 
-def gen_plane_sphere(face, solid, Surfaces):
+def gen_plane_sphere(face, solidFaces):
     same_faces = []
     same_faces.append(face)
 
-    for f in solid.Faces:
+    for f in solidFaces:
         if f.isEqual(face) or str(f.Surface) != "Sphere":
             continue
         if f.Surface.Center == face.Surface.Center and f.Surface.Radius == face.Surface.Radius:
@@ -247,26 +248,25 @@ def gen_plane_sphere(face, solid, Surfaces):
     if dmin > 1e-6:
         center = face.Surface.Center + 0.95 * dmin * normal
         plane = GeounedSurface(("Plane", (center, normal, 1, 1)))
-        return auxillary_plane(plane, Surfaces)
     else:
         return None
 
 
-def gen_plane_cylinder(face, solid, Surfaces):
+def gen_plane_cylinder(face, solidFaces, tolerances):
 
     surf = face.Surface
     rad = surf.Radius
-
+ 
     if str(surf) != "<Cylinder object>":
         return None
 
-    my_index = solid.Faces.index(face)
+    my_index =face.Index
     face_index = [my_index]
 
-    for i, face2 in enumerate(solid.Faces):
-        if face2.Area < Surfaces.tolerances.min_area:
+    for face2 in solidFaces:
+        if face2.Area < tolerances.min_area:
             logger.warning(
-                f"surface {str(surf)} removed from cell definition. Face area < Min area ({face2.Area} < {Surfaces.tolerances.min_area})"
+                f"surface {str(surf)} removed from cell definition. Face area < Min area ({face2.Area} < {tolerances.min_area})"
             )
             continue
         if str(face2.Surface) == "<Cylinder object>" and not (face2.isEqual(face)):
@@ -276,20 +276,20 @@ def gen_plane_cylinder(face, solid, Surfaces):
                 and is_in_line(face2.Surface.Center, face.Surface.Axis, face.Surface.Center)
             ):
                 # print 'Warning: coincident cylinder faces are the same'
-                face_index.append(i)
+                face_index.append(face2.Index)
 
-    u_min, u_max = get_u_value_boundary(solid, face_index, my_index)
+    u_min, u_max = get_u_value_boundary(solidFaces, face_index, my_index)
     if u_min is None:
         return None
 
     u_1, i1 = u_min
     u_2, i2 = u_max
 
-    v_1 = solid.Faces[i1].ParameterRange[2]
-    v_2 = solid.Faces[i2].ParameterRange[2]
+    v_1 = solidFaces[i1].ParameterRange[2]
+    v_2 = solidFaces[i2].ParameterRange[2]
 
-    p1 = solid.Faces[i1].valueAt(u_1, v_1)
-    p2 = solid.Faces[i2].valueAt(u_2, v_2)
+    p1 = solidFaces[i1].valueAt(u_1, v_1)
+    p2 = solidFaces[i2].valueAt(u_2, v_2)
 
     if p1.isEqual(p2, 1e-5):
         logger.error("Error in the additional place definition")
@@ -300,23 +300,22 @@ def gen_plane_cylinder(face, solid, Surfaces):
     if normal.dot(face.CenterOfMass - p1) < 0:
         normal = -normal
 
-    plane = GeounedSurface(("Plane", (p1, normal, 1, 1)))
-    return auxillary_plane(plane, Surfaces)
+    return GeounedSurface(("Plane", (p1, normal, 1, 1)))
 
 
-def gen_plane_cone(face, solid, Surfaces):
+def gen_plane_cone(face, solidFaces, tolerances):
 
     Surf = face.Surface
     if str(Surf) != "<Cone object>":
         return None
 
-    myIndex = solid.Faces.index(face)
+    myIndex = solidFaces.index(face)
     face_index = [myIndex]
 
-    for i, face2 in enumerate(solid.Faces):
-        if face2.Area < Surfaces.tolerances.min_area:
+    for face2 in solidFaces:
+        if face2.Area < tolerances.min_area:
             logger.warning(
-                f"{str(Surf)} surface removed from cell definition. Face area < Min area ({face2.Area} < {Surfaces.tolerances.min_area})"
+                f"{str(Surf)} surface removed from cell definition. Face area < Min area ({face2.Area} < {tolerances.min_area})"
             )
             continue
         if str(face2.Surface) == "<Cone object>" and not (face2.isEqual(face)):
@@ -325,20 +324,20 @@ def gen_plane_cone(face, solid, Surfaces):
                 and face2.Surface.Apex.isEqual(face.Surface.Apex, 1e-5)
                 and (face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1e-6
             ):
-                face_index.append(i)
+                face_index.append(face2.Index)
 
-    u_min, u_max = get_u_value_boundary(solid, face_index, myIndex)
+    u_min, u_max = get_u_value_boundary(solidFaces, face_index, myIndex)
     if u_min is None:
         return None
 
     u_1, i1 = u_min
     u_2, i2 = u_max
 
-    v_1 = solid.Faces[i1].ParameterRange[2]
-    v_2 = solid.Faces[i2].ParameterRange[2]
+    v_1 = solidFaces[i1].ParameterRange[2]
+    v_2 = solidFaces[i2].ParameterRange[2]
 
-    p1 = solid.Faces[i1].valueAt(u_1, v_1)
-    p2 = solid.Faces[i2].valueAt(u_2, v_2)
+    p1 = solidFaces[i1].valueAt(u_1, v_1)
+    p2 = solidFaces[i2].valueAt(u_2, v_2)
 
     if p1.isEqual(p2, 1e-5):
         logger.error("in the additional place definition")
@@ -351,13 +350,12 @@ def gen_plane_cone(face, solid, Surfaces):
     if normal.dot(face.CenterOfMass - face.Surface.Apex) < 0:
         normal = -normal
 
-    plane = GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
-    return auxillary_plane(plane, Surfaces)
+    return GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
+    
 
+def get_u_value_boundary(solidFaces, face_index, my_index):
 
-def get_u_value_boundary(solid, face_index, my_index):
-
-    face_u_ranges, closed_face = get_closed_ranges(solid, face_index)
+    face_u_ranges, closed_face = get_closed_ranges(solidFaces, face_index)
     if closed_face:
         return None, None
 
@@ -367,11 +365,11 @@ def get_u_value_boundary(solid, face_index, my_index):
             return u_min, u_max
 
 
-def get_closed_ranges(solid, face_index):
+def get_closed_ranges(solidFaces, face_index):
 
     u_nodes = []
     for index in face_index:
-        URange = solid.Faces[index].ParameterRange
+        URange = solidFaces[index].ParameterRange
         u_nodes.append((URange[0], index))
         u_nodes.append((URange[1], index))
     u_nodes.sort()

@@ -7,49 +7,20 @@ import math
 import numpy
 from collections import OrderedDict
 
-import FreeCAD
 import Part
 
-from ..utils.geouned_classes import GeounedSurface, MetaSurfacesDict
-from ..utils.functions import get_multiplanes, get_reverseCan
-from ..utils.geometry_gu import SolidGu,PlaneGu,TorusGu
+from ..utils.geouned_classes import GeounedSurface
+from ..utils.geometry_gu import PlaneGu, TorusGu
 from ..utils.basic_functions_part1 import (
     is_in_line,
     is_parallel,
     is_same_value,
 )
 from ..utils.basic_functions_part2 import is_duplicate_in_list
-from ..utils.meta_surfaces import other_face_edge, region_sign
+from ..utils.meta_surfaces import other_face_edge,region_sign
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
-
-
-def get_surfaces(solid, options, tolerances, numeric_format):
-    surfaceDict = extract_surfaces(solid, "All", options, tolerances, numeric_format)
-    kind_order = ("MultiP","RevCan", "Planes", "Cyl", "Cone", "Sph", "Tor")
-
-    cut_surfaces = []
-    for kind in kind_order:
-        if kind == "Planes":
-            PX = []
-            PY = []
-            PZ = []
-            P = []
-            for p in surfaceDict["Planes"]:
-                if is_parallel(p.Surf.Axis, FreeCAD.Vector(1, 0, 0), tolerances.pln_angle):
-                    PX.append(p)
-                elif is_parallel(p.Surf.Axis, FreeCAD.Vector(0, 1, 0), tolerances.pln_angle):
-                    PY.append(p)
-                elif is_parallel(p.Surf.Axis, FreeCAD.Vector(0, 0, 1), tolerances.pln_angle):
-                    PZ.append(p)
-                else:
-                    P.append(p)
-            surfaces = PZ + PX + PY + P
-            cut_surfaces.extend(surfaces)
-        else:
-            cut_surfaces.extend(surfaceDict[kind])
-    return cut_surfaces
 
 
 def gen_plane(pos, normal, diag):
@@ -60,7 +31,7 @@ def gen_plane(pos, normal, diag):
     return plane_center
 
 
-def cyl_bound_planes(solid, face):
+def cyl_bound_planes(solidFaces, face):
     Edges = face.OuterWire.Edges
     planes = []
     for e in Edges:
@@ -69,11 +40,11 @@ def cyl_bound_planes(solid, face):
         except:
             curve = "none"
 
-        adjacent_face = other_face_edge(e, face, solid.Faces)
+        adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
-            if type(adjacent_face.Surface) is  TorusGu:
+            if type(adjacent_face.Surface) is TorusGu:
                 continue  # doesn't create plane if other face is a torus
-            if type(adjacent_face.Surface) is  PlaneGu:
+            if type(adjacent_face.Surface) is PlaneGu:
                 continue  # doesn't create plane if other face is a Plane
             if face.Surface.isSameSurface(adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
@@ -97,7 +68,7 @@ def cyl_bound_planes(solid, face):
     return planes
 
 
-def torus_bound_planes(solid, face, tolerances):
+def torus_bound_planes(solidFaces, face, tolerances):
     params = face.ParameterRange
     planes = []
     if is_same_value(params[1] - params[0], twoPi, tolerances.value):
@@ -111,7 +82,7 @@ def torus_bound_planes(solid, face, tolerances):
         except:
             curve = "none"
 
-        adjacent_face = other_face_edge(e, face, solid.Faces)
+        adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
             if face.Surface.isSameSurface(adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
@@ -158,108 +129,6 @@ def plane_spline_curve(edge, tolerances):
         return (edge.valueAt(0), normal, r.Length, r.Length)
     else:
         return None
-
-
-def extract_surfaces(solid, kind, options, tolerances, numeric_format):
-    fuzzy = False
-    if kind == "All":
-        solid_GU =  SolidGu(solid, tolerances=tolerances)
-    else:
-        if kind == "Plane3Pts":
-            P3P = True
-        else:
-            P3P = False
-        solid_GU =  SolidGu(solid, tolerances=tolerances, plane3Pts=P3P)
-
-    Surfaces = MetaSurfacesDict(options=options, tolerances=tolerances, numeric_format=numeric_format)
-
-    can_list, can_faces = get_reverseCan(solid_GU)
-    for cs in can_list:
-        Surfaces.add_reverseCan(cs)
-
-    multiplanes_list, multiplane_faces = get_multiplanes(solid_GU)
-    for mp in multiplanes_list:
-        Surfaces.add_multiPlane(mp)
-
-    # Get the parameter of all faces of the solid
-    # Add auxillary planes for Cylinders and Cones
-    omitfaces = can_faces.union(multiplane_faces)
-    for iface, face in enumerate(solid.Faces):
-        surf = str(face.Surface)
-        if surf == "<Plane object>" and kind in ["Planes", "All"]:
-            if iface in omitfaces:
-                continue
-            normal = face.Surface.Axis
-            pos = face.CenterOfMass
-            dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-            dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-            plane = GeounedSurface(("Plane", (pos, normal, dim1, dim2)))
-            Surfaces.add_plane(plane, fuzzy)
-
-        elif surf == "<Cylinder object>":
-            if iface in omitfaces:
-                continue
-            dir = face.Surface.Axis
-            orig = face.Surface.Center
-            rad = face.Surface.Radius
-            dim_l = face.ParameterRange[3] - face.ParameterRange[2]
-            if kind in ["Cyl", "All"]:
-                cylinder = GeounedSurface(("Cylinder", (orig, dir, rad, dim_l)))
-                Surfaces.add_cylinder(cylinder, "Forward", fuzzy)
-
-            if kind in ["Planes", "All"]:
-                # add planes if cylinder axis is cut by a plane (plane quasi perpedicular to axis)
-                for p in cyl_bound_planes(solid_GU, face):
-                    Surfaces.add_plane(p, False)
-
-        elif surf == "<Cone object>":
-            dir = face.Surface.Axis
-            apex = face.Surface.Apex
-            half_angle = face.Surface.SemiAngle
-            dim_l = face.ParameterRange[3] - face.ParameterRange[2]
-            dimR = face.Surface.Radius
-            if kind in ["Cone", "All"]:
-                cone = GeounedSurface(("Cone", (apex, dir, half_angle, dim_l, dimR)))
-                Surfaces.add_cone(cone, "Forward")
-
-            if kind in ["Planes", "All"]:
-                for p in cyl_bound_planes(solid_GU, face):
-                    Surfaces.add_plane(p, False)
-
-        elif surf[0:6] == "Sphere" and kind in ["Sph", "All"]:
-            rad = face.Surface.Radius
-            pnt = face.Surface.Center
-            sphere = GeounedSurface(("Sphere", (pnt, rad)))
-            Surfaces.add_sphere(sphere, "Forward")
-
-            if kind in ["Planes", "All"]:
-                for p in cyl_bound_planes(solid_GU, face):
-                    Surfaces.add_plane(p, False)
-
-        elif surf == "<Toroid object>":
-            if kind in ["Tor", "All"]:
-                radMaj = face.Surface.MajorRadius
-                radMin = face.Surface.MinorRadius
-                center = face.Surface.Center
-                dir = face.Surface.Axis
-                torus = GeounedSurface(("Torus", (center, dir, radMaj, radMin)))
-                Surfaces.add_torus(torus, "Forward")
-
-            if kind in ["Planes", "All"]:
-                for p in torus_bound_planes(solid_GU, face, tolerances):
-                    Surfaces.add_plane(p, False)
-
-        elif surf == "<Plane object>" and kind == "Plane3Pts":
-            pos = face.CenterOfMass
-            normal = face.Surface.Axis
-            dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-            dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-            points = tuple(v.Point for v in face.Vertexes)
-
-            plane = GeounedSurface(("Plane3Pts", (pos, normal, dim1, dim2, points)))
-            Surfaces.add_plane(plane, fuzzy)
-
-    return Surfaces
 
 
 #   Check if to faces are joint
@@ -548,35 +417,31 @@ def gen_plane_cone(face, solid, tolerances):
 
 
 def get_solid_dimensions(solid):
-    # not used but may be necessary in the future to check solid validity
+    #not used but may be necessary in the future to check solid validity
     """evaluate characteristic length in the 3 main axis directions of the solid"""
     mat = solid.MatrixOfInertia
-    inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
+    inertialMat = numpy.array(((mat.A11,mat.A12,mat.A13),(mat.A21,mat.A22,mat.A23),(mat.A31,mat.A32,mat.A33)))
     eigval = numpy.linalg.eigvals(inertialMat)
-
-    L0 = math.sqrt(abs(eigval[2] + eigval[1] - eigval[0]) / 2)
-    L1 = math.sqrt(abs(eigval[0] + eigval[2] - eigval[1]) / 2)
-    L2 = math.sqrt(abs(eigval[1] + eigval[0] - eigval[2]) / 2)
-    dim = [L0, L1, L2]
+  
+    L0 = math.sqrt(abs(eigval[2]+eigval[1]-eigval[0])/2)
+    L1 = math.sqrt(abs(eigval[0]+eigval[2]-eigval[1])/2)
+    L2 = math.sqrt(abs(eigval[1]+eigval[0]-eigval[2])/2)
+    dim = [L0,L1,L2]
     dim.sort()
-    return (dim, solid.Volume, solid.Area)
-
+    return (dim,solid.Volume,solid.Area)
 
 def valid_solid(solid):
     Vol_tol = 1e-2
     Vol_area_ratio = 1e-3
-    if abs(solid.Volume / solid.Area) < Vol_area_ratio:
-        return False
-    if abs(solid.Volume) < Vol_tol:
-        return False
+    if abs(solid.Volume/solid.Area) < Vol_area_ratio : return False
+    if abs(solid.Volume) < Vol_tol: return False
     return True
 
-
 def remove_solids(original_solid, Solids):
-
+    
     if len(Solids) == 1:
         return Solids
-
+    
     Solids_Clean = []
     for solid in Solids:
         if not valid_solid(solid):
@@ -587,7 +452,7 @@ def remove_solids(original_solid, Solids):
     return Solids_Clean
 
 def external_plane(plane,Faces):
-    Edges = plane.OuterWire.Edges
+    Edges = plane.Edges
     for e in Edges:
        adjacent_face = other_face_edge(e, plane, Faces)
        if region_sign(plane,adjacent_face,e) == "OR":
@@ -599,5 +464,5 @@ def exclude_no_cutting_planes(Faces):
     for f in Faces:
         if isinstance(f.Surface, PlaneGu):
             if external_plane(f,Faces):
-                omit.add(f.Index)
-    return omit            
+                omit.add(f.Index)              
+    return omit   

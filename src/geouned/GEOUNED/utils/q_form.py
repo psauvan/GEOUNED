@@ -4,8 +4,6 @@
 #
 #
 
-import math
-
 import FreeCAD
 
 

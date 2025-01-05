@@ -8,7 +8,8 @@ import math
 import FreeCAD
 
 from .boolean_function import BoolSequence
-from .functions import GeounedSurface, split_bop
+from .geouned_classes import GeounedSurface
+from .split_function import split_bop
 
 BoolVals = (None, True, False)
 

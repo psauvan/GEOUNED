@@ -20,7 +20,7 @@ from importlib.metadata import version
 import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ..utils.functions import SurfacesDict
+from ..utils.geouned_classes import SurfacesDict
 from .functions import (
     CellString,
     change_surf_sign,

@@ -4,7 +4,7 @@
 import logging
 
 from ..utils import geometry_gu as GU
-from ..utils.functions import get_multiplanes
+from ..utils.functions import get_multiplanes, get_reverseCan
 from ..utils.boolean_function import BoolSequence, BoolRegion
 from .cell_definition_functions import (
     gen_plane,
@@ -38,16 +38,22 @@ def simple_solid_definition(solid, Surfaces):
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
 
     # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
-    multiplanes, pindex = get_multiplanes(
-        solid_gu, None
-    )  # pindex are all faces index used to produced multiplanes, do not count as standard planes
+    # pindex are all faces index used to produced multiplanes, do not count as standard planes
+    multiplanes, pindex = get_multiplanes(solid_gu)  
 
     for mp in multiplanes:
         mp_region = Surfaces.add_multiPlane(mp)
         component_definition.append(mp_region)
 
-    for iface, face in enumerate(solid_gu.Faces):
+    revereCan, cindex = get_reverseCan(solid_gu)   
+    for cs in revereCan:
+        cs_region = Surfaces.add_reverseCan(cs)
+        component_definition.append(cs_region) 
 
+    omitFaces = pindex.union(cindex)
+    for iface, face in enumerate(solid_gu.Faces):
+        if iface in omitFaces:
+            continue
         if abs(face.Area) < Surfaces.tolerances.min_area:
             logger.warning(
                 f"{str(face.Surface)} surface removed from cell definition. Face area < Min area ({face.Area} < {Surfaces.tolerances.min_area})"
@@ -63,8 +69,6 @@ def simple_solid_definition(solid, Surfaces):
             orient = face.Orientation
 
         if isinstance(face.Surface, GU.PlaneGu):
-            if iface in pindex:
-                continue  # the face in includes in multiplane
             plane = gen_plane(face, orient)
             plane_region = Surfaces.add_plane(plane, True)
             component_definition.append(plane_region)
@@ -74,11 +78,10 @@ def simple_solid_definition(solid, Surfaces):
             cylinder_region = Surfaces.add_cylinder(cylinder, orient)
 
             if orient == "Reversed":
-                plane = gen_plane_cylinder(
-                    face, solid, Surfaces.tolerances
-                )  # plane must be correctly oriented toward materials
+                plane = gen_plane_cylinder(face, solid_gu.Faces, Surfaces.Tolerances)  # plane must be correctly oriented toward materials
                 if plane is not None:
                     cylinder_region = BoolRegion.mult(cylinder_region, auxillary_plane(plane, Surfaces), label=cylinder_region)
+
             component_definition.append(cylinder_region)
 
         elif isinstance(face.Surface, GU.ConeGu):
@@ -93,7 +96,7 @@ def simple_solid_definition(solid, Surfaces):
                     cone_region = BoolRegion.add(cone_region, auxillary_plane(apex_plane, Surfaces), label=cone_region)
 
             if orient == "Reversed":
-                plane = gen_plane_cone(face, solid, Surfaces.tolerances)  # plane must be correctly oriented toward materials
+                plane = gen_plane_cone(face, solid_gu.Faces, Surfaces.tolerances) # plane must be correctly oriented toward materials
                 if plane is not None:
                     cone_region = BoolRegion.mult(cone_region, auxillary_plane(plane, Surfaces), label=cone_region)
             component_definition.append(cone_region)
@@ -101,11 +104,10 @@ def simple_solid_definition(solid, Surfaces):
         elif isinstance(face.Surface, GU.SphereGu):
             sphere = gen_sphere(face)
             sphere_region = Surfaces.add_sphere(sphere, orient)
-
             if orient == "Reversed":
-                plane_region = gen_plane_sphere(face, solid, Surfaces)
-                if plane_region is not None:
-                    sphere_region = BoolRegion.mult(sphere_region, plane_region, label=sphere_region)
+                plane = gen_plane_sphere(face, solid_gu.Faces)
+                if plane is not None:
+                    sphere_region = BoolRegion.mult(sphere_region, auxillary_plane(plane, Surfaces), label=sphere_region)
             component_definition.append(sphere_region)
 
         elif isinstance(face.Surface, GU.TorusGu):

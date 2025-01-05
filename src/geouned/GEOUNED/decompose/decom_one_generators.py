@@ -5,17 +5,16 @@
 import logging
 import Part
 
-from .decom_utils import remove_solids, get_surfaces
+from .decom_utils_generator import remove_solids 
+from .generators import get_surfaces
 from ..utils.split_function import split_bop
 
 logger = logging.getLogger("general_logger")
 
 
-def split_surfaces(solid, options, tolerances, numeric_format):
+def split_surfaces(solid, options, tolerances):
 
-    surfaces = get_surfaces(solid, options, tolerances, numeric_format)
-
-    solid_components = generic_split(solid, surfaces, options, tolerances, numeric_format)
+    solid_components = generic_split(solid, options, tolerances)
     comp = Part.makeCompound(solid_components)
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > 0.001:
@@ -23,12 +22,13 @@ def split_surfaces(solid, options, tolerances, numeric_format):
     return comp
 
 
-def generic_split(solid, surfaces: list, options, tolerances, numeric_format):
+def generic_split(solid, options, tolerances):
 
     stop_loop = False
     bbox = solid.BoundBox
     bbox.enlarge(10)
-    for surf in surfaces:
+    cleaned = [solid]
+    for surf in get_surfaces(solid, tolerances):
         surf.build_surface(bbox)
         try:
             comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)
@@ -46,20 +46,19 @@ def generic_split(solid, surfaces: list, options, tolerances, numeric_format):
     if stop_loop:
         components = []
         for part in cleaned:
-            new_surfaces = get_surfaces(part, options, tolerances, numeric_format)
-            subcomp = generic_split(part, new_surfaces, options, tolerances, numeric_format)
+            subcomp = generic_split(part, options, tolerances)
             components.extend(subcomp)
     else:
         components = cleaned
     return components
 
 
-def main_split(solidShape, options, tolerances, numeric_format):
+def main_split(solidShape, options, tolerances):
     """decompose in basic solids a solid from CAD."""
     solid_parts = []
 
     for solid in solidShape.Solids:
-        piece = split_surfaces(solid, options, tolerances, numeric_format)
+        piece = split_surfaces(solid, options, tolerances)
         solid_parts.append(piece)
 
     return Part.makeCompound(solid_parts)

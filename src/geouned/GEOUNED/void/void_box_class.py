@@ -7,10 +7,9 @@ import Part
 
 from ..conversion import cell_definition as Conv
 from ..decompose import decom_one as Decom
-from ..utils.basic_functions_part1 import is_opposite
 from ..utils.boolean_function import BoolSequence
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
-from ..utils.functions import GeounedSolid, GeounedSurface
+from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 
 logger = logging.getLogger("general_logger")
 
