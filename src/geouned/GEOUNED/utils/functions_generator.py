@@ -3,7 +3,7 @@
 #
 import logging
 
-import FreeCAD 
+import FreeCAD
 import Part
 
 logger = logging.getLogger("general_logger")
@@ -13,8 +13,6 @@ from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import commonVertex, commonEdge, multiplane_loop, no_convex, get_revcan_surfaces
 from .basic_functions_part2 import is_same_plane
-
-
 
 
 def get_box(comp, enlargeBox):
@@ -32,7 +30,7 @@ def get_box(comp, enlargeBox):
     )
 
 
-def next_multiplanes(solid,plane_index_set):
+def next_multiplanes(solid, plane_index_set):
     """identify and return all multiplanes in the solid."""
     planes = []
     for f in solid.Faces:
@@ -60,7 +58,7 @@ def next_multiplanes(solid,plane_index_set):
                 yield mp
 
 
-def next_reverseCan(solid,canface_index):
+def next_reverseCan(solid, canface_index):
     """identify and return all can type in the solid."""
 
     for f in solid.Faces:
@@ -79,22 +77,22 @@ def next_reverseCan(solid,canface_index):
 
 def build_revcan_params(cs):
     cyl, p1 = cs[0:2]
-    if isinstance(cyl,GeounedSurface):
+    if isinstance(cyl, GeounedSurface):
         gcyl = cyl
-    else:    
+    else:
         gcyl = GeounedSurface(("Cylinder", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-    
-    if isinstance(p1,GeounedSurface):
+
+    if isinstance(p1, GeounedSurface):
         gp1 = p1
-    else:    
+    else:
         gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1.Surface.Axis, 1.0, 1.0)))
-    
+
     params = [gcyl, gp1]
     if len(cs) == 3:
         p2 = cs[2]
-        if isinstance(p2,GeounedSurface):
+        if isinstance(p2, GeounedSurface):
             gp2 = p2
-        else:    
+        else:
             gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2.Surface.Axis, 1.0, 1.0)))
         params.append(gp2)
     return params

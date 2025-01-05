@@ -5,7 +5,7 @@
 import logging
 import Part
 
-from .decom_utils_generator import remove_solids 
+from .decom_utils_generator import remove_solids
 from .generators import get_surfaces
 from ..utils.split_function import split_bop
 

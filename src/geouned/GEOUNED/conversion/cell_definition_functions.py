@@ -12,7 +12,7 @@ from ..utils.basic_functions_part1 import (
 )
 from ..utils.boolean_function import BoolRegion
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import FaceGu,CylinderGu
+from ..utils.geometry_gu import FaceGu, CylinderGu
 
 logger = logging.getLogger("general_logger")
 
@@ -256,11 +256,11 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
 
     surf = face.Surface
     rad = surf.Radius
- 
+
     if str(surf) != "<Cylinder object>":
         return None
 
-    my_index =face.Index
+    my_index = face.Index
     face_index = [my_index]
 
     for face2 in solidFaces:
@@ -351,7 +351,7 @@ def gen_plane_cone(face, solidFaces, tolerances):
         normal = -normal
 
     return GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
-    
+
 
 def get_u_value_boundary(solidFaces, face_index, my_index):
 

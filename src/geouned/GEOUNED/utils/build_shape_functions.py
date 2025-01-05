@@ -67,7 +67,7 @@ def makeCone(axis, apex, tan, Box):
 
     if dmax > 0:
         length = dmax + 10
-        rad = tan * length 
+        rad = tan * length
         return Part.makeCone(0.0, rad, length, apex, axis, 360.0)
     else:
         return None

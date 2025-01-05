@@ -1,5 +1,6 @@
 import BOPTools.SplitAPI
 
+
 def split_bop(solid, tools, tolerance, options, scale=0.1):
 
     if tolerance >= 0.1:

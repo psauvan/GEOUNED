@@ -12,7 +12,7 @@ import Part
 
 from ..utils.geouned_classes import GeounedSurface, MetaSurfacesDict
 from ..utils.functions import get_multiplanes, get_reverseCan
-from ..utils.geometry_gu import SolidGu,PlaneGu,TorusGu
+from ..utils.geometry_gu import SolidGu, PlaneGu, TorusGu
 from ..utils.basic_functions_part1 import (
     is_in_line,
     is_parallel,
@@ -27,7 +27,7 @@ twoPi = math.pi * 2
 
 def get_surfaces(solid, options, tolerances, numeric_format):
     surfaceDict = extract_surfaces(solid, "All", options, tolerances, numeric_format)
-    kind_order = ("MultiP","RevCan", "Planes", "Cyl", "Cone", "Sph", "Tor")
+    kind_order = ("MultiP", "RevCan", "Planes", "Cyl", "Cone", "Sph", "Tor")
 
     cut_surfaces = []
     for kind in kind_order:
@@ -71,9 +71,9 @@ def cyl_bound_planes(solid, face):
 
         adjacent_face = other_face_edge(e, face, solid.Faces)
         if adjacent_face is not None:
-            if type(adjacent_face.Surface) is  TorusGu:
+            if type(adjacent_face.Surface) is TorusGu:
                 continue  # doesn't create plane if other face is a torus
-            if type(adjacent_face.Surface) is  PlaneGu:
+            if type(adjacent_face.Surface) is PlaneGu:
                 continue  # doesn't create plane if other face is a Plane
             if face.Surface.isSameSurface(adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
@@ -163,13 +163,13 @@ def plane_spline_curve(edge, tolerances):
 def extract_surfaces(solid, kind, options, tolerances, numeric_format):
     fuzzy = False
     if kind == "All":
-        solid_GU =  SolidGu(solid, tolerances=tolerances)
+        solid_GU = SolidGu(solid, tolerances=tolerances)
     else:
         if kind == "Plane3Pts":
             P3P = True
         else:
             P3P = False
-        solid_GU =  SolidGu(solid, tolerances=tolerances, plane3Pts=P3P)
+        solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=P3P)
 
     Surfaces = MetaSurfacesDict(options=options, tolerances=tolerances, numeric_format=numeric_format)
 
@@ -586,18 +586,20 @@ def remove_solids(original_solid, Solids):
 
     return Solids_Clean
 
-def external_plane(plane,Faces):
+
+def external_plane(plane, Faces):
     Edges = plane.OuterWire.Edges
     for e in Edges:
-       adjacent_face = other_face_edge(e, plane, Faces)
-       if region_sign(plane,adjacent_face,e) == "OR":
-               return False
-    return True   
+        adjacent_face = other_face_edge(e, plane, Faces)
+        if region_sign(plane, adjacent_face, e) == "OR":
+            return False
+    return True
+
 
 def exclude_no_cutting_planes(Faces):
     omit = set()
     for f in Faces:
         if isinstance(f.Surface, PlaneGu):
-            if external_plane(f,Faces):
+            if external_plane(f, Faces):
                 omit.add(f.Index)
-    return omit            
+    return omit

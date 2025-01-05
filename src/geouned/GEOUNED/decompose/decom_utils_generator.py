@@ -17,7 +17,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.basic_functions_part2 import is_duplicate_in_list
-from ..utils.meta_surfaces import other_face_edge,region_sign
+from ..utils.meta_surfaces import other_face_edge, region_sign
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
@@ -417,31 +417,35 @@ def gen_plane_cone(face, solid, tolerances):
 
 
 def get_solid_dimensions(solid):
-    #not used but may be necessary in the future to check solid validity
+    # not used but may be necessary in the future to check solid validity
     """evaluate characteristic length in the 3 main axis directions of the solid"""
     mat = solid.MatrixOfInertia
-    inertialMat = numpy.array(((mat.A11,mat.A12,mat.A13),(mat.A21,mat.A22,mat.A23),(mat.A31,mat.A32,mat.A33)))
+    inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
     eigval = numpy.linalg.eigvals(inertialMat)
-  
-    L0 = math.sqrt(abs(eigval[2]+eigval[1]-eigval[0])/2)
-    L1 = math.sqrt(abs(eigval[0]+eigval[2]-eigval[1])/2)
-    L2 = math.sqrt(abs(eigval[1]+eigval[0]-eigval[2])/2)
-    dim = [L0,L1,L2]
+
+    L0 = math.sqrt(abs(eigval[2] + eigval[1] - eigval[0]) / 2)
+    L1 = math.sqrt(abs(eigval[0] + eigval[2] - eigval[1]) / 2)
+    L2 = math.sqrt(abs(eigval[1] + eigval[0] - eigval[2]) / 2)
+    dim = [L0, L1, L2]
     dim.sort()
-    return (dim,solid.Volume,solid.Area)
+    return (dim, solid.Volume, solid.Area)
+
 
 def valid_solid(solid):
     Vol_tol = 1e-2
     Vol_area_ratio = 1e-3
-    if abs(solid.Volume/solid.Area) < Vol_area_ratio : return False
-    if abs(solid.Volume) < Vol_tol: return False
+    if abs(solid.Volume / solid.Area) < Vol_area_ratio:
+        return False
+    if abs(solid.Volume) < Vol_tol:
+        return False
     return True
 
+
 def remove_solids(original_solid, Solids):
-    
+
     if len(Solids) == 1:
         return Solids
-    
+
     Solids_Clean = []
     for solid in Solids:
         if not valid_solid(solid):
@@ -451,18 +455,20 @@ def remove_solids(original_solid, Solids):
 
     return Solids_Clean
 
-def external_plane(plane,Faces):
+
+def external_plane(plane, Faces):
     Edges = plane.Edges
     for e in Edges:
-       adjacent_face = other_face_edge(e, plane, Faces)
-       if region_sign(plane,adjacent_face,e) == "OR":
-               return False
-    return True   
+        adjacent_face = other_face_edge(e, plane, Faces)
+        if region_sign(plane, adjacent_face, e) == "OR":
+            return False
+    return True
+
 
 def exclude_no_cutting_planes(Faces):
     omit = set()
     for f in Faces:
         if isinstance(f.Surface, PlaneGu):
-            if external_plane(f,Faces):
-                omit.add(f.Index)              
-    return omit   
+            if external_plane(f, Faces):
+                omit.add(f.Index)
+    return omit

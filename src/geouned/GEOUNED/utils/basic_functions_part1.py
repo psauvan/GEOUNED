@@ -211,9 +211,10 @@ class MultiPlanesParams:
             outstr += f"{p.__str__()} \n"
         return outstr
 
+
 class ReverseCanParams:
     def __init__(self, params):
-        self.PlaneNumber = len(params)-1
+        self.PlaneNumber = len(params) - 1
         self.Planes = params[1:]
         self.Cylinder = params[0]
 

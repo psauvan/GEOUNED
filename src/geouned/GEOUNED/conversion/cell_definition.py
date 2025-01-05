@@ -39,16 +39,16 @@ def simple_solid_definition(solid, Surfaces):
 
     # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
     # pindex are all faces index used to produced multiplanes, do not count as standard planes
-    multiplanes, pindex = get_multiplanes(solid_gu)  
+    multiplanes, pindex = get_multiplanes(solid_gu)
 
     for mp in multiplanes:
         mp_region = Surfaces.add_multiPlane(mp)
         component_definition.append(mp_region)
 
-    revereCan, cindex = get_reverseCan(solid_gu)   
+    revereCan, cindex = get_reverseCan(solid_gu)
     for cs in revereCan:
         cs_region = Surfaces.add_reverseCan(cs)
-        component_definition.append(cs_region) 
+        component_definition.append(cs_region)
 
     omitFaces = pindex.union(cindex)
     for iface, face in enumerate(solid_gu.Faces):
@@ -78,7 +78,9 @@ def simple_solid_definition(solid, Surfaces):
             cylinder_region = Surfaces.add_cylinder(cylinder, orient)
 
             if orient == "Reversed":
-                plane = gen_plane_cylinder(face, solid_gu.Faces, Surfaces.Tolerances)  # plane must be correctly oriented toward materials
+                plane = gen_plane_cylinder(
+                    face, solid_gu.Faces, Surfaces.Tolerances
+                )  # plane must be correctly oriented toward materials
                 if plane is not None:
                     cylinder_region = BoolRegion.mult(cylinder_region, auxillary_plane(plane, Surfaces), label=cylinder_region)
 
@@ -96,7 +98,9 @@ def simple_solid_definition(solid, Surfaces):
                     cone_region = BoolRegion.add(cone_region, auxillary_plane(apex_plane, Surfaces), label=cone_region)
 
             if orient == "Reversed":
-                plane = gen_plane_cone(face, solid_gu.Faces, Surfaces.tolerances) # plane must be correctly oriented toward materials
+                plane = gen_plane_cone(
+                    face, solid_gu.Faces, Surfaces.tolerances
+                )  # plane must be correctly oriented toward materials
                 if plane is not None:
                     cone_region = BoolRegion.mult(cone_region, auxillary_plane(plane, Surfaces), label=cone_region)
             component_definition.append(cone_region)

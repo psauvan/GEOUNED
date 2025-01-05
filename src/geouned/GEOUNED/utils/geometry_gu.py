@@ -15,11 +15,13 @@ from .basic_functions_part2 import is_same_torus
 
 logger = logging.getLogger("general_logger")
 
+
 class face_index:
     def __init__(self, face, index, orientation):
         self.face = face
         self.index = index
         self.orientation = orientation
+
 
 # SURFACES
 class SurfacesGu(object):
@@ -66,6 +68,7 @@ class PlaneGu(SurfacesGu):
 
     def reverse(self):
         self.Axis = -self.Axis
+
 
 class CylinderGu(SurfacesGu):
     """GEOUNED Cylinder Class"""
@@ -175,13 +178,13 @@ class SolidGu:
         self.TorusUParams = {}
         self.inverted = is_inverted(solid)
 
-        for i,face in enumerate(self.Faces):
+        for i, face in enumerate(self.Faces):
             self.Faces[i].set_index(i)
             if self.inverted:
                 orientation = "Reversed" if face.Orientation == "Forward" else "Forward"
             else:
-                orientation = face.Orientation    
-            self.Faces[i].set_orientation(orientation)  
+                orientation = face.Orientation
+            self.Faces[i].set_orientation(orientation)
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
@@ -322,10 +325,10 @@ class FaceGu(object):
         self.Index = None
         return
 
-    def set_orientation(self,orientation):
+    def set_orientation(self, orientation):
         self.Orientation = orientation
 
-    def set_index(self,index):
+    def set_index(self, index):
         self.Index = index
 
     def tessellate(self, val, reset=False):

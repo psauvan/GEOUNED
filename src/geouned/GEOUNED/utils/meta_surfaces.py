@@ -101,32 +101,32 @@ def region_sign(p1, s2, e1):
     normal1 = p1.Surface.Axis
     if p1.Orientation == "Reversed":
         normal1 = -normal1
-    if isinstance(e1.Curve,Part.Line):
+    if isinstance(e1.Curve, Part.Line):
         direction = e1.Curve.Direction
         if e1.Orientation == "Forward":
             direction = -direction
         vect = direction.cross(normal1)  # toward inside the face. For vect, p1 face orientation doesn't matter.
-        if isinstance(s2.Surface,PlaneGu):
-            normal2 = s2.Surface.Axis 
+        if isinstance(s2.Surface, PlaneGu):
+            normal2 = s2.Surface.Axis
             if s2.Orientation == "Forward":
-                normal2 = -normal2 
+                normal2 = -normal2
         else:
-            umin,umax,vmin,vmax = s2.Surface.ParameterRange()
-            u = 0.5*(umin+umax)
-            v = 0.5*(vmin+vmax)
-            normal2 = s2.normalAt(u,v)
+            umin, umax, vmin, vmax = s2.Surface.ParameterRange()
+            u = 0.5 * (umin + umax)
+            v = 0.5 * (vmin + vmax)
+            normal2 = s2.normalAt(u, v)
 
-        return "OR" if vect.dot(normal2) < 0 else "AND"               
+        return "OR" if vect.dot(normal2) < 0 else "AND"
     else:
         fc = s2.CenterOfMass
         org = p1.Surface.Position
-        dt = normal1.dot(fc-org)
+        dt = normal1.dot(fc - org)
         if p1.Orientation == "Forward":
             if dt > 0:
                 return "OR"
             else:
                 return "AND"
-        else:    
+        else:
             if dt > 0:
                 return "AND"
             else:
@@ -289,7 +289,7 @@ def get_closing_plane(face_edge, Faces, lowSide):
     if isinstance(otherface.Surface, PlaneGu):
         if not in_cylinder:
             return None, None
-        if lowSide :
+        if lowSide:
             if otherface.Surface.Axis.dot(axis) > 0:
                 otherface.Surface.reverse()
         else:
@@ -301,7 +301,7 @@ def get_closing_plane(face_edge, Faces, lowSide):
         planes = cyl_bound_planes(cylface, Faces, lowSide, Edges=(edge,))
         plane = None
         index = None
-        
+
         if planes:
             if not convex_face_cyl(cylface, edge, otherface):
                 plane = planes[0]
@@ -324,7 +324,7 @@ def get_closing_plane(face_edge, Faces, lowSide):
 
 
 def face_in_cylinder(edge, face):
-    if isinstance(edge.Curve,Part.BSplineCurve):
+    if isinstance(edge.Curve, Part.BSplineCurve):
         return edge.Curve.getD0(0).dot(face.Surface.Axis) < 0
     else:
         return edge.Curve.Axis.dot(face.Surface.Axis) < 0
@@ -381,7 +381,7 @@ def cyl_bound_planes(face, solidFaces, lowSide, Edges=None):
                 planes.append(plane)
 
             elif curve == "<BSplineCurve object>":
-                planeParams = plane_spline_curve(e,face.Surface.Axis,lowSide)
+                planeParams = plane_spline_curve(e, face.Surface.Axis, lowSide)
                 if planeParams is not None:
                     plane = GeounedSurface(("Plane", planeParams))
                     planes.append(plane)
@@ -389,9 +389,9 @@ def cyl_bound_planes(face, solidFaces, lowSide, Edges=None):
     return planes
 
 
-def plane_spline_curve(edge,zaxis,lowSide):
-   
-    majoraxis = get_axis_inertia(edge.MatrixOfInertia)  
+def plane_spline_curve(edge, zaxis, lowSide):
+
+    majoraxis = get_axis_inertia(edge.MatrixOfInertia)
     curve_2d = True
     knots = edge.Curve.getKnots()
     poles = edge.Curve.getPoles()
@@ -402,40 +402,41 @@ def plane_spline_curve(edge,zaxis,lowSide):
         if abs(normal_k.dot(majoraxis)) > Tolerances().value:
             curve_2d = False
             break
-    
+
     if curve_2d:
-        return (edge.valueAt(0), majoraxis, 1,1)
+        return (edge.valueAt(0), majoraxis, 1, 1)
     else:
-        rmin = (1e15,None)
-        rmax = (-1e15,None)
+        rmin = (1e15, None)
+        rmax = (-1e15, None)
         for p in poles:
             r = majoraxis.dot(p)
             if rmin[0] > r:
-                rmin =(r,p)
+                rmin = (r, p)
             if rmax[0] < r:
-                rmax =(r,p) 
-      
+                rmax = (r, p)
+
         rmin = rmin[1]
         rmax = rmax[1]
-        d = 0.01*abs(majoraxis.dot(rmax-rmin))
+        d = 0.01 * abs(majoraxis.dot(rmax - rmin))
         vec = majoraxis
         if majoraxis.dot(zaxis) > 0:
-            if lowSide :
+            if lowSide:
                 vec = -vec
-                point = rmin+d*vec
+                point = rmin + d * vec
             else:
-                point = rmax+d*vec 
-        else:             
-            if lowSide :
-                point = rmax+d*vec
+                point = rmax + d * vec
+        else:
+            if lowSide:
+                point = rmax + d * vec
             else:
                 vec = -vec
-                point = rmin+d*vec 
-            
-        return (point,vec,1,1)
-    
+                point = rmin + d * vec
+
+        return (point, vec, 1, 1)
+
+
 def get_axis_inertia(mat):
     inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
-    eigval,evect = numpy.linalg.eig(inertialMat)
-    
+    eigval, evect = numpy.linalg.eig(inertialMat)
+
     return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
