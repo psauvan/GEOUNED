@@ -465,14 +465,19 @@ def external_plane(plane, Faces):
     return True
 
 
-def exclude_no_cutting_planes(Faces, omit):
+def exclude_no_cutting_planes(Faces, omit=None):
+    if omit is None:
+        omit = set()
+        return_set = True
+    else:
+        return_set = False    
     for f in Faces:
         if f.Index in omit:
             continue
         if isinstance(f.Surface, PlaneGu):
             if external_plane(f, Faces):
                 omit.add(f.Index)
-
+    return omit if return_set else None
 
 def cutting_face_number(f, Faces, omitfaces):
     Edges = f.Edges

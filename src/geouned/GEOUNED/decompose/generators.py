@@ -11,21 +11,25 @@ from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
 from .decom_utils_generator import cyl_bound_planes, torus_bound_planes, exclude_no_cutting_planes, order_plane_face
 
 
-def get_surfaces(solid, tolerances, plane3pts=False):
+def get_surfaces(solid, tolerances, meta_surface=False, plane3pts=False):
 
     solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=plane3pts)
-    omitfaces = set()
+   
 
-    for rdc in next_roundCorner(solid_GU, omitfaces):
-        yield rdc
+    if meta_surface:
+        omitfaces = set()
+        for rdc in next_roundCorner(solid_GU, omitfaces):
+            yield rdc
 
-    for can in next_reverseCan(solid_GU, omitfaces):
-        yield can
+        for can in next_reverseCan(solid_GU, omitfaces):
+            yield can
 
-    exclude_no_cutting_planes(solid_GU.Faces, omitfaces)
+        exclude_no_cutting_planes(solid_GU.Faces, omitfaces)
 
-    for multiplane in next_multiplanes(solid_GU, omitfaces):
-        yield multiplane
+        for multiplane in next_multiplanes(solid_GU, omitfaces):
+            yield multiplane
+    else:
+        omitfaces = exclude_no_cutting_planes(solid_GU.Faces)
 
     for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, plane3pts):
         yield surface

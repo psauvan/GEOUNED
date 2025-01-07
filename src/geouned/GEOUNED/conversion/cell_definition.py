@@ -32,27 +32,29 @@ def build_definition(meta_obj, Surfaces):
     meta_obj.set_definition(solid_definition)
 
 
-def simple_solid_definition(solid, Surfaces):
+def simple_solid_definition(solid, Surfaces, meta_surfaces=False):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
+    if meta_surfaces:
+        roundCorner, omitFaces = get_roundCorner(solid_gu)
+        for rc in roundCorner:
+            rc_region = Surfaces.add_roundCorner(rc)
+            component_definition.append(rc_region)
 
-    roundCorner, omitFaces = get_roundCorner(solid_gu)
-    for rc in roundCorner:
-        rc_region = Surfaces.add_roundCorner(rc)
-        component_definition.append(rc_region)
+        # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
+        # pindex are all faces index used to produced multiplanes, do not count as standard planes
+        multiplanes = get_multiplanes(solid_gu, omitFaces)
+        for mp in multiplanes:
+            mp_region = Surfaces.add_multiPlane(mp)
+            component_definition.append(mp_region)
 
-    # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
-    # pindex are all faces index used to produced multiplanes, do not count as standard planes
-    multiplanes = get_multiplanes(solid_gu, omitFaces)
-    for mp in multiplanes:
-        mp_region = Surfaces.add_multiPlane(mp)
-        component_definition.append(mp_region)
-
-    revereCan = get_reverseCan(solid_gu, omitFaces)
-    for cs in revereCan:
-        cs_region = Surfaces.add_reverseCan(cs)
-        component_definition.append(cs_region)
+        revereCan = get_reverseCan(solid_gu, omitFaces)
+        for cs in revereCan:
+            cs_region = Surfaces.add_reverseCan(cs)
+            component_definition.append(cs_region)
+    else:
+        omitFaces =set()
 
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
