@@ -11,7 +11,7 @@ logger = logging.getLogger("general_logger")
 from .geometry_gu import PlaneGu, CylinderGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
-from .meta_surfaces import commonVertex, commonEdge, multiplane_loop, no_convex, get_revcan_surfaces
+from .meta_surfaces import commonVertex, commonEdge, multiplane_loop, no_convex, get_revcan_surfaces, get_roundcorner_surfaces
 
 from .basic_functions_part2 import is_same_plane
 
@@ -31,8 +31,15 @@ def get_box(comp, enlargeBox):
     )
 
 
-def get_multiplanes(solid):
+def get_multiplanes(solid, plane_index_set=None):
     """identify and return all multiplanes in the solid."""
+
+    if plane_index_set is None:
+        plane_index_set = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
     planes = []
     for f in solid.Faces:
         if isinstance(f.Surface, PlaneGu):
@@ -40,7 +47,7 @@ def get_multiplanes(solid):
 
     multiplane_list = []
     multiplane_objects = []
-    plane_index_set = set()
+
     for p in planes:
         loop = False
         for mp in multiplane_list:
@@ -59,14 +66,23 @@ def get_multiplanes(solid):
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)
                 multiplane_objects.append(mp)
-    return multiplane_objects, plane_index_set
+
+    if one_value_return:
+        return multiplane_objects
+    else:
+        return multiplane_objects, plane_index_set
 
 
-def get_reverseCan(solid):
+def get_reverseCan(solid, canface_index=None):
     """identify and return all can type in the solid."""
 
+    if canface_index is None:
+        canface_index = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
     can_list = []
-    canface_index = set()
     for f in solid.Faces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in canface_index:
@@ -78,7 +94,54 @@ def get_reverseCan(solid):
                     can_list.append(gc)
                     canface_index.update(surfindex)
 
-    return can_list, canface_index
+    if one_value_return:
+        return can_list
+    else:
+        return can_list, canface_index
+
+
+def get_roundCorner(solid, cornerface_index=None):
+    """identify and return all roundcorner type in the solid."""
+    if cornerface_index is None:
+        cornerface_index = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
+    corner_list = []
+    for f in solid.Faces:
+        if isinstance(f.Surface, CylinderGu):
+            if f.Index in cornerface_index:
+                continue
+            if f.Orientation == "Forward":
+                rc, surfindex = get_roundcorner_surfaces(f, solid)
+                if rc is not None:
+                    gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
+                    cornerface_index.update(surfindex)
+                    corner_list.append(gc)
+
+    if one_value_return:
+        return corner_list
+    else:
+        return corner_list, cornerface_index
+
+
+def build_roundC_params(rc):
+    cyl, p1, p2 = rc[0]
+    configuration = rc[1]
+
+    gcyl = GeounedSurface(("Cylinder", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+    pos_orientation = "Reversed" if configuration == "AND" else "Forward"
+    p1Axis = p1.Surface.Axis if p1.Orientation == pos_orientation else -p1.Surface.Axis
+    p2Axis = p2.Surface.Axis if p2.Orientation == pos_orientation else -p2.Surface.Axis
+
+    gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1Axis, 1.0, 1.0)))
+    gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2Axis, 1.0, 1.0)))
+
+    gpa = get_additional_corner_plane(cyl, p1, p2)
+
+    params = ((gcyl, gpa), (gp1, gp2), configuration)
+    return params
 
 
 def build_revcan_params(cs):
@@ -150,3 +213,29 @@ def build_multip_params(plane_list):
             vertexes.append((v, n + 1))
 
     return (planeparams, edges, vertexes)
+
+
+def get_additional_corner_plane(cyl, p1, p2):
+    e1 = commonEdge(cyl, p1)
+    e2 = commonEdge(cyl, p2)
+    point1 = e1.Vertexes[0].Point
+    point21 = e2.Vertexes[0].Point
+    point22 = e2.Vertexes[1].Point
+    v21 = point21 - point1
+    v22 = point22 - point1
+    dt1 = abs(cyl.Surface.Axis.dot(v21))
+    dt2 = abs(cyl.Surface.Axis.dot(v22))
+    vect = v21 if dt1 < dt2 else v22
+    paxis = vect.cross(cyl.Surface.Axis)
+    paxis.normalize()
+    umin, umax, vmin, vmax = cyl.ParameterRange
+    surfpoint = cyl.valueAt(0.5 * (umin + umax), 0.5 * (vmin + vmax))
+    dir = surfpoint - cyl.Surface.Center
+    dir.normalize()
+
+    if dir.dot(paxis) > 0:
+        paxis = -paxis
+    eps = 1e-7 * cyl.Surface.Radius  # used to avoid lost particles with possible complementary region
+    point = point1 + eps * paxis
+
+    return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0)))

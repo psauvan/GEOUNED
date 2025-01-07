@@ -4,7 +4,7 @@
 import logging
 
 from ..utils import geometry_gu as GU
-from ..utils.functions import get_multiplanes, get_reverseCan
+from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner
 from ..utils.boolean_function import BoolSequence, BoolRegion
 from .cell_definition_functions import (
     gen_plane,
@@ -37,20 +37,23 @@ def simple_solid_definition(solid, Surfaces):
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
 
+    roundCorner, omitFaces = get_roundCorner(solid_gu)
+    for rc in roundCorner:
+        rc_region = Surfaces.add_roundCorner(rc)
+        component_definition.append(rc_region)
+
     # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
     # pindex are all faces index used to produced multiplanes, do not count as standard planes
-    multiplanes, pindex = get_multiplanes(solid_gu)
-
+    multiplanes = get_multiplanes(solid_gu, omitFaces)
     for mp in multiplanes:
         mp_region = Surfaces.add_multiPlane(mp)
         component_definition.append(mp_region)
 
-    revereCan, cindex = get_reverseCan(solid_gu)
+    revereCan = get_reverseCan(solid_gu, omitFaces)
     for cs in revereCan:
         cs_region = Surfaces.add_reverseCan(cs)
         component_definition.append(cs_region)
 
-    omitFaces = pindex.union(cindex)
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
             continue
@@ -79,7 +82,7 @@ def simple_solid_definition(solid, Surfaces):
 
             if orient == "Reversed":
                 plane = gen_plane_cylinder(
-                    face, solid_gu.Faces, Surfaces.Tolerances
+                    face, solid_gu.Faces, Surfaces.tolerances
                 )  # plane must be correctly oriented toward materials
                 if plane is not None:
                     cylinder_region = BoolRegion.mult(cylinder_region, auxillary_plane(plane, Surfaces), label=cylinder_region)

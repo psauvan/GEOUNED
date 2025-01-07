@@ -163,11 +163,10 @@ class BoolSequence:
                 return False
             equals = 0
             temp = def2.elements[:]
-            ne = len(temp) - 1
             for e1 in self.elements:
-                for ie, e2 in enumerate(reversed(temp)):
+                for ie, e2 in enumerate(temp):
                     if e1 == e2:
-                        del temp[ne - ie]
+                        del temp[ie]
                         equals += 1
                         break
             return equals == len(self.elements)

@@ -20,7 +20,28 @@ def multiplane_loop(adjacents, multi_list, planes):
         multiplane_loop(new_adjacents, multi_list, planes)
 
 
+def no_convex_full(mplane_list):
+    """keep planes only all planes are no convex each other"""
+    planes = mplane_list[:]
+    for p in planes:
+        Edges = p.OuterWire.Edges
+        for e in Edges:
+            try:
+                type_curve = type(e.Curve)
+            except:
+                type_curve = None
+            if type_curve is not Part.Line:
+                continue
+            adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
+            if adjacent_plane is not None:
+                sign = region_sign(p, adjacent_plane)
+                if sign == "AND":
+                    return False
+    return True
+
+
 def no_convex(mplane_list):
+    """keep part of no complex plane set"""
     planes = mplane_list[:]
     while len(planes) > 1:
         p = planes.pop()
@@ -34,7 +55,7 @@ def no_convex(mplane_list):
                 continue
             adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
             if adjacent_plane is not None:
-                sign = region_sign(p, adjacent_plane, e)
+                sign = region_sign(p, adjacent_plane)
                 if sign == "AND":
                     return False
     return True
@@ -76,61 +97,49 @@ def multiplane(p, planes):
 
         adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
         if adjacent_plane is not None:
-            sign = region_sign(p, adjacent_plane, e)
+            sign = region_sign(p, adjacent_plane)
             if sign == "OR":
                 addplane.append(adjacent_plane)
     return addplane
 
 
-def region_sign_old(p1, p2, e1):
+def region_sign(p1, s2):
     normal1 = p1.Surface.Axis
-    direction = e1.Curve.Direction
-    if e1.Orientation == "Forward":
-        direction = -direction
-    vect = direction.cross(normal1)  # toward inside the face. For vect, p1 face orientation doesn't matter.
+    e1 = commonEdge(p1, s2, outer_only=False)
 
-    normal2 = p2.Surface.Axis
-    if p2.Orientation == "Forward":
-        normal2 = -normal2
-
-    return "OR" if vect.dot(normal2) < 0 else "AND"
-
-
-def region_sign(p1, s2, e1):
-
-    normal1 = p1.Surface.Axis
-    if p1.Orientation == "Reversed":
-        normal1 = -normal1
     if isinstance(e1.Curve, Part.Line):
         direction = e1.Curve.Direction
-        if e1.Orientation == "Forward":
-            direction = -direction
-        vect = direction.cross(normal1)  # toward inside the face. For vect, p1 face orientation doesn't matter.
+
         if isinstance(s2.Surface, PlaneGu):
+            arc = 0
             normal2 = s2.Surface.Axis
-            if s2.Orientation == "Forward":
+            if s2.Orientation == "Reversed":
                 normal2 = -normal2
         else:
-            umin, umax, vmin, vmax = s2.Surface.ParameterRange()
-            u = 0.5 * (umin + umax)
-            v = 0.5 * (vmin + vmax)
-            normal2 = s2.normalAt(u, v)
+            umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
+            arc = abs(umax - umin)
+            pos = e1.Vertexes[0].Point
+            u, v = u, v = s2.Surface.face.Surface.parameter(pos)
 
-        return "OR" if vect.dot(normal2) < 0 else "AND"
+            normal2 = s2.Surface.face.normalAt(u, v)
     else:
-        fc = s2.CenterOfMass
-        org = p1.Surface.Position
-        dt = normal1.dot(fc - org)
-        if p1.Orientation == "Forward":
-            if dt > 0:
-                return "OR"
-            else:
-                return "AND"
-        else:
-            if dt > 0:
-                return "AND"
-            else:
-                return "OR"
+        arc = 0
+        pos = e1.Vertexes[0].Point
+        pe = e1.Curve.parameter(pos)
+        direction = e1.derivative1At(pe)
+        direction.normalize()
+
+        u, v = s2.Surface.face.Surface.parameter(pos)
+        normal2 = s2.Surface.face.normalAt(u, v)
+
+    vect = direction.cross(normal1)
+    dprod = vect.dot(normal2)
+    if abs(dprod) < 1e-4:
+        return "AND" if abs(dprod) < arc else "OR"
+    else:
+        if p1.Orientation != e1.Orientation:
+            dprod = -dprod
+        return "OR" if dprod < 0 else "AND"
 
 
 def other_face_edge(current_edge, current_face, Faces, outer_only=False):
@@ -179,7 +188,7 @@ def get_revcan_surfaces(cylinder, solid):
 
     same_cylinder_faces, cylindex = get_adjacent_cylinder_faces(cylinder, solid.Faces)
     if not is_closed_cylinder(same_cylinder_faces):
-        return None
+        return None, None
     feLow, feHigh = get_side_edges(same_cylinder_faces)
 
     lowPlane, indexlow = get_closing_plane(feLow, solid.Faces, "low")
@@ -197,6 +206,46 @@ def get_revcan_surfaces(cylinder, solid):
         return surfaces, cylindex
     else:
         return None, None
+
+
+def get_roundcorner_surfaces(cylinder, solid):
+
+    adjacent_planes = get_adjacent_cylplane(cylinder, solid.Faces)
+    if len(adjacent_planes) != 2:
+        return None, None
+
+    p1, p2 = adjacent_planes
+    r1 = region_sign(p1, cylinder)
+    r2 = region_sign(p2, cylinder)
+    if r1 != r2:
+        return None, None
+    face_index = {cylinder.Index, p1.Index, p2.Index}
+    faces = ((cylinder, p1, p2), r1)
+    return faces, face_index
+
+
+def get_adjacent_cylplane(cyl, Faces):
+    planes = []
+    for e in cyl.OuterWire.Edges:
+        if not isinstance(e.Curve, Part.Line):
+            continue
+        otherface = other_face_edge(e, cyl, Faces, outer_only=True)
+        if isinstance(otherface.Surface, PlaneGu):
+            if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
+                planes.append(otherface)
+
+    delindex = []
+    for i, p1 in enumerate(planes):
+        for j, p2 in enumerate(planes[i + 1 :]):
+            if p1.isSame(p2):
+                delindex.append(j + i + 1)
+
+    delindex.sort()
+    delindex.reverse()
+    for i in delindex:
+        del planes[i]
+
+    return planes
 
 
 def get_adjacent_cylinder_faces(cylinder, Faces):

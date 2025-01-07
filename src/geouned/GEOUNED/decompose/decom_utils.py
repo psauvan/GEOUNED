@@ -27,7 +27,7 @@ twoPi = math.pi * 2
 
 def get_surfaces(solid, options, tolerances, numeric_format):
     surfaceDict = extract_surfaces(solid, "All", options, tolerances, numeric_format)
-    kind_order = ("MultiP", "RevCan", "Planes", "Cyl", "Cone", "Sph", "Tor")
+    kind_order = ("RoundC", "MultiP", "RevCan", "Planes", "Cyl", "Cone", "Sph", "Tor")
 
     cut_surfaces = []
     for kind in kind_order:
@@ -591,7 +591,7 @@ def external_plane(plane, Faces):
     Edges = plane.OuterWire.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
-        if region_sign(plane, adjacent_face, e) == "OR":
+        if region_sign(plane, adjacent_face) == "OR":
             return False
     return True
 

@@ -224,3 +224,20 @@ class ReverseCanParams:
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr
+
+
+class RoundCornerParams:
+    def __init__(self, params):
+        self.Planes = params[1]
+        self.Cylinder = params[0][0]
+        self.AddPlane = params[0][1]
+        self.Configuration = params[2]
+
+    def __str__(self):
+        outstr = f"""RoundCorne :\n"""
+        outstr += f"{self.Configuration} \n"
+        outstr += f"{self.Cylinder.__str__()} \n"
+        outstr += f"{self.AddPlane.__str__()} \n"
+        for p in self.Planes:
+            outstr += f"{p.__str__()} \n"
+        return outstr

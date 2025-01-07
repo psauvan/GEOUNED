@@ -18,12 +18,13 @@ from .basic_functions_part1 import (
     TorusParams,
     MultiPlanesParams,
     ReverseCanParams,
+    RoundCornerParams,
 )
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
 from .boolean_function import BoolRegion
-from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeReverseCan
+from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeReverseCan, makeRoundCorner
 from .basic_functions_part1 import is_parallel, is_opposite
 
 from .data_classes import NumericFormat, Options, Tolerances
@@ -204,6 +205,9 @@ class GeounedSurface:
         elif params[0] == "ReverseCan":
             self.Type = params[0]
             self.Surf = ReverseCanParams(params[1])
+        elif params[0] == "RoundCorner":
+            self.Type = params[0]
+            self.Surf = RoundCornerParams(params[1])
 
         self.shape = Face
 
@@ -250,6 +254,10 @@ class GeounedSurface:
             Box.enlarge(10)
             self.shape = makeReverseCan(self.Surf.Cylinder, self.Surf.Planes, Box)
 
+        elif self.Type == "RoundCorner":
+            Box.enlarge(10)
+            self.shape = makeRoundCorner(self.Surf.Cylinder, self.Surf.AddPlane, self.Surf.Planes, self.Surf.Configuration, Box)
+
         else:
             logger.error(f"Type {self.Type} is not defined")
             return
@@ -277,7 +285,7 @@ class MetaSurfacesDict(dict):
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "RevCan"]
+        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "RevCan", "RoundC"]
         for name in surfname:
             self[name] = []
 
@@ -505,6 +513,46 @@ class MetaSurfacesDict(dict):
             return reverseCan.region
         else:
             return cs.region
+
+    def add_roundCorner(self, roundC):
+        cid, exist = self.primitive_surfaces.add_cylinder(roundC.Surf.Cylinder, True)
+        pid, exist = self.primitive_surfaces.add_plane(roundC.Surf.AddPlane, True)
+        if exist:
+            p = self.primitive_surfaces.get_surface(pid)
+            if is_opposite(roundC.Surf.AddPlane.Surf.Axis, roundC.Surf.AddPlane.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+        roundC_surfaces = [f"({cid}:{pid})"]
+
+        for cp in roundC.Surf.Planes:
+            pid, exist = self.primitive_surfaces.add_plane(cp, True)
+            if exist:
+                p = self.primitive_surfaces.get_surface(pid)
+                if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            roundC_surfaces.append(str(pid))
+
+        if roundC.Surf.Configuration == "AND":
+            op = " "
+        else:
+            op = ":"
+        roundC_region = BoolRegion(0, op.join(roundC_surfaces))
+
+        add_corner = True
+        for i, rc in enumerate(self["RoundC"]):
+            if rc.region == roundC_region:
+                add_corner = False
+                self.__last_obj__ = ("RoundC", i)
+                break
+
+        if add_corner:
+            self.surfaceNumber += 1
+            roundC.region = roundC_region.copy(self.surfaceNumber)
+            self.__last_obj__ = ("RoundC", len(self["RoundC"]))
+            self["RoundC"].append(roundC)
+            self.__surfIndex__["RoundC"].append(roundC.region.__int__())
+            return roundC.region
+        else:
+            return rc.region
 
 
 class SurfacesDict(dict):

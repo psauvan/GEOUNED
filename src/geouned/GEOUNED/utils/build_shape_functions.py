@@ -73,19 +73,45 @@ def makeCone(axis, apex, tan, Box):
         return None
 
 
-def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox):
+def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, multibuild=True):
     """build CAD object (FreeCAD Shell) of the multiplane surface"""
     boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
     cutfaces = makeBoxFaces(boxlim)
+
     for p in plane_list:
-        plane = Part.Plane(p.Surf.Position, -p.Surf.Axis)  # for mutliplane shape construction planes direction must be inverted
+        axis = (
+            -p.Surf.Axis if multibuild else p.Surf.Axis
+        )  # for mutliplane shape construction planes direction must be inverted
+        plane = Part.Plane(p.Surf.Position, axis)
         newbox_points = cut_box(cutfaces, plane)
         cutfaces = makeBoxFaces(newbox_points)
-
-    plane_points = remove_box_faces(newbox_points, cutfaces, boxlim)
-    fix_points(plane_points, vertex_list)
+    if multibuild:
+        plane_points = remove_box_faces(newbox_points, cutfaces, boxlim)
+        fix_points(plane_points, vertex_list)
+    else:
+        plane_points = newbox_points
 
     return Part.makeShell(makeBoxFaces(plane_points))
+
+
+def makeRoundCorner(cylinder, addPlane, planes, config, Box):
+    cyl = makeCylinder(cylinder.Surf.Axis, cylinder.Surf.Center, cylinder.Surf.Radius, Box)
+    addplane_part = Part.makeSolid(makeMultiPlanes([addPlane], [], Box, False))
+    plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
+
+    cyl_region = cyl.fuse(addplane_part)
+    if config == "AND":
+        solid = intersection(cyl_region, plane_part)
+    else:
+        solid = cyl_region.fuse(plane_part)
+    return solid.removeSplitter()
+
+
+def intersection(sol1, sol2):
+    d1 = sol1.cut(sol2)
+    d2 = sol2.cut(sol1)
+    d12 = d1.fuse(d2)
+    return sol1.cut(d12)
 
 
 def makeReverseCan(cylinder, plane_list, Box):

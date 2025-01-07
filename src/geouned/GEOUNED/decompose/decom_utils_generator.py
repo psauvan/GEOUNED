@@ -460,15 +460,45 @@ def external_plane(plane, Faces):
     Edges = plane.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
-        if region_sign(plane, adjacent_face, e) == "OR":
+        if region_sign(plane, adjacent_face) == "OR":
             return False
     return True
 
 
-def exclude_no_cutting_planes(Faces):
-    omit = set()
+def exclude_no_cutting_planes(Faces, omit):
     for f in Faces:
+        if f.Index in omit:
+            continue
         if isinstance(f.Surface, PlaneGu):
             if external_plane(f, Faces):
                 omit.add(f.Index)
-    return omit
+
+
+def cutting_face_number(f, Faces, omitfaces):
+    Edges = f.Edges
+    ncut = 0
+    for e in Edges:
+        adjacent_face = other_face_edge(e, f, Faces)
+        if adjacent_face.Index in omitfaces:
+            continue
+        if isinstance(adjacent_face.Surface, PlaneGu):
+            ncut += 1
+        elif region_sign(f, adjacent_face) == "OR":
+            ncut += 1
+    return ncut
+
+
+def order_plane_face(Faces, omitfaces):
+    counts = []
+    face_dict = {}
+    for f in Faces:
+        if f.Index in omitfaces:
+            continue
+        if not isinstance(f.Surface, PlaneGu):
+            continue
+        ncut = cutting_face_number(f, Faces, omitfaces)
+        counts.append((ncut, f.Index))
+        face_dict[f.Index] = f
+
+    counts.sort(reverse=True)
+    return tuple(face_dict[x[1]] for x in counts)
