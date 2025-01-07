@@ -199,7 +199,7 @@ def next_reverseCan(solid, canface_index):
 
 def next_roundCorner(solid, cornerface_index):
     """identify and return all roundcorner type in the solid."""
-
+    
     for f in solid.Faces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
