@@ -230,6 +230,8 @@ def get_adjacent_cylplane(cyl, Faces):
         if not isinstance(e.Curve, Part.Line):
             continue
         otherface = other_face_edge(e, cyl, Faces, outer_only=True)
+        if otherface is None : 
+            continue
         if isinstance(otherface.Surface, PlaneGu):
             if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
                 planes.append(otherface)
