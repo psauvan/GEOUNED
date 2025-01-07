@@ -183,8 +183,34 @@ def commonEdge(face1, face2, outer_only=True):
                 return e1
     return None
 
-
 def get_revcan_surfaces(cylinder, solid):
+    adjacent_planes = get_adjacent_cylplane(cylinder, solid.Faces, cornerPlanes=False)
+    if len(adjacent_planes) not in (1, 2):
+        return None, None
+
+    surfaces = []
+    faceindex = set()
+    p1 = adjacent_planes[0]
+    r1 = region_sign(p1, cylinder)
+    if r1 == "OR":
+        surfaces.append(p1)
+        faceindex.add(p1.Index)
+
+    if len(adjacent_planes) == 2:
+        p2 = adjacent_planes[1]
+        r2 = region_sign(p2, cylinder)
+        if r2 == "OR":
+            surfaces.append(p2)
+            faceindex.add(p2.Index)
+
+    if len(surfaces) > 0 :
+        surfaces.append(cylinder)
+        faceindex.add(cylinder.Index)
+        return surfaces,faceindex
+    else:
+        return None,None
+
+def get_revcan_surfaces_old(cylinder, solid):
 
     same_cylinder_faces, cylindex = get_adjacent_cylinder_faces(cylinder, solid.Faces)
     if not is_closed_cylinder(same_cylinder_faces):
@@ -224,16 +250,27 @@ def get_roundcorner_surfaces(cylinder, solid):
     return faces, face_index
 
 
-def get_adjacent_cylplane(cyl, Faces):
+def get_adjacent_cylplane(cyl, Faces, cornerPlanes = True):
     planes = []
-    for e in cyl.OuterWire.Edges:
-        if not isinstance(e.Curve, Part.Line):
-            continue
-        otherface = other_face_edge(e, cyl, Faces, outer_only=True)
-        if otherface is None : 
-            continue
-        if isinstance(otherface.Surface, PlaneGu):
-            if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
+
+    if cornerPlanes:
+        for e in cyl.OuterWire.Edges:
+            if not isinstance(e.Curve, Part.Line):
+                continue
+            otherface = other_face_edge(e, cyl, Faces, outer_only=True)
+            if otherface is None : 
+                continue
+            if isinstance(otherface.Surface, PlaneGu):
+                if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
+                    planes.append(otherface)
+    else:
+        for e in cyl.OuterWire.Edges:
+            if isinstance(e.Curve, Part.Line):
+                continue
+            otherface = other_face_edge(e, cyl, Faces, outer_only=False)
+            if otherface is None : 
+                continue
+            if isinstance(otherface.Surface, PlaneGu):
                 planes.append(otherface)
 
     delindex = []

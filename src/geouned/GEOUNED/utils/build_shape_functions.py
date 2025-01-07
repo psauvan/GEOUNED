@@ -136,15 +136,14 @@ def makeReverseCan(cylinder, plane_list, Box):
     orto = abs(axisnorm) > 1 - 1e-8
     if len(plane_list) == 2 and orto:
         orto = abs(axis.dot(normal2)) > 1 - 1e-8
-
+    
+    dmin = axis.dot(Box.getPoint(0) - pt1)
+    dmax = dmin
+    for i in range(1, 8):
+        d = axis.dot(Box.getPoint(i) - pt1)
+        dmin = min(d, dmin)
+        dmax = max(d, dmax)
     if not orto:
-        dmin = axis.dot(Box.getPoint(0) - pt1)
-        dmax = dmin
-        for i in range(1, 8):
-            d = axis.dot(Box.getPoint(i) - pt1)
-            dmin = min(d, dmin)
-            dmax = max(d, dmax)
-
         height = dmax - dmin
         dmin -= 0.1 * height
         dmax += 0.1 * height

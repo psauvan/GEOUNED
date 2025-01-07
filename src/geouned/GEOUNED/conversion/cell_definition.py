@@ -90,10 +90,10 @@ def simple_solid_definition(solid, Surfaces):
             component_definition.append(cylinder_region)
 
         elif isinstance(face.Surface, GU.ConeGu):
-            cone = gen_cone(face, orient)
+            cone = gen_cone(face)
             cone_region = Surfaces.add_cone(cone, orient)
 
-            apex_plane = cone_apex_plane(face, orient)
+            apex_plane = cone_apex_plane(face, orient, Surfaces.tolerances)
             if apex_plane is not None:
                 if orient == "Forward":
                     cone_region = BoolRegion.mult(cone_region, auxillary_plane(apex_plane, Surfaces), label=cone_region)

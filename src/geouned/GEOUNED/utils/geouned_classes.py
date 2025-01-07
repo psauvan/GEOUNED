@@ -521,7 +521,7 @@ class MetaSurfacesDict(dict):
             p = self.primitive_surfaces.get_surface(pid)
             if is_opposite(roundC.Surf.AddPlane.Surf.Axis, roundC.Surf.AddPlane.Surf.Axis, self.tolerances.pln_angle):
                 pid = -pid
-        roundC_surfaces = [f"({cid}:{pid})"]
+        roundC_surfaces = [f"({-cid}:{pid})"]
 
         for cp in roundC.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)

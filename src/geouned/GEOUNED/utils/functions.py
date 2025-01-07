@@ -145,7 +145,7 @@ def build_roundC_params(rc):
 
 
 def build_revcan_params(cs):
-    cyl, p1 = cs[0:2]
+    cyl,p1 = reversed(cs[-2:])
     if isinstance(cyl, GeounedSurface):
         gcyl = cyl
     else:
@@ -158,7 +158,7 @@ def build_revcan_params(cs):
 
     params = [gcyl, gp1]
     if len(cs) == 3:
-        p2 = cs[2]
+        p2 = cs[-3]
         if isinstance(p2, GeounedSurface):
             gp2 = p2
         else:

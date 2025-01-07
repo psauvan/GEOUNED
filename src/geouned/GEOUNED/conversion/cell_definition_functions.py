@@ -71,14 +71,14 @@ def gen_torus(face, tolerances):
 
 def cone_apex_plane(cone, orientation, tolerances):
     if (
-        is_parallel(cone.Surf.Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle)
-        or is_parallel(cone.Surf.Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
-        or is_parallel(cone.Surf.Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
+        is_parallel(cone.Surface.Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle)
+        or is_parallel(cone.Surface.Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
+        or is_parallel(cone.Surface.Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
     ):
         return None
 
-    normal = cone.Axis if orientation == "Forward" else -cone.Axis
-    return GeounedSurface(("Plane", (cone.Apex, normal, 1, 1)))
+    normal = cone.Surface.Axis if orientation == "Forward" else -cone.Surface.Axis
+    return GeounedSurface(("Plane", (cone.Surface.Apex, normal, 1, 1)))
 
 
 def V_torus_surfaces(face, v_params, Surfaces):
