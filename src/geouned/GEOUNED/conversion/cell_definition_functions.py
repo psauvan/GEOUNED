@@ -10,9 +10,10 @@ from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
 )
+from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.boolean_function import BoolRegion
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import FaceGu, CylinderGu
+from ..utils.geometry_gu import PlaneGu
 
 logger = logging.getLogger("general_logger")
 
@@ -446,3 +447,15 @@ def get_intervals(u_nodes):
         closed_range.append(index)
 
     return closed_ranges
+
+def omit_multiplane_repeated_planes(mp_region,Surfaces,Faces):
+    repeated_planes = set()
+    planes = mp_region.definition.get_surfaces_numbers()
+    for p in planes :
+        pg = Surfaces.primitive_surfaces.get_surface(p)
+        for face in Faces:
+            if not isinstance(face,PlaneGu):
+                continue
+            if is_same_plane(face.Surface, pg.Surf, Surfaces.options, Surfaces.tolerances, Surfaces.numeric_format):
+                repeated_planes.add(face.Index)
+    return repeated_planes                

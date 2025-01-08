@@ -460,8 +460,9 @@ def external_plane(plane, Faces):
     Edges = plane.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
-        if region_sign(plane, adjacent_face) == "OR":
-            return False
+        if isinstance(adjacent_face,PlaneGu):               # if not plane not sure current plane will not cut other part of the solid
+            if region_sign(plane, adjacent_face) == "OR":
+                return False
     return True
 
 
@@ -477,6 +478,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
         if isinstance(f.Surface, PlaneGu):
             if external_plane(f, Faces):
                 omit.add(f.Index)
+
     return omit if return_set else None
 
 def cutting_face_number(f, Faces, omitfaces):

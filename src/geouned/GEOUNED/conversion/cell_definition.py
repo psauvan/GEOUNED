@@ -19,6 +19,7 @@ from .cell_definition_functions import (
     gen_plane_sphere,
     gen_plane_cylinder,
     gen_plane_cone,
+    omit_multiplane_repeated_planes,
 )
 
 logger = logging.getLogger("general_logger")
@@ -48,13 +49,15 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         for mp in multiplanes:
             mp_region = Surfaces.add_multiPlane(mp)
             component_definition.append(mp_region)
+            planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
+            omitFaces.update(planeset)
 
         revereCan = get_reverseCan(solid_gu, omitFaces)
         for cs in revereCan:
             cs_region = Surfaces.add_reverseCan(cs)
             component_definition.append(cs_region)
     else:
-        omitFaces =set()
+        omitFaces = set()
 
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
@@ -143,4 +146,10 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")
+    
+    #solid.exportStep('solid.stp')
+    #for k in Surfaces.keys():
+    #    for i,m in enumerate(Surfaces[k]):
+    #        m.build_surface(solid.BoundBox)
+    #        m.shape.exportStep(f'{k}_{i}.stp')
     return component_definition

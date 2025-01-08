@@ -273,12 +273,13 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes = True):
             if isinstance(otherface.Surface, PlaneGu):
                 planes.append(otherface)
 
-    delindex = []
+    delindex = set()
     for i, p1 in enumerate(planes):
         for j, p2 in enumerate(planes[i + 1 :]):
             if p1.isSame(p2):
-                delindex.append(j + i + 1)
+                delindex.add(j + i + 1)
 
+    delindex = list(delindex)
     delindex.sort()
     delindex.reverse()
     for i in delindex:
