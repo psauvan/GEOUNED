@@ -11,7 +11,7 @@ from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
 from .decom_utils_generator import cyl_bound_planes, torus_bound_planes, exclude_no_cutting_planes, order_plane_face
 
 
-def get_surfaces(solid, tolerances, meta_surface=False, plane3pts=False):
+def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
 
     solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=plane3pts)
    

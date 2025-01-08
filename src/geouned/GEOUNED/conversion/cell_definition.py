@@ -32,7 +32,7 @@ def build_definition(meta_obj, Surfaces):
     meta_obj.set_definition(solid_definition)
 
 
-def simple_solid_definition(solid, Surfaces, meta_surfaces=False):
+def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
