@@ -20,29 +20,42 @@ class BoolRegion(int):
 
     def __init__(self, label, definition=None, reverse=False):
         if definition is None:
-            self.definition = BoolSequence(str(label))
-            self.level = 0
+            self.set_definition(BoolSequence(str(label)))
+            
         elif isinstance(definition, str):
-            self.definition = BoolSequence(definition)
-            self.definition.level_update()
-            self.level = self.definition.level
+            self.set_definition(BoolSequence(definition))
+
         elif isinstance(definition, BoolSequence):
             if definition.int_elements:
-                self.definition = definition
-                self.level = self.definition.level
+                self.set_definition(definition)
             else:
                 raise "BoolSequence basic elements of the definition should be integer not BoolRegion"
         else:
             raise ("Boolean region : bad Boolean definition")
 
         self.reverse = reverse
-        self.surfaces = self.definition.get_surfaces_numbers()
+        self.surfaces = self.__def__.get_surfaces_numbers()
 
     #    def __str__(self)
     #        return self.definition.__str__()
 
+    def set_definition(self,definition):
+        definition.level_update()
+        self.__def__ = definition
+        self.__not_def__ = definition.get_complementary()
+        self.level = self.__def__.level
+        self.definition = self.__def__
+
     def __neg__(self):
-        return BoolRegion(-self.__int__(), self.definition.get_complementary(), reverse=self.reverse)
+        neg = BoolRegion(-self.__int__())
+        neg.reverse = self.reverse
+        neg.surfaces = self.surfaces
+        neg.level = self.level
+        neg.__def__ = self.__not_def__
+        neg.__not_def__ = self.__def__
+        neg.definition = neg.__def__
+        return neg
+        #return BoolRegion(-self.__int__(), self.__not_def__, reverse=self.reverse)
 
     def __pos__(self):
         return self
@@ -80,6 +93,11 @@ class BoolRegion(int):
         else:
             return self.definition == def2.definition
 
+    def chg_surf_sign(self,s1):
+        self.__def__.chg_surf_sign(s1)
+        self.__not_def__.chg_surf_sign(s1)
+
+
     def setDef(self, definition):
         if definition.int_elements:
             self.definition = definition
@@ -94,9 +112,11 @@ class BoolRegion(int):
 
     def copy(self, newname: int = None):
         if newname is None:
-            return BoolRegion(self.__int__(), self.definition.copy(), reverse=self.reverse)
-        else:
-            return BoolRegion(newname, self.definition, reverse=self.reverse)
+            newname = self.__int__()
+        
+        cp = BoolRegion(newname, self.definition, reverse=self.reverse)
+        cp.__not_def__ = self.__not_def__
+        return cp
 
     def mult(a, b, label=0):
         newdef = BoolSequence(operator="AND")
@@ -430,8 +450,25 @@ class BoolSequence:
         if self.level == 0:
             if self.int_elements:
                 signed_surf = set(self.elements)
+                self.elements = list(signed_surf)
             else:
-                signed_surf = set((x.__int__() for x in self.elements))
+                signed_surf_list = self.elements
+                signed_surf_set = set([x.__int__() for x in self.elements])
+                ndel =len(signed_surf_list)-len(signed_surf_set) 
+                if ndel > 0 :
+                    ic = 0
+                    for _ in range(ndel):
+                        for ic1,x in enumerate(signed_surf_list[ic:]):
+                            nx = signed_surf_list.count(x)
+                            if nx > 1:
+                                ind = signed_surf_list.index(x)
+                                del signed_surf_list[ind]
+                                ic += ic1
+                                break
+                    signed_surf = set([x.__int__() for x in self.elements])        
+                else:
+                    signed_surf = signed_surf_set                
+
 
             surf_name = self.get_surfaces_numbers()
             if len(signed_surf) == len(surf_name):
@@ -587,6 +624,8 @@ class BoolSequence:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
             newSeq.level_update()
+            if newSeq.level == 0:
+                newSeq.check()
             self.append(newSeq)
 
         elif len(ORop) > 1 and self.operator == "OR":
@@ -596,6 +635,8 @@ class BoolSequence:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
             newSeq.level_update()
+            if newSeq.level == 0:
+                newSeq.check()
             self.append(newSeq)
 
         if self.level > 0 and len(self.elements) == 1:
@@ -604,6 +645,7 @@ class BoolSequence:
             self.level -= 1
             self.join_operators()
 
+        self.level_update()
         if self.level == 0:
             self.check()
             return
@@ -852,7 +894,15 @@ class BoolSequence:
                 continue
             e.level_update()
             self.level = max(e.level + 1, self.level)
-
+    
+    def chg_surf_sign(self,s1):
+        for i,e in enumerate(self.elements):
+            if isinstance(e,(BoolSequence,BoolRegion)):
+                e.chg_surf_sign(s1)
+            elif type(e) is int:
+                if abs(e) == s1:
+                    self.elements[i] = -self.elements[i]
+                    break   #assumed two same sufaces cannot be in the same element
 
 def insert_in_sequence(Seq, trgt, nsrf, operator):
     """Substitute the variable trgt by the sequence "(trgt:nsrg)" or "(trgt nsf)" in the

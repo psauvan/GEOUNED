@@ -24,8 +24,6 @@ def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
         for can in next_reverseCan(solid_GU, omitfaces):
             yield can
 
-        exclude_no_cutting_planes(solid_GU.Faces, omitfaces)
-
         for multiplane in next_multiplanes(solid_GU, omitfaces):
             yield multiplane
     else:
@@ -110,7 +108,7 @@ def cylinder_generator(GUFaces, omitfaces):
         orig = face.Surface.Center
         rad = face.Surface.Radius
         dim_l = face.ParameterRange[3] - face.ParameterRange[2]
-        cylinder = GeounedSurface(("Cylinder", (orig, dir, rad, dim_l)))
+        cylinder = GeounedSurface(("CylinderOnly", (orig, dir, rad, dim_l)))
         yield cylinder
 
 
@@ -124,7 +122,7 @@ def cone_generator(GUFaces):
         half_angle = face.Surface.SemiAngle
         dim_l = face.ParameterRange[3] - face.ParameterRange[2]
         dimR = face.Surface.Radius
-        cone = GeounedSurface(("Cone", (apex, dir, half_angle, dim_l, dimR)))
+        cone = GeounedSurface(("ConeOnly", (apex, dir, half_angle, dim_l, dimR)))
         yield cone
 
 
@@ -136,7 +134,7 @@ def sphere_generator(GUFaces):
 
         rad = face.Surface.Radius
         pnt = face.Surface.Center
-        sphere = GeounedSurface(("Sphere", (pnt, rad)))
+        sphere = GeounedSurface(("SphereOnly", (pnt, rad)))
         yield sphere
 
 
@@ -150,7 +148,7 @@ def torus_generator(GUFaces):
         radMin = face.Surface.MinorRadius
         center = face.Surface.Center
         dir = face.Surface.Axis
-        torus = GeounedSurface(("Torus", (center, dir, radMaj, radMin)))
+        torus = GeounedSurface(("TorusOnly", (center, dir, radMaj, radMin)))
         yield torus
 
 

@@ -95,11 +95,11 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
 
 
 def makeRoundCorner(cylinder, addPlane, planes, config, Box):
-    cyl = makeCylinder(cylinder.Surf.Axis, cylinder.Surf.Center, cylinder.Surf.Radius, Box)
+    cylinder.build_surface(Box)
     addplane_part = Part.makeSolid(makeMultiPlanes([addPlane], [], Box, False))
     plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
 
-    cyl_region = cyl.fuse(addplane_part)
+    cyl_region = cylinder.shape.fuse(addplane_part)
     if config == "AND":
         solid = intersection(cyl_region, plane_part)
     else:

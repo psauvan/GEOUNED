@@ -137,7 +137,7 @@ class PlaneParams:
         return outstr
 
 
-class CylinderParams:
+class CylinderOnlyParams:
     def __init__(self, params, real=True):
         self.Center = params[0]
         self.Axis = params[1]
@@ -153,7 +153,7 @@ class CylinderParams:
         return outstr
 
 
-class ConeParams:
+class ConeOnlyParams:
     def __init__(self, params, real=True):
         self.Apex = params[0]
         self.Axis = params[1]
@@ -170,7 +170,7 @@ class ConeParams:
         return outstr
 
 
-class SphereParams:
+class SphereOnlyParams:
     def __init__(self, params):
         self.Center = params[0]
         self.Radius = params[1]
@@ -182,7 +182,7 @@ class SphereParams:
         return outstr
 
 
-class TorusParams:
+class TorusOnlyParams:
     def __init__(self, params):
         self.Center = params[0]
         self.Axis = params[1]
@@ -241,3 +241,60 @@ class RoundCornerParams:
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr
+
+class SphereParams:
+    def __init__(self, params):
+        self.Sphere = params[0]
+        self.Plane = params[1]
+        self.Orientation = params[2]
+
+    def __str__(self):
+        outstr = f"""Sphere :\n"""
+        outstr += f"{self.Orientation} \n"
+        outstr += f"{self.Sphere.__str__()} \n"
+        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
+        return outstr
+
+class CylinderParams:
+    def __init__(self, params):
+        self.Cylinder = params[0]
+        self.Plane = params[1]
+        self.Orientation = params[2]
+
+    def __str__(self):
+        outstr = f"""Cylinder :\n"""
+        outstr += f"{self.Orientation} \n"
+        outstr += f"{self.Cylinder.__str__()} \n"
+        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
+        return outstr
+    
+class ConeParams:
+    def __init__(self, params):
+        self.Cylinder = params[0]
+        self.ApexPlane = params[1]
+        self.Plane = params[2]
+        self.Orientation = params[3]
+
+    def __str__(self):
+        outstr = f"""Cone :\n"""
+        outstr += f"{self.Orientation} \n"
+        outstr += f"{self.Cone.__str__()} \n"
+        if self.ApexPlane : outstr += f"{self.ApexPlane.__str__()} \n"
+        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
+        return outstr    
+    
+class TorusParams:
+    def __init__(self, params):
+        self.Torus = params[0]
+        self.UPlanes = params[1]
+        self.VSurface = params[2]
+        self.Orientation = params[3]
+        self.SOrientation = params[4]
+
+    def __str__(self):
+        outstr = f"""Cone :\n"""
+        outstr += f"{self.Orientation} \n"
+        outstr += f"{self.Torus.__str__()} \n"
+        if self.UPlane : outstr += f"{self.UPlane.__str__()} \n"
+        if self.VSurface : outstr += f"{self.VSurfacePlane.__str__()} \n"
+        return outstr        

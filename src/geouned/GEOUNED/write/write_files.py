@@ -48,7 +48,7 @@ def write_geometry(
             UniverseBox.ZMax,
         )
         if settings.voidGen:
-            outSphere = (Surfaces["Sph"][-1].Index, Surfaces["Sph"][-1].Surf.Radius)
+            outSphere = (Surfaces["Sph"][-1].Surf.Sphere.Index, Surfaces["Sph"][-1].Surf.Sphere.Surf.Radius)
         else:
             outSphere = None
 

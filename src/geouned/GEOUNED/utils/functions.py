@@ -130,7 +130,7 @@ def build_roundC_params(rc):
     cyl, p1, p2 = rc[0]
     configuration = rc[1]
 
-    gcyl = GeounedSurface(("Cylinder", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+    gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
     pos_orientation = "Reversed" if configuration == "AND" else "Forward"
     p1Axis = p1.Surface.Axis if p1.Orientation == pos_orientation else -p1.Surface.Axis
     p2Axis = p2.Surface.Axis if p2.Orientation == pos_orientation else -p2.Surface.Axis
@@ -149,7 +149,7 @@ def build_revcan_params(cs):
     if isinstance(cyl, GeounedSurface):
         gcyl = cyl
     else:
-        gcyl = GeounedSurface(("Cylinder", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+        gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
 
     if isinstance(p1, GeounedSurface):
         gp1 = p1

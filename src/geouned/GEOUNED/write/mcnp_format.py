@@ -49,9 +49,9 @@ class McnpInput:
         if isinstance(self.step_filename, (tuple, list)):
             self.step_filename = "; ".join(self.step_filename)
 
-        self.get_surface_table()
-        self.simplify_planes(Surfaces.primitive_surfaces)
-
+        self.simplify_planes(Surfaces)
+        self.get_cell_surf_summary()
+        
         self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
 
@@ -283,8 +283,7 @@ C **************************************************************
             comment += "C \n"
         return comment
 
-    def get_surface_table(self):
-        self.surfaceTable = {}
+    def get_cell_surf_summary(self):
         self.__solidCells__ = 0
         self.__cells__ = 0
         self.__materials__ = set()
@@ -293,43 +292,39 @@ C **************************************************************
             if CellObj.__id__ is None:
                 continue
             self.__cells__ += 1
+            CellObj.Definition.expand_regions()
+
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
-            CellObj.Definition.expand_regions()
-            surf = CellObj.Definition.get_surfaces_numbers()
             if not CellObj.Void:
                 self.__solidCells__ += 1
-            for index in surf:
-                if index in self.surfaceTable.keys():
-                    self.surfaceTable[index].add(i)
-                else:
-                    self.surfaceTable[index] = {i}
+
         return
 
     def simplify_planes(self, Surfaces):
 
-        for p in Surfaces["PX"]:
+        for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
                 p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
-                self.change_surf_sign(p)
+                Surfaces.change_sign(p)
 
-        for p in Surfaces["PY"]:
+        for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
-                self.change_surf_sign(p)
+                Surfaces.change_sign(p)
 
-        for p in Surfaces["PZ"]:
+        for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
-                self.change_surf_sign(p)
+                Surfaces.change_sign(p)
 
         if self.options.prnt3PPlane:
             for p in Surfaces["P"]:
                 if p.Surf.pointDef:
                     axis, d = points_to_coeffs(p.Surf.Points)
                     if is_opposite(axis, p.Surf.Axis):
-                        self.change_surf_sign(p)
+                        p.region.change_surf_sign()
 
         return
 
@@ -342,18 +337,7 @@ C **************************************************************
                 surfList.append(s)
                 temp.del_surface(ind + 1)
         return surfList
-
-    def change_surf_sign(self, p):
-
-        if p.Index not in self.surfaceTable.keys():
-            logger.info(f"{p.Type} Surface {p.Index} not used in cell definition) {p.Surf.Axis} {p.Surf.Position}")
-            return
-
-        for ic in self.surfaceTable[p.Index]:
-            surf = self.Cells[ic].Definition.get_surfaces_numbers()
-            for s in surf:
-                if s == p.Index:
-                    change_surf_sign(s, self.Cells[ic].Definition)
+   
 
     def get_solid_cell_volume(self):
 

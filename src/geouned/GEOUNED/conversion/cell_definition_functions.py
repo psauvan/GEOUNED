@@ -18,15 +18,6 @@ from ..utils.geometry_gu import PlaneGu
 logger = logging.getLogger("general_logger")
 
 
-def auxillary_plane(plane, Surfaces):
-    pid, exist = Surfaces.primitive_surfaces.add_plane(plane, True)
-    if exist:
-        p = Surfaces.primitive_surfaces.get_surface(pid)
-        if is_opposite(plane.Surf.Axis, p.Surf.Axis, Surfaces.tolerances.pln_angle):
-            pid = -pid
-    return BoolRegion(0, str(pid))
-
-
 def gen_plane(face, orientation):
     normal = face.Surface.Axis
     if orientation == "Forward":
@@ -39,20 +30,20 @@ def gen_cylinder(face):
     Axis = face.Surface.Axis
     Center = face.Surface.Center
     Radius = face.Surface.Radius
-    return GeounedSurface(("Cylinder", (Center, Axis, Radius, 1)))
+    return GeounedSurface(("CylinderOnly", (Center, Axis, Radius, 1)))
 
 
 def gen_cone(face):
     Axis = face.Surface.Axis
     Apex = face.Surface.Apex
     SemiAngle = face.Surface.SemiAngle
-    return GeounedSurface(("Cone", (Apex, Axis, SemiAngle, 1, 1)))
+    return GeounedSurface(("ConeOnly", (Apex, Axis, SemiAngle, 1, 1)))
 
 
 def gen_sphere(face):
     Center = face.Surface.Center
     Radius = face.Surface.Radius
-    return GeounedSurface(("Sphere", (Center, Radius)))
+    return GeounedSurface(("SphereOnly", (Center, Radius)))
 
 
 def gen_torus(face, tolerances):
@@ -65,7 +56,7 @@ def gen_torus(face, tolerances):
         or is_parallel(Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
         or is_parallel(Axis, FreeCAD.Vector(0, 0, 1), tolerances.angle)
     ):
-        return GeounedSurface(("Torus", (Center, Axis, MajorRadius, MinorRadius)))
+        return GeounedSurface(("TorusOnly", (Center, Axis, MajorRadius, MinorRadius)))
     else:
         return None
 
@@ -104,8 +95,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
         p_mid = face.valueAt(0, v_mid) - face.Surface.Center
         if p_mid.dot(axis) < z1:
             axis = -axis
-        plane = GeounedSurface(("Plane", (center, axis, 1, 1)))
-        return auxillary_plane(plane, Surfaces)
+        return GeounedSurface(("Plane", (center, axis, 1, 1))),None
 
     elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.force_cylinder:
         radius = min(d1, d2)
@@ -124,25 +114,18 @@ def V_torus_surfaces(face, v_params, Surfaces):
                 in_surf = False
         else:
             if d1 < face.Surface.MajorRadius:
-                in_surf = True
+                orientation = "Forward"
                 radius = max(d1, d2)
             else:
-                in_surf = False
-
-        cylinder = GeounedSurface(("Cylinder", (center, axis, radius, 1)))
-        pid, exist = Surfaces.primitive_surfaces.add_cylinder(cylinder, True)
-        if in_surf:
-            pid = -pid
-
-        return BoolRegion(0, str(pid))
-
+                orientation = "Reversed"
+        return GeounedSurface(("CylinderOnly", (center, axis, radius, 1))) ,orientation
     else:
-        surf_type = "Cone"
         za = (z2 * d1 - z1 * d2) / (d1 - d2)
         apex = face.Surface.Center + za * axis
         semi_angle = abs(math.atan(d1 / (z1 - za)))
 
         cone_axis = axis if (z1 - za) > 0.0 else -axis
+        cone = GeounedSurface(("ConeOnly", (apex, cone_axis, semi_angle, 1, 1)))
 
         v_mid = (v_params[0] + v_params[1]) * 0.5
         p_mid = face.valueAt(0, v_mid) - face.Surface.Center
@@ -152,25 +135,14 @@ def V_torus_surfaces(face, v_params, Surfaces):
         d_cone = d1 * (z_mid - za) / (z1 - za)
         in_surf = True if d_mid < d_cone else False
 
-        cone = GeounedSurface(("Cone", (apex, cone_axis, semi_angle, 1, 1)))
-        pid, exist = Surfaces.primitive_surfaces.add_cone(cone)
-
         if in_surf:
-            pid = -pid
-            aux_plane_region = cone_apex_plane(cone, "Forward", Surfaces.tolerances)
-            aux_cone_region = BoolRegion(0, str(pid))
-            if aux_plane_region:
-                return aux_cone_region * aux_plane_region
-            else:
-                return aux_cone_region
-        else:
-            aux_plane_region = cone_apex_plane(cone, "Reversed", Surfaces.tolerances)
-            aux_cone_region = BoolRegion(0, str(pid))
-            if aux_plane_region:
-                return aux_cone_region + aux_plane_region
-            else:
-                return aux_cone_region
-
+            orientation = "Forward"
+        else:    
+            orientation = "Reversed"
+            
+        #apexPlane = cone_apex_plane(cone, orientation, Surfaces.tolerances)  #apex plane not produced because torus axis along x,y,z
+        return cone, orientation
+ 
 
 def U_torus_planes(face, u_params, Surfaces):
 
@@ -192,8 +164,7 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        plane = GeounedSurface(("Plane", (center, d, 1, 1)))
-        return auxillary_plane(plane, Surfaces)
+        return (GeounedSurface(("Plane", (center, d, 1, 1))), )
 
     elif u_params[1] - u_params[0] < math.pi:
         d = axis.cross(p2 - p1)
@@ -201,8 +172,8 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        plane = GeounedSurface(("Plane", (center, d, 1, 1)))
-        return auxillary_plane(plane, Surfaces)
+        return (GeounedSurface(("Plane", (center, d, 1, 1))), )
+
 
     else:
         d1 = axis.cross(p1)
@@ -217,7 +188,7 @@ def U_torus_planes(face, u_params, Surfaces):
 
         plane1 = GeounedSurface(("Plane", (center, d1, 1, 1)))
         plane2 = GeounedSurface(("Plane", (center, d2, 1, 1)))
-        return auxillary_plane(plane1, Surfaces) + auxillary_plane(plane2, Surfaces)
+        return (plane1, plane2)
 
 
 def gen_plane_sphere(face, solidFaces):

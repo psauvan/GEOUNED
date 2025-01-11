@@ -210,30 +210,6 @@ def get_revcan_surfaces(cylinder, solid):
     else:
         return None,None
 
-def get_revcan_surfaces_old(cylinder, solid):
-
-    same_cylinder_faces, cylindex = get_adjacent_cylinder_faces(cylinder, solid.Faces)
-    if not is_closed_cylinder(same_cylinder_faces):
-        return None, None
-    feLow, feHigh = get_side_edges(same_cylinder_faces)
-
-    lowPlane, indexlow = get_closing_plane(feLow, solid.Faces, "low")
-    highPlane, indexhigh = get_closing_plane(feHigh, solid.Faces, "high")
-
-    surfaces = [cylinder]
-    if lowPlane:
-        surfaces.append(lowPlane)
-        cylindex.update(indexlow)
-    if highPlane:
-        surfaces.append(highPlane)
-        cylindex.update(indexhigh)
-
-    if len(surfaces) > 1:
-        return surfaces, cylindex
-    else:
-        return None, None
-
-
 def get_roundcorner_surfaces(cylinder, solid):
 
     adjacent_planes = get_adjacent_cylplane(cylinder, solid.Faces)
@@ -243,7 +219,7 @@ def get_roundcorner_surfaces(cylinder, solid):
     p1, p2 = adjacent_planes
     r1 = region_sign(p1, cylinder)
     r2 = region_sign(p2, cylinder)
-    if r1 != r2:
+    if r1 != r2 or r1 == "OR":
         return None, None
     face_index = {cylinder.Index, p1.Index, p2.Index}
     faces = ((cylinder, p1, p2), r1)

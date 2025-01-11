@@ -4,6 +4,7 @@
 import logging
 
 from ..utils import geometry_gu as GU
+from ..utils.geouned_classes import GeounedSurface
 from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner
 from ..utils.boolean_function import BoolSequence, BoolRegion
 from .cell_definition_functions import (
@@ -12,7 +13,6 @@ from .cell_definition_functions import (
     gen_cone,
     gen_sphere,
     gen_torus,
-    auxillary_plane,
     cone_apex_plane,
     V_torus_surfaces,
     U_torus_planes,
@@ -82,48 +82,48 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(plane_region)
 
         elif isinstance(face.Surface, GU.CylinderGu):
-            cylinder = gen_cylinder(face)
-            cylinder_region = Surfaces.add_cylinder(cylinder, orient)
-
+            cylinderOnly = gen_cylinder(face)
             if orient == "Reversed":
                 plane = gen_plane_cylinder(
                     face, solid_gu.Faces, Surfaces.tolerances
                 )  # plane must be correctly oriented toward materials
-                if plane is not None:
-                    cylinder_region = BoolRegion.mult(cylinder_region, auxillary_plane(plane, Surfaces), label=cylinder_region)
+            else:
+                plane= None
 
+            cylinder = GeounedSurface(("Cylinder",(cylinderOnly,plane,orient)))
+            cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
         elif isinstance(face.Surface, GU.ConeGu):
-            cone = gen_cone(face)
-            cone_region = Surfaces.add_cone(cone, orient)
-
-            apex_plane = cone_apex_plane(face, orient, Surfaces.tolerances)
-            if apex_plane is not None:
-                if orient == "Forward":
-                    cone_region = BoolRegion.mult(cone_region, auxillary_plane(apex_plane, Surfaces), label=cone_region)
-                else:
-                    cone_region = BoolRegion.add(cone_region, auxillary_plane(apex_plane, Surfaces), label=cone_region)
-
+            coneOnly = gen_cone(face)
+            apexPlane = cone_apex_plane(face, orient, Surfaces.tolerances)
             if orient == "Reversed":
                 plane = gen_plane_cone(
                     face, solid_gu.Faces, Surfaces.tolerances
                 )  # plane must be correctly oriented toward materials
-                if plane is not None:
-                    cone_region = BoolRegion.mult(cone_region, auxillary_plane(plane, Surfaces), label=cone_region)
+            else:
+                plane = None    
+
+            cone = GeounedSurface(("Cone",(coneOnly,apexPlane,orient)))
+            cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 
+
         elif isinstance(face.Surface, GU.SphereGu):
-            sphere = gen_sphere(face)
-            sphere_region = Surfaces.add_sphere(sphere, orient)
+            sphereOnly = gen_sphere(face)
+            plane = None
             if orient == "Reversed":
                 plane = gen_plane_sphere(face, solid_gu.Faces)
-                if plane is not None:
-                    sphere_region = BoolRegion.mult(sphere_region, auxillary_plane(plane, Surfaces), label=sphere_region)
-            component_definition.append(sphere_region)
+            else:
+                plane = None
+
+            torus = GeounedSurface(("Torus",(sphereOnly,plane,orient)))
+            torus_region = Surfaces.add_cone(torus)
+            component_definition.append(torus_region)
+
 
         elif isinstance(face.Surface, GU.TorusGu):
-            torus = gen_torus(face, Surfaces.tolerances)
+            torusOnly = gen_torus(face, Surfaces.tolerances)
             if torus is not None:
                 index, u_params = solid_gu.TorusUParams[iface]
                 if index == last_torus:
@@ -132,17 +132,19 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 # add if necesary additional planes following U variable
                 u_closed, u_minMax = u_params
 
-                torus_region = Surfaces.add_torus(torus, orient)
                 if not u_closed:
-                    U_plane_region = U_torus_planes(face, u_minMax, Surfaces)
-                    torus_region = BoolRegion.mult(torus_region, U_plane_region, label=torus_region)
+                    UPlanes = U_torus_planes(face, u_minMax, Surfaces)
+                else:
+                    UPlanes = []    
 
                 if orient == "Reversed":
                     index, Vparams = solid_gu.TorusVParams[iface]
                     v_closed, VminMax = Vparams
                     if not v_closed:
-                        V_torus_surface_region = V_torus_surfaces(face, VminMax, Surfaces)
-                        torus_region = BoolRegion.mult(torus_region, V_torus_surface_region, label=torus_region)
+                        VSurface, surf_orientation= V_torus_surfaces(face, VminMax, Surfaces)               
+                
+                torus = GeounedSurface(("Torus",(torusOnly,UPlanes,VSurface,orient,surf_orientation)))
+                torus_region = Surfaces.add_cone(torus)
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")
