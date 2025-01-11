@@ -55,7 +55,6 @@ class BoolRegion(int):
         neg.__not_def__ = self.__def__
         neg.definition = neg.__def__
         return neg
-        #return BoolRegion(-self.__int__(), self.__not_def__, reverse=self.reverse)
 
     def __pos__(self):
         return self
@@ -70,13 +69,11 @@ class BoolRegion(int):
         newdef = BoolSequence(operator="OR")
         newdef.append(self.definition, def2.definition)
         newdef.join_operators()
-        # newdef.group_single()
         return BoolRegion(0, newdef)
 
     def __sub__(self, def2):
         newdef = BoolSequence(operator="OR")
         newdef.append(self.definition, def2.definition.get_complementary())
-        # newdef.group_single()
         newdef.join_operators()
         return BoolRegion(0, newdef)
 
@@ -84,7 +81,6 @@ class BoolRegion(int):
         newdef = BoolSequence(operator="AND")
         newdef.append(self.definition, def2.definition)
         newdef.join_operators()
-        # newdef.group_single()
         return BoolRegion(0, newdef)
 
     def __eq__(self, def2):
