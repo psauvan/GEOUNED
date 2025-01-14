@@ -24,6 +24,9 @@ def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
         for can in next_reverseCan(solid_GU, omitfaces):
             yield can
 
+        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+        omitfaces.update(extPlanes)    
+
         for multiplane in next_multiplanes(solid_GU, omitfaces):
             yield multiplane
     else:
@@ -45,11 +48,16 @@ def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
     for surface in torus_generator(solid_GU.Faces):
         yield surface
 
+    omitfaces = omitfaces - extPlanes
+    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, plane3pts, True):
+        yield surface
 
-def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False):
+
+def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False, externalPlanes = False):
     omit_isolated_planes(GUFaces, omitfaces)
     cutting_plane_face = order_plane_face(GUFaces, omitfaces)
     for p in cutting_plane_face:
+        omitfaces.add(p.Index)
         normal = p.Surface.Axis
         pos = p.CenterOfMass
         dim1 = p.ParameterRange[1] - p.ParameterRange[0]
@@ -57,6 +65,7 @@ def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False):
         plane = GeounedSurface(("Plane", (pos, normal, dim1, dim2)))
         yield plane
 
+    if externalPlanes : return
     for face in GUFaces:
         if face.Index in omitfaces:
             continue

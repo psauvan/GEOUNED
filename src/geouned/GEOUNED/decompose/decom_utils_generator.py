@@ -41,13 +41,15 @@ def cyl_bound_planes(solidFaces, face):
             curve = "none"
 
         adjacent_face = other_face_edge(e, face, solidFaces)
-        if adjacent_face is not None:
-            if type(adjacent_face.Surface) is TorusGu:
-                continue  # doesn't create plane if other face is a torus
-            if type(adjacent_face.Surface) is PlaneGu:
-                continue  # doesn't create plane if other face is a Plane
-            if face.Surface.isSameSurface(adjacent_face.Surface):
-                continue  # doesn't create plane if other face has same surface
+        if adjacent_face is None:
+            continue
+
+        if type(adjacent_face.Surface) is TorusGu:
+            continue  # doesn't create plane if other face is a torus
+        if type(adjacent_face.Surface) is PlaneGu:
+            continue  # doesn't create plane if other face is a Plane
+        if face.Surface.isSameSurface(adjacent_face.Surface):
+            continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
             if e.Curve.Radius < 1e-6 : continue
@@ -59,7 +61,7 @@ def cyl_bound_planes(solidFaces, face):
             planes.append(plane)
 
         elif curve == "<Ellipse object>":
-            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius > 1e-6: continue
+            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6: continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.MinorRadius
