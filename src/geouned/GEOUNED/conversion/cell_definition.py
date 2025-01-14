@@ -7,6 +7,7 @@ from ..utils import geometry_gu as GU
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner
 from ..utils.boolean_function import BoolSequence, BoolRegion
+from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
     gen_plane,
     gen_cylinder,
@@ -52,12 +53,14 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
 
-        revereCan = get_reverseCan(solid_gu, omitFaces)
-        for cs in revereCan:
+        reverseCan = get_reverseCan(solid_gu, omitFaces)
+        for cs in reverseCan:
             cs_region = Surfaces.add_reverseCan(cs)
             component_definition.append(cs_region)
+        omit_isolated_planes(solid_gu.Faces, omitFaces)
     else:
         omitFaces = set()
+        omit_isolated_planes(solid_gu.Faces, omitFaces)
 
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
@@ -75,7 +78,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             orient = "Reversed" if face.Orientation == "Forward" else "Forward"
         else:
             orient = face.Orientation
-
+        
         if isinstance(face.Surface, GU.PlaneGu):
             plane = gen_plane(face, orient)
             plane_region = Surfaces.add_plane(plane, True)
@@ -104,7 +107,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None    
 
-            cone = GeounedSurface(("Cone",(coneOnly,apexPlane,orient)))
+            cone = GeounedSurface(("Cone",(coneOnly,apexPlane,plane,orient)))
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 
@@ -117,9 +120,9 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            torus = GeounedSurface(("Torus",(sphereOnly,plane,orient)))
-            torus_region = Surfaces.add_cone(torus)
-            component_definition.append(torus_region)
+            sphere = GeounedSurface(("Sphere",(sphereOnly,plane,orient)))
+            sphere_region = Surfaces.add_cone(sphere)
+            component_definition.append(sphere_region)
 
 
         elif isinstance(face.Surface, GU.TorusGu):

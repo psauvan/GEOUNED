@@ -11,7 +11,7 @@ import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
 from ..utils.geouned_classes import SurfacesDict
-from .functions import CardLine, change_surf_sign, mcnp_surface, write_mcnp_cell_def
+from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
 
@@ -174,7 +174,7 @@ C **************************************************************
         """Write the surfaces in MCNP format"""
 
         MCNP_def = mcnp_surface(
-            surface.Index,
+            surface.bVar.__int__(),
             surface.Type,
             surface.Surf,
             self.options,
@@ -307,24 +307,24 @@ C **************************************************************
         for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
                 p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
-                Surfaces.change_sign(p)
+                p.bVar.region.change_ref()
 
         for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
-                Surfaces.change_sign(p)
+                p.bVar.region.change_ref()
 
         for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
-                Surfaces.change_sign(p)
+                p.bVar.region.change_ref()
 
         if self.options.prnt3PPlane:
             for p in Surfaces["P"]:
                 if p.Surf.pointDef:
                     axis, d = points_to_coeffs(p.Surf.Points)
                     if is_opposite(axis, p.Surf.Axis):
-                        p.region.change_surf_sign()
+                        p.bVar.region.change_ref()
 
         return
 

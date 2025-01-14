@@ -50,6 +50,7 @@ def cyl_bound_planes(solidFaces, face):
                 continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
+            if e.Curve.Radius < 1e-6 : continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.Radius
@@ -58,6 +59,7 @@ def cyl_bound_planes(solidFaces, face):
             planes.append(plane)
 
         elif curve == "<Ellipse object>":
+            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius > 1e-6: continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.MinorRadius
@@ -511,3 +513,22 @@ def order_plane_face(Faces, omitfaces):
 
     counts.sort(reverse=True)
     return tuple(face_dict[x[1]] for x in counts)
+
+def omit_isolated_planes(Faces, omitfaces):
+    for f in Faces:
+        if f.Index in omitfaces:
+            continue
+        if not isinstance(f.Surface, PlaneGu):
+            continue
+        
+        for e in f.OuterWire.Edges:
+            adjacent_face = other_face_edge(e, f, Faces)
+            if adjacent_face is None:
+                continue
+            if type(adjacent_face.Surface) is PlaneGu:
+                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis))-1) < 1e-5 :
+                    if adjacent_face.Index not in omitfaces:
+                        omitfaces.add(f.Index)
+                        break
+            
+

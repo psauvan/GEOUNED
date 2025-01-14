@@ -23,7 +23,6 @@ from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
 from ..utils.geouned_classes import SurfacesDict
 from .functions import (
     CellString,
-    change_surf_sign,
     phits_surface,
     write_phits_cell_def,
 )
@@ -561,18 +560,6 @@ $ **************************************************************
                 surfList.append(s)
                 temp.del_surface(ind + 1)
         return surfList
-
-    def change_surf_sign(self, p):
-
-        if p.Index not in self.surfaceTable.keys():
-            logger.info(f"{p.Type} Surface {p.Index} not used in cell definition) {p.Surf.Axis} {p.Surf.Position}")
-            return
-
-        for ic in self.surfaceTable[p.Index]:
-            surf = self.Cells[ic].Definition.get_surfaces_numbers()
-            for s in surf:
-                if s == p.Index:
-                    change_surf_sign(s, self.Cells[ic].Definition)
 
     def get_solid_cell_volume(self):
 

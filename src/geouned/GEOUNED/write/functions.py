@@ -82,20 +82,6 @@ class CellString:
         self.str = newline
 
 
-def change_surf_sign(surf, Seq):
-    if Seq.level == 0:
-        for i, e in enumerate(Seq.elements):
-            if surf == abs(e):
-                Seq.elements[i] = -Seq.elements[i]
-    else:
-        for i, e in enumerate(Seq.elements):
-            if type(e) is int:
-                if surf == abs(e):
-                    Seq.elements[i] = -Seq.elements[i]
-            else:
-                change_surf_sign(surf, e)
-
-
 def write_mcnp_cell_def(definition, tabspace=0, offset=0):
     sdef = CellString(tabspace=tabspace)
     str_def = remove_redundant(write_sequence_mcnp(definition))

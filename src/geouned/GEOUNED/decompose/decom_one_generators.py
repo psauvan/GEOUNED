@@ -28,8 +28,10 @@ def generic_split(solid, options, tolerances):
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
+    cut_surf =[]
     for surf in get_surfaces(solid, tolerances):
         surf.build_surface(bbox)
+        cut_surf.append(surf)
         try:
             comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)
         except:

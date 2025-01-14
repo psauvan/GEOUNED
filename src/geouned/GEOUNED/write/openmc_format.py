@@ -9,7 +9,7 @@ import FreeCAD
 
 from ..code_version import *
 from ..utils.geouned_classes import SurfacesDict
-from .functions import change_surf_sign, open_mc_surface, write_openmc_region
+from .functions import open_mc_surface, write_openmc_region
 
 logger = logging.getLogger("general_logger")
 
@@ -259,14 +259,3 @@ import openmc
                 temp.del_surface(ind + 1)
         return surfList
 
-    def change_surf_sign(self, p):
-
-        if p.Index not in self.surfaceTable.keys():
-            logger.info(f"{p.Type} Surface {p.Index} not used in cell definition {p.Surf.Axis} {p.Surf.Position}")
-            return
-
-        for ic in self.surfaceTable[p.Index]:
-            surf = self.Cells[ic].Definition.get_surfaces_numbers()
-            for s in surf:
-                if s == p.Index:
-                    change_surf_sign(s, self.Cells[ic].Definition)

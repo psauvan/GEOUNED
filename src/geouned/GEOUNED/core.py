@@ -425,7 +425,6 @@ class CadToCsg:
                     continue
                 logger.info(f"Building cell: {j+1}")
                 Conv.build_definition(m, self.Surfaces)
-
                 if j in warningSolidList:
                     warnSolids.append(m)
                 if not m.Solids:
@@ -476,6 +475,7 @@ class CadToCsg:
                 init = self.meta_list[-1].__id__ - len(self.enclosure_list)
             else:
                 init = 0
+             
             meta_void = void.void_generation(
                 meta_reduced,
                 self.enclosure_list,

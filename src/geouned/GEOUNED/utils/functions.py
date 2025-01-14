@@ -62,6 +62,8 @@ def get_multiplanes(solid, plane_index_set=None):
             if no_convex(mplanes):
                 mp_params = build_multip_params(mplanes)
                 mp = GeounedSurface(("MultiPlane", mp_params))
+                if mp.Surf.PlaneNumber < 2 :
+                    continue
                 for pp in mplanes:
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)
@@ -234,7 +236,7 @@ def get_additional_corner_plane(cyl, p1, p2):
     dir.normalize()
 
     if dir.dot(paxis) > 0:
-        paxis = -paxis
+        paxis = -paxis               # normal plane toward negative cylinder surface
     eps = 1e-7 * cyl.Surface.Radius  # used to avoid lost particles with possible complementary region
     point = point1 + eps * paxis
 

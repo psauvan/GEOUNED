@@ -421,7 +421,7 @@ def get_intervals(u_nodes):
 
 def omit_multiplane_repeated_planes(mp_region,Surfaces,Faces):
     repeated_planes = set()
-    planes = mp_region.definition.get_surfaces_numbers()
+    planes = mp_region.region.get_surfaces_numbers()
     for p in planes :
         pg = Surfaces.primitive_surfaces.get_surface(p)
         for face in Faces:

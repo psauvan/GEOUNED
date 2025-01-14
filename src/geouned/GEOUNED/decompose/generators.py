@@ -8,7 +8,7 @@ from ..utils.functions import (
     get_roundcorner_surfaces,
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
-from .decom_utils_generator import cyl_bound_planes, torus_bound_planes, exclude_no_cutting_planes, order_plane_face
+from .decom_utils_generator import cyl_bound_planes, torus_bound_planes, exclude_no_cutting_planes, order_plane_face, omit_isolated_planes
 
 
 def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
@@ -27,7 +27,8 @@ def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
         for multiplane in next_multiplanes(solid_GU, omitfaces):
             yield multiplane
     else:
-        omitfaces = exclude_no_cutting_planes(solid_GU.Faces)
+         omitfaces = set()
+    #    omitfaces = exclude_no_cutting_planes(solid_GU.Faces)  # omit planes that can be useful to split solid (function to be revised)
 
     for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, plane3pts):
         yield surface
@@ -46,6 +47,7 @@ def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
 
 
 def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False):
+    omit_isolated_planes(GUFaces, omitfaces)
     cutting_plane_face = order_plane_face(GUFaces, omitfaces)
     for p in cutting_plane_face:
         normal = p.Surface.Axis
@@ -79,7 +81,7 @@ def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False):
 
         elif surf[0:6] == "Sphere":
             for p in cyl_bound_planes(GUFaces, face):
-                yield plane
+                yield p
 
         elif surf == "<Toroid object>":
             for p in torus_bound_planes(GUFaces, face, tolerances):
@@ -176,6 +178,8 @@ def next_multiplanes(solid, plane_index_set):
             if no_convex(mplanes):
                 mp_params = build_multip_params(mplanes)
                 mp = GeounedSurface(("MultiPlane", mp_params))
+                if mp.Surf.PlaneNumber < 2 :
+                    continue
                 for pp in mplanes:
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)

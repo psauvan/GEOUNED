@@ -184,7 +184,8 @@ class GeounedSurface:
 
     def __init__(self, params, Face=None):
 
-        self.Index = 0
+        self.Index0 = 0
+        self.bVar = None
         self.region = None
         if params[0] == "Plane":
             self.Type = "Plane"
@@ -340,12 +341,6 @@ class MetaSurfacesDict(dict):
                 self.__surfIndex__[key] = []
         return
 
-    def change_sign(self,psurf):
-        
-        for ind in psurf.surfIndex:
-            surf = self.get_surface(ind)      
-            surf.region.chg_surf_sign(psurf.Index)
-
     def get_surface(self, pindex):
 
         for key,values in self.__surfIndex__.items():
@@ -364,249 +359,156 @@ class MetaSurfacesDict(dict):
     def extend(self, surface):
         self.primitive_surfaces.extend(surface)
 
-    def chg_surf_sign(self,surf):
-        for ind in surf.surfIndex:
-            region = self.get_primitive_surface(ind)
-            region.chg_surf_sign(surf)     
-
     def add_plane(self, plane, fuzzy):
         pid, exist = self.primitive_surfaces.add_plane(plane, fuzzy)
         same_dir = True
+        add_plane = True
+
         if exist:
             p_in = self.get_primitive_surface(pid)
             same_dir = not is_opposite(plane.Surf.Axis, p_in.Surf.Axis)
-
-            found = False
-            for i, p in enumerate(self["Planes"]):
-                if pid in p.region.surfaces:
-                    self.__last_obj__ = ("Planes", i)
-                    found = True
-                    break
-            if found:
-                p_region = p.region
-                return -p_region if (p_region.reverse == same_dir) else p_region
-                # Equivalent to :
-                # if p.reverse and same_dir :
-                #     return -p
-                # if p.reverse and not same_dir:
-                #    return p
-                # if not p.reverse and same_dir :
-                #    return p
-                # if not p.reverse and not same_dir :
-                #    return -p
-        else:
-            plane.surfIndex = []
-            p_in = plane
+            if not same_dir:
+                pid = -pid
             
+            for p_region in self["Planes"]:
+                boundary = p_region.isSameInterface(pid)
+                if abs(boundary) == 1:
+                    add_plane = False
+                    break
+ 
+        if add_plane:
+            self.surfaceNumber += 1 
+            newregion = pid.copy(self.surfaceNumber) 
+            self["Planes"].append(newregion)
+        else:   
+            newregion = p_region if boundary > 0 else -p_region    
 
-        self.surfaceNumber += 1
-        p_in.surfIndex.append(self.surfaceNumber)
-
-        if not same_dir:
-            pid = -pid
-        plane.region = BoolRegion(self.surfaceNumber, str(pid), reverse=not same_dir)
-        self["Planes"].append(plane)
-        self.__surfIndex__["Planes"].append(plane.region.__int__())
-        return plane.region
+        return newregion
 
     def add_cylinder(self, cylinder, fuzzy=False):
-        used_surfaces = []
-        cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder)
-        if exist_c:
-            used_surfaces.append(self.get_primitive_surface(cid))
-        else:   
-            cylinder.Surf.Cylinder.surfIndex = []
-            used_surfaces.append(cylinder.Surf.Cylinder)
 
+        cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder)
         if cylinder.Surf.Orientation == "Forward":
             cid = -cid
-            reverse = False
-        else:
-            reverse = True
-        cyl_surfaces = str(cid)
-    
+        cylinder_region =  cid
+
         if cylinder.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                cylinder.Surf.Plane.surfIndex = []
-                used_surfaces.append(cylinder.Surf.Plane)
-
-            cyl_surfaces += f' {pid}'
-        cylinder_region = BoolRegion(0, cyl_surfaces, reverse = reverse)
+            cylinder_region = cylinder_region * pid    
 
         add_cyl = True
-        for i, cyl in enumerate(self["Cyl"]):
-            if cyl.region == cylinder_region:
+        for cyl_region in self["Cyl"]:
+            boundary = cylinder_region.isSameInterface(cyl_region)
+            if abs(boundary) == 1:
                 add_cyl = False
-                self.__last_obj__ = ("Cyl", i)
                 break
 
         if add_cyl:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            cylinder.region = cylinder_region.copy(self.surfaceNumber)
-            self["Cyl"].append(cylinder)
-            self.__surfIndex__["Cyl"].append(cylinder.region.__int__())
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            return cylinder.region
+            newregion = cylinder_region.copy(self.surfaceNumber)
+            self["Cyl"].append(newregion)
         else:
-            return cyl.region
+            newregion = cyl_region if boundary > 0 else -cyl_region
+        
+        return newregion
 
     def add_cone(self, cone):
-        used_surfaces = []
         cid, exist_c = self.primitive_surfaces.add_cone(cone.Surf.Cone)
-        if exist_c:
-            used_surfaces.append(self.get_primitive_surface(cid))
-        else:   
-            cone.Surf.Cone.surfIndex = []
-            used_surfaces.append(cone.Surf.Cone)
 
         if cone.Surf.Orientation == "Forward":
             cid = -cid
-            reverse = False
-        else:
-            reverse = True
-        cone_surfaces = str(cid)
+        cone_region = cid
     
         if cone.Surf.ApexPlane:
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.ApexPlane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(cone.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                cone.Surf.ApexPlane.surfIndex = []
-                used_surfaces.append(cone.Surf.ApexPlane) 
 
             if cone.Surf.Orientation == "Forward" :
-                cone_surfaces += f' {pid}'
+                cone_region = cone_region * pid
             else:    
-                cone_surfaces += f':{pid}'
+                cone_region = cone_region + pid
 
         if cone.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(cone.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                cone.Surf.Plane.surfIndex = []
-                used_surfaces.append(cone.Surf.Plane) 
-            cone_surfaces = f'{pid} ({cone_surfaces})'        
+            cone_region = cone_region * pid        
         
-        cone_region = BoolRegion(0, cone_surfaces, reverse = reverse)
-
         add_cone = True
-        for i, kne in enumerate(self["Cone"]):
-            if kne.region == cone_region:
+        for kne_region in self["Cone"]:
+            boundary = cone_region.isSameInterface(kne_region)
+            if abs(boundary) == 1:
                 add_cone = False
-                self.__last_obj__ = ("Cone", i)
                 break
 
         if add_cone:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            cone.region = cone_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("Cone", len(self["Cone"]))
-            self["Cone"].append(cone)
-            self.__surfIndex__["Cone"].append(cone.region.__int__())
-            return cone.region
+            newregion = cone_region.copy(self.surfaceNumber)
+            self["Cone"].append(newregion)
         else:
-            return kne.region
+            newregion = kne_region if boundary > 0 else -kne_region
+        return newregion    
         
     def add_sphere(self, sphere):
-        used_surfaces = []
         sid, exist_s = self.primitive_surfaces.add_sphere(sphere.Surf.Sphere)
-        if exist_s:
-            used_surfaces.append(self.get_primitive_surface(sid))
-        else:   
-            sphere.Surf.Sphere.surfIndex = []
-            used_surfaces.append(sphere.Surf.Sphere)
 
         if sphere.Surf.Orientation == "Forward":
             sid = -sid
-            reverse = False
-        else:
-            reverse = True
 
-        sph_surfaces = str(sid)    
+        sphere_region = sid    
         if sphere.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(sphere.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(sphere.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                sphere.Surf.Plane.surfIndex = []
-                used_surfaces.append(sphere.Surf.Plane)
-
-            sph_surfaces += f' {pid}'
-        sphere_region = BoolRegion(0, sph_surfaces, reverse = reverse)
+            sphere_region = sphere_region * pid
 
         add_sph = True
-        for i, sph in enumerate(self["Sph"]):
-            if sph.region == sphere_region:
+        for sph_region in self["Sph"]:
+            boundary = sphere_region.isSameInterface(sph_region)
+            if abs(boundary) == 1:
                 add_sph = False
-                self.__last_obj__ = ("Sph", i)
                 break
 
         if add_sph:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            sphere.region = sphere_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("Sph", len(self["Sph"]))
-            self["Sph"].append(sphere)
-            self.__surfIndex__["Sph"].append(sphere.region.__int__())
-            return sphere.region
+            newregion = sphere_region.copy(self.surfaceNumber)
+            self["Sph"].append(newregion)
         else:
-            return sph.region
+            newregion = sph_region if boundary > 0 else -sph_region
+        return newregion
     
     def add_torus(self, torus):
-        used_surfaces = []
         tid, exist_t = self.primitive_surfaces.add_torus(torus.Surf.Torus)
-        if exist_t:
-            used_surfaces.append(self.get_primitive_surface(tid))
-        else:   
-            torus.Surf.Torus.surfIndex = []
-            used_surfaces.append(torus.Surf.Torus)
 
         if torus.Surf.Orientation == "Forward":
             tid = -tid
-            reverse = False
-        else:
-            reverse = True
-        torus_surfaces = str(tid)
+
+        torus_region = tid
         
         psurf = []
         for tp in torus.Surf.UPlanes:
             pid, exist_p = self.primitive_surfaces.add_plane(tp, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(tp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                tp.surfIndex = []
-                used_surfaces.append(tp)
-
-            psurf.append(str(pid))
+            psurf.append(pid)
 
         if len(psurf) == 2 :
-            torus_surfaces += f' ({":".join(psurf)})'
+            torus_region = torus_region * (psurf[0] + psurf[1])
         elif len(psurf) == 1 :    
-            torus_surfaces += f' {psurf[0]}'
+            torus_region = torus_region * psurf[0]
 
         if torus.Surf.VSurface:
             if torus.Surf.VSurface.Type == "Plane":
@@ -618,175 +520,122 @@ class MetaSurfacesDict(dict):
 
             if exist_s:
                 surf = self.get_primitive_surface(sid)
-                used_surfaces.append(surf)
                 if torus.Surf.VSurface.Type == "Plane":
                     if is_opposite(torus.Surf.VSurface.Surf.Axis, surf.Surf.Axis, self.tolerances.pln_angle):
                         sid = -sid
                 else:
                     if torus.Surf.SOrientation == "Forward":
                         sid = -sid        
-            else:        
-                torus.Surf.VSurface.surfIndex =  []
-                used_surfaces.append(torus.Surf.Vsurface)
-            
-            torus_surfaces += f' {sid}'
-                
-        torus_region = BoolRegion(0, torus_surfaces, reverse = reverse)
 
+            torus_region = torus_region * sid
+                
         add_torus = True
-        for i, tor in enumerate(self["Tor"]):
-            if tor.region == torus_region:
+        for tor_region in self["Tor"]:
+            boundary = torus_region.isSameInterface(tor_region)
+            if abs(boundary) == 1:
                 add_torus = False
-                self.__last_obj__ = ("Tor", i)
                 break
 
         if add_torus:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            torus.region = torus_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("Tor", len(self["Tor"]))
-            self["Tor"].append(torus)
-            self.__surfIndex__["Tor"].append(torus.region.__int__())
-            return torus.region
+            newregion = torus_region.copy(self.surfaceNumber)
+            self["Tor"].append(newregion)
         else:
-            return tor.region
+            newregion = tor_region if boundary > 0 else -tor_region
+        return newregion
 
     def add_multiPlane(self, multiP):
-        multiP_surfaces = []
-        used_surfaces = []
+        
+        multiP_region = None
         for mp in multiP.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(mp, True)
             if exist:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(mp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                mp.surfIndex = []
-                used_surfaces.append(mp)        
-            multiP_surfaces.append(str(pid))
-        multiP_region = BoolRegion(0, ":".join(multiP_surfaces))
-
+           
+            multiP_region = BoolRegion.add(multiP_region, pid)            
+        
         add_multiP = True
-        for i, mp in enumerate(self["MultiP"]):
-            if mp.region == multiP_region:
+        for mp_region in self["MultiP"]:
+            boundary = multiP_region.isSameInterface(mp_region)
+            if abs(boundary) == 1:
                 add_multiP = False
-                self.__last_obj__ = ("MultiP", i)
                 break
 
         if add_multiP:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            multiP.region = multiP_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("MultiP", len(self["MultiP"]))
-            self["MultiP"].append(multiP)
-            self.__surfIndex__["MultiP"].append(multiP.region.__int__())
-            return multiP.region
+            newregion = multiP_region.copy(self.surfaceNumber)
+            self["MultiP"].append(newregion)
         else:
-            return mp.region
+            newregion = mp_region if boundary > 0 else -mp_region
+        return newregion
 
     def add_reverseCan(self, reverseCan):
-        used_surfaces = []
         pid, exist = self.primitive_surfaces.add_cylinder(reverseCan.Surf.Cylinder, True)
-        if exist:
-            used_surfaces.append(self.get_primitive_surface(pid))
-        else:   
-            reverseCan.Surf.Cylinder.surfIndex = []
-            used_surfaces.append(reverseCan.Surf.Cylinder)
+        reverseCan_region = pid
 
-        reverseCan_surfaces = [str(pid)]
         for cp in reverseCan.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)
             if exist:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            else:
-                cp.surfIndex = []
-                used_surfaces.append(cp)
 
-            reverseCan_surfaces.append(str(pid))
-        reverseCan_region = BoolRegion(0, ":".join(reverseCan_surfaces))
+            reverseCan_region = reverseCan_region + pid
 
         add_can = True
-        for i, cs in enumerate(self["RevCan"]):
-            if cs.region == reverseCan_region:
+        for cs_region in self["RevCan"]:
+            boundary = reverseCan_region.isSameInterface(cs_region)
+            if abs(boundary) == 1:
                 add_can = False
-                self.__last_obj__ = ("RevCan", i)
                 break
 
         if add_can:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            reverseCan.region = reverseCan_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("RevCan", len(self["RevCan"]))
-            self["RevCan"].append(reverseCan)
-            self.__surfIndex__["RevCan"].append(reverseCan.region.__int__())
-            return reverseCan.region
+            newregion = reverseCan_region.copy(self.surfaceNumber)
+            self["RevCan"].append(newregion)
         else:
-            return cs.region
+            newregion = cs_region if boundary > 0 else -cs_region
+        return newregion
 
     def add_roundCorner(self, roundC):
-        used_surfaces = []
         cid, exist_c = self.primitive_surfaces.add_cylinder(roundC.Surf.Cylinder, True)
-        if exist_c:
-            used_surfaces.append(self.get_primitive_surface(cid))
-        else:   
-            roundC.Surf.Cylinder.surfIndex = []
-            used_surfaces.append(roundC.Surf.Cylinder)
 
         pid, exist_p = self.primitive_surfaces.add_plane(roundC.Surf.AddPlane, True)
         if exist_p:
             p = self.get_primitive_surface(pid)
-            used_surfaces.append(p)
-            if is_opposite(roundC.Surf.AddPlane.Surf.Axis, roundC.Surf.AddPlane.Surf.Axis, self.tolerances.pln_angle):
+            if is_opposite(roundC.Surf.AddPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                 pid = -pid
-        else:
-            roundC.Surf.AddPlane.surfIndex = []
-            used_surfaces.append(roundC.Surf.AddPlane)
 
-        roundC_surfaces = [f"({-cid}:{pid})"]
+        roundC_region = -cid + pid
 
         for cp in roundC.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)
             if exist:
                 p = self.get_primitive_surface(pid)
-                used_surfaces.append(p)
                 if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
+            
+            if roundC.Surf.Configuration == "AND":        
+                roundC_region = roundC_region * pid
             else:
-                cp.surfIndex = []
-                used_surfaces.append(cp)        
-            roundC_surfaces.append(str(pid))
-
-        if roundC.Surf.Configuration == "AND":
-            op = " "
-        else:
-            op = ":"
-        roundC_region = BoolRegion(0, op.join(roundC_surfaces))
-
+                roundC_region = roundC_region + pid
+       
         add_corner = True
-        for i, rc in enumerate(self["RoundC"]):
-            if rc.region == roundC_region:
+        for rc_region in self["RoundC"]:
+            boundary = roundC_region.isSameInterface(rc_region)
+            if abs(boundary) == 1:
                 add_corner = False
-                self.__last_obj__ = ("RoundC", i)
                 break
 
         if add_corner:
             self.surfaceNumber += 1
-            for s in used_surfaces:
-                s.surfIndex.append(self.surfaceNumber)
-            roundC.region = roundC_region.copy(self.surfaceNumber)
-            self.__last_obj__ = ("RoundC", len(self["RoundC"]))
-            self["RoundC"].append(roundC)
-            self.__surfIndex__["RoundC"].append(roundC.region.__int__())
-            return roundC.region
+            newregion = roundC_region.copy(self.surfaceNumber)
+            self["RoundC"].append(newregion)
         else:
-            return rc.region
+            newregion = rc_region if boundary > 0 else -rc_region
+        return newregion
 
 
 class SurfacesDict(dict):
@@ -839,7 +688,7 @@ class SurfacesDict(dict):
         lastInd = self.__last_obj__[1]
         if lastKey != "":
             if len(self[lastKey]) > 0:
-                if self[lastKey][lastInd].Index == index:
+                if self[lastKey][lastInd].bVar == index:
                     return self[lastKey][lastInd]
 
         for key, values in self.__surfIndex__.items():
@@ -885,18 +734,18 @@ class SurfacesDict(dict):
                     options=self.options,
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
-                    fuzzy=(fuzzy, p.Index),
+                    fuzzy=(fuzzy, p.bVar.__int__()),
                 ):
                     add_plane = False
-                    index = p.Index
+                    bVar = p.bVar
                     self.__last_obj__ = ("PX", i)
                     break
             if add_plane:
                 self.surfaceNumber += 1
-                plane.Index = self.surfaceNumber + self.IndexOffset
+                plane.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
                 self.__last_obj__ = ("PX", len(self["PX"]))
                 self["PX"].append(plane)
-                self.__surfIndex__["PX"].append(plane.Index)
+                self.__surfIndex__["PX"].append(plane.bVar.__int__())
 
         elif is_parallel(plane.Surf.Axis, ey, self.tolerances.pln_angle):
             add_plane = True
@@ -907,18 +756,18 @@ class SurfacesDict(dict):
                     options=self.options,
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
-                    fuzzy=(fuzzy, p.Index),
+                    fuzzy=(fuzzy, p.bVar.__int__()),
                 ):
                     add_plane = False
-                    index = p.Index
+                    bVar = p.bVar
                     self.__last_obj__ = ("PY", i)
                     break
             if add_plane:
                 self.surfaceNumber += 1
-                plane.Index = self.surfaceNumber + self.IndexOffset
+                plane.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
                 self.__last_obj__ = ("PY", len(self["PY"]))
                 self["PY"].append(plane)
-                self.__surfIndex__["PY"].append(plane.Index)
+                self.__surfIndex__["PY"].append(plane.bVar.__int__())
 
         elif is_parallel(plane.Surf.Axis, ez, self.tolerances.pln_angle):
             add_plane = True
@@ -929,18 +778,18 @@ class SurfacesDict(dict):
                     options=self.options,
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
-                    fuzzy=(fuzzy, p.Index),
+                    fuzzy=(fuzzy, p.bVar.__int__()),
                 ):
                     add_plane = False
-                    index = p.Index
+                    bVar = p.bVar
                     self.__last_obj__ = ("PZ", i)
                     break
             if add_plane:
                 self.surfaceNumber += 1
-                plane.Index = self.surfaceNumber + self.IndexOffset
+                plane.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
                 self.__last_obj__ = ("PZ", len(self["PZ"]))
                 self["PZ"].append(plane)
-                self.__surfIndex__["PZ"].append(plane.Index)
+                self.__surfIndex__["PZ"].append(plane.bVar.__int__())
 
         else:
             add_plane = True
@@ -951,23 +800,23 @@ class SurfacesDict(dict):
                     options=self.options,
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
-                    fuzzy=(fuzzy, p.Index),
+                    fuzzy=(fuzzy, p.bVar.__int__()),
                 ):
                     add_plane = False
-                    index = p.Index
+                    bVar = p.bVar
                     self.__last_obj__ = ("P", i)
                     break
             if add_plane:
                 self.surfaceNumber += 1
-                plane.Index = self.surfaceNumber + self.IndexOffset
+                plane.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
                 self.__last_obj__ = ("P", len(self["P"]))
                 self["P"].append(plane)
-                self.__surfIndex__["P"].append(plane.Index)
+                self.__surfIndex__["P"].append(plane.bVar.__int__())
 
         if add_plane:
-            return plane.Index, False
+            return plane.bVar, False
         else:
-            return index, True
+            return bVar, True
 
     def add_cylinder(self, cyl, fuzzy=False):
         addCyl = True
@@ -978,22 +827,22 @@ class SurfacesDict(dict):
                 options=self.options,
                 tolerances=self.tolerances,
                 numeric_format=self.numeric_format,
-                fuzzy=(fuzzy, c.Index),
+                fuzzy=(fuzzy, c.bVar.__int__()),
             ):
                 addCyl = False
-                index = c.Index
+                bVar = c.bVar
                 self.__last_obj__ = ("Cyl", i)
                 break
 
         if addCyl:
             self.surfaceNumber += 1
-            cyl.Index = self.surfaceNumber + self.IndexOffset
+            cyl.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
             self.__last_obj__ = ("Cyl", len(self["Cyl"]))
             self["Cyl"].append(cyl)
-            self.__surfIndex__["Cyl"].append(cyl.Index)
-            return cyl.Index, False
+            self.__surfIndex__["Cyl"].append(cyl.bVar.__int__())
+            return cyl.bVar, False
         else:
-            return index, True
+            return bVar, True
 
     def add_cone(self, cone):
         cone_added = True
@@ -1006,18 +855,18 @@ class SurfacesDict(dict):
                 rel_tol=self.tolerances.relativeTol,
             ):
                 cone_added = False
-                index = c.Index
+                bVar = c.bVar
                 self.__last_obj__ = ("Cone", i)
                 break
         if cone_added:
             self.surfaceNumber += 1
-            cone.Index = self.surfaceNumber + self.IndexOffset
+            cone.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
             self.__last_obj__ = ("Cone", len(self["Cone"]))
             self["Cone"].append(cone)
-            self.__surfIndex__["Cone"].append(cone.Index)
-            return cone.Index, False
+            self.__surfIndex__["Cone"].append(cone.bVar.__int__())
+            return cone.bVar, False
         else:
-            return index, True
+            return bVar, True
 
     def add_sphere(self, sph):
         sphere_added = True
@@ -1029,18 +878,18 @@ class SurfacesDict(dict):
                 rel_tol=self.tolerances.relativeTol,
             ):
                 sphere_added = False
-                index = s.Index
+                bVar = s.bVar
                 self.__last_obj__ = ("Sph", i)
                 break
         if sphere_added:
             self.surfaceNumber += 1
-            sph.Index = self.surfaceNumber + self.IndexOffset
+            sph.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
             self.__last_obj__ = ("Sph", len(self["Sph"]))
             self["Sph"].append(sph)
-            self.__surfIndex__["Sph"].append(sph.Index)
-            return sph.Index, False
+            self.__surfIndex__["Sph"].append(sph.bVar.__int__())
+            return sph.bVar, False
         else:
-            return index, True
+            return bVar, True
 
     def add_torus(self, tor):
         add_torus = True
@@ -1053,18 +902,18 @@ class SurfacesDict(dict):
                 rel_tol=self.tolerances.relativeTol,
             ):
                 add_torus = False
-                index = s.Index
+                bVar = s.bVar
                 self.__last_obj__ = ("Tor", i)
                 break
         if add_torus:
             self.surfaceNumber += 1
-            tor.Index = self.surfaceNumber + self.IndexOffset
+            tor.bVar = BoolRegion(self.surfaceNumber + self.IndexOffset)
             self.__last_obj__ = ("Tor", len(self["Tor"]))
             self["Tor"].append(tor)
-            self.__surfIndex__["Tor"].append(tor.Index)
-            return tor.Index, False
+            self.__surfIndex__["Tor"].append(tor.bVar.__int__())
+            return tor.bVar, False
         else:
-            return index, True
+            return bVar, True
 
     def get_id(self, facein):
 
@@ -1086,7 +935,7 @@ class SurfacesDict(dict):
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
                 ):
-                    return s.Index
+                    return s.bVar.__int__()
 
         elif facein.Type == "Cylinder":
             for s in self["Cyl"]:
@@ -1097,7 +946,7 @@ class SurfacesDict(dict):
                     tolerances=self.tolerances,
                     numeric_format=self.numeric_format,
                 ):
-                    return s.Index
+                    return s.bVar.__int__()
 
         elif facein.Type == "Cone":
             for s in self["Cone"]:
@@ -1108,12 +957,12 @@ class SurfacesDict(dict):
                     atol=self.tolerances.kne_angle,
                     rel_tol=self.tolerances.relativeTol,
                 ):
-                    return s.Index
+                    return s.bVar.__int__()
 
         elif facein.Type == "Sphere":
             for s in self["Sph"]:
                 if is_same_sphere(facein.Surf, s.Surf, self.tolerances.sph_distance, rel_tol=self.tolerances.relativeTol):
-                    return s.Index
+                    return s.bVar.__int__()
 
         elif facein.Type == "Torus":
             for s in self["Tor"]:
@@ -1124,6 +973,6 @@ class SurfacesDict(dict):
                     atol=self.tolerances.tor_angle,
                     rel_tol=self.tolerances.relativeTol,
                 ):
-                    return s.Index
+                    return s.bVar.__int__()
 
         return 0

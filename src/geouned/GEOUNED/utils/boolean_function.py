@@ -12,49 +12,126 @@ mix = re.compile(r"(?P<value>([-+]?\d+|\[0+\]))")  # identify signed integer or 
 TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern including F,T,X, or o sequence ( in any order).
 
 
-class BoolRegion(int):
+def BoolSeq_int_to_BoolRegion(Seq):
+    if Seq.base_type != int:
+        return Seq
+    variables = Seq.get_surfaces_numbers()
+    boolvar = dict()
+    for key in variables:
+        boolvar[key] = BoolRegion(key)
 
+    for i, e in enumerate(Seq.elements):
+        if isinstance(e, int):
+            Seq.elements[i] = boolvar[abs(e)] if e > 0 else -boolvar[abs(e)]
+        elif isinstance(e, BoolSequence):
+            Seq.elements[i] = BoolSeq_int_to_BoolRegion(Seq.elements[i])
+    Seq.base_type = BoolRegion
+    return Seq
+
+
+def BoolSeq_int_to_BoolVar(Seq):
+    if Seq.base_type != int:
+        return Seq
+    if type(Seq.elements) is bool : return Seq
+
+    variables = Seq.get_surfaces_numbers()
+    boolvar = dict()
+    for key in variables:
+        boolvar[key] = BoolVariable(key)
+    for i, e in enumerate(Seq.elements):
+        if isinstance(e, int):
+            Seq.elements[i] = boolvar[abs(e)] if e > 0 else -boolvar[abs(e)]
+        elif isinstance(e, BoolSequence):
+            Seq.elements[i] = BoolSeq_int_to_BoolVar(Seq.elements[i])
+    Seq.base_type = BoolVariable
+    return Seq
+
+def chg_surf_ref(Seq,surf):
+    if Seq.base_type != BoolVariable : return True
+
+    surfList = Seq.get_surfaces_numbers()
+    if surf in surfList:
+        for e in Seq.elements:
+            if isinstance(e,BoolVariable):
+                if abs(e) == surf :
+                    e.change_ref()
+                    return True
+            else :
+                brk = chg_surf_ref(e,surf) 
+                if brk : 
+                    return True   
+        return False
+    else:
+        return False 
+
+class surfRef:
+    def __init__(self, value=True):
+        self.__value__ = value
+
+    def switch(self):
+        self.__value__ = not self.__value__
+
+    def ref(self):
+        return self.__value__
+
+
+class BoolVariable(int):
+    def __new__(cls, *args, **kwrds):
+        label = args[0]
+        return super(BoolVariable, cls).__new__(cls, label)
+
+    def __init__(
+        self,
+        label,
+        value=None,
+    ):
+        if value is None:
+            self.__reference__ = surfRef()
+        else:
+            self.__reference__ = value
+
+    def __neg__(self):
+        return BoolVariable(-self.__int__(), self.__reference__)
+
+    def __str__(self):
+        return str(self.value())
+
+    def copy(self):
+        return BoolVariable(self.__int__(), self.__reference__)
+
+    def change_ref(self):
+        self.__reference__.switch()
+
+    def ref(self):
+        return self.__reference__.ref()
+
+    def value(self):
+        return self.__int__() if self.ref() else -self.__int__()
+
+class BoolRegion(int):
     def __new__(cls, *args, **kwrds):
         label = args[0]
         return super(BoolRegion, cls).__new__(cls, label)
 
     def __init__(self, label, definition=None, reverse=False):
-        if definition is None:
-            self.set_definition(BoolSequence(str(label)))
-            
-        elif isinstance(definition, str):
-            self.set_definition(BoolSequence(definition))
-
-        elif isinstance(definition, BoolSequence):
-            if definition.int_elements:
-                self.set_definition(definition)
-            else:
-                raise "BoolSequence basic elements of the definition should be integer not BoolRegion"
-        else:
-            raise ("Boolean region : bad Boolean definition")
-
         self.reverse = reverse
-        self.surfaces = self.__def__.get_surfaces_numbers()
+        if definition is None:
+            self.region = BoolVariable(label)
+            self.level = 0
+        else:
+            self.set_definition(definition)
+        self.surfaces = self.get_surfaces_numbers()    
 
-    #    def __str__(self)
-    #        return self.definition.__str__()
-
-    def set_definition(self,definition):
-        definition.level_update()
-        self.__def__ = definition
-        self.__not_def__ = definition.get_complementary()
-        self.level = self.__def__.level
-        self.definition = self.__def__
+    def __str__(self):
+        line = f"region {self.__int__():2d} : "
+        defline = self.region.__str__()
+        return line + defline
 
     def __neg__(self):
-        neg = BoolRegion(-self.__int__())
-        neg.reverse = self.reverse
-        neg.surfaces = self.surfaces
-        neg.level = self.level
-        neg.__def__ = self.__not_def__
-        neg.__not_def__ = self.__def__
-        neg.definition = neg.__def__
-        return neg
+        if self.level == 0:
+            return BoolRegion(-self.__int__(), -self.region, self.reverse)
+        else:
+            return BoolRegion(-self.__int__(), self.region.get_complementary(), self.reverse)
 
     def __pos__(self):
         return self
@@ -66,20 +143,29 @@ class BoolRegion(int):
             return -self
 
     def __add__(self, def2):
+        if def2 is None:
+            return self
+
         newdef = BoolSequence(operator="OR")
-        newdef.append(self.definition, def2.definition)
+        newdef.append(self.region, def2.region)
         newdef.join_operators()
         return BoolRegion(0, newdef)
 
     def __sub__(self, def2):
+        if def2 is None:
+            return self
+        
         newdef = BoolSequence(operator="OR")
-        newdef.append(self.definition, def2.definition.get_complementary())
+        newdef.append(self.region, -def2.region)
         newdef.join_operators()
         return BoolRegion(0, newdef)
 
     def __mul__(self, def2):
+        if def2 is None:
+            return self
+        
         newdef = BoolSequence(operator="AND")
-        newdef.append(self.definition, def2.definition)
+        newdef.append(self.region, def2.region)
         newdef.join_operators()
         return BoolRegion(0, newdef)
 
@@ -87,44 +173,100 @@ class BoolRegion(int):
         if type(def2) is int:
             return self.__int__() == def2
         else:
-            return self.definition == def2.definition
+            return self.region == def2.region
 
-    def chg_surf_sign(self,s1):
-        self.__def__.chg_surf_sign(s1)
-        self.__not_def__.chg_surf_sign(s1)
-
-
-    def setDef(self, definition):
-        if definition.int_elements:
-            self.definition = definition
-            self.surfaces = self.definition.get_surfaces_numbers()
-            self.level = self.definition.level
+    def chg_surf_ref(self,surf):
+        if self.level == 0:
+            if surf == abs(self.region) :
+                self.region.change_ref()
         else:
-            raise "BoolSequence basic elements of the definition should be integer not BoolRegion"
+            chg_surf_ref(self.region,surf)
 
-    def level_update(self):
-        self.definition.level_update()
-        self.level = self.definition.level
+    def set_definition(self, definition):
+        if isinstance(definition, BoolVariable):
+            self.region = definition
+            self.level = 0
+        elif isinstance(definition, int):
+            self.region = BoolVariable(definition)
+            self.level = 0
+        elif isinstance(definition, str):
+            Seq = BoolSequence(definition)
+            self.region = BoolSeq_int_to_BoolVar(Seq)
+            self.level = self.region.level + 1
+        elif isinstance(definition, BoolSequence):
+            if definition.base_type== int:
+                self.region = BoolSeq_int_to_BoolVar(definition)
+            else:
+                self.region = definition
+            self.level = self.region.level + 1
 
-    def copy(self, newname: int = None):
-        if newname is None:
-            newname = self.__int__()
+    def copy(self,newlabel = None,reverse=False):
+        if newlabel  :
+            label = newlabel
+        else:
+            label = self.__int__()
+
+        if self.level == 0:
+            return BoolRegion(label, definition=self.region, reverse=self.reverse)
+        else:
+            copydef = self.region.copy()
+            return BoolRegion(label, definition=copydef, reverse=self.reverse)
         
-        cp = BoolRegion(newname, self.definition, reverse=self.reverse)
-        cp.__not_def__ = self.__not_def__
-        return cp
+    def get_surfaces_numbers(self):
+        if type(self.region) is BoolVariable:
+            return (abs(self.region.__int__()), )
+        else:   
+            return self.region.get_surfaces_numbers()
+        
+    def to_integer(self):
+        if type(self.region) == BoolVariable:
+            return self.region.value()
+        else:
+            return self.region.to_integer()
+        
+    def isSameInterface(self,region2):
+        if self.level != region2.level :
+            return 0
+        if len(self.surfaces) != len(region2.surfaces):
+            return 0
+        
+        if type(self.region) is BoolVariable:
+            if self.region.value() == region2.region.value():
+                return 1
+            elif self.region.value() == -region2.region.value():
+                return -1
+            else:
+                return 0
+            
+        if self.region == region2.region:
+            return 1
+        elif self.region == region2.region.get_complementary():
+            return -1
+        else:
+            return 0
+
 
     def mult(a, b, label=0):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        
         newdef = BoolSequence(operator="AND")
-        newdef.append(a.definition, b.definition)
+        newdef.append(a.region, b.region)
         #  newdef.group_single()
         newdef.join_operators()
 
         return BoolRegion(label, newdef)
 
     def add(a, b, label=0):
+        if a is None:
+            return b
+        if b is None:
+            return a
+
         newdef = BoolSequence(operator="OR")
-        newdef.append(a.definition, b.definition)
+        newdef.append(a.region, b.region)
         newdef.join_operators()
         # newdef.group_single()
         return BoolRegion(label, newdef)
@@ -136,14 +278,14 @@ class BoolSequence:
     def __init__(self, definition=None, operator=None):
         if definition:
             self.elements = []
-            self.int_elements = True
-            self.set_def(definition)
-
+            if type(definition) is str:
+                self.set_def(definition)
+                self.base_type = int   
         else:
             self.elements = []
             self.operator = operator
             self.level = 0
-            self.int_elements = None
+            self.base_type = None
 
     def __str__(self):
         out = f"{self.operator}["
@@ -187,6 +329,16 @@ class BoolSequence:
                         break
             return equals == len(self.elements)
 
+    def set_Bool_variable(self, positive=True):
+        for i, e in enumerate(self.elements):
+            if isinstance(e, BoolSequence):
+                e.set_Bool_variable(positive)
+            elif type(e) is int:  # isintance does not differ int from BoolRegion
+                if positive:
+                    self.elements[i] = BoolVariable(abs(e), e > 0)
+                else:
+                    self.elements[i] = BoolVariable(e, True)
+
     def get_lev0_surfaces(self):
         if self.level > 1:
             return None
@@ -208,24 +360,21 @@ class BoolSequence:
                 self.assign(seq)
             return
 
-        if self.int_elements is None:
-            for s in seq:
-                if isinstance(s, bool):
+        if self.base_type is None:
+            for e in seq:
+                if type(e) is bool :
                     continue
-                elif isinstance(s, BoolRegion):
-                    self.int_elements = False
+                elif isinstance(e, BoolSequence):
+                    self.base_type = e.base_type
                     break
-                elif isinstance(s, BoolSequence):
-                    self.int_elements = s.int_elements
+                else: 
+                    self.base_type = type(e)
                     break
-                else:
-                    self.int_elements = True
-                    break
-
+                
         for s in seq:
             if isinstance(s, int):
-                if (type(s) is int) != self.int_elements:
-                    raise "Base elements of bool sequence should have the same type (int ot BoolRegion)"
+                if type(s) != self.base_type:
+                    raise "All base elements in sequence should have the same type (int, BoolVariable or BoolRegion)"
 
                 if s in self.elements:
                     continue
@@ -252,7 +401,7 @@ class BoolSequence:
                     else:
                         continue
                 else:
-                    if s.int_elements != self.int_elements:
+                    if s.base_type != self.base_type:
                         raise "Base elements of bool sequence should have the same type (int ot BoolRegion)"
 
             self.elements.append(s)
@@ -303,7 +452,7 @@ class BoolSequence:
         cp = BoolSequence()
         cp.operator = self.operator
         cp.level = self.level
-        cp.int_elements = self.int_elements
+        cp.base_type = self.base_type
 
         if isinstance(self.elements, bool):
             cp.elements = self.elements
@@ -315,11 +464,22 @@ class BoolSequence:
                     cp.elements.append(e.copy())
         return cp
 
+    def to_integer(self):
+        if self.base_type == int:
+            return self
+        intSeq = self.copy()
+        for i,e in enumerate(intSeq.elements):
+            if isinstance (e,(BoolRegion,BoolSequence)):
+                intSeq.elements[i] = e.to_integer()
+            else:    
+                intSeq.elements[i] = e.value()
+        return intSeq        
+
     # TODO rename to snake case, care as multiple functions with same name
     def get_complementary(self):
         c = BoolSequence(operator=self.comp_operator())
         c.level = self.level
-        c.int_elements = self.int_elements
+        c.base_type = self.base_type
 
         if self.level == 0:
             for e in self.elements:
@@ -340,10 +500,13 @@ class BoolSequence:
     def expand_regions(self):
         for i, e in enumerate(self.elements):
             if isinstance(e, BoolRegion):
-                self.elements[i] = e.definition
+                if type(e.region) is BoolVariable:
+                    self.elements[i] = e.region.value()
+                else:    
+                    self.elements[i] = e.region.to_integer()
             elif isinstance(e, BoolSequence):
                 e.expand_regions()
-        self.int_elements = True
+        self.base_type = int
         self.join_operators()
 
     def simplify(self, CT=None, depth=0):
@@ -444,27 +607,26 @@ class BoolSequence:
         if type(self.elements) is bool:
             return self.elements
         if self.level == 0:
-            if self.int_elements:
+            if self.base_type == int:
                 signed_surf = set(self.elements)
                 self.elements = list(signed_surf)
             else:
                 signed_surf_list = self.elements
                 signed_surf_set = set([x.__int__() for x in self.elements])
-                ndel =len(signed_surf_list)-len(signed_surf_set) 
-                if ndel > 0 :
+                ndel = len(signed_surf_list) - len(signed_surf_set)
+                if ndel > 0:
                     ic = 0
                     for _ in range(ndel):
-                        for ic1,x in enumerate(signed_surf_list[ic:]):
+                        for ic1, x in enumerate(signed_surf_list[ic:]):
                             nx = signed_surf_list.count(x)
                             if nx > 1:
                                 ind = signed_surf_list.index(x)
                                 del signed_surf_list[ind]
                                 ic += ic1
                                 break
-                    signed_surf = set([x.__int__() for x in self.elements])        
+                    signed_surf = set([x.__int__() for x in self.elements])
                 else:
-                    signed_surf = signed_surf_set                
-
+                    signed_surf = signed_surf_set
 
             surf_name = self.get_surfaces_numbers()
             if len(signed_surf) == len(surf_name):
@@ -615,7 +777,7 @@ class BoolSequence:
 
         if len(ANDop) > 1 and self.operator == "AND":
             newSeq = BoolSequence(operator="AND")
-            newSeq.int_elements = self.int_elements
+            newSeq.base_type = self.base_type
             for s in ANDop:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
@@ -626,7 +788,7 @@ class BoolSequence:
 
         elif len(ORop) > 1 and self.operator == "OR":
             newSeq = BoolSequence(operator="OR")
-            newSeq.int_elements = self.int_elements
+            newSeq.base_type = self.base_type
             for s in ORop:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
@@ -836,7 +998,7 @@ class BoolSequence:
         if not group:
             return
         seq = BoolSequence()
-        seq.int_elements = self.int_elements
+        seq.base_type = self.base_type
         seq.elements.extend(group)
         seq.operator = self.operator
         seq.level = 0
@@ -850,7 +1012,7 @@ class BoolSequence:
         for e in self.elements:
             if type(e) is int:
                 surf.add(abs(e))
-            elif type(e) is BoolRegion:
+            elif isinstance(e, (BoolRegion,BoolVariable)):
                 surf.add(abs(e.__int__()))
             else:
                 surf.update(e.get_surfaces_numbers())
@@ -860,7 +1022,7 @@ class BoolSequence:
         """Return the list of all regions in the BoolSequence definition."""
         if type(self.elements) is bool:
             return tuple()
-        if self.int_elements:
+        if self.base_type == int:
             return tuple()
 
         surf = []
@@ -890,15 +1052,6 @@ class BoolSequence:
                 continue
             e.level_update()
             self.level = max(e.level + 1, self.level)
-    
-    def chg_surf_sign(self,s1):
-        for i,e in enumerate(self.elements):
-            if isinstance(e,(BoolSequence,BoolRegion)):
-                e.chg_surf_sign(s1)
-            elif type(e) is int:
-                if abs(e) == s1:
-                    self.elements[i] = -self.elements[i]
-                    break   #assumed two same sufaces cannot be in the same element
 
 def insert_in_sequence(Seq, trgt, nsrf, operator):
     """Substitute the variable trgt by the sequence "(trgt:nsrg)" or "(trgt nsf)" in the

@@ -48,7 +48,9 @@ def write_geometry(
             UniverseBox.ZMax,
         )
         if settings.voidGen:
-            outSphere = (Surfaces["Sph"][-1].Surf.Sphere.Index, Surfaces["Sph"][-1].Surf.Sphere.Surf.Radius)
+            sph_primitive_index = abs(Surfaces["Sph"][-1].region.value())
+            sphere = Surfaces.get_primitive_surface(sph_primitive_index)
+            outSphere = (sph_primitive_index, sphere.Surf.Radius)
         else:
             outSphere = None
 

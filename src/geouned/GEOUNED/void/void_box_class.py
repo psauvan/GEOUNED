@@ -25,7 +25,7 @@ class VoidBox:
             self.BoundBox = Enclosure.optimalBoundingBox()
             self.PieceEnclosure = Enclosure
 
-        for m in MetaSolids:
+        for i,m in enumerate(MetaSolids):
             if not m.BoundBox:
                 continue
             if m.BoundBox.isValid():

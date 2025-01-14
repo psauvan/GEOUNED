@@ -270,7 +270,7 @@ class CylinderParams:
     
 class ConeParams:
     def __init__(self, params):
-        self.Cylinder = params[0]
+        self.Cone = params[0]
         self.ApexPlane = params[1]
         self.Plane = params[2]
         self.Orientation = params[3]
