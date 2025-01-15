@@ -11,7 +11,6 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.basic_functions_part2 import is_same_plane
-from ..utils.boolean_function import BoolRegion
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import PlaneGu
 
@@ -241,7 +240,7 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
                 f"surface {str(surf)} removed from cell definition. Face area < Min area ({face2.Area} < {tolerances.min_area})"
             )
             continue
-        if str(face2.Surface) == "<Cylinder object>" and not (face2.isEqual(face)):
+        if str(face2.Surface) == "<Cylinder object>" and face2.Index != face.Index:
             if (
                 face2.Surface.Axis.isEqual(face.Surface.Axis, 1e-5)
                 and face2.Surface.Radius == rad
@@ -262,6 +261,7 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
 
     p1 = solidFaces[i1].valueAt(u_1, v_1)
     p2 = solidFaces[i2].valueAt(u_2, v_2)
+
 
     if p1.isEqual(p2, 1e-5):
         logger.error("Error in the additional place definition")
@@ -430,3 +430,6 @@ def omit_multiplane_repeated_planes(mp_region,Surfaces,Faces):
             if is_same_plane(face.Surface, pg.Surf, Surfaces.options, Surfaces.tolerances, Surfaces.numeric_format):
                 repeated_planes.add(face.Index)
     return repeated_planes                
+
+
+   
