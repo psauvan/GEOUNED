@@ -183,8 +183,8 @@ def commonEdge(face1, face2, outer_only=True):
                 return e1
     return None
 
-def get_revcan_surfaces(cylinder, solid):
-    adjacent_planes = get_adjacent_cylplane(cylinder, solid.Faces, cornerPlanes=False)
+def get_revcan_surfaces(cylinder, solidFaces):
+    adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
     if len(adjacent_planes) not in (1, 2):
         return None, None
 
@@ -210,9 +210,9 @@ def get_revcan_surfaces(cylinder, solid):
     else:
         return None,None
 
-def get_roundcorner_surfaces(cylinder, solid):
+def get_roundcorner_surfaces(cylinder, Faces):
 
-    adjacent_planes = get_adjacent_cylplane(cylinder, solid.Faces)
+    adjacent_planes = get_adjacent_cylplane(cylinder, Faces)
     if len(adjacent_planes) != 2:
         return None, None
 

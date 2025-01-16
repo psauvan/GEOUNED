@@ -19,31 +19,28 @@ from .decom_utils_generator import (
 )
 
 
-def get_surfaces(solid, tolerances, meta_surface=True, additional_planes = False):
+def get_surfaces(solid, omitfaces, tolerances, meta_surface=True, additional_planes = False):
 
     solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=False)
    
     if additional_planes:
-        omitfaces = set()
         for plane in cyl_cone_plane_generator(solid_GU.Faces,omitfaces,tolerances):
             yield plane
    
     else:
         if meta_surface:
-            omitfaces = set()
-            for rdc in next_roundCorner(solid_GU, omitfaces):
+            for rdc in next_roundCorner(solid_GU.Faces, omitfaces):
                 yield rdc
 
-            for can in next_reverseCan(solid_GU, omitfaces):
+            for can in next_reverseCan(solid_GU.Faces, omitfaces):
                 yield can
 
             extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
             omitfaces.update(extPlanes)    
 
-            for multiplane in next_multiplanes(solid_GU, omitfaces):
+            for multiplane in next_multiplanes(solid_GU.Faces, omitfaces):
                 yield multiplane
         else:
-            omitfaces = set()
             extPlanes = exclude_no_cutting_planes(solid_GU.Faces)  
             omitfaces.update(extPlanes)
 
@@ -195,10 +192,10 @@ def cyl_cone_plane_generator(GUFaces,omitfaces,tolerances):
             yield plane
 
 
-def next_multiplanes(solid, plane_index_set):
+def next_multiplanes(solidFaces, plane_index_set):
     """identify and return all multiplanes in the solid."""
     planes = []
-    for f in solid.Faces:
+    for f in solidFaces:
         if f.Index in plane_index_set:
             continue
         if isinstance(f.Surface, PlaneGu):
@@ -227,15 +224,15 @@ def next_multiplanes(solid, plane_index_set):
                 yield mp
 
 
-def next_reverseCan(solid, canface_index):
+def next_reverseCan(solidFaces, canface_index):
     """identify and return all can type in the solid."""
 
-    for f in solid.Faces:
+    for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in canface_index:
                 continue
             if f.Orientation == "Reversed":
-                cs, surfindex = get_revcan_surfaces(f, solid)
+                cs, surfindex = get_revcan_surfaces(f, solidFaces)
                 if cs is not None:
                     gc = GeounedSurface(("ReverseCan", build_revcan_params(cs)))
                     canface_index.update(surfindex)
@@ -244,15 +241,15 @@ def next_reverseCan(solid, canface_index):
     return None
 
 
-def next_roundCorner(solid, cornerface_index):
+def next_roundCorner(solidFaces, cornerface_index):
     """identify and return all roundcorner type in the solid."""
     
-    for f in solid.Faces:
+    for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
                 continue
             if f.Orientation == "Forward":
-                rc, surfindex = get_roundcorner_surfaces(f, solid)
+                rc, surfindex = get_roundcorner_surfaces(f, solidFaces)
                 if rc is not None:
                     gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
                     cornerface_index.update(surfindex)

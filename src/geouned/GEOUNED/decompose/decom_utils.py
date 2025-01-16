@@ -173,11 +173,11 @@ def extract_surfaces(solid, kind, options, tolerances, numeric_format):
 
     Surfaces = MetaSurfacesDict(options=options, tolerances=tolerances, numeric_format=numeric_format)
 
-    can_list, can_faces = get_reverseCan(solid_GU)
+    can_list, can_faces = get_reverseCan(solid_GU.Faces)
     for cs in can_list:
         Surfaces.add_reverseCan(cs)
 
-    multiplanes_list, multiplane_faces = get_multiplanes(solid_GU)
+    multiplanes_list, multiplane_faces = get_multiplanes(solid_GU.Faces)
     for mp in multiplanes_list:
         Surfaces.add_multiPlane(mp)
 

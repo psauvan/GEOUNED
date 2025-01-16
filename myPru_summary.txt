@@ -1,2 +1,0 @@
-  Cell Id     Mat Id      Density       Volume     Comments
-        1          0                  1.3681e+05   /Component31

@@ -39,21 +39,21 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
     if meta_surfaces:
-        roundCorner, omitFaces = get_roundCorner(solid_gu)
+        roundCorner, omitFaces = get_roundCorner(solid_gu.Faces)
         for rc in roundCorner:
             rc_region = Surfaces.add_roundCorner(rc)
             component_definition.append(rc_region)
 
         # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
         # pindex are all faces index used to produced multiplanes, do not count as standard planes
-        multiplanes = get_multiplanes(solid_gu, omitFaces)
+        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces)
         for mp in multiplanes:
             mp_region = Surfaces.add_multiPlane(mp)
             component_definition.append(mp_region)
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
 
-        reverseCan = get_reverseCan(solid_gu, omitFaces)
+        reverseCan = get_reverseCan(solid_gu.Faces, omitFaces)
         for cs in reverseCan:
             cs_region = Surfaces.add_reverseCan(cs)
             component_definition.append(cs_region)

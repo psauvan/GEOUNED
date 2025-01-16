@@ -31,7 +31,7 @@ def get_box(comp, enlargeBox):
     )
 
 
-def get_multiplanes(solid, plane_index_set=None):
+def get_multiplanes(solidFaces, plane_index_set=None):
     """identify and return all multiplanes in the solid."""
 
     if plane_index_set is None:
@@ -41,7 +41,7 @@ def get_multiplanes(solid, plane_index_set=None):
         one_value_return = True
 
     planes = []
-    for f in solid.Faces:
+    for f in solidFaces:
         if isinstance(f.Surface, PlaneGu):
             planes.append(f)
 
@@ -75,7 +75,7 @@ def get_multiplanes(solid, plane_index_set=None):
         return multiplane_objects, plane_index_set
 
 
-def get_reverseCan(solid, canface_index=None):
+def get_reverseCan(solidFaces, canface_index=None):
     """identify and return all can type in the solid."""
 
     if canface_index is None:
@@ -85,12 +85,12 @@ def get_reverseCan(solid, canface_index=None):
         one_value_return = True
 
     can_list = []
-    for f in solid.Faces:
+    for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in canface_index:
                 continue
             if f.Orientation == "Reversed":
-                cs, surfindex = get_revcan_surfaces(f, solid)
+                cs, surfindex = get_revcan_surfaces(f, solidFaces)
                 if cs is not None:
                     gc = GeounedSurface(("ReverseCan", build_revcan_params(cs)))
                     can_list.append(gc)
@@ -102,7 +102,7 @@ def get_reverseCan(solid, canface_index=None):
         return can_list, canface_index
 
 
-def get_roundCorner(solid, cornerface_index=None):
+def get_roundCorner(solidFaces, cornerface_index=None):
     """identify and return all roundcorner type in the solid."""
     if cornerface_index is None:
         cornerface_index = set()
@@ -111,12 +111,12 @@ def get_roundCorner(solid, cornerface_index=None):
         one_value_return = True
 
     corner_list = []
-    for f in solid.Faces:
+    for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
                 continue
             if f.Orientation == "Forward":
-                rc, surfindex = get_roundcorner_surfaces(f, solid)
+                rc, surfindex = get_roundcorner_surfaces(f, solidFaces)
                 if rc is not None:
                     gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
                     cornerface_index.update(surfindex)
