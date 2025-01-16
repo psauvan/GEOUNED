@@ -7,53 +7,67 @@ from ..utils.functions import (
     get_revcan_surfaces,
     get_roundcorner_surfaces,
 )
-from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
-from .decom_utils_generator import cyl_bound_planes, torus_bound_planes, exclude_no_cutting_planes, order_plane_face, omit_isolated_planes
+from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
+from .decom_utils_generator import (
+    cyl_bound_planes, 
+    torus_bound_planes,
+    gen_plane_cylinder,
+    gen_plane_cone, 
+    exclude_no_cutting_planes, 
+    order_plane_face, 
+    omit_isolated_planes,
+)
 
 
-def get_surfaces(solid, tolerances, meta_surface=True, plane3pts=False):
+def get_surfaces(solid, tolerances, meta_surface=True, additional_planes = False):
 
-    solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=plane3pts)
+    solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=False)
    
-
-    if meta_surface:
+    if additional_planes:
         omitfaces = set()
-        for rdc in next_roundCorner(solid_GU, omitfaces):
-            yield rdc
-
-        for can in next_reverseCan(solid_GU, omitfaces):
-            yield can
-
-        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
-        omitfaces.update(extPlanes)    
-
-        for multiplane in next_multiplanes(solid_GU, omitfaces):
-            yield multiplane
+        for plane in cyl_cone_plane_generator(solid_GU.Faces,omitfaces,tolerances):
+            yield plane
+   
     else:
-         omitfaces = set()
-    #    omitfaces = exclude_no_cutting_planes(solid_GU.Faces)  # omit planes that can be useful to split solid (function to be revised)
+        if meta_surface:
+            omitfaces = set()
+            for rdc in next_roundCorner(solid_GU, omitfaces):
+                yield rdc
 
-    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, plane3pts):
-        yield surface
+            for can in next_reverseCan(solid_GU, omitfaces):
+                yield can
 
-    for surface in cylinder_generator(solid_GU.Faces, omitfaces):
-        yield surface
+            extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+            omitfaces.update(extPlanes)    
 
-    for surface in cone_generator(solid_GU.Faces):
-        yield surface
+            for multiplane in next_multiplanes(solid_GU, omitfaces):
+                yield multiplane
+        else:
+            omitfaces = set()
+            extPlanes = exclude_no_cutting_planes(solid_GU.Faces)  
+            omitfaces.update(extPlanes)
 
-    for surface in sphere_generator(solid_GU.Faces):
-        yield surface
+        for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
+            yield surface
 
-    for surface in torus_generator(solid_GU.Faces):
-        yield surface
+        for surface in cylinder_generator(solid_GU.Faces, omitfaces):
+            yield surface
 
-    omitfaces = omitfaces - extPlanes
-    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, plane3pts, True):
-        yield surface
+        for surface in cone_generator(solid_GU.Faces):
+            yield surface
 
+        for surface in sphere_generator(solid_GU.Faces):
+            yield surface
 
-def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False, externalPlanes = False):
+        for surface in torus_generator(solid_GU.Faces):
+            yield surface
+
+        omitfaces = omitfaces - extPlanes
+        for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, True):
+            yield surface
+ 
+
+def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes = False):
     omit_isolated_planes(GUFaces, omitfaces)
     cutting_plane_face = order_plane_face(GUFaces, omitfaces)
     for p in cutting_plane_face:
@@ -96,7 +110,7 @@ def plane_generator(GUFaces, omitfaces, tolerances, plane3Pts=False, externalPla
             for p in torus_bound_planes(GUFaces, face, tolerances):
                 yield p
 
-        elif surf == "<Plane object>" and plane3Pts:
+        elif surf == "<Plane object>" and False:     # plane3pts part to be removed properly
             pos = face.CenterOfMass
             normal = face.Surface.Axis
             dim1 = face.ParameterRange[1] - face.ParameterRange[0]
@@ -161,6 +175,24 @@ def torus_generator(GUFaces):
         dir = face.Surface.Axis
         torus = GeounedSurface(("TorusOnly", (center, dir, radMaj, radMin)))
         yield torus
+
+def cyl_cone_plane_generator(GUFaces,omitfaces,tolerances):
+
+    for face in GUFaces:
+        if face.Index in omitfaces:
+            continue
+        if face.Orientation == "Forward":
+            continue
+        if isinstance(face.Surface,CylinderGu):
+            plane = gen_plane_cylinder(face,GUFaces,tolerances)
+            if plane is None :
+                continue
+            yield plane
+        elif isinstance(face.Surface,ConeGu):
+            plane = gen_plane_cone(face,GUFaces,tolerances)
+            if plane is None:
+                continue
+            yield plane
 
 
 def next_multiplanes(solid, plane_index_set):

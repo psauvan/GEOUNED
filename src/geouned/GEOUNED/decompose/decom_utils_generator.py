@@ -295,20 +295,19 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
 
     normal = V2.sub(V1).cross(face.Surface.Axis)
 
-    plane = Part.Plane(V1, normal).toShape()
-
+    plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
     return plane
 
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(face, solid, tolerances):
+def gen_plane_cone(face, solidFaces, tolerances):
 
     if face.Area < 1e-2:
         return None
 
     UVNodes = []
-    face_index_0 = [solid.Faces.index(face)]
+    face_index_0 = [solidFaces.index(face)]
 
     try:
         face.tessellate(0.1)
@@ -319,9 +318,9 @@ def gen_plane_cone(face, solid, tolerances):
         UVNode2 = (PR[1], PR[3])
         UVNodes.append([UVNode1, UVNode2])
 
-    for i, face2 in enumerate(solid.Faces):
+    for i, face2 in enumerate(solidFaces):
 
-        if str(face2.Surface) == "<Cone object>" and not (face2.isEqual(face)):
+        if str(face2.Surface) == "<Cone object>" and face2.Index != face.Index:
 
             if (
                 face2.Surface.Axis.isEqual(face.Surface.Axis, 1e-5)
@@ -333,7 +332,7 @@ def gen_plane_cone(face, solid, tolerances):
 
     Faces_p = []
     for ind in face_index_0:
-        Faces_p.append(solid.Faces[ind])
+        Faces_p.append(solidFaces[ind])
 
     face_index = [face_index_0[0]]  # la face de entrada
 
@@ -345,10 +344,10 @@ def gen_plane_cone(face, solid, tolerances):
     #    return None
 
     for ind in reversed(face_index[1:]):
-        if solid.Faces[ind].Area <= 1e-3:
+        if solidFaces[ind].Area <= 1e-3:
             face_index.remove(ind)
         else:
-            face2 = solid.Faces[ind]
+            face2 = solidFaces[ind]
             try:
                 face2.tessellate(0.1)
                 UVNodes.append(face2.getUVNodes())
@@ -363,7 +362,7 @@ def gen_plane_cone(face, solid, tolerances):
     Uval = []
 
     for index in face_index:
-        Range = solid.Faces[index].ParameterRange
+        Range = solidFaces[index].ParameterRange
         AngleRange = AngleRange + abs(Range[1] - Range[0])
         Uval.append(Range[0])
         Uval.append(Range[1])
@@ -405,8 +404,8 @@ def gen_plane_cone(face, solid, tolerances):
                 face_index_2[1] = face_index[j]
                 dif2_0 = dif2
 
-    V1 = solid.Faces[face_index_2[0]].valueAt(Node_min[0], Node_min[1])
-    V2 = solid.Faces[face_index_2[1]].valueAt(Node_max[0], Node_max[1])
+    V1 = solidFaces[face_index_2[0]].valueAt(Node_min[0], Node_min[1])
+    V2 = solidFaces[face_index_2[1]].valueAt(Node_max[0], Node_max[1])
 
     if V1.isEqual(V2, 1e-5):
         logger.error("in the additional plane definition")
@@ -415,8 +414,12 @@ def gen_plane_cone(face, solid, tolerances):
     # normal=V2.sub(V1).cross(face.Surface.Axis)
 
     # plane=Part.Plane(V1,normal).toShape()
-    plane = Part.Plane(V1, V2, face.Surface.Apex).toShape()
+    dir1 = V1-face.Surface.Apex
+    dir2 = V2-face.Surface.Apex
+    normal = dir2.cross(dir1)
+    normal.normalize()
 
+    plane = GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
     return plane
 
 

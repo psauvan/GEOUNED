@@ -22,13 +22,13 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, options, tolerances):
+def generic_split(solid, options, tolerances, additional_planes = False):
 
-    stop_loop = False
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
-    for surf in get_surfaces(solid, tolerances):
+    for surf in get_surfaces(solid, tolerances, additional_planes=additional_planes):
+
         surf.build_surface(bbox)
         try:
             comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)
@@ -40,13 +40,19 @@ def generic_split(solid, options, tolerances):
             comsolid = solid
         cleaned = remove_solids(solid, comsolid.Solids)
         if len(cleaned) > 1:
-            stop_loop = True
+            new_split = True
             break
+    else:  
+        # loop exit normally (without break)
+        new_split = not additional_planes
+        additional_planes = True
 
-    if stop_loop:
+ 
+
+    if new_split:
         components = []
         for part in cleaned:
-            subcomp = generic_split(part, options, tolerances)
+            subcomp = generic_split(part, options, tolerances,additional_planes)
             components.extend(subcomp)
     else:
         components = cleaned
