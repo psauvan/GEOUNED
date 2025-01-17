@@ -103,7 +103,7 @@ def test_conversion(input_step_file):
 
     geo.load_step_file(filename=f"{input_step_file.resolve()}", skip_solids=[])
 
-    geo.start()
+    geo.run()
 
     geo.export_csg(
         title="Converted with GEOUNED",
@@ -174,7 +174,7 @@ def test_writing_to_new_folders():
 
     geo = geouned.CadToCsg()
     geo.load_step_file(filename="testing/inputSTEP/BC.stp", skip_solids=[])
-    geo.start()
+    geo.run()
 
     for outformat in ["mcnp", "phits", "serpent", "openmc_xml", "openmc_py"]:
         geo.export_csg(
@@ -206,10 +206,10 @@ def test_with_relative_tol_true():
         tolerances=geouned.Tolerances(relativeTol=False),
     )
     geo.load_step_file(filename=f"{step_files[1].resolve()}", skip_solids=[])
-    geo.start()
+    geo.run()
 
     geo = geouned.CadToCsg(
         tolerances=geouned.Tolerances(relativeTol=True),
     )
     geo.load_step_file(filename=f"{step_files[1].resolve()}", skip_solids=[])
-    geo.start()
+    geo.run()

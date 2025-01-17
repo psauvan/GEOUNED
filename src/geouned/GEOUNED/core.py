@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import get_type_hints
 from importlib.metadata import version
+import time
 
 import FreeCAD
 import Part
@@ -13,13 +14,15 @@ from tqdm import tqdm
 from .code_version import *
 from .conversion import cell_definition as Conv
 from .cuboid.translate import translate
-#from .decompose.decom_one import main_split
+
+# from .decompose.decom_one import main_split
 from .decompose.decom_one_generators import main_split
 from .loadfile import load_step as Load
 from .utils.geouned_classes import GeounedSolid, SurfacesDict, MetaSurfacesDict
 from .utils.functions import get_box
 from .utils.boolean_solids import build_c_table_from_solids
 from .utils.data_classes import NumericFormat, Options, Settings, Tolerances
+from .threading.geouned_threads import ThreadPoolExecutor
 from .void import void as void
 from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
@@ -179,7 +182,7 @@ class CadToCsg:
 
         # if the geometry_bounding_box has not previuosly been calculated, then make a default one
         if self.geometry_bounding_box is None:
-            self._get_geometry_bounding_box()
+            self._set_geometry_bounding_box()
 
         write_geometry(
             UniverseBox=self.geometry_bounding_box,
@@ -255,7 +258,7 @@ class CadToCsg:
                 )
 
         cad_to_csg.load_step_file(**config["load_step_file"])
-        cad_to_csg.start()
+        cad_to_csg.run()
         if "export_csg" in config.keys():
             cad_to_csg.export_csg(**config["export_csg"])
         else:
@@ -321,145 +324,72 @@ class CadToCsg:
 
         logger.info("End of step file loading phase")
 
-        return self.meta_list, self.enclosure_list
-
-    def _export_solids(self, filename: str):
-        """Export all the solid volumes from the loaded geometry to a STEP file.
-
-        Args:
-            filename (str): filepath of the output STEP file.
-        """
-        # export in STEP format solids read from input file
-        if self.meta_list == []:
-            raise ValueError(
-                "No solids in CadToCsg.meta_list to export. Try loading the STEP file first with CadToCsg.load_step_file"
-            )
-        solids = []
-        for m in self.meta_list:
-            if m.IsEnclosure:
-                continue
-            solids.extend(m.Solids)
-        Part.makeCompound(solids).exportStep(filename)
-
-    def _get_geometry_bounding_box(self, padding: float = 10.0):
-        """
-        Get the bounding box of the geometry.
-
-        Args:
-            padding (float): The padding value to add to the bounding box dimensions.
-
-        Returns:
-            FreeCAD.BoundBox: The universe bounding box.
-        """
-        # set up Universe
-        meta_list = self.meta_list
-
-        Box = meta_list[0].optimalBoundingBox()
-        xmin = Box.XMin
-        xmax = Box.XMax
-        ymin = Box.YMin
-        ymax = Box.YMax
-        zmin = Box.ZMin
-        zmax = Box.ZMax
-        for m in meta_list[1:]:
-            # MIO. This was removed since in HELIAS the enclosure cell is the biggest one
-            # if m.IsEnclosure: continue
-            optBox = m.optimalBoundingBox()
-            xmin = min(optBox.XMin, xmin)
-            xmax = max(optBox.XMax, xmax)
-            ymin = min(optBox.YMin, ymin)
-            ymax = max(optBox.YMax, ymax)
-            zmin = min(optBox.ZMin, zmin)
-            zmax = max(optBox.ZMax, zmax)
-
-        self.geometry_bounding_box = FreeCAD.BoundBox(
-            FreeCAD.Vector(xmin - padding, ymin - padding, zmin - padding),
-            FreeCAD.Vector(xmax + padding, ymax + padding, zmax + padding),
-        )
-        return self.geometry_bounding_box
-
-    def start(self):
-
-        startTime = datetime.now()
-
         if self.settings.exportSolids:
             self._export_solids(filename=self.settings.exportSolids)
-
         logger.info("End of loading phase")
-        tempstr1 = str(datetime.now() - startTime)
-        logger.info(tempstr1)
-        tempTime = datetime.now()
 
-        # sets self.geometry_bounding_box with default padding
-        self._get_geometry_bounding_box()
+        return self.meta_list, self.enclosure_list
 
-        self.Surfaces = SurfacesDict(
-            offset=self.settings.startSurf - 1,
-            options=self.options,
-            tolerances=self.tolerances,
-            numeric_format=self.numeric_format,
-        )
+    def run(self):
+        t0 = time.time()
+        self.decompose_solids()
+        t1 = time.time()
+        self.build_solid_definition()
+        t2 = time.time()
+        self.build_void()
+        t3 = time.time()
+        print(f'decomposition : {t1-t0}s\nbuild : {t2-t1}s\nvoid : {t3-t2}s')
 
-        warnSolids = []
-        warnEnclosures = []
-        coneInfo = dict()
-        tempTime0 = datetime.now()
-        if not self.options.Facets:
+    def decompose_solids(self):
 
-            # decompose all solids in elementary solids (convex ones)
-            warningSolidList = self._decompose_solids(meta=True)
+        # decompose all solids in elementary solids (convex ones)
+        self._decompose_solids(meta=True)
 
-            # decompose Enclosure solids
-            if self.settings.voidGen and self.enclosure_list:
-                warningEnclosureList = self._decompose_solids(meta=False)
+        # decompose Enclosure solids
+        if self.settings.voidGen and self.enclosure_list:
+            self._decompose_solids(meta=False)
 
-            logger.info("End of decomposition phase")
+    def build_solid_definition(self):
+        # start Building CGS cells phase
+        self.Surfaces = MetaSurfacesDict(options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format)
 
-            # start Building CGS cells phase
-
-            self.Surfaces = MetaSurfacesDict(
-                options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format
-            )
-            for j, m in enumerate(tqdm(self.meta_list, desc="Translating solid cells")):
+        if self.options.n_thread > 1:
+            onlysolidList = []
+            for m in self.meta_list:
                 if m.IsEnclosure:
                     continue
-                logger.info(f"Building cell: {j+1}")
-                Conv.build_definition(m, self.Surfaces)
-                if j in warningSolidList:
-                    warnSolids.append(m)
-                if not m.Solids:
-                    logger.info(f"none {j}, {m.__id__}")
-                    logger.info(m.Definition)
+                onlysolidList.append(m)
 
-            if self.options.forceNoOverlap:
-                Conv.no_overlapping_cell(self.meta_list, self.Surfaces, self.options)
-
-        else:
-            translate(
-                self.meta_list,
-                self.Surfaces,
-                self.geometry_bounding_box,
-                self.settings,
-                self.options,
-                self.tolerances,
+            ThreadPoolExecutor(
+                Conv.build_definition,
+                onlysolidList,
+                target_options=(self.Surfaces,),
+                max_thread=self.options.n_thread,
+                progress_bar_label="Translating solid cells",
             )
-            # decompose Enclosure solids
             if self.settings.voidGen and self.enclosure_list:
-                warningEnclosureList = self._decompose_solids(meta=False)
-
-        tempstr2 = str(datetime.now() - tempTime)
-        logger.info(tempstr2)
-
-        #  building enclosure solids
-
-        if self.settings.voidGen and self.enclosure_list:
-            for j, m in enumerate(self.enclosure_list):
-                logger.info(f"Building Enclosure Cell: {j + 1}")
+                ThreadPoolExecutor(
+                    Conv.build_definition,
+                    self.enclosure_list,
+                    target_options=(self.Surfaces,),
+                    max_thread=self.options.n_thread,
+                    progress_bar_label="Translating Encloures",
+                )
+        else:
+            #  building solids
+            for m in tqdm(self.meta_list, desc="Translating solid cells"):
+                if m.IsEnclosure:
+                    continue
                 Conv.build_definition(m, self.Surfaces)
-                if j in warningEnclosureList:
-                    warnEnclosures.append(m)
 
-        tempTime1 = datetime.now()
+            #  building enclosure regions
+            if self.settings.voidGen and self.enclosure_list:
+                for m in tqdm(self.enclosure_list, desc="Translating Enclosures"):
+                    Conv.build_definition(m, self.Surfaces)
+
+    def build_void(self):
+       # sets self.geometry_bounding_box with default padding
+        self._set_geometry_bounding_box()
 
         # void generation phase
         meta_void = []
@@ -475,7 +405,7 @@ class CadToCsg:
                 init = self.meta_list[-1].__id__ - len(self.enclosure_list)
             else:
                 init = 0
-             
+
             meta_void = void.void_generation(
                 meta_reduced,
                 self.enclosure_list,
@@ -505,11 +435,6 @@ class CadToCsg:
                 c.Definition.clean()
                 if type(c.Definition.elements) is bool:
                     logger.info(f"unexpected constant cell {c.__id__} :{c.Definition.elements}")
-
-        tempTime2 = datetime.now()
-        logger.info(f"build Time: {tempTime2} - {tempTime1}")
-
-        logger.info(datetime.now() - startTime)
 
         cellOffSet = self.settings.startCell - 1
         if self.enclosure_list and self.settings.sort_enclosure:
@@ -556,13 +481,59 @@ class CadToCsg:
 
             self.meta_list.extend(meta_void)
 
-        print_warning_solids(warnSolids, warnEnclosures)
+    def _export_solids(self, filename: str):
+        """Export all the solid volumes from the loaded geometry to a STEP file.
 
-        logger.info("Process finished")
-        logger.info(datetime.now() - startTime)
+        Args:
+            filename (str): filepath of the output STEP file.
+        """
+        # export in STEP format solids read from input file
+        if self.meta_list == []:
+            raise ValueError(
+                "No solids in CadToCsg.meta_list to export. Try loading the STEP file first with CadToCsg.load_step_file"
+            )
+        solids = []
+        for m in self.meta_list:
+            if m.IsEnclosure:
+                continue
+            solids.extend(m.Solids)
+        Part.makeCompound(solids).exportStep(filename)
 
-        logger.info(f"Translation time of solid cells {tempTime1} - {tempTime0}")
-        logger.info(f"Translation time of void cells {tempTime2} - {tempTime1}")
+    def _set_geometry_bounding_box(self, padding: float = 10.0):
+        """
+        Get the bounding box of the geometry.
+
+        Args:
+            padding (float): The padding value to add to the bounding box dimensions.
+
+        Returns:
+            FreeCAD.BoundBox: The universe bounding box.
+        """
+        # set up Universe
+        meta_list = self.meta_list
+
+        Box = meta_list[0].optimalBoundingBox()
+        xmin = Box.XMin
+        xmax = Box.XMax
+        ymin = Box.YMin
+        ymax = Box.YMax
+        zmin = Box.ZMin
+        zmax = Box.ZMax
+        for m in meta_list[1:]:
+            # MIO. This was removed since in HELIAS the enclosure cell is the biggest one
+            # if m.IsEnclosure: continue
+            optBox = m.optimalBoundingBox()
+            xmin = min(optBox.XMin, xmin)
+            xmax = max(optBox.XMax, xmax)
+            ymin = min(optBox.YMin, ymin)
+            ymax = max(optBox.YMax, ymax)
+            zmin = min(optBox.ZMin, zmin)
+            zmax = max(optBox.ZMax, zmax)
+
+        self.geometry_bounding_box = FreeCAD.BoundBox(
+            FreeCAD.Vector(xmin - padding, ymin - padding, zmin - padding),
+            FreeCAD.Vector(xmax + padding, ymax + padding, zmax + padding),
+        )
 
     def _decompose_solids(self, meta: bool):
 
@@ -573,50 +544,60 @@ class CadToCsg:
             meta_list = self.enclosure_list
             description = "Decomposing enclosure solids"
 
-        totsolid = len(meta_list)
-        warningSolids = []
-        for i, m in enumerate(tqdm(meta_list, desc=description)):
-            if meta and m.IsEnclosure:
-                continue
-            logger.info(f"Decomposing solid: {i + 1}/{totsolid}")
-            if self.settings.debug:
-                debug_output_folder = Path("debug")
-                logger.info(m.Comments)
-                debug_output_folder.mkdir(parents=True, exist_ok=True)
-                if m.IsEnclosure:
-                    m.Solids[0].exportStep(str(debug_output_folder / f"origEnclosure_{i}.stp"))
-                else:
-                    m.Solids[0].exportStep(str(debug_output_folder / f"origSolid_{i}.stp"))
+        if self.settings.debug:
+            self.debug_output_folder = Path("debug")
+            self.debug_output_folder.mkdir(parents=True, exist_ok=True)
 
-            comsolid = main_split(
-                Part.makeCompound(m.Solids),
-                self.options,
-                self.tolerances,
-#                self.numeric_format, #not used with generators
+        if self.options.n_thread > 1:
+            ThreadPoolExecutor(
+                self._decompose_target,
+                meta_list,
+                target_options=[meta],
+                max_thread=self.options.n_thread,
+                progress_bar_label=description,
+                add_index=True,
             )
+        else:
+            for i, m in enumerate(tqdm(meta_list, desc=description)):
+                self._decompose_target(m, i, meta)
 
-            if False: #todo decomposition error information 
-                sus_output_folder = Path("suspicious_solids")
-                sus_output_folder.mkdir(parents=True, exist_ok=True)
-                if m.IsEnclosure:
-                    Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Enclosure_original_{i}.stp"))
-                    comsolid.exportStep(str(sus_output_folder / f"Enclosure_split_{i}.stp"))
-                else:
-                    Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Solid_original_{i}.stp"))
-                    comsolid.exportStep(str(sus_output_folder / f"Solid_split_{i}.stp"))
+    def _decompose_target(self, m, i, meta):
 
-                warningSolids.append(i)
+        if meta and m.IsEnclosure:
+            return
 
-            if self.settings.debug:
-                if m.IsEnclosure:
-                    comsolid.exportStep(str(debug_output_folder / f"compEnclosure_{i}.stp"))
-                else:
-                    comsolid.exportStep(str(debug_output_folder / f"compSolid_{i}.stp"))
+        if self.settings.debug:
+            if m.IsEnclosure:
+                m.Solids[0].exportStep(str(self.debug_output_folder / f"origEnclosure_{i}.stp"))
+            else:
+                m.Solids[0].exportStep(str(self.debug_output_folder / f"origSolid_{i}.stp"))
 
-            m.set_cad_solid()
-            m.update_solids(comsolid.Solids)
+        comsolid = main_split(
+            Part.makeCompound(m.Solids),
+            self.options,
+            self.tolerances,
+        )
 
-        return warningSolids
+        if False:  # todo decomposition error information
+            sus_output_folder = Path("suspicious_solids")
+            sus_output_folder.mkdir(parents=True, exist_ok=True)
+            if m.IsEnclosure:
+                Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Enclosure_original_{i}.stp"))
+                comsolid.exportStep(str(sus_output_folder / f"Enclosure_split_{i}.stp"))
+            else:
+                Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Solid_original_{i}.stp"))
+                comsolid.exportStep(str(sus_output_folder / f"Solid_split_{i}.stp"))
+
+            warningSolids.append(i)
+
+        if self.settings.debug:
+            if m.IsEnclosure:
+                comsolid.exportStep(str(self.debug_output_folder / f"/compEnclosure_{i}.stp"))
+            else:
+                comsolid.exportStep(str(self.debug_output_folder / f"compSolid_{i}.stp"))
+
+        m.set_cad_solid()
+        m.update_solids(comsolid.Solids)
 
 
 def update_comment(meta, idLabel):

@@ -37,14 +37,13 @@ class Options:
             11 True then all cones and cylinders will be defined in the
             openMC python script format under their quadric form. Defaults
             to False.
-        Facets (bool, optional): use alternative conversion module when
-            geometry is defined by cells compound by only triangular plane
-            faces. Defaults to False.
-        prnt3PPlane (bool, optional): print 3 point plane definition in
-            output as 3 points coordinates. Defaults to False.
         forceNoOverlap (bool, optional): force no overlaping cell
             definition. Adjacent cell definition are rested from current
             cell definition. Defaults to False.
+        n_thread (int, optional): number of threads used for decomposition 
+            and cell definition building. Experimental doesn't give signicant 
+            improvements until freecad is base on python version > 3.12. 
+            Defaults to 1.
     """
 
     def __init__(
@@ -60,6 +59,7 @@ class Options:
         Facets: bool = False,
         prnt3PPlane: bool = False,
         forceNoOverlap: bool = False,
+        n_thread: int = 1,
     ):
 
         self.forceCylinder = forceCylinder
@@ -73,6 +73,7 @@ class Options:
         self.Facets = Facets
         self.prnt3PPlane = prnt3PPlane
         self.forceNoOverlap = forceNoOverlap
+        self.n_thread = n_thread
 
     @property
     def forceCylinder(self):
@@ -188,6 +189,15 @@ class Options:
             raise TypeError(f"geouned.Options.forceNoOverlap should be a bool, not a {type(value)}")
         self._forceNoOverlap = value
 
+    @property
+    def n_thread(self):
+        return self._n_thread
+
+    @n_thread.setter
+    def n_thread(self, value: int):
+        if not isinstance(value, int):
+            raise TypeError(f"geouned.Options.n_thread should be a int, not a {type(value)}")
+        self._n_thread = value
 
 class Tolerances:
     """A class for containing tolerances values

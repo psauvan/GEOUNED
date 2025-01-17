@@ -230,7 +230,11 @@ def cut_face(face: Part.Face, plane: Part.Plane):
     if len(line) > 0:
         l = line[0]
         for e in face.Edges:
-            pt = l.intersect(e.Curve)
+            if abs(abs(l.Direction.dot(e.Curve.Direction))-1) < 1e-6:
+                pt = [] # if e and line are parallel not point or infinity
+            else:    
+                pt = l.intersect(e.Curve)
+            
             if len(pt) > 0:
                 point = pt[0].toShape().Point
                 if e.isInside(point, 1e-8, True):
