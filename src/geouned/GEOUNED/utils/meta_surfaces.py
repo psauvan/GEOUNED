@@ -183,6 +183,7 @@ def commonEdge(face1, face2, outer_only=True):
                 return e1
     return None
 
+
 def get_revcan_surfaces(cylinder, solidFaces):
     adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
     if len(adjacent_planes) not in (1, 2):
@@ -203,12 +204,13 @@ def get_revcan_surfaces(cylinder, solidFaces):
             surfaces.append(p2)
             faceindex.add(p2.Index)
 
-    if len(surfaces) > 0 :
+    if len(surfaces) > 0:
         surfaces.append(cylinder)
         faceindex.add(cylinder.Index)
-        return surfaces,faceindex
+        return surfaces, faceindex
     else:
-        return None,None
+        return None, None
+
 
 def get_roundcorner_surfaces(cylinder, Faces):
 
@@ -226,7 +228,7 @@ def get_roundcorner_surfaces(cylinder, Faces):
     return faces, face_index
 
 
-def get_adjacent_cylplane(cyl, Faces, cornerPlanes = True):
+def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
     planes = []
 
     if cornerPlanes:
@@ -234,7 +236,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes = True):
             if not isinstance(e.Curve, Part.Line):
                 continue
             otherface = other_face_edge(e, cyl, Faces, outer_only=True)
-            if otherface is None : 
+            if otherface is None:
                 continue
             if isinstance(otherface.Surface, PlaneGu):
                 if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
@@ -244,7 +246,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes = True):
             if isinstance(e.Curve, Part.Line):
                 continue
             otherface = other_face_edge(e, cyl, Faces, outer_only=False)
-            if otherface is None : 
+            if otherface is None:
                 continue
             if isinstance(otherface.Surface, PlaneGu):
                 planes.append(otherface)

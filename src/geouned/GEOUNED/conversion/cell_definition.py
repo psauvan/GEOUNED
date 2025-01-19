@@ -78,7 +78,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             orient = "Reversed" if face.Orientation == "Forward" else "Forward"
         else:
             orient = face.Orientation
-        
+
         if isinstance(face.Surface, GU.PlaneGu):
             plane = gen_plane(face, orient)
             plane_region = Surfaces.add_plane(plane, True)
@@ -91,9 +91,9 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                     face, solid_gu.Faces, Surfaces.tolerances
                 )  # plane must be correctly oriented toward materials
             else:
-                plane= None
+                plane = None
 
-            cylinder = GeounedSurface(("Cylinder",(cylinderOnly,plane,orient)))
+            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, orient)))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
@@ -105,12 +105,11 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                     face, solid_gu.Faces, Surfaces.tolerances
                 )  # plane must be correctly oriented toward materials
             else:
-                plane = None    
+                plane = None
 
-            cone = GeounedSurface(("Cone",(coneOnly,apexPlane,plane,orient)))
+            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane, orient)))
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
-
 
         elif isinstance(face.Surface, GU.SphereGu):
             sphereOnly = gen_sphere(face)
@@ -120,10 +119,9 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            sphere = GeounedSurface(("Sphere",(sphereOnly,plane,orient)))
+            sphere = GeounedSurface(("Sphere", (sphereOnly, plane, orient)))
             sphere_region = Surfaces.add_cone(sphere)
             component_definition.append(sphere_region)
-
 
         elif isinstance(face.Surface, GU.TorusGu):
             torusOnly = gen_torus(face, Surfaces.tolerances)
@@ -138,22 +136,22 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 if not u_closed:
                     UPlanes = U_torus_planes(face, u_minMax, Surfaces)
                 else:
-                    UPlanes = []    
+                    UPlanes = []
 
                 if orient == "Reversed":
                     index, Vparams = solid_gu.TorusVParams[iface]
                     v_closed, VminMax = Vparams
                     if not v_closed:
-                        VSurface, surf_orientation= V_torus_surfaces(face, VminMax, Surfaces)               
-                
-                torus = GeounedSurface(("Torus",(torusOnly,UPlanes,VSurface,orient,surf_orientation)))
+                        VSurface, surf_orientation = V_torus_surfaces(face, VminMax, Surfaces)
+
+                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, orient, surf_orientation)))
                 torus_region = Surfaces.add_cone(torus)
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")
-    
-    #solid.exportStep('solid.stp')
-    #for k in Surfaces.keys():
+
+    # solid.exportStep('solid.stp')
+    # for k in Surfaces.keys():
     #    for i,m in enumerate(Surfaces[k]):
     #        m.build_surface(solid.BoundBox)
     #        m.shape.exportStep(f'{k}_{i}.stp')

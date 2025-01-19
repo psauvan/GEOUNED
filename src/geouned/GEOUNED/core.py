@@ -338,7 +338,7 @@ class CadToCsg:
         t2 = time.time()
         self.build_void()
         t3 = time.time()
-        print(f'decomposition : {t1-t0}s\nbuild : {t2-t1}s\nvoid : {t3-t2}s')
+        print(f"decomposition : {t1-t0}s\nbuild : {t2-t1}s\nvoid : {t3-t2}s")
 
     def decompose_solids(self):
 
@@ -353,7 +353,7 @@ class CadToCsg:
         # start Building CGS cells phase
         self.Surfaces = MetaSurfacesDict(options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format)
 
-        if self.options.n_thread > 1:
+        if self.options.n_thread > 1 and False:  # disabled sevral processes writting in the same self.Surface may induce errors
             onlysolidList = []
             for m in self.meta_list:
                 if m.IsEnclosure:
@@ -388,7 +388,7 @@ class CadToCsg:
                     Conv.build_definition(m, self.Surfaces)
 
     def build_void(self):
-       # sets self.geometry_bounding_box with default padding
+        # sets self.geometry_bounding_box with default padding
         self._set_geometry_bounding_box()
 
         # void generation phase

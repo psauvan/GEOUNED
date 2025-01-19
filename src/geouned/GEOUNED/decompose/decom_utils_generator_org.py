@@ -184,9 +184,19 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
     if face.Area < 1e-2:
         return None
 
-    face_index_0 = [face.Index]
+    UVNodes = []
+    face_index_0 = [solidFaces.index(face)]
 
-    for face2 in solidFaces:
+    try:
+        face.tessellate(0.1)
+        UVNodes.append(face.getUVNodes())
+    except RuntimeError:
+        PR = face.ParameterRange
+        UVNode1 = (PR[0], PR[2])
+        UVNode2 = (PR[1], PR[3])
+        UVNodes.append([UVNode1, UVNode2])
+
+    for i, face2 in enumerate(solidFaces):
 
         if str(face2.Surface) == "<Cylinder object>" and  face2.Index != face.Index:
             if (
@@ -194,82 +204,90 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
                 and face2.Surface.Radius == rad
                 and is_in_line(face2.Surface.Center, face.Surface.Axis, face.Surface.Center)
             ):
-                face_index_0.append(face2.Index)
+                face_index_0.append(i)
 
     # prueba same_faces, parece ok
     Faces_p = []
     for ind in face_index_0:
         Faces_p.append(solidFaces[ind])
 
-    face_index = [face.Index]  # la face de entrada
+    face_index = [face_index_0[0]]  # la face de entrada
 
     for k in same_faces(Faces_p, tolerances):
         face_index.append(face_index_0[k])
 
+    # commented to let plane cut rounded corner
+    # if len(face_index_0)==len(face_index): #Esto evita un corte creo!!! no debería ser así en conversion
+    #    return None
+
+    for ind in reversed(face_index[1:]):
+        if solidFaces[ind].Area <= 1e-3:
+            face_index.remove(ind)
+
+        else:
+            face2 = solidFaces[ind]
+            try:
+                face2.tessellate(0.1)
+                UVNodes.append(face2.getUVNodes())
+            except RuntimeError:
+                PR = face2.ParameterRange
+                UVNode1 = (PR[0], PR[2])
+                UVNode2 = (PR[1], PR[3])
+                UVNodes.append([UVNode1, UVNode2])
+
     AngleRange = 0.0
-    Uval,UValmin,UValmax = [],[],[]
+
+    Uval = []
     for index in face_index:
         Range = solidFaces[index].ParameterRange
         AngleRange = AngleRange + abs(Range[1] - Range[0])
-        Uval.append(Range[0:2])
-        UValmin.append(Range[0])
-        UValmax.append(Range[1])
-    if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
+        # if not(Range[0] in Uval) and not(Range[1] in Uval):
+        Uval.append(Range[0])
+        Uval.append(Range[1])
+
+    if twoPi - AngleRange < 1.0e-2 or AngleRange < 1.0e-2:
         return None
-    
-    Umin,Umax = sort_range(Uval)
 
-    ifacemin = face_index[UValmin.index(Umin)]
-    ifacemax = face_index[UValmax.index(Umax)]
+    Uval_str_cl = []
 
-    if ifacemin == ifacemax:
-        face2 = solidFaces[ifacemin]
-        try:
-            face2.tessellate(0.1)
-            UVNode_min = face2.getUVNodes()
-        except RuntimeError:
-            PR = face2.ParameterRange
-            UVNode1 = (PR[0], PR[2])
-            UVNode2 = (PR[1], PR[3])
-            UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min   
-    else:        
-        face2min = solidFaces[ifacemin]
-        try:
-            face2min.tessellate(0.1)
-            UVNode_min = face2min.getUVNodes()
-        except RuntimeError:
-            PR = face2min.ParameterRange
-            UVNode_min = ((PR[0], PR[2]),)
-       
-        face2max = solidFaces[ifacemax]
-        try:
-            face2max.tessellate(0.1)
-            UVNode_max = face2max.getUVNodes()
-        except RuntimeError:
-            PR = face2max.ParameterRange
-            UVNode_max = ((PR[1], PR[3]),)
+    for i, elem1 in enumerate(Uval):
+        num_str1 = f"{elem1:11.4E}"
+        if abs(elem1) < 1.0e-5:
+            num_str1 = "%11.4E" % 0.0
 
-    dmin = twoPi
-    Uminr = Umin%twoPi
-    Umaxr = Umax%twoPi
-    for i,node in enumerate(UVNode_min):
-        nd = node[0]%twoPi
-        d = abs(nd-Uminr)
-        if d < dmin :
-            dmin = d
-            indmin = i
+        if not (is_duplicate_in_list(num_str1, i, Uval)):
+            Uval_str_cl.append(num_str1)
 
-    dmax = twoPi
-    for i,node in enumerate(UVNode_max):
-        nd = node[0]%twoPi
-        d = abs(nd-Umaxr)
-        if d < dmax :
-            dmax = d
-            indmax = i
+    if len(Uval_str_cl) < 2:
+        logger.info("gen_plane_cylinder : Uval_str_cl should no be void")
+        return None
 
-    V1 = solidFaces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
-    V2 = solidFaces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
+    face_index_2 = [face_index[0], face_index[0]]
+
+    Node_min = UVNodes[0][0]
+    Node_max = UVNodes[0][1]
+
+    dif1_0 = abs(float(Uval_str_cl[0]) - Node_min[0])
+    dif2_0 = abs(float(Uval_str_cl[1]) - Node_max[0])
+
+    # searching for minimum and maximum angle points
+
+    for j, Nodes in enumerate(UVNodes):
+        for elem in Nodes:
+            dif1 = abs(float(Uval_str_cl[0]) - elem[0])
+            dif2 = abs(float(Uval_str_cl[1]) - elem[0])
+
+            if dif1 < dif1_0:
+                Node_min = elem
+                face_index_2[0] = face_index[j]
+                dif1_0 = dif1
+            if dif2 < dif2_0:
+                Node_max = elem
+                face_index_2[1] = face_index[j]
+                dif2_0 = dif2
+
+    V1 = solidFaces[face_index_2[0]].valueAt(Node_min[0], Node_min[1])
+    V2 = solidFaces[face_index_2[1]].valueAt(Node_max[0], Node_max[1])
 
     if V1.isEqual(V2, 1e-5):
         logger.error("in the additional plane definition")
@@ -278,10 +296,10 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
     normal = V2.sub(V1).cross(face.Surface.Axis)
     normal.normalize()
 
-    e1 = get_edge(V1,solidFaces[ifacemin],normal,face.Surface.Axis)
-    e2 = get_edge(V2,solidFaces[ifacemax],normal,face.Surface.Axis)
-    adjacent1 = other_face_edge(e1, solidFaces[ifacemin], solidFaces)
-    adjacent2 = other_face_edge(e2, solidFaces[ifacemax], solidFaces)
+    e1 = get_edge(V1,solidFaces[face_index_2[0]],normal,face.Surface.Axis)
+    e2 = get_edge(V2,solidFaces[face_index_2[1]],normal,face.Surface.Axis)
+    adjacent1 = other_face_edge(e1, solidFaces[face_index_2[0]], solidFaces)
+    adjacent2 = other_face_edge(e2, solidFaces[face_index_2[1]], solidFaces)
 
     if type(adjacent1.Surface) is PlaneGu or type(adjacent2.Surface) is PlaneGu:
         return None
@@ -297,9 +315,19 @@ def gen_plane_cone(face, solidFaces, tolerances):
     if face.Area < 1e-2:
         return None
 
-    face_index_0 = [face.Index]
+    UVNodes = []
+    face_index_0 = [solidFaces.index(face)]
 
-    for face2 in solidFaces:
+    try:
+        face.tessellate(0.1)
+        UVNodes.append(face.getUVNodes())
+    except RuntimeError:
+        PR = face.ParameterRange
+        UVNode1 = (PR[0], PR[2])
+        UVNode2 = (PR[1], PR[3])
+        UVNodes.append([UVNode1, UVNode2])
+
+    for i, face2 in enumerate(solidFaces):
 
         if str(face2.Surface) == "<Cone object>" and face2.Index != face.Index:
 
@@ -308,79 +336,85 @@ def gen_plane_cone(face, solidFaces, tolerances):
                 and face2.Surface.Apex.isEqual(face.Surface.Apex, 1e-5)
                 and (face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1e-6
             ):
-                face_index_0.append(face2.Index)
+
+                face_index_0.append(i)
 
     Faces_p = []
     for ind in face_index_0:
         Faces_p.append(solidFaces[ind])
 
-    face_index = [face.Index]  # la face de entrada
+    face_index = [face_index_0[0]]  # la face de entrada
 
     for k in same_faces(Faces_p, tolerances):
         face_index.append(face_index_0[k])
 
+    # same as cylinder commennt
+    # if len(face_index_0)==len(face_index):
+    #    return None
+
+    for ind in reversed(face_index[1:]):
+        if solidFaces[ind].Area <= 1e-3:
+            face_index.remove(ind)
+        else:
+            face2 = solidFaces[ind]
+            try:
+                face2.tessellate(0.1)
+                UVNodes.append(face2.getUVNodes())
+            except RuntimeError:
+                PR = face2.ParameterRange
+                UVNode1 = (PR[0], PR[2])
+                UVNode2 = (PR[1], PR[3])
+                UVNodes.append([UVNode1, UVNode2])
+
     AngleRange = 0.0
-    Uval,UValmin,UValmax = [],[],[]
+
+    Uval = []
+
     for index in face_index:
         Range = solidFaces[index].ParameterRange
         AngleRange = AngleRange + abs(Range[1] - Range[0])
-        Uval.append(Range[0:2])
-        UValmin.append(Range[0])
-        UValmax.append(Range[1])
+        Uval.append(Range[0])
+        Uval.append(Range[1])
     if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
         return None
 
-    Umin,Umax = sort_range(Uval)
+    Uval_str_cl = []
 
-    ifacemin = face_index[UValmin.index(Umin)]
-    ifacemax = face_index[UValmax.index(Umax)]
+    for i, elem1 in enumerate(Uval):
+        num_str1 = f"{elem1:11.4E}"
+        if abs(elem1) < 1.0e-5:
+            num_str1 = "%11.4E" % 0.0
+        if not (is_duplicate_in_list(num_str1, i, Uval)):
+            Uval_str_cl.append(num_str1)
 
-    if ifacemin == ifacemax:
-        face2 = solidFaces[ifacemin]
-        try:
-            face2.tessellate(0.1)
-            UVNode_min = face2.getUVNodes()
-        except RuntimeError:
-            PR = face2.ParameterRange
-            UVNode1 = (PR[0], PR[2])
-            UVNode2 = (PR[1], PR[3])
-            UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min   
-    else:        
-        face2min = solidFaces[ifacemin]
-        try:
-            face2min.tessellate(0.1)
-            UVNode_min = face2min.getUVNodes()
-        except RuntimeError:
-            PR = face2min.ParameterRange
-            UVNode_min = ((PR[0], PR[2]),)
-       
-        face2max = solidFaces[ifacemax]
-        try:
-            face2max.tessellate(0.1)
-            UVNode_max = face2max.getUVNodes()
-        except RuntimeError:
-            PR = face2max.ParameterRange
-            UVNode_max = ((PR[1], PR[3]),)
-  
-    dmin = twoPi
-    for i,node in enumerate(UVNode_min):
-        nd = node[0]%twoPi
-        d = abs(nd-Umin)
-        if d < dmin :
-            dmin = d
-            indmin = i
+    if len(Uval_str_cl) < 2:
+        logger.info("gen_plane_cone : Uval_str_cl should no be void")
+        return None
 
-    dmax = twoPi
-    for i,node in enumerate(UVNode_max):
-        nd = node[0]%twoPi
-        d = abs(nd-Umax)
-        if d < dmax :
-            dmax = d
-            indmax = i
+    face_index_2 = [face_index[0], face_index[0]]
 
-    V1 = solidFaces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
-    V2 = solidFaces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
+    Node_min = UVNodes[0][0]
+    Node_max = UVNodes[0][1]
+    dif1_0 = abs(float(Uval_str_cl[0]) - Node_min[0])
+    dif2_0 = abs(float(Uval_str_cl[1]) - Node_max[0])
+
+    # searching for minimum and maximum angle points
+    for j, Nodes in enumerate(UVNodes):
+        for elem in Nodes:
+            dif1 = abs(float(Uval_str_cl[0]) - elem[0])
+            dif2 = abs(float(Uval_str_cl[1]) - elem[0])
+
+            if dif1 < dif1_0:
+                Node_min = elem
+                face_index_2[0] = face_index[j]
+                dif1_0 = dif1
+            if dif2 < dif2_0:
+                Node_max = elem
+                face_index_2[1] = face_index[j]
+                dif2_0 = dif2
+
+    V1 = solidFaces[face_index_2[0]].valueAt(Node_min[0], Node_min[1])
+    V2 = solidFaces[face_index_2[1]].valueAt(Node_max[0], Node_max[1])
 
     if V1.isEqual(V2, 1e-5):
         logger.error("in the additional plane definition")
@@ -388,15 +422,13 @@ def gen_plane_cone(face, solidFaces, tolerances):
 
     dir1 = V1-face.Surface.Apex
     dir2 = V2-face.Surface.Apex
-    dir1.normalize()
-    dir2.normalize()
     normal = dir2.cross(dir1)
     normal.normalize()
 
-    e1 = get_edge(V1,solidFaces[ifacemin],normal,dir1)
-    e2 = get_edge(V2,solidFaces[ifacemax],normal,dir2)
-    adjacent1 = other_face_edge(e1, solidFaces[ifacemin], solidFaces)
-    adjacent2 = other_face_edge(e2, solidFaces[ifacemax], solidFaces)
+    e1 = get_edge(V1,solidFaces[face_index_2[0]],normal,dir1)
+    e2 = get_edge(V2,solidFaces[face_index_2[1]],normal,dir2)
+    adjacent1 = other_face_edge(e1, solidFaces[face_index_2[0]], solidFaces)
+    adjacent2 = other_face_edge(e2, solidFaces[face_index_2[1]], solidFaces)
 
     if type(adjacent1.Surface) is PlaneGu or type(adjacent2.Surface) is PlaneGu:
        return None 
@@ -522,13 +554,10 @@ def get_edge(v1,face,normal,axis):
     for edge in face.Edges:
         if type(edge.Curve) == Part.Line:
             vect = v1 - edge.Curve.Location
-            if vect.Length < 1e-8:
-                return edge
             vect.normalize()
             if abs(abs(vect.dot(edge.Curve.Direction)-1)) < 1e-5:
                 return edge
-        
-        elif type(edge.Curve) == Part.BSplineCurve:
+        else:
             if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or  v1.sub(edge.Vertexes[1].Point).Length < 1e-5:                   
                 vect = edge.Vertexes[0].Point - edge.Vertexes[1].Point
                 vect.normalize()
@@ -536,73 +565,5 @@ def get_edge(v1,face,normal,axis):
                     continue
                 else:
                     return edge 
-        else:
-            if abs(abs(edge.Curve.Axis.dot(face.Surface.Axis))-1) < 1e-5 :
-                continue
-            else:
-                return edge 
-            
 
-def sort_range(Urange):
-    workRange = Urange[1:]
-    current = Urange[0]
-    for r in reversed(workRange):
-        joined = join_range(current,r)
-        if joined is None:
-            continue
-        current = joined
-        workRange.remove(r)
-    if len(workRange) == 0:
-        return current
-    elif len(workRange) == 1 :
-        joined = join_range(current,workRange[0])
-        if joined is None:
-            return adjust_range(current,workRange[0])
-        else:
-            return joined
-    else:
-        workRange.append(current)
-        sorted = sort_range(workRange)
-        return  sorted
-    
-def join_range(U0,U1):
-    if ((U0[0]-U1[0] < 1e-5 ) and (-1e-5 < U0[1]-U1[0])) :
-        if U1[1] > U0[1]:
-            return (U0[0],U1[1])
-        else:
-            return U0
-    elif (U0[0]-U1[1] < 1e-5) and  (-1e-5 < U0[1]-U1[1]):
-        if U1[0] < U0[0]:
-            return (U1[0],U0[1])
-        else:
-            return U0
-    elif (U1[0] < U0[0]) and  ( U0[1]<U1[1]) :
-        return U1
 
-    elif (U0[0] < U1[0]) and  ( U1[1]<U0[1]) :
-        return U0
-    else:
-        return None
-    
-def adjust_range(U0,U1):  
-
-    V0 = [0 if abs(x-twoPi)<1e-5 else x%twoPi for x in U0]
-    V1 = [0 if abs(x-twoPi)<1e-5 else x%twoPi for x in U1]
-
-    if abs(V0[0]-V1[1]) < 1e-5:
-            imin = 1  #U1[0]
-            imax = 0  #U0[1]
-    elif abs(V1[0]-V0[1]) < 1e-5:
-            imin = 0  #U0[0]
-            imax = 1  #U1[1]
-    elif V1[1] < V0[0]:
-        imin = 0      #U0[0]
-        imax = 1      #U1[1]
-    else:
-        imin = 1       #U1[0]
-        imax = 0       #U1[0]
-
-    mat = (U0,U1)
-    return (mat[imin][0],mat[imax][1])    
-
-        

@@ -22,11 +22,13 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, omitfaces, options, tolerances, additional_planes = False):
+def generic_split(solid, omitfaces, options, tolerances, additional_planes=False):
 
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
+    if not additional_planes:
+        omitfaces = set()  # prueba
     for surf in get_surfaces(solid, omitfaces, tolerances, additional_planes=additional_planes):
 
         surf.build_surface(bbox)
@@ -42,17 +44,16 @@ def generic_split(solid, omitfaces, options, tolerances, additional_planes = Fal
         if len(cleaned) > 1:
             new_split = True
             break
-    else:  
+    else:
         # loop exit normally (without break)
         new_split = not additional_planes
+        new_split = False
         additional_planes = True
-
- 
 
     if new_split:
         components = []
         for part in cleaned:
-            subcomp = generic_split(part, omitfaces, options, tolerances,additional_planes)
+            subcomp = generic_split(part, omitfaces, options, tolerances, additional_planes)
             components.extend(subcomp)
     else:
         components = cleaned
