@@ -6,7 +6,6 @@ import Part
 
 from ..utils.basic_functions_part1 import (
     is_in_line,
-    is_opposite,
     is_parallel,
     is_same_value,
 )

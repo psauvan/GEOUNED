@@ -17,7 +17,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.basic_functions_part2 import is_duplicate_in_list
-from ..utils.meta_surfaces import other_face_edge, region_sign
+from ..utils.meta_surfaces_utils import other_face_edge, region_sign
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2

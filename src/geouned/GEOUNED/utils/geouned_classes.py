@@ -23,6 +23,7 @@ from .basic_functions_part1 import (
     MultiPlanesParams,
     ReverseCanParams,
     RoundCornerParams,
+    ReversedConeCylParams,
 )
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
@@ -225,6 +226,9 @@ class GeounedSurface:
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
+        elif params[0] == "ReversedConeCylinder":
+            self.Type = params[0]
+            self.Surf = ReversedConeCylParams(params[1])    
 
         self.shape = Face
 
@@ -275,6 +279,10 @@ class GeounedSurface:
             Box.enlarge(10)
             self.shape = makeRoundCorner(self.Surf.Cylinder, self.Surf.AddPlane, self.Surf.Planes, self.Surf.Configuration, Box)
 
+        elif self.type == "ReversedConeCylinder": 
+            #No need to build shape since this shape not used in decomposition
+            pass
+
         else:
             logger.error(f"Cannot build {self.Type} shape")
             return
@@ -303,18 +311,7 @@ class MetaSurfacesDict(dict):
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        self.__nickname__ = {
-            "Plane": "Planes",
-            "Cylinder": "Cyl",
-            "Cone": "Cone",
-            "Sphere": "Sph",
-            "Torus": "Tor",
-            "MultiPlane": "MultiP",
-            "ReverseCan": "revCan",
-            "RoundCorner": "RoundC",
-        }
-
-        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "RevCan", "RoundC"]
+        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "RevCan", "RoundC", "RevCC"]
         for name in surfname:
             self[name] = []
 
@@ -594,6 +591,41 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = reverseCan_region.copy(self.surfaceNumber)
             self["RevCan"].append(newregion)
+        else:
+            newregion = cs_region if boundary > 0 else -cs_region
+        return newregion
+    
+    def add_reversedCC(self, reversedCC):
+        reversedCC_region = None
+        for cc in reversedCC.Surf.ConeCyl:
+            if reversedCC.Type == 'CylinderOnly':
+                pid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
+            else:   
+                pid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True) 
+            reversedCC_region = BoolRegion.mult(reversedCC_region, pid)
+
+        plane_region = None
+        for cp in reversedCC.Surf.Planes:
+            pid, exist = self.primitive_surfaces.add_plane(cp, True)
+            if exist:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            plane_region = BoolRegion.add(plane_region, pid)
+        
+        reversedCC_region = reversedCC_region * plane_region
+            
+        add_cc = True
+        for cs_region in self["RevCC"]:
+            boundary = reversedCC_region.isSameInterface(cs_region)
+            if abs(boundary) == 1:
+                add_cc = False
+                break
+
+        if add_cc:
+            self.surfaceNumber += 1
+            newregion = reversedCC_region.copy(self.surfaceNumber)
+            self["RevCC"].append(newregion)
         else:
             newregion = cs_region if boundary > 0 else -cs_region
         return newregion

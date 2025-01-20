@@ -1,5 +1,6 @@
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.meta_surfaces import multiplane_loop, no_convex
+from ..utils.meta_surfaces import multiplane_loop
+from ..utils.meta_surfaces_utils import no_convex
 from ..utils.functions import (
     build_multip_params,
     build_revcan_params,
@@ -11,57 +12,51 @@ from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
     cyl_bound_planes,
     torus_bound_planes,
-    gen_plane_cylinder,
-    gen_plane_cone,
     exclude_no_cutting_planes,
     order_plane_face,
     omit_isolated_planes,
 )
 
 
-def get_surfaces(solid, omitfaces, tolerances, meta_surface=True, additional_planes=False):
+def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
     solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=False)
 
-    if additional_planes:
-        for plane in cyl_cone_plane_generator(solid_GU.Faces, omitfaces, tolerances):
-            yield plane
 
+    if meta_surface:
+        for rdc in next_roundCorner(solid_GU.Faces, omitfaces):
+            yield rdc
+
+        for can in next_reverseCan(solid_GU.Faces, omitfaces):
+            yield can
+
+        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+        omitfaces.update(extPlanes)
+
+        for multiplane in next_multiplanes(solid_GU.Faces, omitfaces):
+            yield multiplane
     else:
-        if meta_surface:
-            for rdc in next_roundCorner(solid_GU.Faces, omitfaces):
-                yield rdc
+        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+        omitfaces.update(extPlanes)
 
-            for can in next_reverseCan(solid_GU.Faces, omitfaces):
-                yield can
+    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
+        yield surface
 
-            extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
-            omitfaces.update(extPlanes)
+    for surface in cylinder_generator(solid_GU.Faces, omitfaces):
+        yield surface
 
-            for multiplane in next_multiplanes(solid_GU.Faces, omitfaces):
-                yield multiplane
-        else:
-            extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
-            omitfaces.update(extPlanes)
+    for surface in cone_generator(solid_GU.Faces):
+        yield surface
 
-        for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
-            yield surface
+    for surface in sphere_generator(solid_GU.Faces):
+        yield surface
 
-        for surface in cylinder_generator(solid_GU.Faces, omitfaces):
-            yield surface
+    for surface in torus_generator(solid_GU.Faces):
+        yield surface
 
-        for surface in cone_generator(solid_GU.Faces):
-            yield surface
-
-        for surface in sphere_generator(solid_GU.Faces):
-            yield surface
-
-        for surface in torus_generator(solid_GU.Faces):
-            yield surface
-
-        omitfaces = omitfaces - extPlanes
-        for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, True):
-            yield surface
+    omitfaces = omitfaces - extPlanes
+    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, True):
+        yield surface
 
 
 def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
@@ -173,25 +168,6 @@ def torus_generator(GUFaces):
         dir = face.Surface.Axis
         torus = GeounedSurface(("TorusOnly", (center, dir, radMaj, radMin)))
         yield torus
-
-
-def cyl_cone_plane_generator(GUFaces, omitfaces, tolerances):
-    for face in GUFaces:
-        if face.Index in omitfaces:
-            continue
-        if face.Orientation == "Forward":
-            continue
-        if isinstance(face.Surface, CylinderGu):
-            plane = gen_plane_cylinder(face, GUFaces, tolerances)
-            if plane is None:
-                continue
-            yield plane
-
-        elif isinstance(face.Surface, ConeGu):
-            plane = gen_plane_cone(face, GUFaces, tolerances)
-            if plane is None:
-                continue
-            yield plane
 
 
 def next_multiplanes(solidFaces, plane_index_set):

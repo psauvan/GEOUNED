@@ -14,7 +14,7 @@ logger = logging.getLogger("general_logger")
 
 def split_surfaces(solid, options, tolerances):
 
-    solid_components = generic_split(solid, set(), options, tolerances)
+    solid_components = generic_split(solid, options, tolerances)
     comp = Part.makeCompound(solid_components)
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > 0.001:
@@ -22,14 +22,14 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, omitfaces, options, tolerances, additional_planes=False):
+def generic_split(solid, options, tolerances):
 
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
-    if not additional_planes:
-        omitfaces = set()  # prueba
-    for surf in get_surfaces(solid, omitfaces, tolerances, additional_planes=additional_planes):
+    omitfaces = set() 
+
+    for surf in get_surfaces(solid, omitfaces, tolerances):
 
         surf.build_surface(bbox)
         try:
@@ -46,14 +46,12 @@ def generic_split(solid, omitfaces, options, tolerances, additional_planes=False
             break
     else:
         # loop exit normally (without break)
-        new_split = not additional_planes
         new_split = False
-        additional_planes = True
 
     if new_split:
         components = []
         for part in cleaned:
-            subcomp = generic_split(part, omitfaces, options, tolerances, additional_planes)
+            subcomp = generic_split(part, options, tolerances)
             components.extend(subcomp)
     else:
         components = cleaned

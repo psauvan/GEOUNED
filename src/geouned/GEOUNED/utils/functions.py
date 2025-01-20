@@ -8,10 +8,11 @@ import Part
 
 logger = logging.getLogger("general_logger")
 
-from .geometry_gu import PlaneGu, CylinderGu
+from .geometry_gu import PlaneGu, CylinderGu, ConeGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
-from .meta_surfaces import commonVertex, commonEdge, multiplane_loop, no_convex, get_revcan_surfaces, get_roundcorner_surfaces
+from .meta_surfaces import multiplane_loop, get_revcan_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
+from .meta_surfaces_utils import no_convex, commonVertex, commonEdge
 
 from .basic_functions_part2 import is_same_plane
 
@@ -126,6 +127,32 @@ def get_roundCorner(solidFaces, cornerface_index=None):
         return corner_list
     else:
         return corner_list, cornerface_index
+
+
+def get_reversed_cone_cylinder(solidFaces, conecylface_index=None):
+    """identify and return all roundcorner type in the solid."""
+    if conecylface_index is None:
+        conecylface_index = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
+    conecyl_list = []
+    for f in solidFaces:
+        if f.Index in conecylface_index:
+            continue
+        if isinstance(f.Surface, (CylinderGu,ConeGu)):
+            if f.Orientation == "Reversed":
+                rcc, surfindex = get_revConeCyl_surfaces(f, solidFaces, conecylface_index)
+                if rcc is not None:
+                    gc = GeounedSurface(("ReversedConeCylinder", rcc))
+                    conecylface_index.update(surfindex)
+                    conecyl_list.append(gc)
+
+    if one_value_return:
+        return conecyl_list
+    else:
+        return conecyl_list, conecylface_index
 
 
 def build_roundC_params(rc):
