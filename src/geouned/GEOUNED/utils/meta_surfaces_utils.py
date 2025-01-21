@@ -475,8 +475,6 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
     for k in same_faces(faces, tolerances):
         sameface_index.append(face_index[k])
 
-    omitFaces.update(sameface_index)
-
     AngleRange = 0.0
     Uval,UValmin,UValmax = [],[],[]
     for index in sameface_index:
@@ -488,6 +486,7 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
     if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
         return []
     
+    omitFaces.update(sameface_index)
     Umin,Umax = sort_range(Uval)
 
     ifacemin = face_index[UValmin.index(Umin)]
@@ -733,8 +732,8 @@ def join_range(U0,U1):
     
 def adjust_range(U0,U1):  
 
-    V0 = [0 if abs(x-twoPi)<1e-5 else x%twoPi for x in U0]
-    V1 = [0 if abs(x-twoPi)<1e-5 else x%twoPi for x in U1]
+    V0 = [0 if (abs(x-twoPi)<1e-5 or abs(x)<1e-5) else x%twoPi for x in U0]
+    V1 = [0 if (abs(x-twoPi)<1e-5 or abs(x)<1e-5) else x%twoPi for x in U1]
 
     if abs(V0[0]-V1[1]) < 1e-5:
             imin = 1  #U1[0]

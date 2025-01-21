@@ -611,7 +611,7 @@ class MetaSurfacesDict(dict):
                     pid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True) 
                     if exist:
                         p = self.get_primitive_surface(pid)
-                        if is_opposite(cc.Surf.Cone.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        if is_opposite(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                             pid = -pid
                     coneRegion = cid + pid
                 else:    
