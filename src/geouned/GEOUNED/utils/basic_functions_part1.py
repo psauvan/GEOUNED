@@ -244,18 +244,14 @@ class RoundCornerParams:
 
 class ReversedConeCylParams(): 
     def __init__(self, params):
-        self.Planes = []
         self.CylCones = []
         for cc in params:
-            self.Planes.append(cc.plane)
-            self.CylCones.append(cc.surf) 
+            self.CylCones.append(cc.Surf) 
         
     def __str__(self):
         outstr = f"""ReversedCylCone :\n"""
         for cc in self.CylCones:
             outstr += f"{cc.__str__()} \n"
-        for p in self.Planes:
-            outstr += f"{p.__str__()} \n"
         return outstr 
 
 class SphereParams:

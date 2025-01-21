@@ -228,7 +228,9 @@ class GeounedSurface:
             self.Surf = RoundCornerParams(params[1])
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
-            self.Surf = ReversedConeCylParams(params[1])    
+            self.Surf = ReversedConeCylParams(params[1])  
+        else:
+            print(f"type {params[0]} not found")      
 
         self.shape = Face
 
@@ -279,7 +281,7 @@ class GeounedSurface:
             Box.enlarge(10)
             self.shape = makeRoundCorner(self.Surf.Cylinder, self.Surf.AddPlane, self.Surf.Planes, self.Surf.Configuration, Box)
 
-        elif self.type == "ReversedConeCylinder": 
+        elif self.Type == "ReversedConeCylinder": 
             #No need to build shape since this shape not used in decomposition
             pass
 
@@ -597,15 +599,27 @@ class MetaSurfacesDict(dict):
     
     def add_reversedCC(self, reversedCC):
         reversedCC_region = None
-        for cc in reversedCC.Surf.ConeCyl:
-            if reversedCC.Type == 'CylinderOnly':
-                pid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
+        Planes = []
+        for cc in reversedCC.Surf.CylCones:
+            Planes.append(cc.Surf.Plane)
+            if cc.Type == 'Cylinder':
+                cid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
+                reversedCC_region = BoolRegion.mult(reversedCC_region, cid)               
             else:   
-                pid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True) 
-            reversedCC_region = BoolRegion.mult(reversedCC_region, pid)
+                cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
+                if cc.Surf.ApexPlane:
+                    pid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True) 
+                    if exist:
+                        p = self.get_primitive_surface(pid)
+                        if is_opposite(cc.Surf.Cone.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pid = -pid
+                    coneRegion = cid + pid
+                else:    
+                    coneRegion = cid
+                reversedCC_region = BoolRegion.mult(reversedCC_region, coneRegion)    
 
         plane_region = None
-        for cp in reversedCC.Surf.Planes:
+        for cp in Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)
             if exist:
                 p = self.get_primitive_surface(pid)

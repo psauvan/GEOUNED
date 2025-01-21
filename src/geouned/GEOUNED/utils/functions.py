@@ -143,10 +143,9 @@ def get_reversed_cone_cylinder(solidFaces, conecylface_index=None):
             continue
         if isinstance(f.Surface, (CylinderGu,ConeGu)):
             if f.Orientation == "Reversed":
-                rcc, surfindex = get_revConeCyl_surfaces(f, solidFaces, conecylface_index)
-                if rcc is not None:
+                rcc = get_revConeCyl_surfaces(f, solidFaces, conecylface_index)
+                if rcc:
                     gc = GeounedSurface(("ReversedConeCylinder", rcc))
-                    conecylface_index.update(surfindex)
                     conecyl_list.append(gc)
 
     if one_value_return:

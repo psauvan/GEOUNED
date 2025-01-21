@@ -79,8 +79,13 @@ def get_roundcorner_surfaces(cylinder, Faces):
 
 def get_revConeCyl_surfaces(face, Faces, omitFaces):
         revCC = get_join_cone_cyl(face,Faces,omitFaces,Tolerances())
-        if len(revCC) == 2:
+        if len(revCC) == 1:
+            omitFaces = omitFaces - revCC[0].surf_index
+            return None
+        elif len(revCC) == 2:
             if is_same_plane(revCC[0].plane,revCC[1].plane, Options(), Tolerances(), NumericFormat()):
+                for rcc in revCC:
+                    omitFaces = omitFaces - rcc.surf_index
                 return None
         else:
             return revCC

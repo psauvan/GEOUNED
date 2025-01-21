@@ -9,15 +9,15 @@ from .geometry_gu import PlaneGu, CylinderGu, ConeGu, TorusGu
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
 from ..utils.basic_functions_part1 import is_in_line
+from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 
 twoPi = 2 * math.pi
 
 class reversedCCP:
     def __init__(self,surf):
-        self.type = type(surf)
+        self.Type = type(surf)
         self.surf_index = set()
-        self.plane = None
-        self.surf = surf
+        self.Surf = surf
 
 def no_convex_full(mplane_list):
     """keep planes only all planes are no convex each other"""
@@ -486,7 +486,7 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
         UValmin.append(Range[0])
         UValmax.append(Range[1])
     if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
-        return None
+        return []
     
     Umin,Umax = sort_range(Uval)
 
@@ -515,28 +515,30 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
     adjacent2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces)
 
     if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
-        new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,omitFaces,tolerances)
-        if new_adjacent is not None:
+        if adjacent1.Index not in omitFaces:
+            new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,omitFaces,tolerances)
             joined_faces.extend(new_adjacent)
     if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
-        new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,omitFaces,tolerances)
-        if new_adjacent is not None:
+        if adjacent2.Index not in omitFaces:
+            new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,omitFaces,tolerances)
             joined_faces.extend(new_adjacent)
-
-    if len(joined_faces) == 0:
-        return []
-    
-    if type(face) is CylinderGu:
-        facein = reversedCCP(GeounedSurface("CylinderOnly",(face.Surface.Center,face.Surface.Center,face.Surface.Radius,1,1)))
-        facein.surf_index.update(sameface_index)
+   
+    if type(face.Surface) is CylinderGu:
+        cylOnly = gen_cylinder(face)
         plane = gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, GUFaces)
-        facein.plane = plane
+
+        facein = reversedCCP(GeounedSurface(("Cylinder",(cylOnly,plane,"Reversed"))))
+        facein.surf_index.update(sameface_index)
+
         
     else:    
-        facein = reversedCCP(GeounedSurface("ConeOnly",(face.Surface.Center,face.Surface.Apex,face.Surface.SemiAngle,1)))
-        facein.surf_index.update(sameface_index)
+        coneOnly = gen_cone(face)
+        apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
         plane = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces)
-        facein.plane = plane
+
+        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,plane,"Reversed"))))
+        facein.surf_index.update(sameface_index)
+       
     
     joined_faces.append(facein)
     return joined_faces
