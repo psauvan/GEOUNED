@@ -41,21 +41,27 @@ class SurfacesGu(object):
 class PlaneGu(SurfacesGu):
     """GEOUNED Plane Class"""
 
-    def __init__(self, face, plane3Pts=False):
+    def __init__(self, face, plane3Pts=False,BSpline_Plane=None):
         SurfacesGu.__init__(self, face)
-        self.Axis = face.Surface.Axis
-        self.Position = face.Surface.Position
         self.pointDef = plane3Pts
-        if plane3Pts:
-            self.Points = tuple(v.Point for v in face.Vertexes)
-            d1 = self.Points[0] - self.Points[1]
-            d2 = self.Points[0] - self.Points[2]
-            d3 = self.Points[1] - self.Points[2]
-            self.dim1 = max(d1.Length, d2.Length, d3.Length)
-            self.dim2 = min(d1.Length, d2.Length, d3.Length)
+        if BSpline_Plane is None:
+            self.Axis = face.Surface.Axis
+            self.Position = face.Surface.Position
+            if plane3Pts:
+                self.Points = tuple(v.Point for v in face.Vertexes)
+                d1 = self.Points[0] - self.Points[1]
+                d2 = self.Points[0] - self.Points[2]
+                d3 = self.Points[1] - self.Points[2]
+                self.dim1 = max(d1.Length, d2.Length, d3.Length)
+                self.dim2 = min(d1.Length, d2.Length, d3.Length)
+            else:
+                self.dim1 = face.ParameterRange[1] - face.ParameterRange[0]
+                self.dim2 = face.ParameterRange[3] - face.ParameterRange[2]
         else:
-            self.dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-            self.dim2 = face.ParameterRange[3] - face.ParameterRange[2]
+            self.Axis = BSpline_Plane.Axis
+            self.Position = BSpline_Plane.Position
+            self.dim1 = 1
+            self.dim2 = 1
 
     def isSameSurface(self, surface):
         if type(surface) is not PlaneGu:
@@ -382,6 +388,8 @@ def define_surface(face, plane3Pts):
         Surf_GU = SphereGu(face)
     elif kind_surf is Part.Toroid:
         Surf_GU = TorusGu(face)
+    elif kind_surf is Part.BSplineSurface:
+        Surf_GU = BSplineGu(face)    
     else:
         logger.info(f"bad Surface type {kind_surf}")
         Surf_GU = None
@@ -437,3 +445,40 @@ def is_inverted(solid):
             return True
 
     return False
+
+
+def BSplineGu(face):
+
+    plane = face.findPlane()
+    if plane is None:
+        return None
+    else:
+        return PlaneGu(face,BSpline_Plane=plane)    
+
+    def __init__(self, face, plane3Pts=False):
+        SurfacesGu.__init__(self, face)
+        self.Axis = face.Surface.Axis
+        self.Position = face.Surface.Position
+        self.pointDef = plane3Pts
+        if plane3Pts:
+            self.Points = tuple(v.Point for v in face.Vertexes)
+            d1 = self.Points[0] - self.Points[1]
+            d2 = self.Points[0] - self.Points[2]
+            d3 = self.Points[1] - self.Points[2]
+            self.dim1 = max(d1.Length, d2.Length, d3.Length)
+            self.dim2 = min(d1.Length, d2.Length, d3.Length)
+        else:
+            self.dim1 = face.ParameterRange[1] - face.ParameterRange[0]
+            self.dim2 = face.ParameterRange[3] - face.ParameterRange[2]
+
+    def isSameSurface(self, surface):
+        if type(surface) is not PlaneGu:
+            return False
+        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
+            return False
+        if abs(self.Axis.dot(self.Position) - surface.Axis.dot(surface.Position)) > 1e-5:
+            return False
+        return True
+
+    def reverse(self):
+        self.Axis = -self.Axis

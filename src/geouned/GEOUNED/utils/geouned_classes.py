@@ -12,6 +12,7 @@ logger = logging.getLogger("general_logger")
 from .basic_functions_part1 import (
     Plane3PtsParams,
     PlaneParams,
+    DiskParams,
     ConeOnlyParams,
     CylinderOnlyParams,
     SphereOnlyParams,
@@ -22,6 +23,7 @@ from .basic_functions_part1 import (
     TorusParams,
     MultiPlanesParams,
     ReverseCanParams,
+    ForwardCanParams,
     RoundCornerParams,
     ReversedConeCylParams,
 )
@@ -29,7 +31,7 @@ from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone
 
 from .data_classes import NumericFormat, Options, Tolerances
 from .boolean_function import BoolRegion
-from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeReverseCan, makeRoundCorner
+from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeCylinderCan, makeRoundCorner
 from .basic_functions_part1 import is_parallel, is_opposite
 
 from .data_classes import NumericFormat, Options, Tolerances
@@ -193,6 +195,9 @@ class GeounedSurface:
         elif params[0] == "Plane3Pts":
             self.Type = "Plane"
             self.Surf = Plane3PtsParams(params[1])  # plane point defined with 3 points
+        elif params[0] == "Disk":
+            self.Type = "Disk"
+            self.Surf = DiskParams(params[1])  
         elif params[0] == "CylinderOnly":
             self.Type = params[0]
             self.Surf = CylinderOnlyParams(params[1])
@@ -223,6 +228,9 @@ class GeounedSurface:
         elif params[0] == "ReverseCan":
             self.Type = params[0]
             self.Surf = ReverseCanParams(params[1])
+        elif params[0] == "ForwardCan":
+            self.Type = params[0]
+            self.Surf = ForwardCanParams(params[1])    
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
@@ -242,6 +250,17 @@ class GeounedSurface:
         if self.Type == "Plane":
             Box.enlarge(10)
             self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
+
+        elif self.Type == "Disk":
+            if self.Surf.Type == 'circle':
+                radius = self.Surf.Radius * 1.5
+                circle = Part.makeCircle(radius,self.Surf.Center,self.Surf.Axis)
+                self.shape = Part.makeFilledFace([circle]) 
+            else:
+                 S1 = self.Surf.Center + self.Surf.majAxis * 1.5  # major axis
+                 S2 = self.Surf.Center + self.Surf.minAxis * 1.5 # minor axis
+                 ellipse = Part.Ellipse(S1, S2, self.Surf.Center)
+                 self.shape = Part.makeFilledFace([ellipse.toShape()])
 
         elif self.Type == "CylinderOnly":
             self.shape = makeCylinder(self.Surf.Axis, self.Surf.Center, self.Surf.Radius, Box)
@@ -275,7 +294,11 @@ class GeounedSurface:
 
         elif self.Type == "ReverseCan":
             Box.enlarge(10)
-            self.shape = makeReverseCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+
+        elif self.Type == "ForwardCan":
+            Box.enlarge(10)
+            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)    
 
         elif self.Type == "RoundCorner":
             Box.enlarge(10)

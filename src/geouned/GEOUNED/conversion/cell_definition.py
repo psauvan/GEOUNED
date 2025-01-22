@@ -29,7 +29,6 @@ logger = logging.getLogger("general_logger")
 def build_definition(meta_obj, Surfaces):
     solid_definition = BoolSequence(operator="OR")
     for i,basic_solid in enumerate(meta_obj.Solids):
-        print(i)
         comp = simple_solid_definition(basic_solid, Surfaces)
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)

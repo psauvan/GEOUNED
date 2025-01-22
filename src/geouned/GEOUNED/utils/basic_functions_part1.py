@@ -136,6 +136,34 @@ class PlaneParams:
     Position : {pos}  """
         return outstr
 
+class DiskParams:
+    def __init__(self, params, real=True):
+        if params[0] == 'circle':
+            self.Type = 'circle'
+            self.Center = params[1]
+            self.Axis = params[2]
+            self.Radius = params[3]
+        else:        
+            self.Type = 'ellipse'
+            self.Center = params[1]
+            self.Axis = params[2]
+            self.majAxis = params[3]
+            self.minAxis = params[4]
+
+    def __str__(self):
+        if self.Type == "circle":
+            outstr = f"""Circular disk :
+        Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
+        Center   : {self.Center.x}  {self.Center.y}  {self.Center.z}
+        Radius   : {self.Radius} """
+        else:    
+            outstr = f"""Elliptic disk :
+        Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
+        Center   : {self.Center.x}  {self.Center.y}  {self.Center.z}
+        Min/Maj Radius   : {self.minRadius} {self.majRadius} """
+
+        return outstr
+
 
 class CylinderOnlyParams:
     def __init__(self, params, real=True):
@@ -224,6 +252,19 @@ class ReverseCanParams:
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr
+    
+class ForwardCanParams:
+    def __init__(self, params):
+        self.PlaneNumber = len(params) - 1
+        self.Planes = params[1:]
+        self.Cylinder = params[0]
+
+    def __str__(self):
+        outstr = f"""ForwardCan :\n"""
+        outstr += f"{self.Cylinder.__str__()} \n"
+        for p in self.Planes:
+            outstr += f"{p.__str__()} \n"
+        return outstr    
 
 
 class RoundCornerParams:

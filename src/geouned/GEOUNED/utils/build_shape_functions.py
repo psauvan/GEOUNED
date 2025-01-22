@@ -114,7 +114,7 @@ def intersection(sol1, sol2):
     return sol1.cut(d12)
 
 
-def makeReverseCan(cylinder, plane_list, Box):
+def makeCylinderCan(cylinder, plane_list, Box):
 
     radius = cylinder.Surf.Radius
     axis = cylinder.Surf.Axis

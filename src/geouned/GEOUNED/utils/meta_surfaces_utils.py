@@ -790,3 +790,11 @@ def same_faces(Faces, tolerances):
                     lista.append(elem)
 
     return list(set(lista))
+
+def closed_circle_edge(planes):
+    angle = 0
+    for p in planes:
+        for e in p.OuterWire.Edges:
+            umin,umax = e.ParameterRange
+            angle += umax-umin
+    return abs(angle- 2*math.pi) < 1e-5 

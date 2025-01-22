@@ -2,7 +2,7 @@ import Part
 
 from .data_classes import Options,Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
-from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl
+from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl, closed_circle_edge
 
 
 def multiplane_loop(adjacents, multi_list, planes):
@@ -32,6 +32,43 @@ def multiplane(p, planes):
             if sign == "OR":
                 addplane.append(adjacent_plane)
     return addplane
+
+
+def get_fwdcan_surfaces(cylinder, solidFaces):
+    adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
+
+    planes = []
+    plane_list = []
+    for p in adjacent_planes:
+        r = region_sign(p, cylinder)
+        if r == "AND":
+            plane_list.append(p)
+    
+    if len(plane_list) > 0:
+        p1s = plane_list[0:1]
+        p2s = []
+        r1 = plane_list[0].Surface.Position
+        axis = plane_list[0].Surface.Axis
+        for p in plane_list[1:]:
+            d = p.Surface.Position - r1
+            if d.Length < 1e-5:
+                p1s.append(p)
+            else:
+                d.normalize()
+                if abs(axis.dot(d)) < 1e-5:
+                    p1s.append(p)
+                else :
+                    p2s.append(p)
+        
+        if closed_circle_edge(p1s):
+            planes.append(p1s)
+        if closed_circle_edge(p2s):   
+            planes.append(p2s)
+
+        return planes,cylinder
+    else:
+        return [], None
+    
 
 def get_revcan_surfaces(cylinder, solidFaces):
     adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)

@@ -171,6 +171,41 @@ def build_roundC_params(rc):
     params = ((gcyl, gpa), (gp1, gp2), configuration)
     return params
 
+def build_disk_params(planes):
+    p = planes[0]
+    curve = p.OuterWire.Edges[0].Curve
+    if type(curve) is Part.Circle:
+        center = curve.Center
+        radius = curve.Radius
+        axis = curve.Axis
+        return ('circle',center,axis,radius)
+    else:
+        center = curve.Center
+        majAxis = curve.MajorRadius*curve.XAxis
+        minAxis = curve.MinorRadius*curve.YAxis
+        axis = curve.Axis
+        return ('ellipse',center,axis,majAxis,minAxis)
+
+
+def build_fwdcan_params(plist,cyl):
+
+    if isinstance(cyl, GeounedSurface):
+        gcyl = cyl
+    else:
+        gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+
+    p1 = plist[0][0]
+    if len(plist) == 2:
+        p2 =plist[1][0]
+    else:
+        p2 = None
+    
+    gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1.Surface.Axis, 1.0, 1.0)))
+    params = [gcyl, gp1]
+    if p2 :
+        gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2.Surface.Axis, 1.0, 1.0)))
+        params.append(gp2)
+    return params
 
 def build_revcan_params(cs):
     cyl,p1 = reversed(cs[-2:])
@@ -267,3 +302,7 @@ def get_additional_corner_plane(cyl, p1, p2):
     point = point1 + eps * paxis
 
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0)))
+
+
+        
+

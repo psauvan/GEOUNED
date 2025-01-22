@@ -1,12 +1,18 @@
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.meta_surfaces import multiplane_loop
+from ..utils.meta_surfaces import (
+    multiplane_loop, 
+    get_revcan_surfaces,
+    get_fwdcan_surfaces, 
+    get_roundcorner_surfaces
+)    
 from ..utils.meta_surfaces_utils import no_convex
+
 from ..utils.functions import (
     build_multip_params,
     build_revcan_params,
     build_roundC_params,
-    get_revcan_surfaces,
-    get_roundcorner_surfaces,
+    build_disk_params,
+    build_fwdcan_params,
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
@@ -24,10 +30,13 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
 
     if meta_surface:
-        for rdc in next_roundCorner(solid_GU.Faces, omitfaces):
+        for rdc in next_roundCorner(solid_GU, omitfaces):
             yield rdc
 
-        for can in next_reverseCan(solid_GU.Faces, omitfaces):
+        for can in next_forwardCan(solid_GU, omitfaces):
+            yield can    
+
+        for can in next_reverseCan(solid_GU, omitfaces):
             yield can
 
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
@@ -201,15 +210,94 @@ def next_multiplanes(solidFaces, plane_index_set):
                 multiplane_list.append(mplanes)
                 yield mp
 
-
-def next_reverseCan(solidFaces, canface_index):
+def next_forwardCan(solid, canface_index):
     """identify and return all can type in the solid."""
+
+    solidFaces = solid.Faces
+    fwdOrientation = "Reversed" if solid.inverted else "Forward"
+
+    cyl1_plane = []
+    for f in solidFaces:
+        if isinstance(f.Surface, CylinderGu):
+            if f.Index in canface_index:
+                continue
+            if f.Orientation == fwdOrientation:
+                plane_list, cylinder = get_fwdcan_surfaces(f, solidFaces)
+                if plane_list == []:
+                    continue
+
+                if len(plane_list) == 1:
+                    cyl1_plane.append((plane_list,cylinder))
+                    continue    
+                 
+                gd = GeounedSurface(("ForwardCan", build_fwdcan_params(plane_list,cylinder)))
+                canface_index.add(cylinder.Index)
+                for planes in plane_list:
+                    for p in planes:
+                        canface_index.add(p.Index)
+                yield gd
+
+    for plist,cyl in cyl1_plane:
+        gc = GeounedSurface(("ForwardCan", build_fwdcan_params(plist,cyl)))
+        canface_index.add(cyl.Index)
+        for p in plist[0]:
+            canface_index.add(p.Index)
+        yield gc
+  
+    return None
+
+def next_forwardCan_old(solid, canface_index):
+    """identify and return all can type in the solid."""
+
+    solidFaces = solid.Faces
+    fwdOrientation = "Reversed" if solid.inverted else "Forward"
+
+    cyl1_plane = []
+    cyl2_plane = []
+    for f in solidFaces:
+        if isinstance(f.Surface, CylinderGu):
+            if f.Index in canface_index:
+                continue
+            if f.Orientation == fwdOrientation:
+                plane_list, cylinder = get_fwdcan_surfaces(f, solidFaces)
+                if plane_list == []:
+                    continue
+
+                if len(plane_list) == 1:
+                    cyl1_plane.append(cylinder)
+                else:    
+                    cyl2_plane.append(cylinder)
+
+                for planes in plane_list: 
+                    gd = GeounedSurface(("Disk", build_disk_params(planes)))
+                    for p in planes:
+                        canface_index.add(p.Index)
+                    yield gd
+
+    for cyl in cyl2_plane:
+        gc = GeounedSurface(("CylinderOnly", (cyl.Surface.Center,cyl.Surface.Axis,cyl.Surface.Radius,1)))
+        canface_index.add(cyl.Index)
+        yield gc
+
+    for cyl in cyl1_plane:
+        gc = GeounedSurface(("CylinderOnly", (cyl.Surface.Center,cyl.Surface.Axis,cyl.Surface.Radius,1)))
+        canface_index.add(cyl.Index)
+        yield gc
+  
+    return None
+
+def next_reverseCan(solid, canface_index):
+    """identify and return all can type in the solid."""
+    
+    solidFaces = solid.Faces
+    revOrientation = "Forward" if solid.inverted else "Reversed"
+
 
     for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in canface_index:
                 continue
-            if f.Orientation == "Reversed":
+            if f.Orientation == revOrientation:
                 cs, surfindex = get_revcan_surfaces(f, solidFaces)
                 if cs is not None:
                     gc = GeounedSurface(("ReverseCan", build_revcan_params(cs)))
@@ -219,14 +307,16 @@ def next_reverseCan(solidFaces, canface_index):
     return None
 
 
-def next_roundCorner(solidFaces, cornerface_index):
+def next_roundCorner(solid, cornerface_index):
     """identify and return all roundcorner type in the solid."""
+    solidFaces = solid.Faces
+    fwdOrientation = "Reversed" if solid.inverted else "Forward"
 
     for f in solidFaces:
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
                 continue
-            if f.Orientation == "Forward":
+            if f.Orientation == fwdOrientation:
                 rc, surfindex = get_roundcorner_surfaces(f, solidFaces)
                 if rc is not None:
                     gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
