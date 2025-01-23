@@ -5,7 +5,7 @@ from ..utils.meta_surfaces import (
     get_fwdcan_surfaces, 
     get_roundcorner_surfaces
 )    
-from ..utils.meta_surfaces_utils import no_convex
+from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel
 
 from ..utils.functions import (
     build_multip_params,
@@ -201,6 +201,7 @@ def next_multiplanes(solidFaces, plane_index_set):
         multiplane_loop([p], mplanes, planes)
         if len(mplanes) != 1:
             if no_convex(mplanes):
+                remove_twice_parallel(mplanes)
                 mp_params = build_multip_params(mplanes)
                 mp = GeounedSurface(("MultiPlane", mp_params))
                 if mp.Surf.PlaneNumber < 2:

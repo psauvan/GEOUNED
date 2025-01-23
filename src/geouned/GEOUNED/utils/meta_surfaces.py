@@ -3,7 +3,7 @@ import math
 
 from .data_classes import Options,Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
-from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl, closed_circle_edge
+from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl
 
 twoPi = 2*math.pi
 halfPi = 0.5*math.pi
@@ -64,7 +64,10 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         umin,umax,vmin,vmax = cylinder.ParameterRange
         angle = umax-umin
         if abs(angle-twoPi)< 1e-5:
-            return (p1s,p2s),cylinder
+            if p2s :
+                return (p1s,p2s),cylinder
+            else:
+                return (p1s,),cylinder
         else:
             return [],None
     else:

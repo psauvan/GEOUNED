@@ -152,6 +152,10 @@ C **************************************************************
             self.inpfile.write(comment)
             return
 
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
+            return
+
         if cell.Material == 0:
             cellHeader = f"{index:<5d} {0:<5d}  "
         else:

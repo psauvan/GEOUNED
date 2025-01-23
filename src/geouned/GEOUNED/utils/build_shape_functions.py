@@ -189,7 +189,7 @@ def makeCylinderCan(cylinder, plane_list, Box):
 
         point = pt1 + dmin * axis
         cylshape = Part.makeCylinder(radius, height, point, axis, 360)
-        planeshape1 = makePlane(normal1, pt1, Box)
+        planeshape1 = makePlane(normal1, pt1, cylshape.BoundBox)
 
         if len(plane_list) == 1:
             comsolid = split_bop(cylshape, [planeshape1], options.splitTolerance, options)
@@ -202,7 +202,7 @@ def makeCylinderCan(cylinder, plane_list, Box):
         else:
             g2 = (pos2 - center).dot(normal2) / normal2.dot(axis)
             pt2 = center + g2 * axis
-            planeshape2 = makePlane(normal2, pt2, Box)
+            planeshape2 = makePlane(normal2, pt2, cylshape.BoundBox)
             comsolid = split_bop(cylshape, [planeshape1, planeshape2], options.splitTolerance, options)
             s1, s2, s3 = comsolid.Solids
             v1 = s1.CenterOfMass - pt1

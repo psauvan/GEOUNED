@@ -71,7 +71,12 @@ class PlaneGu(SurfacesGu):
         if abs(self.Axis.dot(self.Position) - surface.Axis.dot(surface.Position)) > 1e-5:
             return False
         return True
-
+    
+    def isParallel(self, surface):
+        if type(surface) is not PlaneGu:
+            return False
+        return abs(self.Axis.dot(surface.Axis)) > 0.99999
+      
     def reverse(self):
         self.Axis = -self.Axis
 

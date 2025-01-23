@@ -38,6 +38,53 @@ def no_convex_full(mplane_list):
                     return False
     return True
 
+def remove_twice_parallel(mplanes):
+    plane_list = []
+    omit = set()
+    for i,p1 in enumerate(mplanes):
+        if p1.Index in omit :
+            continue
+        parallel = []
+        for p2 in mplanes[i+1:]:
+            if p2.Index in omit :
+                continue
+            if p1.Surface.isParallel(p2.Surface):
+                parallel.append(p2)
+                omit.add(p2.Index)
+        if len(parallel)>1:
+            parallel.append(p1)
+            omit.add(p1.Index)
+            plane_list.append(parallel)
+
+    for parallel in plane_list:
+        p0 = parallel[0]
+        dmin = 0
+        dmax = 0
+        pmin = p0
+        pmax = p0
+        for i,p in enumerate(parallel[1:]):
+            d = p0.Surface.Axis.dot(p.Surface.Position-p0.Surface.Position)
+            if d>dmax :
+                dmax = d
+                pmax = p
+            elif d<dmin:
+                dmin = d
+                pmin = p
+
+        if dmax-dmin < 1e-5:
+            continue   
+
+        for p in reversed(parallel): 
+            if p.Surface.isSameSurface(pmin.Surface):
+                parallel.remove(p)
+            elif p.Surface.isSameSurface(pmax.Surface):
+                parallel.remove(p)    
+
+        for p in parallel:
+            mplanes.remove(p)        
+
+
+
 
 def no_convex(mplane_list):
     """keep part of no complex plane set"""
@@ -531,14 +578,17 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
     adjacent1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces)
     adjacent2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces)
 
-    if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
-        if adjacent1.Index not in omitFaces:
-            new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,omitFaces,tolerances)
-            joined_faces.extend(new_adjacent)
-    if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
-        if adjacent2.Index not in omitFaces:
-            new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,omitFaces,tolerances)
-            joined_faces.extend(new_adjacent)
+    if adjacent1 is not None:
+        if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
+            if adjacent1.Index not in omitFaces:
+                new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,omitFaces,tolerances)
+                joined_faces.extend(new_adjacent)
+
+    if adjacent2 is not None:
+        if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
+            if adjacent2.Index not in omitFaces:
+                new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,omitFaces,tolerances)
+                joined_faces.extend(new_adjacent)
    
     if type(face.Surface) is CylinderGu:
         cylOnly = gen_cylinder(face)
@@ -597,7 +647,7 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces):
     Uminr = Umin%twoPi
     Umaxr = Umax%twoPi
     for i,node in enumerate(UVNode_min):
-        nd = node[0]%twoPi
+        nd = node[0]%twoPi if (abs(node[0])>1e-5 and abs(abs(node[0])-twoPi) > 1e-5) else 0.
         d = abs(nd-Uminr)
         if d < dmin :
             dmin = d
@@ -605,7 +655,7 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces):
 
     dmax = twoPi
     for i,node in enumerate(UVNode_max):
-        nd = node[0]%twoPi
+        nd = node[0]%twoPi if (abs(node[0])>1e-5 and abs(abs(node[0])-twoPi) > 1e-5) else 0.
         d = abs(nd-Umaxr)
         if d < dmax :
             dmax = d
