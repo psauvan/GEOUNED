@@ -5,7 +5,7 @@ import numpy
 
 from collections import OrderedDict
 
-from .geometry_gu import PlaneGu, CylinderGu, ConeGu, TorusGu
+from .geometry_gu import PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
 from ..utils.basic_functions_part1 import is_in_line
@@ -17,7 +17,7 @@ class reversedCCP:
     def __init__(self,surf):
         self.Type = type(surf)
         self.surf_index = set()
-        self.Surf = surf
+        self.Surf = surf 
 
 def no_convex_full(mplane_list):
     """keep planes only all planes are no convex each other"""
@@ -82,7 +82,7 @@ def convex_wire(p):
     return Edges
 
 
-def region_sign(p1, s2):
+def region_sign(p1, s2,outAngle=False):
     normal1 = p1.Surface.Axis
     e1 = commonEdge(p1, s2, outer_only=False)
 
@@ -114,11 +114,29 @@ def region_sign(p1, s2):
     vect = direction.cross(normal1)
     dprod = vect.dot(normal2)
     if abs(dprod) < 1e-4:
-        return "AND" if abs(dprod) < arc else "OR"
+        operator = "AND" if abs(dprod) < arc else "OR"
+        if outAngle:
+            return operator, angle(normal1,normal2,operator)
+        else:
+            return operator
+        
     else:
         if p1.Orientation != e1.Orientation:
             dprod = -dprod
-        return "OR" if dprod < 0 else "AND"
+        operator = "OR" if dprod < 0 else "AND"     
+        if outAngle:
+            return operator, angle(normal1,normal2,operator)
+        else:
+            return operator
+
+
+def angle(v1,v2,operator):
+    d = v1.dot(v2)/(v1.Length*v2.Length)
+    a = math.acos(max(-1,min(1,d)))
+    if operator == "AND":
+        return math.pi - a
+    else:
+        return math.pi + a
 
 
 def other_face_edge(current_edge, current_face, Faces, outer_only=False):
@@ -794,7 +812,7 @@ def same_faces(Faces, tolerances):
 def closed_circle_edge(planes):
     angle = 0
     for p in planes:
-        for e in p.OuterWire.Edges:
-            umin,umax = e.ParameterRange
-            angle += umax-umin
+        umin,umax = p.edge.ParameterRange
+        angle += umax-umin
     return abs(angle- 2*math.pi) < 1e-5 
+

@@ -96,16 +96,54 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
 
 def makeRoundCorner(cylinder, addPlane, planes, config, Box):
     cylinder.build_surface(Box)
-    addplane_part = Part.makeSolid(makeMultiPlanes([addPlane], [], Box, False))
     plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
+    cut = plane_part.cut(cylinder.shape)
 
-    cyl_region = cylinder.shape.fuse(addplane_part)
-    if config == "AND":
-        solid = intersection(cyl_region, plane_part)
-    else:
-        solid = cyl_region.fuse(plane_part)
+    for s in cut.Solids:
+        if addPlane.Surf.Axis.dot(s.CenterOfMass-addPlane.Surf.Position) > 0 :
+            cylr = s
+            break
+   
+    p1box = cylinder_cut_box(cylinder.shape,planes[0])
+    p2box = cylinder_cut_box(cylinder.shape,planes[1])
+    cylcut = cylinder.shape.cut([p1box,p2box])
+    
+    solid = cylr.fuse(cylcut)    
     return solid.removeSplitter()
 
+def cylinder_cut_box(cylinder,plane):
+    z = []
+    for f in cylinder.Faces:
+        if type(f.Surface) is Part.Plane:
+            z.append(f.CenterOfMass)
+        else:
+            radius = f.Surface.Radius
+    z0,z1 = z[:]
+
+    axis = z1-z0
+    h = axis.Length
+    axis.normalize()
+    normal = plane.Surf.Axis
+    vect = axis.cross(normal)
+
+    a = h * 1.1
+    b = normal.dot(plane.Surf.Position-z0)
+    c = radius * 1.1
+    pc = z0+b*normal
+    p1 = pc +a*axis +c*vect
+    p2 = pc -a*axis +c*vect
+    p3 = pc -a*axis -c*vect
+    p4 = pc +a*axis -c*vect 
+
+    pc -= radius*normal
+    p5 = pc +a*axis +c*vect
+    p6 = pc -a*axis +c*vect
+    p7 = pc -a*axis -c*vect
+    p8 = pc +a*axis -c*vect 
+
+    boxvect = (p1,p2,p3,p4,p5,p6,p7,p8)
+    shell =  Part.makeShell(makeBoxFaces(boxvect))
+    return Part.makeSolid(shell)
 
 def intersection(sol1, sol2):
     d1 = sol1.cut(sol2)
@@ -212,6 +250,17 @@ def makeBoxFaces(box: list):
         face6 = (v6, v7, v3, v2)
 
         faces_points = (face1, face2, face3, face4, face5, face6)
+
+    elif isinstance(box[0], FreeCAD.Vector):
+        v0, v1, v2, v3, v4, v5, v6, v7 = box
+        face1 = (v0, v1, v2, v3)
+        face2 = (v7, v6, v5, v4)
+        face3 = (v0, v3, v7, v4)
+        face4 = (v5, v6, v2, v1)
+        face5 = (v4, v5, v1, v0)
+        face6 = (v6, v7, v3, v2)
+        faces_points = (face1, face2, face3, face4, face5, face6)
+
     else:
         faces_points = box
 

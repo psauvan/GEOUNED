@@ -317,7 +317,9 @@ class FaceGu(object):
 
     def __init__(self, face, Plane3Pts=False):
         # GEOUNED based atributes
+
         self.__face__ = face
+        self.Index = None
         self.Surface = define_surface(face, Plane3Pts)  # Define the appropiate GU Surface of the face
 
         # FreeCAD based Atributes
@@ -328,7 +330,7 @@ class FaceGu(object):
         self.OuterWire = face.OuterWire
         self.Edges = face.Edges
         self.Vertexes = face.Vertexes
-        self.Index = None
+            
         return
 
     def set_orientation(self, orientation):
@@ -355,7 +357,7 @@ class FaceGu(object):
 
     def distToShape(self, shape):
         shape1 = self.__face__
-        if type(shape) is Part.Shape:
+        if isinstance(shape, Part.Shape):
             shape2 = shape
         else:
             shape2 = shape.__face__
@@ -377,6 +379,7 @@ def define_list_face_gu(face_list, plane3Pts=False):
 
 
 def define_surface(face, plane3Pts):
+    
     kind_surf = type(face.Surface)
     if kind_surf is Part.Plane:
         Surf_GU = PlaneGu(face, plane3Pts)
@@ -454,31 +457,3 @@ def BSplineGu(face):
         return None
     else:
         return PlaneGu(face,BSpline_Plane=plane)    
-
-    def __init__(self, face, plane3Pts=False):
-        SurfacesGu.__init__(self, face)
-        self.Axis = face.Surface.Axis
-        self.Position = face.Surface.Position
-        self.pointDef = plane3Pts
-        if plane3Pts:
-            self.Points = tuple(v.Point for v in face.Vertexes)
-            d1 = self.Points[0] - self.Points[1]
-            d2 = self.Points[0] - self.Points[2]
-            d3 = self.Points[1] - self.Points[2]
-            self.dim1 = max(d1.Length, d2.Length, d3.Length)
-            self.dim2 = min(d1.Length, d2.Length, d3.Length)
-        else:
-            self.dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-            self.dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-
-    def isSameSurface(self, surface):
-        if type(surface) is not PlaneGu:
-            return False
-        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
-            return False
-        if abs(self.Axis.dot(self.Position) - surface.Axis.dot(surface.Position)) > 1e-5:
-            return False
-        return True
-
-    def reverse(self):
-        self.Axis = -self.Axis

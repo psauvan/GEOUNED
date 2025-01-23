@@ -68,6 +68,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         omitFaces = set()
         omit_isolated_planes(solid_gu.Faces, omitFaces)
 
+    last_torus = -1
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
             continue
@@ -126,12 +127,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 plane = None
 
             sphere = GeounedSurface(("Sphere", (sphereOnly, plane, orient)))
-            sphere_region = Surfaces.add_cone(sphere)
+            sphere_region = Surfaces.add_sphere(sphere)
             component_definition.append(sphere_region)
 
         elif isinstance(face.Surface, GU.TorusGu):
             torusOnly = gen_torus(face, Surfaces.tolerances)
-            if torus is not None:
+            if torusOnly is not None:
                 index, u_params = solid_gu.TorusUParams[iface]
                 if index == last_torus:
                     continue
@@ -144,6 +145,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 else:
                     UPlanes = []
 
+                VSurface, surf_orientation = None, None 
                 if orient == "Reversed":
                     index, Vparams = solid_gu.TorusVParams[iface]
                     v_closed, VminMax = Vparams
@@ -151,7 +153,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                         VSurface, surf_orientation = V_torus_surfaces(face, VminMax, Surfaces)
 
                 torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, orient, surf_orientation)))
-                torus_region = Surfaces.add_cone(torus)
+                torus_region = Surfaces.add_torus(torus)
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")

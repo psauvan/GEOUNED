@@ -95,7 +95,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
             axis = -axis
         return GeounedSurface(("Plane", (center, axis, 1, 1))),None
 
-    elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.force_cylinder:
+    elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.forceCylinder:
         radius = min(d1, d2)
         center = face.Surface.Center
         if is_same_value(d1, face.Surface.MajorRadius, Surfaces.tolerances.distance):
@@ -218,6 +218,7 @@ def gen_plane_sphere(face, solidFaces):
     if dmin > 1e-6:
         center = face.Surface.Center + 0.95 * dmin * normal
         plane = GeounedSurface(("Plane", (center, normal, 1, 1)))
+        return plane
     else:
         return None
 
