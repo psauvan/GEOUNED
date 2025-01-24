@@ -624,8 +624,11 @@ class MetaSurfacesDict(dict):
     def add_reversedCC(self, reversedCC):
         reversedCC_region = None
         Planes = []
+        addPlanes = []
         for cc in reversedCC.Surf.CylCones:
             Planes.append(cc.Surf.Plane)
+            addPlanes.extend(cc.Surf.addPlanes)
+
             if cc.Type == 'Cylinder':
                 cid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
                 reversedCC_region = BoolRegion.mult(reversedCC_region, cid)               
@@ -643,6 +646,7 @@ class MetaSurfacesDict(dict):
                 reversedCC_region = BoolRegion.mult(reversedCC_region, coneRegion)    
 
         plane_region = None
+        Planes.extend(addPlanes)
         for cp in Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)
             if exist:

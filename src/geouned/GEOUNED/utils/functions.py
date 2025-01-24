@@ -129,7 +129,7 @@ def get_roundCorner(solidFaces, cornerface_index=None):
         return corner_list, cornerface_index
 
 
-def get_reversed_cone_cylinder(solidFaces, conecylface_index=None):
+def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
     """identify and return all roundcorner type in the solid."""
     if conecylface_index is None:
         conecylface_index = set()
@@ -143,7 +143,7 @@ def get_reversed_cone_cylinder(solidFaces, conecylface_index=None):
             continue
         if isinstance(f.Surface, (CylinderGu,ConeGu)):
             if f.Orientation == "Reversed":
-                rcc = get_revConeCyl_surfaces(f, solidFaces, conecylface_index)
+                rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index)
                 if rcc:
                     gc = GeounedSurface(("ReversedConeCylinder", rcc))
                     conecyl_list.append(gc)
@@ -200,10 +200,12 @@ def build_fwdcan_params(plist,cyl):
     else:
         p2 = None
     
-    gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1.Surface.Axis, 1.0, 1.0)))
+    normal = -p1.Surface.Axis if p1.Orientation == "Forward" else p1.Surface.Axis
+    gp1 = GeounedSurface(("Plane", (p1.Surface.Position, normal, 1.0, 1.0)))
     params = [gcyl, gp1]
     if p2 :
-        gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2.Surface.Axis, 1.0, 1.0)))
+        normal = -p2.Surface.Axis if p2.Orientation == "Forward" else p2.Surface.Axis
+        gp2 = GeounedSurface(("Plane", (p2.Surface.Position, normal, 1.0, 1.0)))
         params.append(gp2)
     return params
 
@@ -217,7 +219,8 @@ def build_revcan_params(cs):
     if isinstance(p1, GeounedSurface):
         gp1 = p1
     else:
-        gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1.Surface.Axis, 1.0, 1.0)))
+        normal = -p1.Surface.Axis if p1.Orientation == "Forward" else p1.Surface.Axis
+        gp1 = GeounedSurface(("Plane", (p1.Surface.Position, normal, 1.0, 1.0)))
 
     params = [gcyl, gp1]
     if len(cs) == 3:
@@ -225,7 +228,8 @@ def build_revcan_params(cs):
         if isinstance(p2, GeounedSurface):
             gp2 = p2
         else:
-            gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2.Surface.Axis, 1.0, 1.0)))
+            normal = -p1.Surface.Axis if p2.Orientation == "Forward" else p2.Surface.Axis
+            gp2 = GeounedSurface(("Plane", (p2.Surface.Position, normal, 1.0, 1.0)))
         params.append(gp2)
     return params
 

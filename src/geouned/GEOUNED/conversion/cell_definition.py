@@ -39,6 +39,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
+    multiplane_surface = False    
     if meta_surfaces:
         roundCorner, omitFaces = get_roundCorner(solid_gu.Faces)
         for rc in roundCorner:
@@ -53,6 +54,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(mp_region)
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
+            multiplane_surface = True
 
         reverseCan = get_reverseCan(solid_gu.Faces, omitFaces)
         for cs in reverseCan:
@@ -60,7 +62,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)
 
-        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, omitFaces)
+        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
         for cs in reversedCC:
             cc_region = Surfaces.add_reversedCC(cs)
             component_definition.append(cc_region)
@@ -101,7 +103,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, orient)))
+            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, [], orient)))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 

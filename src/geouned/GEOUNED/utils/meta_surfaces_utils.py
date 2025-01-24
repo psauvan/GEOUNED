@@ -508,7 +508,7 @@ def get_axis_inertia(mat):
 
     return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
 
-def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
+def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
     face_index = [face.Index]
     faces = [face]
     joined_faces = []
@@ -578,32 +578,43 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
     adjacent1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces)
     adjacent2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces)
 
+    normal1 = None
+    normal2 = None
+
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
             if adjacent1.Index not in omitFaces:
-                new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,omitFaces,tolerances)
+                new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,multiplanes,omitFaces,tolerances)
                 joined_faces.extend(new_adjacent)
+        elif multiplanes :        
+            if isinstance(adjacent1.Surface, PlaneGu): 
+                normal1  = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
             if adjacent2.Index not in omitFaces:
-                new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,omitFaces,tolerances)
+                new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,multiplanes,omitFaces,tolerances)
                 joined_faces.extend(new_adjacent)
-   
+        elif multiplanes :        
+            if isinstance(adjacent2.Surface, PlaneGu):  
+                normal2  = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
+
+
     if type(face.Surface) is CylinderGu:
         cylOnly = gen_cylinder(face)
-        plane = gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, GUFaces)
+        cyl_plane,add_planes = gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, GUFaces, normal1, normal2)
 
-        facein = reversedCCP(GeounedSurface(("Cylinder",(cylOnly,plane,"Reversed"))))
+        facein = reversedCCP(GeounedSurface(("Cylinder",(cylOnly,cyl_plane,add_planes,"Reversed"))))
         facein.surf_index.update(sameface_index)
 
         
     else:    
         coneOnly = gen_cone(face)
         apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
-        plane = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces)
+        cone_plane = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces)
+        
 
-        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,plane,"Reversed"))))
+        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,cone_plane,"Reversed"))))
         facein.surf_index.update(sameface_index)
        
     
@@ -613,7 +624,7 @@ def get_join_cone_cyl(face,GUFaces,omitFaces,tolerances):
             
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces):
+def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=None) :
    
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -664,11 +675,27 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces):
     V1 = Faces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
     V2 = Faces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
-    normal = V2.sub(V1).cross(Faces[ifacemin].Surface.Axis)
+    axis = Faces[ifacemin].Surface.Axis
+    normal = V2.sub(V1).cross(axis)
     normal.normalize()
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
-    return plane
+
+    add_planes= []
+    if normal1:
+        normal = axis.cross(normal1.cross(axis))
+        normal.normalize()
+        plane1 = GeounedSurface(("Plane", (V1, normal, 1, 1)))
+        add_planes.append(plane1)
+
+    if normal2:
+        normal = axis.cross(normal2.cross(axis))
+        normal.normalize()
+        plane2 = GeounedSurface(("Plane", (V2, normal, 1, 1)))
+        add_planes.append(plane2)
+
+
+    return plane, add_planes
 
 
 # Tolerance in this function are not the general once

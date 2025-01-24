@@ -121,20 +121,6 @@ def get_roundcorner_surfaces(cylinder, Faces):
     return faces, face_index
 
 
-def get_revConeCyl_surfaces(face, Faces, omitFaces):
-        revCC = get_join_cone_cyl(face,Faces,omitFaces,Tolerances())
-        if len(revCC) == 1:
-            omitFaces.difference_update(revCC[0].surf_index)
-            return None
-        elif len(revCC) == 2:
-            p1 = revCC[0].Surf.Surf.Plane.Surf
-            p2 = revCC[1].Surf.Surf.Plane.Surf
-            if is_same_plane(p1,p2, Options(), Tolerances(), NumericFormat()):
-                for rcc in revCC:
-                    omitFaces.difference_update(rcc.surf_index)
-                return None
-            else:
-                return revCC    
-        else:
-            return revCC
+def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
+    return get_join_cone_cyl(face,Faces,multifaces,omitFaces,Tolerances())
 

@@ -312,7 +312,8 @@ class CylinderParams:
     def __init__(self, params):
         self.Cylinder = params[0]
         self.Plane = params[1]
-        self.Orientation = params[2]
+        self.addPlanes = params[2]
+        self.Orientation = params[3]
 
     def __str__(self):
         outstr = f"""Cylinder :\n"""
