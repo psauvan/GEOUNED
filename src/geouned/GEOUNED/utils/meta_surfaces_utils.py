@@ -583,7 +583,7 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
 
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
-            if adjacent1.Index not in omitFaces:
+            if adjacent1.Index not in omitFaces and adjacent1.Orientation == "Reversed":
                 new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,multiplanes,omitFaces,tolerances)
                 joined_faces.extend(new_adjacent)
         elif multiplanes :        
@@ -592,7 +592,7 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
-            if adjacent2.Index not in omitFaces:
+            if adjacent2.Index not in omitFaces and adjacent2.Orientation == "Reversed":
                 new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,multiplanes,omitFaces,tolerances)
                 joined_faces.extend(new_adjacent)
         elif multiplanes :        
