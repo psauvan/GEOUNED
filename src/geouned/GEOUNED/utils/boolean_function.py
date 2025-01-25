@@ -279,8 +279,8 @@ class BoolSequence:
         if definition:
             self.elements = []
             if type(definition) is str:
-                self.set_def(definition)
                 self.base_type = int   
+                self.set_def(definition)
         else:
             self.elements = []
             self.operator = operator
@@ -497,22 +497,36 @@ class BoolSequence:
         else:
             return "AND"
 
-    def expand_regions(self):
+    def expand_regions_to_integer(self):
         for i, e in enumerate(self.elements):
-            if isinstance(e, BoolRegion):
+            if type(e) is BoolRegion:
                 if type(e.region) is BoolVariable:
                     self.elements[i] = e.region.value()
                 else:    
                     self.elements[i] = e.region.to_integer()
-            elif isinstance(e, BoolSequence):
-                e.expand_regions()
+            elif type(e) is BoolVariable:
+                self.elements[i] = e.value()
+            elif type(e) is BoolSequence:
+                e.expand_regions_to_integer()
         self.base_type = int
         self.join_operators()
+
+    def expand_regions_to_boolVar(self):
+        for i, e in enumerate(self.elements):
+            if type(e) is BoolRegion:
+                self.elements[i] = e.region            
+            elif type(e) is  BoolSequence:
+                e.expand_regions_to_boolVar()
+
+        self.base_type = BoolVariable
+        self.join_operators()    
 
     def simplify(self, CT=None, depth=0):
         """Simplification by recursive calls to the inner BoolSequence objects."""
         if self.level > 0:
             for seq in self.elements:
+                if type(seq) is BoolRegion:
+                    continue
                 seq.simplify(CT, depth + 1)
             self.clean()
             self.join_operators()
@@ -1004,7 +1018,7 @@ class BoolSequence:
         seq.level = 0
         self.elements.insert(0, seq)
 
-    def get_surfaces_numbers(self):
+    def get_surfaces_numbers(self,expand = False):
         """Return the list of all surfaces in the BoolSequence definition."""
         if type(self.elements) is bool:
             return tuple()
@@ -1012,10 +1026,15 @@ class BoolSequence:
         for e in self.elements:
             if type(e) is int:
                 surf.add(abs(e))
-            elif isinstance(e, (BoolRegion,BoolVariable)):
+            elif type(e) is BoolRegion:
+                if expand:
+                    surf.update(e.surfaces)
+                else:    
+                    surf.add(abs(e.__int__()))
+            elif type(e) is BoolVariable:   
                 surf.add(abs(e.__int__()))
             else:
-                surf.update(e.get_surfaces_numbers())
+                surf.update(e.get_surfaces_numbers(expand=expand))
         return surf
 
     def get_regions(self):

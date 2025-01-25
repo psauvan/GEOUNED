@@ -295,14 +295,14 @@ C **************************************************************
         for i, CellObj in enumerate(self.Cells):
             if CellObj.__id__ is None:
                 continue
-            self.__cells__ += 1
-            CellObj.Definition.expand_regions()
+            self.__cells__ += 1                
 
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
             if not CellObj.Void:
                 self.__solidCells__ += 1
+            CellObj.Definition.expand_regions_to_integer()
 
         return
 
