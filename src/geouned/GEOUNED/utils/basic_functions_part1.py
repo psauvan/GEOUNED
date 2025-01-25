@@ -327,7 +327,8 @@ class ConeParams:
         self.Cone = params[0]
         self.ApexPlane = params[1]
         self.Plane = params[2]
-        self.Orientation = params[3]
+        self.addPlanes = params[3]
+        self.Orientation = params[4]
 
     def __str__(self):
         outstr = f"""Cone :\n"""

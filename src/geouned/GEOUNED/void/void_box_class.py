@@ -245,10 +245,10 @@ class VoidBox:
         complementary = BoolSequence(operator="AND")
         complementary.append(boxDef)
         if simplify != "no":
-            surfList = voidSolidDef.get_surfaces_numbers()
+            surfList = voidSolidDef.get_surfaces_numbers(expand=True)
 
             if enclosure:
-                surfList.update(boxDef.get_surfaces_numbers())
+                surfList.update(boxDef.get_surfaces_numbers(expand=True))
             else:
                 for s in boxDef.elements:
                     val = s > 0
@@ -262,7 +262,7 @@ class VoidBox:
             if enclosure or res is None:
                 surfaceDict = {}
                 for i in surfList:
-                    surfaceDict[i] = Surfaces.get_surface(i)
+                    surfaceDict[i] = Surfaces.get_primitive_surface(i)
                 CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options)
             else:
                 if res is True:
@@ -280,6 +280,7 @@ class VoidBox:
                 voidSolidDef = cellVoid
 
             for solDef in voidSolidDef.elements:
+                solDef.expand_regions_to_boolVar()
                 newSolid = remove_extra_surfaces(solDef, CTable)
                 if type(newSolid.elements) is not bool:
                     newTemp.append(newSolid)
@@ -304,7 +305,6 @@ class VoidBox:
         if voidSolidDef.level == 0:
             compSeq = voidSolidDef.get_complementary()
         else:
-
             if voidSolidDef.level == 1 and voidSolidDef.operator == "AND":
                 compSeq = BoolSequence(operator="OR")
             else:
@@ -332,15 +332,18 @@ class VoidBox:
 
         if simplify == "full":
             if enclosure:
+                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
                 complementary.simplify(CTable)
             else:
                 compSeq.simplify(CTable)
+                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
         else:
             compSeq.simplify(None)
             complementary.simplify(None)
             complementary.append(compSeq)
+            complementary.expand_regions_to_boolVar()
 
         complementary.clean()
         complementary.level_update()

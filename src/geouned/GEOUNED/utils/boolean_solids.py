@@ -254,8 +254,7 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options):
     if type(surfaces[surfaceList[0]]) is GeounedSurface:
         for s in surfaceList:
             ss = surfaces[s]
-            ss.__boundBox__ = Box.BoundBox
-            ss.build_surface()
+            ss.build_surface(Box.BoundBox)
     else:
         for s in surfaceList:
             surfaces[s].buildShape(Box.BoundBox)
@@ -559,7 +558,7 @@ def check_sign(solid, surf):
         else:
             return -1
 
-    elif surf.Type == "Cylinder":
+    elif surf.Type == "CylinderOnly":
         r = point - surf.Surf.Center
         L2 = r.Length * r.Length
         z = surf.Surf.Axis.dot(r)
@@ -570,14 +569,14 @@ def check_sign(solid, surf):
         else:
             return -1
 
-    elif surf.Type == "Sphere":
+    elif surf.Type == "SphereOnly":
         r = point - surf.Surf.Center
         if r.Length > surf.Surf.Radius:
             return 1
         else:
             return -1
 
-    elif surf.Type == "Cone":
+    elif surf.Type == "ConeOnly":
         r = point - surf.Surf.Apex
         r.normalize()
         z = round(surf.Surf.Axis.dot(r), 15)
@@ -588,7 +587,7 @@ def check_sign(solid, surf):
         else:
             return -1
 
-    elif surf.Type == "Torus":
+    elif surf.Type == "TorusOnly":
         r = point - surf.Surf.Center
         h = r.dot(surf.Surf.Axis)
         rho = r - h * surf.Surf.Axis

@@ -588,7 +588,7 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
                 joined_faces.extend(new_adjacent)
         elif multiplanes :        
             if isinstance(adjacent1.Surface, PlaneGu): 
-                normal1  = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
+                normal1  = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
@@ -597,7 +597,7 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
                 joined_faces.extend(new_adjacent)
         elif multiplanes :        
             if isinstance(adjacent2.Surface, PlaneGu):  
-                normal2  = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
+                normal2  = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
 
 
     if type(face.Surface) is CylinderGu:
@@ -611,10 +611,10 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
     else:    
         coneOnly = gen_cone(face)
         apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
-        cone_plane = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces)
+        cone_plane, add_planes = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces, normal1, normal2)
         
 
-        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,cone_plane,"Reversed"))))
+        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,cone_plane,add_planes,"Reversed"))))
         facein.surf_index.update(sameface_index)
        
     
@@ -683,15 +683,11 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
 
     add_planes= []
     if normal1:
-        normal = axis.cross(normal1.cross(axis))
-        normal.normalize()
-        plane1 = GeounedSurface(("Plane", (V1, normal, 1, 1)))
+        plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
         add_planes.append(plane1)
 
     if normal2:
-        normal = axis.cross(normal2.cross(axis))
-        normal.normalize()
-        plane2 = GeounedSurface(("Plane", (V2, normal, 1, 1)))
+        plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
         add_planes.append(plane2)
 
 
@@ -700,7 +696,7 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces):
+def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=None):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -757,7 +753,17 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces):
     normal.normalize()
 
     plane = GeounedSurface(("Plane", (Faces[ifacemin].Surface.Apex, normal, 1, 1)))
-    return plane
+
+    add_planes= []
+    if normal1:
+        plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
+        add_planes.append(plane1)
+
+    if normal2:
+        plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
+        add_planes.append(plane2)
+    
+    return plane, add_planes
 
 def get_edge(v1,face,normal,axis):
     for edge in face.Edges:
