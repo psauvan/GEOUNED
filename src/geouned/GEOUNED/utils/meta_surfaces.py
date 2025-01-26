@@ -1,12 +1,13 @@
 import Part
 import math
 
-from .data_classes import Options,Tolerances, NumericFormat
+from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
 from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl
 
-twoPi = 2*math.pi
-halfPi = 0.5*math.pi
+twoPi = 2 * math.pi
+halfPi = 0.5 * math.pi
+
 
 def multiplane_loop(adjacents, multi_list, planes):
     for p in adjacents:
@@ -16,6 +17,7 @@ def multiplane_loop(adjacents, multi_list, planes):
                 new_adjacents.remove(ap)
         multi_list.extend(new_adjacents)
         multiplane_loop(new_adjacents, multi_list, planes)
+
 
 def multiplane(p, planes):
     """Found planes adjacent to "p". Region delimited by plane is concanve."""
@@ -40,11 +42,11 @@ def multiplane(p, planes):
 def get_fwdcan_surfaces(cylinder, solidFaces):
     adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
 
-    #for p in adjacent_planes:
+    # for p in adjacent_planes:
     #    r = region_sign(p, cylinder)
     #    if r == "AND":
     #        plane_list.append(p)
-    
+
     if len(adjacent_planes) > 0:
         p1s = adjacent_planes[0:1]
         p2s = []
@@ -53,26 +55,26 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         for p in adjacent_planes[1:]:
             d = p.Surface.Position - r1
             if d.Length < 1e-5:
-                p1s.append(p) 
+                p1s.append(p)
             else:
                 d.normalize()
                 if abs(axis.dot(d)) < 1e-5:
                     p1s.append(p)
-                else :
+                else:
                     p2s.append(p)
-        
-        umin,umax,vmin,vmax = cylinder.ParameterRange
-        angle = umax-umin
-        if abs(angle-twoPi)< 1e-5:
-            if p2s :
-                return (p1s,p2s),cylinder
+
+        umin, umax, vmin, vmax = cylinder.ParameterRange
+        angle = umax - umin
+        if abs(angle - twoPi) < 1e-5:
+            if p2s:
+                return (p1s, p2s), cylinder
             else:
-                return (p1s,),cylinder
+                return (p1s,), cylinder
         else:
-            return [],None
+            return [], None
     else:
         return [], None
-    
+
 
 def get_revcan_surfaces(cylinder, solidFaces):
     adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
@@ -109,18 +111,17 @@ def get_roundcorner_surfaces(cylinder, Faces):
         return None, None
 
     p1, p2 = adjacent_planes
-    r1,a1 = region_sign(p1, cylinder,outAngle=True)
-    r2,a2 = region_sign(p2, cylinder,outAngle=True)
+    r1, a1 = region_sign(p1, cylinder, outAngle=True)
+    r2, a2 = region_sign(p2, cylinder, outAngle=True)
     if r1 != r2 or r1 == "OR":
         return None, None
-    if a1 < halfPi+0.1 or a2 < halfPi +0.1 : 
-        return None,None
-    
+    if a1 < halfPi + 0.1 or a2 < halfPi + 0.1:
+        return None, None
+
     face_index = {cylinder.Index, p1.Index, p2.Index}
     faces = ((cylinder, p1, p2), r1)
     return faces, face_index
 
 
 def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
-    return get_join_cone_cyl(face,Faces,multifaces,omitFaces,Tolerances())
-
+    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, Tolerances())

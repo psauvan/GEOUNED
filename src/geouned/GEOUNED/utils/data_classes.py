@@ -40,9 +40,9 @@ class Options:
         forceNoOverlap (bool, optional): force no overlaping cell
             definition. Adjacent cell definition are rested from current
             cell definition. Defaults to False.
-        n_thread (int, optional): number of threads used for decomposition 
-            and cell definition building. Experimental doesn't give signicant 
-            improvements until freecad is base on python version > 3.12. 
+        n_thread (int, optional): number of threads used for decomposition
+            and cell definition building. Experimental doesn't give signicant
+            improvements until freecad is base on python version > 3.12.
             Defaults to 1.
     """
 
@@ -198,6 +198,7 @@ class Options:
         if not isinstance(value, int):
             raise TypeError(f"geouned.Options.n_thread should be a int, not a {type(value)}")
         self._n_thread = value
+
 
 class Tolerances:
     """A class for containing tolerances values

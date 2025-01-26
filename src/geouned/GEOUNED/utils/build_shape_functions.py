@@ -100,50 +100,52 @@ def makeRoundCorner(cylinder, addPlane, planes, config, Box):
     cut = plane_part.cut(cylinder.shape)
 
     for s in cut.Solids:
-        if addPlane.Surf.Axis.dot(s.CenterOfMass-addPlane.Surf.Position) > 0 :
+        if addPlane.Surf.Axis.dot(s.CenterOfMass - addPlane.Surf.Position) > 0:
             cylr = s
             break
-   
-    p1box = cylinder_cut_box(cylinder.shape,planes[0])
-    p2box = cylinder_cut_box(cylinder.shape,planes[1])
-    cylcut = cylinder.shape.cut([p1box,p2box])
-    
-    solid = cylr.fuse(cylcut)    
+
+    p1box = cylinder_cut_box(cylinder.shape, planes[0])
+    p2box = cylinder_cut_box(cylinder.shape, planes[1])
+    cylcut = cylinder.shape.cut([p1box, p2box])
+
+    solid = cylr.fuse(cylcut)
     return solid.removeSplitter()
 
-def cylinder_cut_box(cylinder,plane):
+
+def cylinder_cut_box(cylinder, plane):
     z = []
     for f in cylinder.Faces:
         if type(f.Surface) is Part.Plane:
             z.append(f.CenterOfMass)
         else:
             radius = f.Surface.Radius
-    z0,z1 = z[:]
+    z0, z1 = z[:]
 
-    axis = z1-z0
+    axis = z1 - z0
     h = axis.Length
     axis.normalize()
     normal = plane.Surf.Axis
     vect = axis.cross(normal)
 
     a = h * 1.1
-    b = normal.dot(plane.Surf.Position-z0)
+    b = normal.dot(plane.Surf.Position - z0)
     c = radius * 1.1
-    pc = z0+b*normal
-    p1 = pc +a*axis +c*vect
-    p2 = pc -a*axis +c*vect
-    p3 = pc -a*axis -c*vect
-    p4 = pc +a*axis -c*vect 
+    pc = z0 + b * normal
+    p1 = pc + a * axis + c * vect
+    p2 = pc - a * axis + c * vect
+    p3 = pc - a * axis - c * vect
+    p4 = pc + a * axis - c * vect
 
-    pc -= radius*normal
-    p5 = pc +a*axis +c*vect
-    p6 = pc -a*axis +c*vect
-    p7 = pc -a*axis -c*vect
-    p8 = pc +a*axis -c*vect 
+    pc -= radius * normal
+    p5 = pc + a * axis + c * vect
+    p6 = pc - a * axis + c * vect
+    p7 = pc - a * axis - c * vect
+    p8 = pc + a * axis - c * vect
 
-    boxvect = (p1,p2,p3,p4,p5,p6,p7,p8)
-    shell =  Part.makeShell(makeBoxFaces(boxvect))
+    boxvect = (p1, p2, p3, p4, p5, p6, p7, p8)
+    shell = Part.makeShell(makeBoxFaces(boxvect))
     return Part.makeSolid(shell)
+
 
 def intersection(sol1, sol2):
     d1 = sol1.cut(sol2)
@@ -174,7 +176,7 @@ def makeCylinderCan(cylinder, plane_list, Box):
     orto = abs(axisnorm) > 1 - 1e-8
     if len(plane_list) == 2 and orto:
         orto = abs(axis.dot(normal2)) > 1 - 1e-8
-    
+
     dmin = axis.dot(Box.getPoint(0) - pt1)
     dmax = dmin
     for i in range(1, 8):
@@ -279,11 +281,11 @@ def cut_face(face: Part.Face, plane: Part.Plane):
     if len(line) > 0:
         l = line[0]
         for e in face.Edges:
-            if abs(abs(l.Direction.dot(e.Curve.Direction))-1) < 1e-6:
-                pt = [] # if e and line are parallel not point or infinity
-            else:    
+            if abs(abs(l.Direction.dot(e.Curve.Direction)) - 1) < 1e-6:
+                pt = []  # if e and line are parallel not point or infinity
+            else:
                 pt = l.intersect(e.Curve)
-            
+
             if len(pt) > 0:
                 point = pt[0].toShape().Point
                 if e.isInside(point, 1e-8, True):

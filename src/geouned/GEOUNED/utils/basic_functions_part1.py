@@ -136,15 +136,16 @@ class PlaneParams:
     Position : {pos}  """
         return outstr
 
+
 class DiskParams:
     def __init__(self, params, real=True):
-        if params[0] == 'circle':
-            self.Type = 'circle'
+        if params[0] == "circle":
+            self.Type = "circle"
             self.Center = params[1]
             self.Axis = params[2]
             self.Radius = params[3]
-        else:        
-            self.Type = 'ellipse'
+        else:
+            self.Type = "ellipse"
             self.Center = params[1]
             self.Axis = params[2]
             self.majAxis = params[3]
@@ -156,7 +157,7 @@ class DiskParams:
         Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
         Center   : {self.Center.x}  {self.Center.y}  {self.Center.z}
         Radius   : {self.Radius} """
-        else:    
+        else:
             outstr = f"""Elliptic disk :
         Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
         Center   : {self.Center.x}  {self.Center.y}  {self.Center.z}
@@ -252,7 +253,8 @@ class ReverseCanParams:
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
         return outstr
-    
+
+
 class ForwardCanParams:
     def __init__(self, params):
         self.PlaneNumber = len(params) - 1
@@ -264,7 +266,7 @@ class ForwardCanParams:
         outstr += f"{self.Cylinder.__str__()} \n"
         for p in self.Planes:
             outstr += f"{p.__str__()} \n"
-        return outstr    
+        return outstr
 
 
 class RoundCornerParams:
@@ -283,17 +285,19 @@ class RoundCornerParams:
             outstr += f"{p.__str__()} \n"
         return outstr
 
-class ReversedConeCylParams(): 
+
+class ReversedConeCylParams:
     def __init__(self, params):
         self.CylCones = []
         for cc in params:
-            self.CylCones.append(cc.Surf) 
-        
+            self.CylCones.append(cc.Surf)
+
     def __str__(self):
         outstr = f"""ReversedCylCone :\n"""
         for cc in self.CylCones:
             outstr += f"{cc.__str__()} \n"
-        return outstr 
+        return outstr
+
 
 class SphereParams:
     def __init__(self, params):
@@ -305,8 +309,10 @@ class SphereParams:
         outstr = f"""Sphere :\n"""
         outstr += f"{self.Orientation} \n"
         outstr += f"{self.Sphere.__str__()} \n"
-        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
+        if self.Plane:
+            outstr += f"{self.Plane.__str__()} \n"
         return outstr
+
 
 class CylinderParams:
     def __init__(self, params):
@@ -319,9 +325,11 @@ class CylinderParams:
         outstr = f"""Cylinder :\n"""
         outstr += f"{self.Orientation} \n"
         outstr += f"{self.Cylinder.__str__()} \n"
-        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
+        if self.Plane:
+            outstr += f"{self.Plane.__str__()} \n"
         return outstr
-    
+
+
 class ConeParams:
     def __init__(self, params):
         self.Cone = params[0]
@@ -334,10 +342,13 @@ class ConeParams:
         outstr = f"""Cone :\n"""
         outstr += f"{self.Orientation} \n"
         outstr += f"{self.Cone.__str__()} \n"
-        if self.ApexPlane : outstr += f"{self.ApexPlane.__str__()} \n"
-        if self.Plane : outstr += f"{self.Plane.__str__()} \n"
-        return outstr    
-    
+        if self.ApexPlane:
+            outstr += f"{self.ApexPlane.__str__()} \n"
+        if self.Plane:
+            outstr += f"{self.Plane.__str__()} \n"
+        return outstr
+
+
 class TorusParams:
     def __init__(self, params):
         self.Torus = params[0]
@@ -350,6 +361,8 @@ class TorusParams:
         outstr = f"""Cone :\n"""
         outstr += f"{self.Orientation} \n"
         outstr += f"{self.Torus.__str__()} \n"
-        if self.UPlane : outstr += f"{self.UPlane.__str__()} \n"
-        if self.VSurface : outstr += f"{self.VSurfacePlane.__str__()} \n"
-        return outstr        
+        if self.UPlane:
+            outstr += f"{self.UPlane.__str__()} \n"
+        if self.VSurface:
+            outstr += f"{self.VSurfacePlane.__str__()} \n"
+        return outstr

@@ -51,7 +51,7 @@ class McnpInput:
 
         self.simplify_planes(Surfaces)
         self.get_cell_surf_summary()
-        
+
         self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
 
@@ -295,7 +295,7 @@ C **************************************************************
         for i, CellObj in enumerate(self.Cells):
             if CellObj.__id__ is None:
                 continue
-            self.__cells__ += 1                
+            self.__cells__ += 1
 
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
@@ -341,7 +341,6 @@ C **************************************************************
                 surfList.append(s)
                 temp.del_surface(ind + 1)
         return surfList
-   
 
     def get_solid_cell_volume(self):
 

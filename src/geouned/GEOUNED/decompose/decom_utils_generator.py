@@ -50,7 +50,8 @@ def cyl_bound_planes(solidFaces, face):
             continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
-            if e.Curve.Radius < 1e-6 : continue
+            if e.Curve.Radius < 1e-6:
+                continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.Radius
@@ -59,7 +60,8 @@ def cyl_bound_planes(solidFaces, face):
             planes.append(plane)
 
         elif curve == "<Ellipse object>":
-            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6: continue
+            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6:
+                continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.MinorRadius
@@ -177,11 +179,13 @@ def external_plane(plane, Faces):
     Edges = plane.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
-        if isinstance(adjacent_face.Surface,PlaneGu):               # if not plane not sure current plane will not cut other part of the solid
+        if isinstance(
+            adjacent_face.Surface, PlaneGu
+        ):  # if not plane not sure current plane will not cut other part of the solid
             if region_sign(plane, adjacent_face) == "OR":
                 return False
         else:
-            return False    
+            return False
     return True
 
 
@@ -190,7 +194,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
         omit = set()
         return_set = True
     else:
-        return_set = False    
+        return_set = False
     for f in Faces:
         if f.Index in omit:
             continue
@@ -199,6 +203,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
                 omit.add(f.Index)
 
     return omit if return_set else None
+
 
 def cutting_face_number(f, Faces, omitfaces):
     Edges = f.Edges
@@ -229,23 +234,20 @@ def order_plane_face(Faces, omitfaces):
     counts.sort(reverse=True)
     return tuple(face_dict[x[1]] for x in counts)
 
+
 def omit_isolated_planes(Faces, omitfaces):
     for f in Faces:
         if f.Index in omitfaces:
             continue
         if not isinstance(f.Surface, PlaneGu):
             continue
-        
+
         for e in f.OuterWire.Edges:
             adjacent_face = other_face_edge(e, f, Faces)
             if adjacent_face is None:
                 continue
             if type(adjacent_face.Surface) is PlaneGu:
-                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis))-1) < 1e-5 :
+                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < 1e-5:
                     if adjacent_face.Index not in omitfaces:
                         omitfaces.add(f.Index)
                         break
-            
- 
-
-        

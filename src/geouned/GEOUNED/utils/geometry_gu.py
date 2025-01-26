@@ -41,7 +41,7 @@ class SurfacesGu(object):
 class PlaneGu(SurfacesGu):
     """GEOUNED Plane Class"""
 
-    def __init__(self, face, plane3Pts=False,BSpline_Plane=None):
+    def __init__(self, face, plane3Pts=False, BSpline_Plane=None):
         SurfacesGu.__init__(self, face)
         self.pointDef = plane3Pts
         if BSpline_Plane is None:
@@ -71,12 +71,12 @@ class PlaneGu(SurfacesGu):
         if abs(self.Axis.dot(self.Position) - surface.Axis.dot(surface.Position)) > 1e-5:
             return False
         return True
-    
+
     def isParallel(self, surface):
         if type(surface) is not PlaneGu:
             return False
         return abs(self.Axis.dot(surface.Axis)) > 0.99999
-      
+
     def reverse(self):
         self.Axis = -self.Axis
 
@@ -335,7 +335,7 @@ class FaceGu(object):
         self.OuterWire = face.OuterWire
         self.Edges = face.Edges
         self.Vertexes = face.Vertexes
-            
+
         return
 
     def set_orientation(self, orientation):
@@ -384,7 +384,7 @@ def define_list_face_gu(face_list, plane3Pts=False):
 
 
 def define_surface(face, plane3Pts):
-    
+
     kind_surf = type(face.Surface)
     if kind_surf is Part.Plane:
         Surf_GU = PlaneGu(face, plane3Pts)
@@ -397,7 +397,7 @@ def define_surface(face, plane3Pts):
     elif kind_surf is Part.Toroid:
         Surf_GU = TorusGu(face)
     elif kind_surf is Part.BSplineSurface:
-        Surf_GU = BSplineGu(face)    
+        Surf_GU = BSplineGu(face)
     else:
         logger.info(f"bad Surface type {kind_surf}")
         Surf_GU = None
@@ -461,4 +461,4 @@ def BSplineGu(face):
     if plane is None:
         return None
     else:
-        return PlaneGu(face,BSpline_Plane=plane)    
+        return PlaneGu(face, BSpline_Plane=plane)
