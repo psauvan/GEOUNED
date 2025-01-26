@@ -197,7 +197,7 @@ class GeounedSurface:
             self.Surf = Plane3PtsParams(params[1])  # plane point defined with 3 points
         elif params[0] == "Disk":
             self.Type = "Disk"
-            self.Surf = DiskParams(params[1])  
+            self.Surf = DiskParams(params[1])
         elif params[0] == "CylinderOnly":
             self.Type = params[0]
             self.Surf = CylinderOnlyParams(params[1])
@@ -230,15 +230,15 @@ class GeounedSurface:
             self.Surf = ReverseCanParams(params[1])
         elif params[0] == "ForwardCan":
             self.Type = params[0]
-            self.Surf = ForwardCanParams(params[1])    
+            self.Surf = ForwardCanParams(params[1])
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
-            self.Surf = ReversedConeCylParams(params[1])  
+            self.Surf = ReversedConeCylParams(params[1])
         else:
-            print(f"type {params[0]} not found")      
+            print(f"type {params[0]} not found")
 
         self.shape = Face
 
@@ -252,15 +252,15 @@ class GeounedSurface:
             self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
 
         elif self.Type == "Disk":
-            if self.Surf.Type == 'circle':
+            if self.Surf.Type == "circle":
                 radius = self.Surf.Radius * 1.5
-                circle = Part.makeCircle(radius,self.Surf.Center,self.Surf.Axis)
-                self.shape = Part.makeFilledFace([circle]) 
+                circle = Part.makeCircle(radius, self.Surf.Center, self.Surf.Axis)
+                self.shape = Part.makeFilledFace([circle])
             else:
-                 S1 = self.Surf.Center + self.Surf.majAxis * 1.5  # major axis
-                 S2 = self.Surf.Center + self.Surf.minAxis * 1.5 # minor axis
-                 ellipse = Part.Ellipse(S1, S2, self.Surf.Center)
-                 self.shape = Part.makeFilledFace([ellipse.toShape()])
+                S1 = self.Surf.Center + self.Surf.majAxis * 1.5  # major axis
+                S2 = self.Surf.Center + self.Surf.minAxis * 1.5  # minor axis
+                ellipse = Part.Ellipse(S1, S2, self.Surf.Center)
+                self.shape = Part.makeFilledFace([ellipse.toShape()])
 
         elif self.Type == "CylinderOnly":
             self.shape = makeCylinder(self.Surf.Axis, self.Surf.Center, self.Surf.Radius, Box)
@@ -298,14 +298,14 @@ class GeounedSurface:
 
         elif self.Type == "ForwardCan":
             Box.enlarge(10)
-            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)    
+            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
 
         elif self.Type == "RoundCorner":
             Box.enlarge(10)
             self.shape = makeRoundCorner(self.Surf.Cylinder, self.Surf.AddPlane, self.Surf.Planes, self.Surf.Configuration, Box)
 
-        elif self.Type == "ReversedConeCylinder": 
-            #No need to build shape since this shape not used in decomposition
+        elif self.Type == "ReversedConeCylinder":
+            # No need to build shape since this shape not used in decomposition
             pass
 
         else:
@@ -536,11 +536,11 @@ class MetaSurfacesDict(dict):
                 sid, exist_s = self.primitive_surfaces.add_plane(torus.Surf.VSurface, True)
             elif torus.Surf.VSurface.Type == "Cylinder":
                 sid, exist_s = self.primitive_surfaces.add_cylinder(torus.Surf.VSurface, True)
-                if  torus.Surf.SOrientation == "Forward":
+                if torus.Surf.SOrientation == "Forward":
                     sid = -sid
             else:
                 sid, exist_s = self.primitive_surfaces.add_cone(torus.Surf.VSurface)
-                if  torus.Surf.SOrientation == "Forward":
+                if torus.Surf.SOrientation == "Forward":
                     sid = -sid
 
             if exist_s:
@@ -620,7 +620,7 @@ class MetaSurfacesDict(dict):
         else:
             newregion = cs_region if boundary > 0 else -cs_region
         return newregion
-    
+
     def add_reversedCC(self, reversedCC):
         reversedCC_region = None
         Planes = []
@@ -629,21 +629,21 @@ class MetaSurfacesDict(dict):
             Planes.append(cc.Surf.Plane)
             addPlanes.extend(cc.Surf.addPlanes)
 
-            if cc.Type == 'Cylinder':
+            if cc.Type == "Cylinder":
                 cid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
-                reversedCC_region = BoolRegion.mult(reversedCC_region, cid)               
-            else:   
+                reversedCC_region = BoolRegion.mult(reversedCC_region, cid)
+            else:
                 cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
                 if cc.Surf.ApexPlane:
-                    pid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True) 
+                    pid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True)
                     if exist:
                         p = self.get_primitive_surface(pid)
                         if is_opposite(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                             pid = -pid
                     coneRegion = cid + pid
-                else:    
+                else:
                     coneRegion = cid
-                reversedCC_region = BoolRegion.mult(reversedCC_region, coneRegion)    
+                reversedCC_region = BoolRegion.mult(reversedCC_region, coneRegion)
 
         plane_region = None
         Planes.extend(addPlanes)
@@ -654,9 +654,9 @@ class MetaSurfacesDict(dict):
                 if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
             plane_region = BoolRegion.add(plane_region, pid)
-        
+
         reversedCC_region = reversedCC_region * plane_region
-            
+
         add_cc = True
         for cs_region in self["RevCC"]:
             boundary = reversedCC_region.isSameInterface(cs_region)

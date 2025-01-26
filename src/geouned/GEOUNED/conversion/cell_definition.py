@@ -29,7 +29,7 @@ logger = logging.getLogger("general_logger")
 def build_definition(meta_obj, Surfaces):
 
     solid_definition = BoolSequence(operator="OR")
-    for i,basic_solid in enumerate(meta_obj.Solids):
+    for i, basic_solid in enumerate(meta_obj.Solids):
         comp = simple_solid_definition(basic_solid, Surfaces)
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
@@ -39,7 +39,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
-    multiplane_surface = False    
+    multiplane_surface = False
     if meta_surfaces:
         roundCorner, omitFaces = get_roundCorner(solid_gu.Faces)
         for rc in roundCorner:
@@ -66,7 +66,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         for cs in reversedCC:
             cc_region = Surfaces.add_reversedCC(cs)
             component_definition.append(cc_region)
-    
+
     else:
         omitFaces = set()
         omit_isolated_planes(solid_gu.Faces, omitFaces)
@@ -148,7 +148,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 else:
                     UPlanes = []
 
-                VSurface, surf_orientation = None, None 
+                VSurface, surf_orientation = None, None
                 if orient == "Reversed":
                     index, Vparams = solid_gu.TorusVParams[iface]
                     v_closed, VminMax = Vparams

@@ -63,7 +63,7 @@ def get_multiplanes(solidFaces, plane_index_set=None):
             if no_convex(mplanes):
                 mp_params = build_multip_params(mplanes)
                 mp = GeounedSurface(("MultiPlane", mp_params))
-                if mp.Surf.PlaneNumber < 2 :
+                if mp.Surf.PlaneNumber < 2:
                     continue
                 for pp in mplanes:
                     plane_index_set.add(pp.Index)
@@ -141,7 +141,7 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
     for f in solidFaces:
         if f.Index in conecylface_index:
             continue
-        if isinstance(f.Surface, (CylinderGu,ConeGu)):
+        if isinstance(f.Surface, (CylinderGu, ConeGu)):
             if f.Orientation == "Reversed":
                 rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index)
                 if rcc:
@@ -171,6 +171,7 @@ def build_roundC_params(rc):
     params = ((gcyl, gpa), (gp1, gp2), configuration)
     return params
 
+
 def build_disk_params(planes):
     p = planes[0]
     curve = p.OuterWire.Edges[0].Curve
@@ -178,16 +179,16 @@ def build_disk_params(planes):
         center = curve.Center
         radius = curve.Radius
         axis = curve.Axis
-        return ('circle',center,axis,radius)
+        return ("circle", center, axis, radius)
     else:
         center = curve.Center
-        majAxis = curve.MajorRadius*curve.XAxis
-        minAxis = curve.MinorRadius*curve.YAxis
+        majAxis = curve.MajorRadius * curve.XAxis
+        minAxis = curve.MinorRadius * curve.YAxis
         axis = curve.Axis
-        return ('ellipse',center,axis,majAxis,minAxis)
+        return ("ellipse", center, axis, majAxis, minAxis)
 
 
-def build_fwdcan_params(plist,cyl):
+def build_fwdcan_params(plist, cyl):
 
     if isinstance(cyl, GeounedSurface):
         gcyl = cyl
@@ -196,21 +197,22 @@ def build_fwdcan_params(plist,cyl):
 
     p1 = plist[0][0]
     if len(plist) == 2:
-        p2 =plist[1][0]
+        p2 = plist[1][0]
     else:
         p2 = None
-    
+
     normal = -p1.Surface.Axis if p1.Orientation == "Forward" else p1.Surface.Axis
     gp1 = GeounedSurface(("Plane", (p1.Surface.Position, normal, 1.0, 1.0)))
     params = [gcyl, gp1]
-    if p2 :
+    if p2:
         normal = -p2.Surface.Axis if p2.Orientation == "Forward" else p2.Surface.Axis
         gp2 = GeounedSurface(("Plane", (p2.Surface.Position, normal, 1.0, 1.0)))
         params.append(gp2)
     return params
 
+
 def build_revcan_params(cs):
-    cyl,p1 = reversed(cs[-2:])
+    cyl, p1 = reversed(cs[-2:])
     if isinstance(cyl, GeounedSurface):
         gcyl = cyl
     else:
@@ -301,12 +303,8 @@ def get_additional_corner_plane(cyl, p1, p2):
     dir.normalize()
 
     if dir.dot(paxis) > 0:
-        paxis = -paxis               # normal plane toward negative cylinder surface
+        paxis = -paxis  # normal plane toward negative cylinder surface
     eps = 1e-7 * cyl.Surface.Radius  # used to avoid lost particles with possible complementary region
     point = point1 + eps * paxis
 
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0)))
-
-
-        
-

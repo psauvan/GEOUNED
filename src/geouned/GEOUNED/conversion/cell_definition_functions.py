@@ -93,7 +93,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
         p_mid = face.valueAt(0, v_mid) - face.Surface.Center
         if p_mid.dot(axis) < z1:
             axis = -axis
-        return GeounedSurface(("Plane", (center, axis, 1, 1))),None
+        return GeounedSurface(("Plane", (center, axis, 1, 1))), None
 
     elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.forceCylinder:
         radius = min(d1, d2)
@@ -116,7 +116,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
                 radius = max(d1, d2)
             else:
                 orientation = "Reversed"
-        return GeounedSurface(("CylinderOnly", (center, axis, radius, 1))) ,orientation
+        return GeounedSurface(("CylinderOnly", (center, axis, radius, 1))), orientation
     else:
         za = (z2 * d1 - z1 * d2) / (d1 - d2)
         apex = face.Surface.Center + za * axis
@@ -135,12 +135,12 @@ def V_torus_surfaces(face, v_params, Surfaces):
 
         if in_surf:
             orientation = "Forward"
-        else:    
+        else:
             orientation = "Reversed"
-            
-        #apexPlane = cone_apex_plane(cone, orientation, Surfaces.tolerances)  #apex plane not produced because torus axis along x,y,z
+
+        # apexPlane = cone_apex_plane(cone, orientation, Surfaces.tolerances)  #apex plane not produced because torus axis along x,y,z
         return cone, orientation
- 
+
 
 def U_torus_planes(face, u_params, Surfaces):
 
@@ -162,7 +162,7 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        return (GeounedSurface(("Plane", (center, d, 1, 1))), )
+        return (GeounedSurface(("Plane", (center, d, 1, 1))),)
 
     elif u_params[1] - u_params[0] < math.pi:
         d = axis.cross(p2 - p1)
@@ -170,8 +170,7 @@ def U_torus_planes(face, u_params, Surfaces):
         if d.dot(pmid - center) < 0:
             d = -d
 
-        return (GeounedSurface(("Plane", (center, d, 1, 1))), )
-
+        return (GeounedSurface(("Plane", (center, d, 1, 1))),)
 
     else:
         d1 = axis.cross(p1)
@@ -261,7 +260,6 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
 
     p1 = solidFaces[i1].valueAt(u_1, v_1)
     p2 = solidFaces[i2].valueAt(u_2, v_2)
-
 
     if p1.isEqual(p2, 1e-5):
         logger.error("Error in the additional place definition")
@@ -419,17 +417,15 @@ def get_intervals(u_nodes):
 
     return closed_ranges
 
-def omit_multiplane_repeated_planes(mp_region,Surfaces,Faces):
+
+def omit_multiplane_repeated_planes(mp_region, Surfaces, Faces):
     repeated_planes = set()
     planes = mp_region.region.get_surfaces_numbers()
-    for p in planes :
+    for p in planes:
         pg = Surfaces.primitive_surfaces.get_surface(p)
         for face in Faces:
-            if not isinstance(face,PlaneGu):
+            if not isinstance(face, PlaneGu):
                 continue
             if is_same_plane(face.Surface, pg.Surf, Surfaces.options, Surfaces.tolerances, Surfaces.numeric_format):
                 repeated_planes.add(face.Index)
-    return repeated_planes                
-
-
-   
+    return repeated_planes

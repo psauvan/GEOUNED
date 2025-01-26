@@ -27,7 +27,7 @@ def generic_split(solid, options, tolerances):
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
-    omitfaces = set() 
+    omitfaces = set()
 
     for surf in get_surfaces(solid, omitfaces, tolerances):
 

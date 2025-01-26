@@ -258,4 +258,3 @@ import openmc
                 surfList.append(s)
                 temp.del_surface(ind + 1)
         return surfList
-

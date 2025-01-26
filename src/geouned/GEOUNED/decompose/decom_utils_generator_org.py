@@ -52,7 +52,8 @@ def cyl_bound_planes(solidFaces, face):
             continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
-            if e.Curve.Radius < 1e-6 : continue
+            if e.Curve.Radius < 1e-6:
+                continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.Radius
@@ -61,7 +62,8 @@ def cyl_bound_planes(solidFaces, face):
             planes.append(plane)
 
         elif curve == "<Ellipse object>":
-            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6: continue
+            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6:
+                continue
             dir = e.Curve.Axis
             center = e.Curve.Center
             dim1 = e.Curve.MinorRadius
@@ -198,7 +200,7 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
 
     for i, face2 in enumerate(solidFaces):
 
-        if str(face2.Surface) == "<Cylinder object>" and  face2.Index != face.Index:
+        if str(face2.Surface) == "<Cylinder object>" and face2.Index != face.Index:
             if (
                 face2.Surface.Axis.isEqual(face.Surface.Axis, 1e-5)
                 and face2.Surface.Radius == rad
@@ -292,18 +294,18 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
     if V1.isEqual(V2, 1e-5):
         logger.error("in the additional plane definition")
         return None
-    
+
     normal = V2.sub(V1).cross(face.Surface.Axis)
     normal.normalize()
 
-    e1 = get_edge(V1,solidFaces[face_index_2[0]],normal,face.Surface.Axis)
-    e2 = get_edge(V2,solidFaces[face_index_2[1]],normal,face.Surface.Axis)
+    e1 = get_edge(V1, solidFaces[face_index_2[0]], normal, face.Surface.Axis)
+    e2 = get_edge(V2, solidFaces[face_index_2[1]], normal, face.Surface.Axis)
     adjacent1 = other_face_edge(e1, solidFaces[face_index_2[0]], solidFaces)
     adjacent2 = other_face_edge(e2, solidFaces[face_index_2[1]], solidFaces)
 
     if type(adjacent1.Surface) is PlaneGu or type(adjacent2.Surface) is PlaneGu:
         return None
- 
+
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
     return plane
 
@@ -420,18 +422,18 @@ def gen_plane_cone(face, solidFaces, tolerances):
         logger.error("in the additional plane definition")
         return None
 
-    dir1 = V1-face.Surface.Apex
-    dir2 = V2-face.Surface.Apex
+    dir1 = V1 - face.Surface.Apex
+    dir2 = V2 - face.Surface.Apex
     normal = dir2.cross(dir1)
     normal.normalize()
 
-    e1 = get_edge(V1,solidFaces[face_index_2[0]],normal,dir1)
-    e2 = get_edge(V2,solidFaces[face_index_2[1]],normal,dir2)
+    e1 = get_edge(V1, solidFaces[face_index_2[0]], normal, dir1)
+    e2 = get_edge(V2, solidFaces[face_index_2[1]], normal, dir2)
     adjacent1 = other_face_edge(e1, solidFaces[face_index_2[0]], solidFaces)
     adjacent2 = other_face_edge(e2, solidFaces[face_index_2[1]], solidFaces)
 
     if type(adjacent1.Surface) is PlaneGu or type(adjacent2.Surface) is PlaneGu:
-       return None 
+        return None
 
     plane = GeounedSurface(("Plane", (face.Surface.Apex, normal, 1, 1)))
     return plane
@@ -481,11 +483,13 @@ def external_plane(plane, Faces):
     Edges = plane.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
-        if isinstance(adjacent_face.Surface,PlaneGu):               # if not plane not sure current plane will not cut other part of the solid
+        if isinstance(
+            adjacent_face.Surface, PlaneGu
+        ):  # if not plane not sure current plane will not cut other part of the solid
             if region_sign(plane, adjacent_face) == "OR":
                 return False
         else:
-            return False    
+            return False
     return True
 
 
@@ -494,7 +498,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
         omit = set()
         return_set = True
     else:
-        return_set = False    
+        return_set = False
     for f in Faces:
         if f.Index in omit:
             continue
@@ -503,6 +507,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
                 omit.add(f.Index)
 
     return omit if return_set else None
+
 
 def cutting_face_number(f, Faces, omitfaces):
     Edges = f.Edges
@@ -533,37 +538,37 @@ def order_plane_face(Faces, omitfaces):
     counts.sort(reverse=True)
     return tuple(face_dict[x[1]] for x in counts)
 
+
 def omit_isolated_planes(Faces, omitfaces):
     for f in Faces:
         if f.Index in omitfaces:
             continue
         if not isinstance(f.Surface, PlaneGu):
             continue
-        
+
         for e in f.OuterWire.Edges:
             adjacent_face = other_face_edge(e, f, Faces)
             if adjacent_face is None:
                 continue
             if type(adjacent_face.Surface) is PlaneGu:
-                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis))-1) < 1e-5 :
+                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < 1e-5:
                     if adjacent_face.Index not in omitfaces:
                         omitfaces.add(f.Index)
                         break
-            
-def get_edge(v1,face,normal,axis):
+
+
+def get_edge(v1, face, normal, axis):
     for edge in face.Edges:
         if type(edge.Curve) == Part.Line:
             vect = v1 - edge.Curve.Location
             vect.normalize()
-            if abs(abs(vect.dot(edge.Curve.Direction)-1)) < 1e-5:
+            if abs(abs(vect.dot(edge.Curve.Direction) - 1)) < 1e-5:
                 return edge
         else:
-            if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or  v1.sub(edge.Vertexes[1].Point).Length < 1e-5:                   
+            if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or v1.sub(edge.Vertexes[1].Point).Length < 1e-5:
                 vect = edge.Vertexes[0].Point - edge.Vertexes[1].Point
                 vect.normalize()
-                if abs(vect.dot(normal)) < 1e-5 and abs(vect.dot(axis))< 1e-5:
+                if abs(vect.dot(normal)) < 1e-5 and abs(vect.dot(axis)) < 1e-5:
                     continue
                 else:
-                    return edge 
-
-
+                    return edge
