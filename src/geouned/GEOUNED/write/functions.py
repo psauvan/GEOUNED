@@ -127,7 +127,6 @@ def write_sequence_mcnp(Seq):
             else:
                 terms.append(write_sequence_mcnp(e))
 
-
         if Seq.operator == "AND":
             line = f"({' '.join(terms)})"
         else:

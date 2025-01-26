@@ -13,11 +13,13 @@ from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_
 
 twoPi = 2 * math.pi
 
+
 class reversedCCP:
-    def __init__(self,surf):
+    def __init__(self, surf):
         self.Type = type(surf)
         self.surf_index = set()
-        self.Surf = surf 
+        self.Surf = surf
+
 
 def no_convex_full(mplane_list):
     """keep planes only all planes are no convex each other"""
@@ -38,20 +40,21 @@ def no_convex_full(mplane_list):
                     return False
     return True
 
+
 def remove_twice_parallel(mplanes):
     plane_list = []
     omit = set()
-    for i,p1 in enumerate(mplanes):
-        if p1.Index in omit :
+    for i, p1 in enumerate(mplanes):
+        if p1.Index in omit:
             continue
         parallel = []
-        for p2 in mplanes[i+1:]:
-            if p2.Index in omit :
+        for p2 in mplanes[i + 1 :]:
+            if p2.Index in omit:
                 continue
             if p1.Surface.isParallel(p2.Surface):
                 parallel.append(p2)
                 omit.add(p2.Index)
-        if len(parallel)>1:
+        if len(parallel) > 1:
             parallel.append(p1)
             omit.add(p1.Index)
             plane_list.append(parallel)
@@ -62,28 +65,26 @@ def remove_twice_parallel(mplanes):
         dmax = 0
         pmin = p0
         pmax = p0
-        for i,p in enumerate(parallel[1:]):
-            d = p0.Surface.Axis.dot(p.Surface.Position-p0.Surface.Position)
-            if d>dmax :
+        for i, p in enumerate(parallel[1:]):
+            d = p0.Surface.Axis.dot(p.Surface.Position - p0.Surface.Position)
+            if d > dmax:
                 dmax = d
                 pmax = p
-            elif d<dmin:
+            elif d < dmin:
                 dmin = d
                 pmin = p
 
-        if dmax-dmin < 1e-5:
-            continue   
+        if dmax - dmin < 1e-5:
+            continue
 
-        for p in reversed(parallel): 
+        for p in reversed(parallel):
             if p.Surface.isSameSurface(pmin.Surface):
                 parallel.remove(p)
             elif p.Surface.isSameSurface(pmax.Surface):
-                parallel.remove(p)    
+                parallel.remove(p)
 
         for p in parallel:
-            mplanes.remove(p)        
-
-
+            mplanes.remove(p)
 
 
 def no_convex(mplane_list):
@@ -129,7 +130,7 @@ def convex_wire(p):
     return Edges
 
 
-def region_sign(p1, s2,outAngle=False):
+def region_sign(p1, s2, outAngle=False):
     normal1 = p1.Surface.Axis
     e1 = commonEdge(p1, s2, outer_only=False)
 
@@ -163,23 +164,23 @@ def region_sign(p1, s2,outAngle=False):
     if abs(dprod) < 1e-4:
         operator = "AND" if abs(dprod) < arc else "OR"
         if outAngle:
-            return operator, angle(normal1,normal2,operator)
+            return operator, angle(normal1, normal2, operator)
         else:
             return operator
-        
+
     else:
         if p1.Orientation != e1.Orientation:
             dprod = -dprod
-        operator = "OR" if dprod < 0 else "AND"     
+        operator = "OR" if dprod < 0 else "AND"
         if outAngle:
-            return operator, angle(normal1,normal2,operator)
+            return operator, angle(normal1, normal2, operator)
         else:
             return operator
 
 
-def angle(v1,v2,operator):
-    d = v1.dot(v2)/(v1.Length*v2.Length)
-    a = math.acos(max(-1,min(1,d)))
+def angle(v1, v2, operator):
+    d = v1.dot(v2) / (v1.Length * v2.Length)
+    a = math.acos(max(-1, min(1, d)))
     if operator == "AND":
         return math.pi - a
     else:
@@ -508,7 +509,8 @@ def get_axis_inertia(mat):
 
     return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
 
-def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
+
+def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     face_index = [face.Index]
     faces = [face]
     joined_faces = []
@@ -516,9 +518,9 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
     for face2 in GUFaces:
         if face2.Index in omitFaces:
             continue
-        if type(face2.Surface) != type(face.Surface): 
+        if type(face2.Surface) != type(face.Surface):
             continue
-        if isinstance(face2.Surface,CylinderGu) and  face2.Index != face.Index:
+        if isinstance(face2.Surface, CylinderGu) and face2.Index != face.Index:
             if (
                 face2.Surface.Axis.isEqual(face.Surface.Axis, 1e-5)
                 and abs(face2.Surface.Radius - face.Surface.Radius) < 1e-5
@@ -526,10 +528,10 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
             ):
                 face_index.append(face2.Index)
                 faces.append(face2)
-        elif isinstance(face2.Surface,ConeGu) and  face2.Index != face.Index:       
+        elif isinstance(face2.Surface, ConeGu) and face2.Index != face.Index:
             if (
                 face2.Surface.Axis.isEqual(face.Surface.Axis, 1e-5)
-                and abs(face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1.e-5
+                and abs(face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1.0e-5
                 and face2.Surface.Apex.sub(face.Surface.Apex).Length < 1e-5
             ):
                 face_index.append(face2.Index)
@@ -541,7 +543,7 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
         sameface_index.append(face_index[k])
 
     AngleRange = 0.0
-    Uval,UValmin,UValmax = [],[],[]
+    Uval, UValmin, UValmax = [], [], []
     for index in sameface_index:
         Range = GUFaces[index].ParameterRange
         AngleRange = AngleRange + abs(Range[1] - Range[0])
@@ -550,29 +552,29 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
         UValmax.append(Range[1])
     if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
         return []
-    
+
     omitFaces.update(sameface_index)
-    Umin,Umax = sort_range(Uval)
+    Umin, Umax = sort_range(Uval)
 
     ifacemin = face_index[UValmin.index(Umin)]
     ifacemax = face_index[UValmax.index(Umax)]
 
     du = twoPi
-    umin = Umin%twoPi
+    umin = Umin % twoPi
     for e in GUFaces[ifacemin].OuterWire.Edges:
-        pnt = 0.5*(e.Vertexes[0].Point + e.Vertexes[-1].Point)
-        u,v  = GUFaces[ifacemin].__face__.Surface.parameter(pnt)
-        if abs(umin-u) < du:
-            du = abs(umin-u)
+        pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
+        u, v = GUFaces[ifacemin].__face__.Surface.parameter(pnt)
+        if abs(umin - u) < du:
+            du = abs(umin - u)
             emin = e
 
     du = twoPi
-    umax = Umax%twoPi
+    umax = Umax % twoPi
     for e in GUFaces[ifacemax].OuterWire.Edges:
-        pnt = 0.5*(e.Vertexes[0].Point + e.Vertexes[-1].Point)
-        u,v  = GUFaces[ifacemax].__face__.Surface.parameter(pnt)
-        if abs(umax-u) < du:
-            du = abs(umax-u)
+        pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
+        u, v = GUFaces[ifacemax].__face__.Surface.parameter(pnt)
+        if abs(umax - u) < du:
+            du = abs(umax - u)
             emax = e
 
     adjacent1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces)
@@ -582,50 +584,46 @@ def get_join_cone_cyl(face,GUFaces, multiplanes, omitFaces,tolerances):
     normal2 = None
 
     if adjacent1 is not None:
-        if isinstance(adjacent1.Surface,(ConeGu,CylinderGu)):
+        if isinstance(adjacent1.Surface, (ConeGu, CylinderGu)):
             if adjacent1.Index not in omitFaces and adjacent1.Orientation == "Reversed":
-                new_adjacent = get_join_cone_cyl(adjacent1,GUFaces,multiplanes,omitFaces,tolerances)
+                new_adjacent = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
                 joined_faces.extend(new_adjacent)
-        elif multiplanes :        
-            if isinstance(adjacent1.Surface, PlaneGu): 
-                normal1  = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
+        elif multiplanes:
+            if isinstance(adjacent1.Surface, PlaneGu):
+                normal1 = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
 
     if adjacent2 is not None:
-        if isinstance(adjacent2.Surface,(ConeGu,CylinderGu)):
+        if isinstance(adjacent2.Surface, (ConeGu, CylinderGu)):
             if adjacent2.Index not in omitFaces and adjacent2.Orientation == "Reversed":
-                new_adjacent = get_join_cone_cyl(adjacent2,GUFaces,multiplanes,omitFaces,tolerances)
+                new_adjacent = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
                 joined_faces.extend(new_adjacent)
-        elif multiplanes :        
-            if isinstance(adjacent2.Surface, PlaneGu):  
-                normal2  = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
-
+        elif multiplanes:
+            if isinstance(adjacent2.Surface, PlaneGu):
+                normal2 = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
 
     if type(face.Surface) is CylinderGu:
         cylOnly = gen_cylinder(face)
-        cyl_plane,add_planes = gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, GUFaces, normal1, normal2)
+        cyl_plane, add_planes = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
-        facein = reversedCCP(GeounedSurface(("Cylinder",(cylOnly,cyl_plane,add_planes,"Reversed"))))
+        facein = reversedCCP(GeounedSurface(("Cylinder", (cylOnly, cyl_plane, add_planes, "Reversed"))))
         facein.surf_index.update(sameface_index)
 
-        
-    else:    
+    else:
         coneOnly = gen_cone(face)
         apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
-        cone_plane, add_planes = gen_plane_cone(ifacemin,ifacemax,Umin,Umax, GUFaces, normal1, normal2)
-        
+        cone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
-        facein = reversedCCP(GeounedSurface(("Cone",(coneOnly,apexPlane,cone_plane,add_planes,"Reversed"))))
+        facein = reversedCCP(GeounedSurface(("Cone", (coneOnly, apexPlane, cone_plane, add_planes, "Reversed"))))
         facein.surf_index.update(sameface_index)
-       
-    
+
     joined_faces.append(facein)
     return joined_faces
 
-            
+
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=None) :
-   
+def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None):
+
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
         try:
@@ -636,8 +634,8 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
             UVNode1 = (PR[0], PR[2])
             UVNode2 = (PR[1], PR[3])
             UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min   
-    else:        
+        UVNode_max = UVNode_min
+    else:
         face2min = Faces[ifacemin]
         try:
             face2min.tessellate(0.1)
@@ -645,7 +643,7 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
         except RuntimeError:
             PR = face2min.ParameterRange
             UVNode_min = ((PR[0], PR[2]),)
-       
+
         face2max = Faces[ifacemax]
         try:
             face2max.tessellate(0.1)
@@ -655,20 +653,20 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
             UVNode_max = ((PR[1], PR[3]),)
 
     dmin = twoPi
-    Uminr = Umin%twoPi
-    Umaxr = Umax%twoPi
-    for i,node in enumerate(UVNode_min):
-        nd = node[0]%twoPi if (abs(node[0])>1e-5 and abs(abs(node[0])-twoPi) > 1e-5) else 0.
-        d = abs(nd-Uminr)
-        if d < dmin :
+    Uminr = Umin % twoPi
+    Umaxr = Umax % twoPi
+    for i, node in enumerate(UVNode_min):
+        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        d = abs(nd - Uminr)
+        if d < dmin:
             dmin = d
             indmin = i
 
     dmax = twoPi
-    for i,node in enumerate(UVNode_max):
-        nd = node[0]%twoPi if (abs(node[0])>1e-5 and abs(abs(node[0])-twoPi) > 1e-5) else 0.
-        d = abs(nd-Umaxr)
-        if d < dmax :
+    for i, node in enumerate(UVNode_max):
+        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        d = abs(nd - Umaxr)
+        if d < dmax:
             dmax = d
             indmax = i
 
@@ -681,7 +679,7 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
 
-    add_planes= []
+    add_planes = []
     if normal1:
         plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
         add_planes.append(plane1)
@@ -690,13 +688,12 @@ def gen_plane_cylinder(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2
         plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
         add_planes.append(plane2)
 
-
     return plane, add_planes
 
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=None):
+def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -708,8 +705,8 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=Non
             UVNode1 = (PR[0], PR[2])
             UVNode2 = (PR[1], PR[3])
             UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min   
-    else:        
+        UVNode_max = UVNode_min
+    else:
         face2min = Faces[ifacemin]
         try:
             face2min.tessellate(0.1)
@@ -717,7 +714,7 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=Non
         except RuntimeError:
             PR = face2min.ParameterRange
             UVNode_min = ((PR[0], PR[2]),)
-       
+
         face2max = Faces[ifacemax]
         try:
             face2max.tessellate(0.1)
@@ -725,28 +722,28 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=Non
         except RuntimeError:
             PR = face2max.ParameterRange
             UVNode_max = ((PR[1], PR[3]),)
-  
+
     dmin = twoPi
-    for i,node in enumerate(UVNode_min):
-        nd = node[0]%twoPi
-        d = abs(nd-Umin)
-        if d < dmin :
+    for i, node in enumerate(UVNode_min):
+        nd = node[0] % twoPi
+        d = abs(nd - Umin)
+        if d < dmin:
             dmin = d
             indmin = i
 
     dmax = twoPi
-    for i,node in enumerate(UVNode_max):
-        nd = node[0]%twoPi
-        d = abs(nd-Umax)
-        if d < dmax :
+    for i, node in enumerate(UVNode_max):
+        nd = node[0] % twoPi
+        d = abs(nd - Umax)
+        if d < dmax:
             dmax = d
             indmax = i
 
     V1 = Faces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
     V2 = Faces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
-    dir1 = V1-Faces[ifacemin].Surface.Apex
-    dir2 = V2-Faces[ifacemin].Surface.Apex
+    dir1 = V1 - Faces[ifacemin].Surface.Apex
+    dir2 = V2 - Faces[ifacemin].Surface.Apex
     dir1.normalize()
     dir2.normalize()
     normal = dir2.cross(dir1)
@@ -754,7 +751,7 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=Non
 
     plane = GeounedSurface(("Plane", (Faces[ifacemin].Surface.Apex, normal, 1, 1)))
 
-    add_planes= []
+    add_planes = []
     if normal1:
         plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
         add_planes.append(plane1)
@@ -762,95 +759,99 @@ def gen_plane_cone(ifacemin,ifacemax,Umin,Umax, Faces, normal1=None, normal2=Non
     if normal2:
         plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
         add_planes.append(plane2)
-    
+
     return plane, add_planes
 
-def get_edge(v1,face,normal,axis):
+
+def get_edge(v1, face, normal, axis):
     for edge in face.Edges:
         if type(edge.Curve) == Part.Line:
             vect = v1 - edge.Curve.Location
             if vect.Length < 1e-8:
                 return edge
             vect.normalize()
-            if abs(abs(vect.dot(edge.Curve.Direction)-1)) < 1e-5:
+            if abs(abs(vect.dot(edge.Curve.Direction) - 1)) < 1e-5:
                 return edge
-        
+
         elif type(edge.Curve) == Part.BSplineCurve:
-            if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or  v1.sub(edge.Vertexes[1].Point).Length < 1e-5:                   
+            if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or v1.sub(edge.Vertexes[1].Point).Length < 1e-5:
                 vect = edge.Vertexes[0].Point - edge.Vertexes[1].Point
                 vect.normalize()
-                if abs(vect.dot(normal)) < 1e-5 and abs(vect.dot(axis))< 1e-5:
+                if abs(vect.dot(normal)) < 1e-5 and abs(vect.dot(axis)) < 1e-5:
                     continue
                 else:
-                    return edge 
+                    return edge
         else:
-            if abs(abs(edge.Curve.Axis.dot(face.Surface.Axis))-1) < 1e-5 :
+            if abs(abs(edge.Curve.Axis.dot(face.Surface.Axis)) - 1) < 1e-5:
                 continue
             else:
-                return edge 
-            
+                return edge
+
 
 def sort_range(Urange):
     workRange = Urange[1:]
     current = Urange[0]
     for r in reversed(workRange):
-        joined = join_range(current,r)
+        joined = join_range(current, r)
         if joined is None:
             continue
         current = joined
         workRange.remove(r)
     if len(workRange) == 0:
         return current
-    elif len(workRange) == 1 :
-        joined = join_range(current,workRange[0])
+    elif len(workRange) == 1:
+        joined = join_range(current, workRange[0])
         if joined is None:
-            return adjust_range(current,workRange[0])
+            return adjust_range(current, workRange[0])
         else:
             return joined
     else:
         workRange.append(current)
         sorted = sort_range(workRange)
-        return  sorted
-    
-def join_range(U0,U1):
-    if ((U0[0]-U1[0] < 1e-5 ) and (-1e-5 < U0[1]-U1[0])) :
+        return sorted
+
+
+def join_range(U0, U1):
+    if (U0[0] - U1[0] < 1e-5) and (-1e-5 < U0[1] - U1[0]):
         if U1[1] > U0[1]:
-            return (U0[0],U1[1])
+            return (U0[0], U1[1])
         else:
             return U0
-    elif (U0[0]-U1[1] < 1e-5) and  (-1e-5 < U0[1]-U1[1]):
+    elif (U0[0] - U1[1] < 1e-5) and (-1e-5 < U0[1] - U1[1]):
         if U1[0] < U0[0]:
-            return (U1[0],U0[1])
+            return (U1[0], U0[1])
         else:
             return U0
-    elif (U1[0] < U0[0]) and  ( U0[1]<U1[1]) :
+    elif (U1[0] < U0[0]) and (U0[1] < U1[1]):
         return U1
 
-    elif (U0[0] < U1[0]) and  ( U1[1]<U0[1]) :
+    elif (U0[0] < U1[0]) and (U1[1] < U0[1]):
         return U0
     else:
         return None
-    
-def adjust_range(U0,U1):  
 
-    V0 = [0 if (abs(x-twoPi)<1e-5 or abs(x)<1e-5) else x%twoPi for x in U0]
-    V1 = [0 if (abs(x-twoPi)<1e-5 or abs(x)<1e-5) else x%twoPi for x in U1]
 
-    if abs(V0[0]-V1[1]) < 1e-5:
-            imin = 1  #U1[0]
-            imax = 0  #U0[1]
-    elif abs(V1[0]-V0[1]) < 1e-5:
-            imin = 0  #U0[0]
-            imax = 1  #U1[1]
+def adjust_range(U0, U1):
+
+    V0 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U0]
+    V1 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U1]
+
+    if abs(V0[0] - V1[1]) < 1e-5:
+        imin = 1  # U1[0]
+        imax = 0  # U0[1]
+    elif abs(V1[0] - V0[1]) < 1e-5:
+        imin = 0  # U0[0]
+        imax = 1  # U1[1]
     elif V1[1] < V0[0]:
-        imin = 0      #U0[0]
-        imax = 1      #U1[1]
+        imin = 0  # U0[0]
+        imax = 1  # U1[1]
     else:
-        imin = 1       #U1[0]
-        imax = 0       #U1[0]
+        imin = 1  # U1[0]
+        imax = 0  # U1[0]
 
-    mat = (U0,U1)
-    return (mat[imin][0],mat[imax][1])   
+    mat = (U0, U1)
+    return (mat[imin][0], mat[imax][1])
+
 
 #   Check if to faces are joint
 def contiguous_face(face1, face2, tolerances):
@@ -892,10 +893,10 @@ def same_faces(Faces, tolerances):
 
     return list(set(lista))
 
+
 def closed_circle_edge(planes):
     angle = 0
     for p in planes:
-        umin,umax = p.edge.ParameterRange
-        angle += umax-umin
-    return abs(angle- 2*math.pi) < 1e-5 
-
+        umin, umax = p.edge.ParameterRange
+        angle += umax - umin
+    return abs(angle - 2 * math.pi) < 1e-5
