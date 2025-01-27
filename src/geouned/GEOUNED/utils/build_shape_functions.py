@@ -99,11 +99,14 @@ def makeRoundCorner(cylinder, addPlane, planes, config, Box):
     plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
     cut = plane_part.cut(cylinder.shape)
 
+    cylr = None
     for s in cut.Solids:
         if addPlane.Surf.Axis.dot(s.CenterOfMass - addPlane.Surf.Position) > 0:
             cylr = s
             break
 
+    #    if cylr is None:
+    #        return None
     p1box = cylinder_cut_box(cylinder.shape, planes[0])
     p2box = cylinder_cut_box(cylinder.shape, planes[1])
     cylcut = cylinder.shape.cut([p1box, p2box])

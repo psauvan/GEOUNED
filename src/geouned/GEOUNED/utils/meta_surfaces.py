@@ -113,9 +113,10 @@ def get_roundcorner_surfaces(cylinder, Faces):
     p1, p2 = adjacent_planes
     r1, a1 = region_sign(p1, cylinder, outAngle=True)
     r2, a2 = region_sign(p2, cylinder, outAngle=True)
+
     if r1 != r2 or r1 == "OR":
         return None, None
-    if a1 < halfPi + 0.1 or a2 < halfPi + 0.1:
+    if abs(a1 - math.pi) > 0.1 or abs(a2 - math.pi) > 0.1:
         return None, None
 
     face_index = {cylinder.Index, p1.Index, p2.Index}

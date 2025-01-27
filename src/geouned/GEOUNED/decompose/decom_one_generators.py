@@ -30,7 +30,6 @@ def generic_split(solid, options, tolerances):
     omitfaces = set()
 
     for surf in get_surfaces(solid, omitfaces, tolerances):
-
         surf.build_surface(bbox)
         try:
             comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)

@@ -191,11 +191,6 @@ class SolidGu:
 
         for i, face in enumerate(self.Faces):
             self.Faces[i].set_index(i)
-            if self.inverted:
-                orientation = "Reversed" if face.Orientation == "Forward" else "Forward"
-            else:
-                orientation = face.Orientation
-            self.Faces[i].set_orientation(orientation)
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
@@ -337,9 +332,6 @@ class FaceGu(object):
         self.Vertexes = face.Vertexes
 
         return
-
-    def set_orientation(self, orientation):
-        self.Orientation = orientation
 
     def set_index(self, index):
         self.Index = index

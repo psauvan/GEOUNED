@@ -16,9 +16,9 @@ from ..utils.geometry_gu import PlaneGu
 logger = logging.getLogger("general_logger")
 
 
-def gen_plane(face, orientation):
+def gen_plane(face):
     normal = face.Surface.Axis
-    if orientation == "Forward":
+    if face.Orientation == "Forward":
         normal = -normal
     pos = face.CenterOfMass
     return GeounedSurface(("Plane", (pos, normal, 1, 1)))
@@ -59,7 +59,7 @@ def gen_torus(face, tolerances):
         return None
 
 
-def cone_apex_plane(cone, orientation, tolerances):
+def cone_apex_plane(cone, tolerances):
     if (
         is_parallel(cone.Surface.Axis, FreeCAD.Vector(1, 0, 0), tolerances.angle)
         or is_parallel(cone.Surface.Axis, FreeCAD.Vector(0, 1, 0), tolerances.angle)
@@ -67,7 +67,7 @@ def cone_apex_plane(cone, orientation, tolerances):
     ):
         return None
 
-    normal = cone.Surface.Axis if orientation == "Forward" else -cone.Surface.Axis
+    normal = cone.Surface.Axis if cone.Orientation == "Forward" else -cone.Surface.Axis
     return GeounedSurface(("Plane", (cone.Surface.Apex, normal, 1, 1)))
 
 

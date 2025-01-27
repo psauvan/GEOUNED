@@ -131,7 +131,7 @@ def convex_wire(p):
 
 
 def region_sign(p1, s2, outAngle=False):
-    normal1 = p1.Surface.Axis
+    normal1 = p1.Surface.Axis if p1.Orientation == "Forward" else -p1.Surface.Axis
     e1 = commonEdge(p1, s2, outer_only=False)
 
     if isinstance(e1.Curve, Part.Line):
@@ -139,15 +139,12 @@ def region_sign(p1, s2, outAngle=False):
 
         if isinstance(s2.Surface, PlaneGu):
             arc = 0
-            normal2 = s2.Surface.Axis
-            if s2.Orientation == "Reversed":
-                normal2 = -normal2
+            normal2 = s2.Surface.Axis if s2.Orientation == "Forward" else -s2.Surface.Axis
         else:
             umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
             arc = abs(umax - umin)
             pos = e1.Vertexes[0].Point
-            u, v = u, v = s2.Surface.face.Surface.parameter(pos)
-
+            u, v = s2.Surface.face.Surface.parameter(pos)
             normal2 = s2.Surface.face.normalAt(u, v)
     else:
         arc = 0
@@ -160,6 +157,9 @@ def region_sign(p1, s2, outAngle=False):
         normal2 = s2.Surface.face.normalAt(u, v)
 
     vect = direction.cross(normal1)
+    if e1.Orientation == "Reversed":
+        vect = -vect
+
     dprod = vect.dot(normal2)
     if abs(dprod) < 1e-4:
         operator = "AND" if abs(dprod) < arc else "OR"
@@ -169,8 +169,6 @@ def region_sign(p1, s2, outAngle=False):
             return operator
 
     else:
-        if p1.Orientation != e1.Orientation:
-            dprod = -dprod
         operator = "OR" if dprod < 0 else "AND"
         if outAngle:
             return operator, angle(normal1, normal2, operator)
@@ -653,8 +651,8 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             UVNode_max = ((PR[1], PR[3]),)
 
     dmin = twoPi
-    Uminr = Umin % twoPi
-    Umaxr = Umax % twoPi
+    Uminr = Umin % twoPi if (abs(Umin) > 1e-5 and abs(abs(Umin) - twoPi) > 1e-5) else 0.0
+    Umaxr = Umax % twoPi if (abs(Umax) > 1e-5 and abs(abs(Umax) - twoPi) > 1e-5) else 0.0
     for i, node in enumerate(UVNode_min):
         nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
         d = abs(nd - Uminr)
