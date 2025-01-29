@@ -235,6 +235,33 @@ def build_revcan_params(cs):
         params.append(gp2)
     return params
 
+def build_can_params(cs,orientation):
+    cyl, s1, s2 = cs
+    if isinstance(cyl, GeounedSurface):
+        gcyl = cyl
+    else:
+        gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+
+    if isinstance(s1, GeounedSurface):
+        gs1 = s1
+    else:
+        if type(s1) is PlaneGu:
+            normal = -s1.Surface.Axis if s1.Orientation == "Forward" else s1.Surface.Axis
+            gs1 = GeounedSurface(("Plane", (s1.Surface.Position, normal, 1.0, 1.0)))
+        elif type(s1) is CylinderGu:
+            gs1 = GeounedSurface(("CylinderOnly", (s1.Surface.Center, s1.Surface.Axis, s1.Surface.Radius, 1.0, 1.0)))
+    
+    if isinstance(s2, GeounedSurface):
+        gs2 = s2
+    else:
+        if type(s2) is PlaneGu:
+            normal = -s2.Surface.Axis if s2.Orientation == "Forward" else s2.Surface.Axis
+            gs2 = GeounedSurface(("Plane", (s2.Surface.Position, normal, 1.0, 1.0)))
+        elif type(s2) is CylinderGu:
+            normal = -s2.Surface.Axis if s2.Orientation == "Forward" else s2.Surface.Axis
+            gs2 = GeounedSurface(("CylinderOnly", (s2.Surface.Center, s2.Surface.Axis, s2.Surface.Radius, 1.0, 1.0))) 
+        
+    return (gcyl,gs1,gs2,orientation)     
 
 def build_multip_params(plane_list):
 

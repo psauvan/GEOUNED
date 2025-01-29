@@ -264,6 +264,33 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
 
     return planes
 
+def get_adjacent_cylsurf(cyl, Faces):
+    adjfaces = []
+
+    for e in cyl.OuterWire.Edges:
+        if isinstance(e.Curve, Part.Line):
+            continue
+        otherface = other_face_edge(e, cyl, Faces, outer_only=False)
+        if otherface is None:
+            continue
+
+    delindex = set()
+    for i, s1 in enumerate(adjfaces):
+        for j, s2 in enumerate(adjfaces[i + 1 :]):
+            if s1.isSame(s2):
+                delindex.add(j + i + 1)
+
+    delindex = list(delindex)
+    delindex.sort()
+    delindex.reverse()
+    for i in delindex:
+        del adjfaces[i]
+
+    if len(adjfaces) > 2 :
+        return most_outer_faces(adjfaces)   
+    else: 
+        return adjfaces
+
 
 def get_adjacent_cylinder_faces(cylinder, Faces):
     sameCyl = [cylinder]
@@ -898,3 +925,19 @@ def closed_circle_edge(planes):
         umin, umax = p.edge.ParameterRange
         angle += umax - umin
     return abs(angle - 2 * math.pi) < 1e-5
+
+def most_outer_faces(cyl,faces):
+    umin,umax,vmin,vmax = cyl.parameterRange
+    rmin = cyl.Surface.Axis.dot(cyl.valueAt(0,vmin)-cyl.Surface.Center)
+    rmax = cyl.Surface.Axis.dot(cyl.valueAt(0,vmax)-cyl.Surface.Center ) 
+
+    dmin = dmax = abs(rmax-rmin)
+    for f in faces:
+        d = cyl.Surface.Axis.dot(f.CenterOfMass-cyl.Surface.Center)
+        if abs(d-rmin) < dmin :
+            fmin = f
+            dmin = abs(d-rmin)
+        if abs(d-rmax) < dmax :
+            fmax = f
+            dmax = abs(d-rmax)   
+    return(fmin,fmax)         
