@@ -6,7 +6,7 @@ import FreeCAD
 import Part
 
 from ..conversion import cell_definition as Conv
-from ..decompose import decom_one as Decom
+from ..decompose.decom_one_generators import main_split
 from ..utils.boolean_function import BoolSequence
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
@@ -177,12 +177,10 @@ class VoidBox:
         else:
             UniverseBox = self.PieceEnclosure.BoundBox
             TempPieceEnclosure = GeounedSolid(None, self.PieceEnclosure)
-            comsolid, err = Decom.main_split(
+            comsolid = main_split(
                 Part.makeCompound(TempPieceEnclosure.Solids),
-                UniverseBox,
                 options,
                 tolerances,
-                numeric_format,
             )
             Surfaces.extend(
                 Decom.extract_surfaces(

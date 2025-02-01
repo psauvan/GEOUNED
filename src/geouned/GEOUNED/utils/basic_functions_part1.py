@@ -269,6 +269,25 @@ class ForwardCanParams:
         return outstr
 
 
+class CanParams:
+    def __init__(self, params):
+        self.Cylinder = params[0][0]
+        self.Orientation = params[0][1]
+        self.s1 = params[1][0]
+        self.s1_orientation = params[1][2]
+        self.s1_plane = params[1][1]
+        self.s2 = params[2][0]
+        self.s2_orientation = params[2][2]
+        self.s2_plane = params[2][1]
+
+    def __str__(self):
+        outstr = f"""ForwardCan :\n"""
+        outstr += f"{self.Cylinder.__str__()} \n"
+        for p in self.Planes:
+            outstr += f"{p.__str__()} \n"
+        return outstr
+
+
 class RoundCornerParams:
     def __init__(self, params):
         self.Planes = params[1]

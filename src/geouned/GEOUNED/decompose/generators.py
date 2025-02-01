@@ -26,10 +26,13 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
         for rdc in next_roundCorner(solid_GU, omitfaces):
             yield rdc
 
-        for can in next_forwardCan(solid_GU, omitfaces):
-            yield can
+        # for can in next_forwardCan(solid_GU, omitfaces):
+        #    yield can
 
-        for can in next_reverseCan(solid_GU, omitfaces):
+        # for can in next_reverseCan(solid_GU, omitfaces):
+        #    yield can
+
+        for can in next_Can(solid_GU, omitfaces):
             yield can
 
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
@@ -253,7 +256,7 @@ def next_Can(solid, canface_index):
 
             cs, surfindex = get_can_surfaces(f, solidFaces)
             if cs is not None:
-                gc = GeounedSurface(("Can", build_can_params(cs,f.Orientation)))
+                gc = GeounedSurface(("Can", build_can_params(cs)))
                 canface_index.update(surfindex)
                 yield gc
 

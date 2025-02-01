@@ -190,7 +190,10 @@ class SolidGu:
         self.inverted = is_inverted(solid)
 
         for i, face in enumerate(self.Faces):
-            self.Faces[i].set_index(i)
+            face.set_index(i)
+
+        for i, face in enumerate(self.Faces):
+            face.set_outerWire(self.Faces)
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
@@ -327,14 +330,17 @@ class FaceGu(object):
         self.CenterOfMass = face.CenterOfMass
         self.ParameterRange = face.ParameterRange
         self.Orientation = face.Orientation
-        self.OuterWire = face.OuterWire
         self.Edges = face.Edges
         self.Vertexes = face.Vertexes
+        self.OuterWire = face.OuterWire
 
         return
 
     def set_index(self, index):
         self.Index = index
+
+    def set_outerWire(self, Faces):
+        self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
 
     def tessellate(self, val, reset=False):
         res = self.__face__.tessellate(val, reset)
@@ -454,3 +460,57 @@ def BSplineGu(face):
         return None
     else:
         return PlaneGu(face, BSpline_Plane=plane)
+
+
+def set_outerWire(wires, face, Faces):
+    if len(wires) == 1:
+        return wires[0]
+
+    for w in wires:
+        if not innerWires(w, face, Faces):
+            return w
+    print("outer wire not found")
+
+
+def innerWires(wire, face, Faces):
+    for i, x0 in enumerate(wire.OrderedVertexes):
+        for x1 in wire.OrderedVertexes[i + 1 :]:
+            dx = x0.Point - x1.Point
+            if dx.Length < 1e-5:
+                return False
+
+    edge = wire.Edges[0]
+    pos = edge.Vertexes[0].Point
+    u, v = face.__face__.Surface.parameter(pos)
+    normal = face.__face__.normalAt(u, v)
+
+    pe = edge.Curve.parameter(pos)
+
+    if type(edge) is Part.Line:
+        direction = edge.Direction
+    else:
+        direction = edge.derivative1At(pe)
+    if edge.Orientation == "Reversed":
+        direction = -direction
+    direction.normalize()
+
+    for adjface in Faces:
+        if adjface.Index == face.Index:
+            continue
+
+        for ei in adjface.Edges:
+            if edge.isSame(ei):
+                found = True
+                break
+        else:
+            found = False
+        if found:
+            break
+    else:
+        adjface = face
+
+    vect = direction.cross(normal)
+    u, v = adjface.__face__.Surface.parameter(pos)
+    vect2 = adjface.__face__.Surface.normal(u, v)
+    scalar = vect.dot(vect2)
+    return scalar < 0

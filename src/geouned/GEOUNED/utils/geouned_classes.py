@@ -24,6 +24,7 @@ from .basic_functions_part1 import (
     MultiPlanesParams,
     ReverseCanParams,
     ForwardCanParams,
+    CanParams,
     RoundCornerParams,
     ReversedConeCylParams,
 )
@@ -31,7 +32,7 @@ from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone
 
 from .data_classes import NumericFormat, Options, Tolerances
 from .boolean_function import BoolRegion
-from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeCylinderCan, makeRoundCorner
+from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeCan, makeRoundCorner
 from .basic_functions_part1 import is_parallel, is_opposite
 
 from .data_classes import NumericFormat, Options, Tolerances
@@ -225,12 +226,15 @@ class GeounedSurface:
         elif params[0] == "MultiPlane":
             self.Type = params[0]
             self.Surf = MultiPlanesParams(params[1])
-        elif params[0] == "ReverseCan":
+        elif params[0] == "Can":
             self.Type = params[0]
-            self.Surf = ReverseCanParams(params[1])
-        elif params[0] == "ForwardCan":
-            self.Type = params[0]
-            self.Surf = ForwardCanParams(params[1])
+            self.Surf = CanParams(params[1])
+        # elif params[0] == "ReverseCan":
+        #    self.Type = params[0]
+        #    self.Surf = ReverseCanParams(params[1])
+        # elif params[0] == "ForwardCan":
+        #    self.Type = params[0]
+        #    self.Surf = ForwardCanParams(params[1])
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
@@ -272,7 +276,7 @@ class GeounedSurface:
         elif self.Type == "SphereOnly":
             rad = self.Surf.Radius
             pnt = self.Surf.Center
-            self.shape = Part.makeSphere(rad, pnt).Faces[0]
+            self.shape = Part.makeSphere(rad, pnt)
             return
 
         elif self.Type == "TorusOnly":
@@ -292,13 +296,16 @@ class GeounedSurface:
             multiplane = makeMultiPlanes(planes, vertexes, Box)
             self.shape = multiplane
 
-        elif self.Type == "ReverseCan":
-            Box.enlarge(10)
-            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+        elif self.Type == "Can":
+            self.shape = makeCan(self.Surf, Box)
 
-        elif self.Type == "ForwardCan":
-            Box.enlarge(10)
-            self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+        # elif self.Type == "ReverseCan":
+        #    Box.enlarge(10)
+        #    self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+
+        # elif self.Type == "ForwardCan":
+        #    Box.enlarge(10)
+        #    self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
 
         elif self.Type == "RoundCorner":
             Box.enlarge(10)
@@ -597,14 +604,55 @@ class MetaSurfacesDict(dict):
         pid, exist = self.primitive_surfaces.add_cylinder(reverseCan.Surf.Cylinder, True)
         reverseCan_region = pid
 
-        for cp in reverseCan.Surf.Planes:
-            pid, exist = self.primitive_surfaces.add_plane(cp, True)
-            if exist:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
+        if reverseCan.Surf.s1_plane is None:
+            cp = reverseCan.Surf.s1
+            cs = None
+        else:
+            cp = reverseCan.Surf.s1_plane
+            cs = reverseCan.Surf.s1
 
+        pid, exist = self.primitive_surfaces.add_plane(cp, True)
+        if exist:
+            p = self.get_primitive_surface(pid)
+            if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+
+        if cs is None:
             reverseCan_region = reverseCan_region + pid
+        else:
+            sid, exist = self.primitive_surfaces.add_cylinder(
+                reverseCan.Surf.s1, True
+            )  # to be replaced by a generic add function for any kind of primitive
+            if reverseCan.Surf.s1_orientation == "Reversed":
+                sid = -sid
+                reverseCan_region = reverseCan_region + (pid + sid)
+            else:
+                reverseCan_region = reverseCan_region + (pid * sid)
+
+        if reverseCan.Surf.s2_plane is None:
+            cp = reverseCan.Surf.s2
+            cs = None
+        else:
+            cp = reverseCan.Surf.s2_plane
+            cs = reverseCan.Surf.s2
+
+        pid, exist = self.primitive_surfaces.add_plane(cp, True)
+        if exist:
+            p = self.get_primitive_surface(pid)
+            if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+
+        if cs is None:
+            reverseCan_region = reverseCan_region + pid
+        else:
+            sid, exist = self.primitive_surfaces.add_cylinder(
+                reverseCan.Surf.s2, True
+            )  # to be replaced by a generic add function for any kind of primitive
+            if reverseCan.Surf.s2_orientation == "Reversed":
+                sid = -sid
+                reverseCan_region = reverseCan_region + (pid + sid)
+            else:
+                reverseCan_region = reverseCan_region + (pid * sid)
 
         add_can = True
         for cs_region in self["RevCan"]:

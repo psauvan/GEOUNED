@@ -6,9 +6,10 @@ import logging
 import math
 import numpy
 
-
+import FreeCAD
 import Part
 
+from ..utils.data_classes import Tolerances
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import PlaneGu, TorusGu
 from ..utils.basic_functions_part1 import (
@@ -29,7 +30,7 @@ def gen_plane(pos, normal, diag):
     return plane_center
 
 
-def cyl_bound_planes(solidFaces, face):
+def cyl_bound_planes_first_version(solidFaces, face):
     Edges = face.OuterWire.Edges
     planes = []
     for e in Edges:
@@ -117,37 +118,203 @@ def torus_bound_planes(solidFaces, face, tolerances):
     return planes
 
 
-def plane_spline_curve(edge, tolerances):
+def cyl_bound_planes(solidFaces, face, Edges=None):
 
-    normal = edge.derivative1At(0).cross(edge.derivative1At(0.5))
-    normal.normalize()
-    curve_2d = True
-    for p in (0.25, 0.75, 1):
+    if Edges is None:
+        Edges = face.OuterWire.Edges
+    planes = []
+
+    for e in Edges:
+        adjacent_face = other_face_edge(e, face, solidFaces)
+        if adjacent_face is not None:
+            if type(adjacent_face.Surface) is TorusGu:
+                continue  # doesn't create plane if other face is a torus
+            if face.Surface.isSameSurface(adjacent_face.Surface):
+                continue  # doesn't create plane if other face has same surface
+            plane = cyl_edge_plane(face, [e])
+            if plane is not None:
+                planes.append(plane)
+
+    return planes
+
+
+def planar_edges(edges):
+
+    e0 = edges[0]
+    if type(e0.Curve) is Part.BSplineCurve:
+        d0 = e0.derivative1At(0)
+        if d0.Length < 1e-5:
+            dir0 = e0.Vertexes[1].Point - e0.Vertexes[0].Point
+            dir0.normalize()
+            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+        elif spline_2D(e0):
+            dir0 = e0.derivative1At(0).cross(e0.normalAt(0))
+            dir0.normalize()
+            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+        else:
+            return False
+    elif isinstance(e0.Curve, (Part.Circle, Part.Ellispse)):
+        dir0 = e0.Curve.Axis
+        center0 = e0.Curve.Center
+    else:  # should be a line
+        dir0 = e0.Curve.direction
+        center0 = e0.Curve.location
+
+    if len(edges) == 1:
+        return True
+
+    for ei in edges[1:]:
+        if type(ei.Curve) is Part.BSplineCurve:
+            di = ei.derivative1At(0)
+            if di.Length < 1e-5:
+                dir = ei.Vertexes[1].Point - ei.Vertexes[0].Point
+                dir.normalize()
+                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+            elif spline_2D(ei):
+                dir = ei.derivative1At(0).cross(ei.normalAt(0))
+                dir.normalize()
+                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+            else:
+                return False
+        elif isinstance(ei.Curve, (Part.Circle, Part.Ellispse)):
+            dir = ei.Curve.Axis
+            center = ei.Curve.Center
+        else:  # should be a line
+            dir = ei.Curve.direction
+            center = ei.Curve.location
+
+        if not is_parallel(dir0, dir, Tolerances().angle):
+            return False
+        if abs(dir0.dot(center - center0)) > 1e-5:
+            return False
+
+    return True
+
+
+def cyl_edge_plane(face, edges):
+
+    try:
+        curve = str(edges[0].Curve)
+    except:
+        curve = "none"
+
+    if curve[0:6] == "Circle":
+        dir = edges[0].Curve.Axis
+        center = edges[0].Curve.Center
+        dim1 = edges[0].Curve.Radius
+        dim2 = edges[0].Curve.Radius
+        pos = edges[0].Curve.value(0)
+        u, v = face.__face__.Surface.parameter(pos)
+        normal = face.__face__.normalAt(u, v)
+        direction = edges[0].derivative1At(0)
+        direction.normalize()
+        vect = direction.cross(normal)
+        if edges[0].Orientation == "Reversed":
+            vect = -vect
+        if dir.dot(vect) > 0:
+            dir = -dir
+        planeParams = [center, dir, dim1, dim2]
+
+    elif curve == "<Ellipse object>":
+        dir = edges[0].Curve.Axis
+        center = edges[0].Curve.Center
+        dim1 = edges[0].Curve.MinorRadius
+        dim2 = edges[0].Curve.MajorRadius
+        pos = edges[0].Curve.value(0)
+        u, v = face.__face__.Surface.parameter(pos)
+        normal = face.__face__.normalAt(u, v)
+        direction = edges[0].derivative1At(0)
+        direction.normalize()
+        vect = direction.cross(normal)
+        if edges[0].Orientation == "Reversed":
+            vect = -vect
+        if dir.dot(vect) > 0:
+            dir = -dir
+        planeParams = [center, dir, dim1, dim2]
+
+    elif curve == "<BSplineCurve object>":
+        planeParams = plane_spline_curve(edges, face)
+
+    if planeParams is not None:
+        if face.Orientation == "Reversed":
+            planeParams[1] = -planeParams[1]
+        return GeounedSurface(("Plane", planeParams))
+
+
+def spline_2D(edge):
+    knots = edge.Curve.getKnots()
+    d0 = edge.derivative1At(knots[0])
+    if d0.Length < 1e-5:
+        return False
+
+    norm_0 = d0.cross(edge.normalAt(knots[0]))
+    norm_0.normalize()
+
+    for k in knots[1:]:
         # check if derivative orthogonal to curve normal vector
-        if abs(normal.dot(edge.derivative1At(p))) > tolerances.value:
-            curve_2d = False
-            break
+        dk = edge.derivative1At(k)
+        normal_k = dk.cross(edge.normalAt(k))
+        normal_k.normalize()
+        if abs(normal_k.dot(norm_0)) > Tolerances().value:
+            return False
+    return True
 
-    r = edge.valueAt(0.25) - edge.valueAt(0.75)
-    if curve_2d:
-        return (edge.valueAt(0), normal, r.Length, r.Length)
+
+def plane_spline_curve(edges, face):
+    zaxis = face.Surface.Axis
+
+    pos = edges[0].Curve.value(0)
+    u, v = face.__face__.Surface.parameter(pos)
+    normal = face.__face__.normalAt(u, v)
+    direction = edges[0].derivative1At(0)
+    direction.normalize()
+
+    vect = direction.cross(normal)  # vector forward direction Vs Material
+    if edges[0].Orientation == "Reversed":
+        vect = -vect
+
+    lowSide = zaxis.dot(vect) < 0
+    W = Part.Wire(edges)
+    majoraxis = get_axis_inertia(W.MatrixOfInertia)
+
+    if spline_2D(edges[0]):
+        return (edges[0].valueAt(0), majoraxis, 1, 1)
     else:
-        return None
+        rmin = (1e15, None)
+        rmax = (-1e15, None)
+        for e in edges:
+            for p in e.Curve.getPoles():
+                r = majoraxis.dot(p)
+                if rmin[0] > r:
+                    rmin = (r, p)
+                if rmax[0] < r:
+                    rmax = (r, p)
+
+        rmin = rmin[1]
+        rmax = rmax[1]
+        d = 0.01 * abs(majoraxis.dot(rmax - rmin))
+        vec = majoraxis
+        if majoraxis.dot(zaxis) > 0:
+            if lowSide:
+                vec = -vec
+                point = rmin + d * vec
+            else:
+                point = rmax + d * vec
+        else:
+            if lowSide:
+                point = rmax + d * vec
+            else:
+                vec = -vec
+                point = rmin + d * vec
+
+        return [point, vec, 1, 1]
 
 
-def get_solid_dimensions(solid):
-    # not used but may be necessary in the future to check solid validity
-    """evaluate characteristic length in the 3 main axis directions of the solid"""
-    mat = solid.MatrixOfInertia
+def get_axis_inertia(mat):
     inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
-    eigval = numpy.linalg.eigvals(inertialMat)
+    eigval, evect = numpy.linalg.eig(inertialMat)
 
-    L0 = math.sqrt(abs(eigval[2] + eigval[1] - eigval[0]) / 2)
-    L1 = math.sqrt(abs(eigval[0] + eigval[2] - eigval[1]) / 2)
-    L2 = math.sqrt(abs(eigval[1] + eigval[0] - eigval[2]) / 2)
-    dim = [L0, L1, L2]
-    dim.sort()
-    return (dim, solid.Volume, solid.Area)
+    return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
 
 
 def valid_solid(solid):
@@ -160,9 +327,10 @@ def valid_solid(solid):
     return True
 
 
-def remove_solids(original_solid, Solids):
+def remove_solids(Solids):
 
     if len(Solids) == 1:
+        Solids[0] = Solids[0].removeSplitter()
         return Solids
 
     Solids_Clean = []
@@ -170,7 +338,7 @@ def remove_solids(original_solid, Solids):
         if not valid_solid(solid):
             logger.warning(f"remove_solids degenerated solids are produced bad dimensions")
             continue
-        Solids_Clean.append(solid)
+        Solids_Clean.append(solid.removeSplitter())
 
     return Solids_Clean
 

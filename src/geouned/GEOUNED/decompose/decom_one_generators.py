@@ -39,7 +39,7 @@ def generic_split(solid, options, tolerances):
 
         if not comsolid.Solids:
             comsolid = solid
-        cleaned = remove_solids(solid, comsolid.Solids)
+        cleaned = remove_solids(comsolid.Solids)
         if len(cleaned) > 1:
             new_split = True
             break

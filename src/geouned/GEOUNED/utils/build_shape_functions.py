@@ -4,6 +4,7 @@ import numpy
 
 from .split_function import split_bop
 from .data_classes import Options
+from .geometry_gu import PlaneGu
 
 
 def makePlane(normal, position, Box):
@@ -157,82 +158,69 @@ def intersection(sol1, sol2):
     return sol1.cut(d12)
 
 
-def makeCylinderCan(cylinder, plane_list, Box):
+def makeCan(can, box):
 
-    radius = cylinder.Surf.Radius
-    axis = cylinder.Surf.Axis
-    center = cylinder.Surf.Center
-    plane1 = plane_list[0]
-    normal1 = plane1.Surf.Axis
-    pos1 = plane1.Surf.Position
-    if len(plane_list) == 2:
-        plane2 = plane_list[1]
-        normal2 = plane2.Surf.Axis
-        pos2 = plane2.Surf.Position
+    can.Cylinder.build_surface(box)
+    can.s1.build_surface(box)
+    can.s2.build_surface(box)
 
-    options = Options()
-
-    g1 = (pos1 - center).dot(normal1) / normal1.dot(axis)
-    pt1 = center + g1 * axis
-
-    axisnorm = axis.dot(normal1)
-    orto = abs(axisnorm) > 1 - 1e-8
-    if len(plane_list) == 2 and orto:
-        orto = abs(axis.dot(normal2)) > 1 - 1e-8
-
-    dmin = axis.dot(Box.getPoint(0) - pt1)
-    dmax = dmin
-    for i in range(1, 8):
-        d = axis.dot(Box.getPoint(i) - pt1)
-        dmin = min(d, dmin)
-        dmax = max(d, dmax)
-    if not orto:
-        height = dmax - dmin
-        dmin -= 0.1 * height
-        dmax += 0.1 * height
-        height = dmax - dmin
-
-        point = pt1 + dmin * axis
-        cylshape = Part.makeCylinder(radius, height, point, axis, 360)
-        planeshape1 = makePlane(normal1, pt1, cylshape.BoundBox)
-
-        if len(plane_list) == 1:
-            comsolid = split_bop(cylshape, [planeshape1], options.splitTolerance, options)
-            s1, s2 = comsolid.Solids
-            v1 = s1.CenterOfMass - pt1
-            if v1.dot(normal1) > 0:
-                return s2
-            else:
-                return s1
-        else:
-            g2 = (pos2 - center).dot(normal2) / normal2.dot(axis)
-            pt2 = center + g2 * axis
-            planeshape2 = makePlane(normal2, pt2, cylshape.BoundBox)
-            comsolid = split_bop(cylshape, [planeshape1, planeshape2], options.splitTolerance, options)
-            s1, s2, s3 = comsolid.Solids
-            v1 = s1.CenterOfMass - pt1
-            v2 = s1.CenterOfMass - pt2
-            if v1.dot(v2) < 0:
-                return s1
-            v1 = s2.CenterOfMass - pt1
-            v2 = s2.CenterOfMass - pt2
-            if v1.dot(v2) < 0:
-                return s2
-            return s3
-
+    if can.s1.Type == "Plane":
+        scnd1 = False
+        p1 = can.s1
     else:
-        if len(plane_list) == 1:
-            if axisnorm > 0:
-                height = -dmin
-                axis = -axis
+        scnd1 = True
+        p1 = can.s1_plane
+        p1.build_surface(box)
+
+    if can.s2.Type == "Plane":
+        scnd2 = False
+        p2 = can.s2
+    else:
+        scnd2 = True
+        p2 = can.s2_plane
+        p2.build_surface(box)
+
+    rawCan = makeCylinderCan(can.Cylinder.shape, p1.shape, p2.shape)
+
+    if scnd1:
+        if can.s1.Type == "SphereOnly":
+            if can.Orientation == can.s1_orientation:
+                rawCan = rawCan.fuse(can.s1.shape)
             else:
-                height = dmax
-            return Part.makeCylinder(radius, height, pt1, axis, 360)
+                rawCan = rawCan.cut(can.s1.shape)
         else:
-            g2 = (plane2.Surf.Position - center).dot(plane2.Surf.Axis) / plane2.Surf.Axis.dot(axis)
-            if g1 > g2:
-                axis = -axis
-            return Part.makeCylinder(radius, abs(g2 - g1), pt1, axis, 360)
+            if can.s1_orientation == "Forward":
+                rawCan = rawCan.cut(can.s1.shape.reversed())
+            else:
+                rawCan = rawCan.cut(can.s1.shape)
+
+    if scnd2:
+        if can.s2.Type == "SphereOnly":
+            if can.Orientation == can.s2_orientation:
+                rawCan = rawCan.fuse(can.s2.shape)
+            else:
+                rawCan = rawCan.cut(can.s2.shape)
+        else:
+            if can.s2_orientation == "Forward":
+                rawCan = rawCan.cut(can.s2.shape.reversed())
+            else:
+                rawCan = rawCan.cut(can.s2.shape)
+
+    return rawCan
+
+
+def makeCylinderCan(cylshape, p1shape, p2shape):
+    options = Options()
+    comsolid = split_bop(cylshape, [p1shape, p2shape], options.splitTolerance, options)
+    s1, s2, s3 = comsolid.Solids
+    v3 = s3.CenterOfMass - s1.CenterOfMass
+    v2 = s2.CenterOfMass - s1.CenterOfMass
+    if v3.dot(v2) < 0:
+        return s1
+    elif v2.Length < v3.Length:
+        return s2
+    else:
+        return s3
 
 
 def makeBoxFaces(box: list):

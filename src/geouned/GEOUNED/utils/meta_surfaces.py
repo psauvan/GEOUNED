@@ -4,7 +4,14 @@ import math
 from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
 from .geometry_gu import PlaneGu
-from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_adjacent_cylsurf, get_join_cone_cyl
+from .meta_surfaces_utils import (
+    other_face_edge,
+    region_sign,
+    get_adjacent_cylplane,
+    get_adjacent_cylsurf,
+    get_join_cone_cyl,
+    closed_cylinder,
+)
 
 twoPi = 2 * math.pi
 halfPi = 0.5 * math.pi
@@ -77,20 +84,23 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         return [], None
 
 
-def get_revcan_surfaces(cylinder, solidFaces):
-    ext_faces = get_adjacent_cylsurf(cylinder, solidFaces)
+def get_can_surfaces(cylinder, solidFaces):
+    cylinder_shell, faceindex, closed = closed_cylinder(cylinder, solidFaces)
+    if not closed:
+        return None, None
 
-    surfaces = [cylinder]
-    faceindex.add(cylinder.Index)
+    ext_faces = get_adjacent_cylsurf(cylinder_shell, solidFaces)
 
-    faceindex = set()
-    for s in ext_faces:
-        r = region_sign(s, cylinder)
-        surfaces.append((s,r))
-        if r == "OR":
+    surfaces = [cylinder_shell]
+
+    for s, outer in ext_faces:
+        r = region_sign(cylinder_shell, s)
+        surfaces.append((s, r))
+        if outer:  # current face is edge is an outer edge of the adjacent face
             faceindex.add(s.Index)
 
-    return surfaces,faceindex    
+    return surfaces, faceindex
+
 
 def get_roundcorner_surfaces(cylinder, Faces):
 
