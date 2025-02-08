@@ -8,6 +8,7 @@
 import logging
 import math
 
+import FreeCAD
 import Part
 
 from .basic_functions_part1 import is_same_value
@@ -373,6 +374,20 @@ class FaceGu(object):
             except:
                 dist2Shape = shape2.distToShape(shape1)
             return dist2Shape
+
+class ShellGu():
+    def __init__(self,faces):
+        self.Faces = faces
+        self.Edges = []
+        self.Indexes = []
+        self.Area = 0
+        self.CenterOfMass = FreeCAD.Vector(0,0,0)
+        for f in faces:
+            self.Edges.extend(f.Edges)
+            self.Indexes.append(f.Index)
+            self.Area += f.Area
+            self.CenterOfMass += f.Area * f.CenterOfMass
+        self.Orientation = faces[0].Orientation   
 
 
 # Aux functions

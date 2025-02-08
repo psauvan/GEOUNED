@@ -5,7 +5,7 @@ import numpy
 
 from collections import OrderedDict
 
-from .geometry_gu import PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu
+from .geometry_gu import ShellGu,PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
 from ..utils.basic_functions_part1 import is_in_line
@@ -137,8 +137,27 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
 
     return planes
 
-
 def get_adjacent_cylsurf(cyl, Faces):
+    if type(cyl) is ShellGu:
+        adjacent =[]
+        adjIndexes = set()
+        surface = cyl.Faces[0].Surface
+        for f in cyl.Faces :
+            adj = get_adjacent_cylsurfFace(f, Faces, checkOuter = False)
+            for af in adj:
+                if af[0].Surface.isSameSurface(surface):
+                    continue
+                if af[0].Index not in adjIndexes:
+                    adjIndexes.add(af[0].Index)
+                    adjacent.append(af)
+        if len(adjacent) > 2:
+            return most_outer_faces(cyl, adjacent)
+        else:
+            return adjacent
+    else:
+        return get_adjacent_cylsurfFace(cyl, Faces)  
+
+def get_adjacent_cylsurfFace(cyl, Faces, checkOuter = True):
     adjfaces = []
 
     # for e in cyl.OuterWire.Edges:
@@ -149,7 +168,7 @@ def get_adjacent_cylsurf(cyl, Faces):
         otherface = other_face_edge(e, cyl, Faces, outer_only=False)
         if otherface is None:
             continue
-
+     
         for ei in otherface.OuterWire.Edges:
             if ei.isSame(e):
                 outer = True
@@ -170,7 +189,7 @@ def get_adjacent_cylsurf(cyl, Faces):
     for i in delindex:
         del adjfaces[i]
 
-    if len(adjfaces) > 2:
+    if len(adjfaces) > 2 and checkOuter:
         return most_outer_faces(cyl, adjfaces)
     else:
         return adjfaces
@@ -223,15 +242,38 @@ def is_adjacent_cylinder(c1, c2):
     return False
 
 
-def is_closed_cylinder(face_list):
-
-    Umin, Umax, vmin, vmax = face_list[0].ParameterRange
-    for f in face_list[1:]:
+def is_closed_cylinder(shape):
+    if type(shape) is not ShellGu:
+        umin, umax, vmin, vmax = shape.ParameterRange
+        return twoPimod(umax-umin) == 0
+    
+    Urange = []
+    for f in shape.Faces:
         umin, umax, vmin, vmax = f.ParameterRange
-        Umin = min(Umin, umin)
-        Umax = min(Umax, umax)
-    return abs(Umax - Umin) % twoPi < 1e-3
+        umin,umax =twoPimod(umin),twoPimod(umax)
+        if umin>umax:
+            Urange.append((umin-twoPi,umax))
+        else:    
+            Urange.append((umin,umax))
 
+
+    Urange.sort()
+    Umin,Umax = Urange[0]
+    if Umin < 0:
+        Umin0 = Umin + twoPi
+    else:
+        Umin0 = Umin
+
+    for umin,umax in Urange[1:]:
+        if umax <= Umax :    
+            continue
+        elif umin-Umax < 1e-5:
+            Umax = umax 
+            if umax-Umin0 > -1e-5 :
+                return True      
+        else:
+            return False
+    return 'error'
 
 def get_side_edges(cylinder_faces):
 
@@ -321,7 +363,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     ifacemax = face_index[UValmax.index(Umax)]
 
     du = twoPi
-    umin = Umin % twoPi
+    umin = twoPimod(Umin)
     for e in GUFaces[ifacemin].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
         u, v = GUFaces[ifacemin].__face__.Surface.parameter(pnt)
@@ -330,7 +372,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
             emin = e
 
     du = twoPi
-    umax = Umax % twoPi
+    umax = twoPimod(Umax)
     for e in GUFaces[ifacemax].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
         u, v = GUFaces[ifacemax].__face__.Surface.parameter(pnt)
@@ -414,10 +456,10 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             UVNode_max = ((PR[1], PR[3]),)
 
     dmin = twoPi
-    Uminr = Umin % twoPi if (abs(Umin) > 1e-5 and abs(abs(Umin) - twoPi) > 1e-5) else 0.0
-    Umaxr = Umax % twoPi if (abs(Umax) > 1e-5 and abs(abs(Umax) - twoPi) > 1e-5) else 0.0
+    Uminr = twoPimod(Umin)
+    Umaxr = twoPimod(Umax)
     for i, node in enumerate(UVNode_min):
-        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        nd = twoPimod(node[0])
         d = abs(nd - Uminr)
         if d < dmin:
             dmin = d
@@ -425,7 +467,7 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        nd = twoPimod(node[0])
         d = abs(nd - Umaxr)
         if d < dmax:
             dmax = d
@@ -486,7 +528,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmin = twoPi
     for i, node in enumerate(UVNode_min):
-        nd = node[0] % twoPi
+        nd = twoPimod(node[0])
         d = abs(nd - Umin)
         if d < dmin:
             dmin = d
@@ -494,7 +536,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = node[0] % twoPi
+        nd = twoPi(node[0])
         d = abs(nd - Umax)
         if d < dmax:
             dmax = d
@@ -594,8 +636,8 @@ def join_range(U0, U1):
 
 def adjust_range(U0, U1):
 
-    V0 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U0]
-    V1 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U1]
+    V0 = [twoPimod(x) for x in U0]
+    V1 = [twoPimod(x) for x in U1]
 
     if abs(V0[0] - V1[1]) < 1e-5:
         imin = 1  # U1[0]
@@ -664,19 +706,33 @@ def closed_circle_edge(planes):
 
 
 def most_outer_faces(cyl, faces):
-    umin, umax, vmin, vmax = cyl.ParameterRange
-    rmin = cyl.Surface.Axis.dot(cyl.valueAt(0, vmin) - cyl.Surface.Center)
-    rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - cyl.Surface.Center)
-
+    
+    if type(cyl) is ShellGu:
+        umin, umax, Vmin, Vmax = cyl.Faces[0].ParameterRange
+        for f in cyl.Faces[1:]:
+            umin, umax, vmin, vmax = f.ParameterRange
+            Vmin = min (Vmin,vmin)
+            Vmax = max (Vmax,vmax)
+        cylSurf = cyl.Faces[0].Surface
+        center = cylSurf.Center + cylSurf.Axis * cylSurf.Axis.dot(cyl.CenterOfMass-cylSurf.center)
+        rmin = cylSurf.Axis.dot(cylSurf.value(0, Vmin) - center)
+        rmax = cylSurf.Axis.dot(cylSurf.value(0, Vmax) - center)
+    else:    
+        umin, umax, vmin, vmax = cyl.ParameterRange
+        center = cyl.Surface.Center
+        rmin = cyl.Surface.Axis.dot(cyl.valueAt(0, vmin) - center)
+        rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - center)
+    
     dmin = dmax = abs(rmax - rmin)
     for f in faces:
-        d = cyl.Surface.Axis.dot(f[0].CenterOfMass - cyl.Surface.Center)
+        d = cyl.Surface.Axis.dot(f[0].CenterOfMass - center)
         if abs(d - rmin) < dmin:
             fmin = f
             dmin = abs(d - rmin)
         if abs(d - rmax) < dmax:
             fmax = f
             dmax = abs(d - rmax)
+    
     return (fmin, fmax)
 
 
@@ -729,8 +785,17 @@ def commonVertex(e1, e2):
 
     return common
 
-
 def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
+    if type(face1) is ShellGu:
+        for face in face1.Faces:
+            edges = commonEdgeFace(face, face2, outer1_only, outer2_only)
+            if edges is not None:
+                return edges, face
+        return None,None    
+    else:
+        return commonEdgeFace(face1, face2, outer1_only, outer2_only)        
+
+def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     if face1.distToShape(face2)[0] > 0:
         return None
 
@@ -744,10 +809,22 @@ def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
     return edges
 
 
-def region_sign(s1, s2, outAngle=False):
-    normal1 = s1.Surface.Axis if s1.Orientation == "Forward" else -s1.Surface.Axis
-    Edges = commonEdge(s1, s2, outer1_only=False, outer2_only=False)
+def region_sign(s1_in, s2, outAngle=False):
+    if type(s1_in) is ShellGu:
+        Edges,s1 = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
+    else:
+        Edges = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
+        s1 = s1_in
+
     e1 = Edges[0]
+
+    if isinstance(s1.Surface, PlaneGu):
+        normal1 = s1.Surface.Axis if s1.Orientation == "Forward" else -s1.Surface.Axis
+    else:    
+        pos = e1.Vertexes[0].Point
+        u, v = s1.Surface.face.Surface.parameter(pos)
+        normal1 = s1.Surface.face.normalAt(u, v)
+
     if isinstance(e1.Curve, Part.Line):
         direction = e1.Curve.Direction
 
@@ -814,16 +891,162 @@ def closed_cylinder(cylinder, solidFaces):
         sameIndex.insert(0, 0)
         sameCyl = [Cylinders[i] for i in sameIndex]
         if len(sameCyl) > 1:
-            cyl_shell = Part.makeShell(sameCyl)
+            cyl_shell = ShellGu(sameCyl)
+            cyl_index = set(cyl_shell.Indexes)
         else:
             cyl_shell = cylinder
+            cyl_index = {cylinder.Index}
     else:
-        sameCyl = [cylinder]
         cyl_shell = cylinder
+        cyl_index = {cylinder.Index}
+    
+    
+    return cyl_shell, cyl_index, is_closed_cylinder(cyl_shell)
 
-    umin, umax, vmin, vmax = cyl_shell.ParameterRange
-    du = (umax - umin) % twoPi
-    du = 0 if (abs(du) < 1e-5 or abs(twoPi - du) > 1e-5) else du
-    closed = du == 0
-    cyl_index = set([c.Index for c in sameCyl])
-    return cyl_shell, cyl_index, closed
+def join_wires(wireList):
+    if len(wireList) == 0:
+        return None
+    elif len(wireList) == 1:
+        return wireList[0]
+    elif len(wireList) == 2:
+        merged = merge_two_wires(*wireList)
+        if not merged:  
+            return wireList[0]
+        else:
+            return merged
+    else:
+        noneList = []
+        joined = False
+        w1 = wireList[0]
+        for w2 in wireList[1:]:
+            joined_W = merge_two_wires(w1,w2)
+            if joined_W is None:
+                noneList.append(w2)
+            else:
+                joined = True
+                w1 = joined_W
+
+        if joined and len(noneList)>0:
+            noneList.insert(0,w1)
+            return join_wires(noneList)
+        else:
+            return w1
+
+def merge_two_wires(wire1,wire2):
+    if wire1.distToShape(wire2)[0] > 1e-5:
+        return None
+    cmon_vertexes = common_vertexes(wire1,wire2)
+    if len(cmon_vertexes[0]) == 0:
+        return None
+    
+    parts1 = cut_wires(cmon_vertexes[0],wire1.OrderedEdges)
+    parts2 = cut_wires(cmon_vertexes[1],wire2.OrderedEdges)
+    joined = []
+    addSame = False
+    i = 0
+    for w1,w2 in zip(parts1,parts2):
+        if same_wire(w1,w2):
+            if not addSame and i!=0:
+                joined.extend(w1)
+                addSame = True
+        else:    
+            joined.extend(w1+w2)
+        i+=1    
+    return Part.Wire(joined)
+    
+def common_vertexes(w1,w2):
+    common1 = []
+    common2 = []
+    for v1 in w1.OrderedVertexes:
+        for v2 in w2.Vertexes:
+            d =v1.Point-v2.Point
+            if d.Length < 1e-6:
+                common1.append(v1)
+                common2.append(v2)
+    return (common1,common2)      
+
+def cut_wires(cmon_vertexes,wire):  
+    vertex_pos,increase = vertex_edge_index(cmon_vertexes,wire)
+    parts = []
+    nval = len(vertex_pos)
+    if increase:
+        for i0 in range(len(vertex_pos)):
+            i1=(i0+1)%nval
+            e0 = max(vertex_pos[i0])
+            e1 = min (vertex_pos[i1])
+            if e0 <= e1:
+                if e1+1 == len(wire):
+                    parts.append(wire[e0:])
+                else:            
+                    parts.append(wire[e0:e1+1])
+            else:
+                parts.append(wire[e0:]+wire[0:e1+1])
+    else:    
+        for i0 in range(len(vertex_pos)):
+            i1=(i0+1)%nval
+            e0 = max(vertex_pos[i1])
+            e1 = min (vertex_pos[i0])
+            if e0 <= e1:
+                if e1+1 == len(wire):
+                    parts.append(list(reversed(wire[e0:])))
+                else:            
+                    parts.append(list(reversed(wire[e0:e1+1])))
+            else:
+                parts.append(list(reversed(wire[0:e1+1]))+list(reversed(wire[e0:])))
+    return parts            
+            
+def vertex_edge_index(cmon_vertexes,wireEdges):
+    position = []
+    for v in cmon_vertexes:
+        ind = []
+        for i,e in enumerate(wireEdges):
+            if v.isSame(e.Vertexes[0]) or v.isSame(e.Vertexes[1]) :
+                ind.append(i)
+                if len(ind) == 2 :
+                    break      
+        position.append(ind)
+
+    seq = [x[0] for x in position]
+    vmin,vmax = min(seq),max(seq)
+    if seq[0] > seq[1]:
+        if seq[0] == vmax and seq[1]==vmin:
+            increase = True
+        else:    
+            increase = False
+    else:        
+        if seq[0] == vmin and seq[1] == vmax:
+            increase = False
+        else:    
+            increase = True
+    
+    for x in position:
+        if x[0]==0: 
+            if x[1] == len(wireEdges)-1:
+                x[1] = -1 
+            break       
+    return position,increase        
+
+def same_wire(w1,w2):
+    e1 = w1[0]
+    e2 = w2[0]
+    p1min,p1max = e1.ParameterRange
+    p1 = 0.5*(p1min+p1max)
+    pos1 = e1.valueAt(p1)
+    v1 = Part.Vertex(pos1)
+    if e2.distToShape(v1)[0] < 1e-5:
+        return True
+    else:
+        p2min,p2max = e2.ParameterRange
+        p2 = 0.5*(p2min+p2max)
+        pos2 = e2.valueAt(p2)
+        v2 = Part.Vertex(pos2)
+        return e1.distToShape(v2)[0] < 1e-5
+    
+def twoPimod(x):
+    x = x%twoPi
+    if x<1e-5 :
+        return 0.0
+    elif twoPi-x < 1e-5: 
+        return 0.0
+    else:
+        return x   

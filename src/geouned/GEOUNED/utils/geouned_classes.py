@@ -618,16 +618,15 @@ class MetaSurfacesDict(dict):
                 pid = -pid
 
         if cs is None:
-            reverseCan_region = reverseCan_region + pid
+            reverseCan_region = reverseCan_region + (pid)
         else:
             sid, exist = self.primitive_surfaces.add_cylinder(
                 reverseCan.Surf.s1, True
             )  # to be replaced by a generic add function for any kind of primitive
             if reverseCan.Surf.s1_orientation == "Reversed":
-                sid = -sid
-                reverseCan_region = reverseCan_region + (pid + sid)
-            else:
                 reverseCan_region = reverseCan_region + (pid * sid)
+            else:
+                reverseCan_region = reverseCan_region + (pid + (-sid))
 
         if reverseCan.Surf.s2_plane is None:
             cp = reverseCan.Surf.s2
@@ -649,10 +648,9 @@ class MetaSurfacesDict(dict):
                 reverseCan.Surf.s2, True
             )  # to be replaced by a generic add function for any kind of primitive
             if reverseCan.Surf.s2_orientation == "Reversed":
-                sid = -sid
-                reverseCan_region = reverseCan_region + (pid + sid)
-            else:
                 reverseCan_region = reverseCan_region + (pid * sid)
+            else:
+                reverseCan_region = reverseCan_region + (pid + (-sid))
 
         add_can = True
         for cs_region in self["RevCan"]:
