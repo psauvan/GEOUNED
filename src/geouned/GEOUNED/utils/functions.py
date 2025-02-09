@@ -13,8 +13,8 @@ from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
-from .meta_surfaces_utils import commonEdge, commonVertex, no_convex
-from ..decompose.decom_utils_generator import cyl_edge_plane, planar_edges
+from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges
+from ..decompose.decom_utils_generator import cyl_edge_plane
 from .basic_functions_part2 import is_same_plane
 
 
@@ -146,7 +146,7 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
             if f.Orientation == "Reversed":
                 rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index)
                 if rcc:
-                    gc = GeounedSurface(("ReversedConeCylinder", rcc))
+                    gc = GeounedSurface(("ReversedConeCylinder", build_RCC_params(rcc)))
                     conecyl_list.append(gc)
 
     if one_value_return:
@@ -170,6 +170,81 @@ def build_roundC_params(rc):
     gpa = get_additional_corner_plane(cyl, p1, p2)
 
     params = ((gcyl, gpa), (gp1, gp2), configuration)
+    return params
+
+
+def build_RCC_params(rc):
+    cylcones = []
+    plane_dict = dict()
+    add_planes = []
+    init = None
+    for cc in rc:
+        if cc.Type == "Cylinder":
+            gcylcone, plane, addP = cc.Params
+        else:
+            cone, apexPlane, plane, addP = cc.Params
+            gcylcone = GeounedSurface("Cone", (cone, apexPlane, None, [], "Reversed"))
+
+        add_planes.extend(addP)
+        if len(cc.Connections) == 1:
+            init = cc.Index
+        plane_dict[cc.Index] = (cc.Connections, plane)
+        cylcones.append(gcylcone)
+
+    if len(rc) == 1:
+        loop = False
+        init = tuple(plane_dict.keys())[0]
+        planeSeq = [plane_dict[init][1]]        
+    else:
+        loop = True
+        if init is None:
+            init = tuple(plane_dict.keys())[0]
+        nextip, operator = plane_dict[init][0][0]
+        ip = init
+        if operator == "OR":
+            gp = plane_dict[init][1]
+            ORPlanes = [gp]
+            planeSeq = []
+        else:
+            ORPlanes = []
+            gp = plane_dict[init][1]
+            planeSeq = [gp]
+
+    while loop:
+        connect = plane_dict[nextip][0]
+        if len(connect) == 1:
+            ip = nextip
+            nextip, nextop = connect[0]
+            loop = False
+        else:
+            next1, op1 = connect[0]
+            next2, op2 = connect[1]
+            if ip != next1:
+                ip = nextip
+                nextip = next1
+                nextop = op1
+            else:
+                ip = nextip
+                nextip = next2
+                nextop = op2
+            if nextip == init:
+                loop = False
+
+        gp = plane_dict[ip][1]
+       
+        if operator == "OR":
+            ORPlanes.append(gp)
+            if not loop:
+                planeSeq.append(ORPlanes)
+        else:
+            if ORPlanes:
+                planeSeq.append(ORPlanes)
+                ORPlanes = []
+            planeSeq.append(gp)
+
+        operator = nextop
+
+    params = (cylcones,planeSeq,add_planes)
     return params
 
 
@@ -246,39 +321,59 @@ def build_can_params(cs):
     bsurf = []
     for s, r in (sr1, sr2):
         s_orientation = s.Orientation
+
         if type(s.Surface) is PlaneGu:
             normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
-            if (r == "AND" and cyl_in.Orientation == "Reversed"):
-                normal = -normal 
+            if r == "AND" and cyl_in.Orientation == "Reversed":
+                normal = -normal
             gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
             pa = None
+
         elif type(s.Surface) is CylinderGu:
-            if r == "AND" and cyl_in.Orientation == "Reversed":
-                s_orientation = "Forward" if s.Orientation == "Reversed" else "Reversed"
             if shell:
-                edges,cyl = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
+                edges, cyl = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
             else:
-                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)    
-            
+                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
+
             if planar_edges(edges):
                 gs = cyl_edge_plane(cyl, edges)
                 pa = None
+                s_orientation = "Forward"
             else:
                 gs = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
                 pa = cyl_edge_plane(cyl, edges)
-        
+                if r == "AND" and cyl_in.Orientation == "Reversed":
+                    s_orientation = "Forward" if s.Orientation == "Reversed" else "Reversed"
+
+        elif type(s.Surface) is ConeGu:
+            if shell:
+                edges, cyl = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
+            else:
+                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
+
+            if planar_edges(edges):
+                gs = cyl_edge_plane(cyl, edges)
+                pa = None
+                s_orientation = "Forward"
+            else:
+                gs = GeounedSurface(("ConeOnly", (s.Surface.Apex, s.Surface.Axis, s.Surface.SemiAngle, 1.0, 1.0)))
+                pa = cyl_edge_plane(cyl, edges)
+                if r == "AND" and cyl_in.Orientation == "Reversed":
+                    s_orientation = "Forward" if s.Orientation == "Reversed" else "Reversed"
+
         elif type(s.Surface) is SphereGu:
             if r == "AND" and cyl_in.Orientation == "Reversed":
                 s_orientation = "Forward" if s.Orientation == "Reversed" else "Reversed"
 
             if shell:
-                edges,cyl = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
+                edges, cyl = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
             else:
-                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)    
+                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
             edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             gs = GeounedSurface(("SphereOnly", (s.Surface.Center, s.Surface.Radius)))
             pa = cyl_edge_plane(cyl, edges)
+
         bsurf.append((gs, pa, s_orientation))
 
     gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))

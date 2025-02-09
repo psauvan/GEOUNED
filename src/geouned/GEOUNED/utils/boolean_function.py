@@ -247,6 +247,28 @@ class BoolRegion(int):
             return self.region.to_integer()
 
     def isSameInterface(self, region2):
+        if type(region2) is BoolVariable:
+            if self.level > 0 : 
+                return 0
+            elif len(self.surfaces) == 1 :
+                if type(self.region) is BoolVariable:
+                    if self.region.value() == region2.value():
+                        return 1
+                    elif self.region.value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+                else:
+                    if self.region.elements[0].value() == region2.value():
+                        return 1
+                    elif self.region.elements[0].value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+
+            else:
+                return 0
+        
         if self.level != region2.level:
             return 0
         if len(self.surfaces) != len(region2.surfaces):

@@ -11,6 +11,7 @@ import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
 from ..utils.geouned_classes import SurfacesDict
+from ..utils.boolean_function import BoolVariable
 from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
@@ -111,9 +112,9 @@ C   ______ _______  _____      _     _ __   _ _______ ______
 C  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\ 
 C  |_____| |______ |_____|     |_____| |  \\_| |______ |_____/
 """
-#C Version : {version('geouned')}
-#C FreeCAD Version : {freeCAD_Version} 
-#"""
+        # C Version : {version('geouned')}
+        # C FreeCAD Version : {freeCAD_Version}
+        # """
 
         Information = f"""C
 C *************************************************************
@@ -312,24 +313,24 @@ C **************************************************************
         for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
                 p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
-                p.bVar.region.change_ref()
+                p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
-                p.bVar.region.change_ref()
+                p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
-                p.bVar.region.change_ref()
+                p.bVar.change_ref()
 
         if self.options.prnt3PPlane:
             for p in Surfaces["P"]:
                 if p.Surf.pointDef:
                     axis, d = points_to_coeffs(p.Surf.Points)
                     if is_opposite(axis, p.Surf.Axis):
-                        p.bVar.region.change_ref()
+                        p.bVar.change_ref()
 
         return
 
@@ -337,10 +338,11 @@ C **************************************************************
         temp = SurfacesDict(Surfaces)
         surfList = []
         for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            s = temp.get_surface(ind + 1)
+            bvar = BoolVariable(ind + 1)
+            s = temp.get_surface(bvar)
             if s is not None:
                 surfList.append(s)
-                temp.del_surface(ind + 1)
+                temp.del_surface(bvar)
         return surfList
 
     def get_solid_cell_volume(self):

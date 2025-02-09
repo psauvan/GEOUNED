@@ -3,9 +3,8 @@ import math
 
 from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
-from .geometry_gu import PlaneGu
+from .geometry_gu import PlaneGu, other_face_edge
 from .meta_surfaces_utils import (
-    other_face_edge,
     region_sign,
     get_adjacent_cylplane,
     get_adjacent_cylsurf,
@@ -123,4 +122,4 @@ def get_roundcorner_surfaces(cylinder, Faces):
 
 
 def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
-    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, Tolerances())
+    return get_join_cone_cyl(face, -1, Faces, multifaces, omitFaces, Tolerances())

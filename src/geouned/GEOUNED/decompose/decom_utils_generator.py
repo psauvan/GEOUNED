@@ -11,12 +11,12 @@ import Part
 
 from ..utils.data_classes import Tolerances
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import PlaneGu, TorusGu
+from ..utils.geometry_gu import PlaneGu, TorusGu, other_face_edge
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
 )
-from ..utils.meta_surfaces_utils import other_face_edge, region_sign
+from ..utils.meta_surfaces_utils import region_sign, spline_2D
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
@@ -138,59 +138,6 @@ def cyl_bound_planes(solidFaces, face, Edges=None):
     return planes
 
 
-def planar_edges(edges):
-
-    e0 = edges[0]
-    if type(e0.Curve) is Part.BSplineCurve:
-        d0 = e0.derivative1At(0)
-        if d0.Length < 1e-5:
-            dir0 = e0.Vertexes[1].Point - e0.Vertexes[0].Point
-            dir0.normalize()
-            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
-        elif spline_2D(e0):
-            dir0 = e0.derivative1At(0).cross(e0.normalAt(0))
-            dir0.normalize()
-            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
-        else:
-            return False
-    elif isinstance(e0.Curve, (Part.Circle, Part.Ellispse)):
-        dir0 = e0.Curve.Axis
-        center0 = e0.Curve.Center
-    else:  # should be a line
-        dir0 = e0.Curve.direction
-        center0 = e0.Curve.location
-
-    if len(edges) == 1:
-        return True
-
-    for ei in edges[1:]:
-        if type(ei.Curve) is Part.BSplineCurve:
-            di = ei.derivative1At(0)
-            if di.Length < 1e-5:
-                dir = ei.Vertexes[1].Point - ei.Vertexes[0].Point
-                dir.normalize()
-                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
-            elif spline_2D(ei):
-                dir = ei.derivative1At(0).cross(ei.normalAt(0))
-                dir.normalize()
-                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
-            else:
-                return False
-        elif isinstance(ei.Curve, (Part.Circle, Part.Ellispse)):
-            dir = ei.Curve.Axis
-            center = ei.Curve.Center
-        else:  # should be a line
-            dir = ei.Curve.direction
-            center = ei.Curve.location
-
-        if not is_parallel(dir0, dir, Tolerances().angle):
-            return False
-        if abs(dir0.dot(center - center0)) > 1e-5:
-            return False
-
-    return True
-
-
 def cyl_edge_plane(face, edges):
 
     try:
@@ -198,6 +145,7 @@ def cyl_edge_plane(face, edges):
     except:
         curve = "none"
 
+    planeParams = None
     if curve[0:6] == "Circle":
         dir = edges[0].Curve.Axis
         center = edges[0].Curve.Center
@@ -239,25 +187,6 @@ def cyl_edge_plane(face, edges):
         if face.Orientation == "Reversed":
             planeParams[1] = -planeParams[1]
         return GeounedSurface(("Plane", planeParams))
-
-
-def spline_2D(edge):
-    knots = edge.Curve.getKnots()
-    d0 = edge.derivative1At(knots[0])
-    if d0.Length < 1e-5:
-        return False
-
-    norm_0 = d0.cross(edge.normalAt(knots[0]))
-    norm_0.normalize()
-
-    for k in knots[1:]:
-        # check if derivative orthogonal to curve normal vector
-        dk = edge.derivative1At(k)
-        normal_k = dk.cross(edge.normalAt(k))
-        normal_k.normalize()
-        if abs(normal_k.dot(norm_0)) > Tolerances().value:
-            return False
-    return True
 
 
 def plane_spline_curve(edges, face):

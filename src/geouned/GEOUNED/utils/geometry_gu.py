@@ -341,8 +341,9 @@ class FaceGu(object):
         self.Index = index
 
     def set_outerWire(self, Faces):
-        self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
-
+        #self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
+        self.OuterWire = self.__face__.OuterWire
+        
     def tessellate(self, val, reset=False):
         res = self.__face__.tessellate(val, reset)
         return res
@@ -375,19 +376,20 @@ class FaceGu(object):
                 dist2Shape = shape2.distToShape(shape1)
             return dist2Shape
 
-class ShellGu():
-    def __init__(self,faces):
+
+class ShellGu:
+    def __init__(self, faces):
         self.Faces = faces
         self.Edges = []
         self.Indexes = []
         self.Area = 0
-        self.CenterOfMass = FreeCAD.Vector(0,0,0)
+        self.CenterOfMass = FreeCAD.Vector(0, 0, 0)
         for f in faces:
             self.Edges.extend(f.Edges)
             self.Indexes.append(f.Index)
             self.Area += f.Area
             self.CenterOfMass += f.Area * f.CenterOfMass
-        self.Orientation = faces[0].Orientation   
+        self.Orientation = faces[0].Orientation
 
 
 # Aux functions
@@ -487,6 +489,7 @@ def set_outerWire(wires, face, Faces):
     print("outer wire not found")
 
 
+
 def innerWires(wire, face, Faces):
     for i, x0 in enumerate(wire.OrderedVertexes):
         for x1 in wire.OrderedVertexes[i + 1 :]:
@@ -494,38 +497,42 @@ def innerWires(wire, face, Faces):
             if dx.Length < 1e-5:
                 return False
 
-    edge = wire.Edges[0]
-    pos = edge.Vertexes[0].Point
-    u, v = face.__face__.Surface.parameter(pos)
-    normal = face.__face__.normalAt(u, v)
+    if len(Faces) == 0:
+        return True
+    for edge in wire.Edges:
+        adjface = other_face_edge(edge, face, Faces)
+        pos = edge.Vertexes[0].Point
+        u, v = face.__face__.Surface.parameter(pos)
+        normal = face.__face__.normalAt(u, v)
 
-    pe = edge.Curve.parameter(pos)
+        pe = edge.Curve.parameter(pos)
 
-    if type(edge) is Part.Line:
-        direction = edge.Direction
+        if type(edge.Curve) is Part.Line:
+            direction = edge.Curve.Direction
+        else:
+            direction = edge.derivative1At(pe)
+        if edge.Orientation == "Reversed":
+            direction = -direction
+        direction.normalize()
+
+        vect = direction.cross(normal)
+        u, v = adjface.__face__.Surface.parameter(pos)
+        vect2 = adjface.__face__.normalAt(u, v)
+        scalar = vect.dot(vect2)
+        if abs(scalar) < 1e-5:
+            continue
+        elif scalar > 0:
+            return False
     else:
-        direction = edge.derivative1At(pe)
-    if edge.Orientation == "Reversed":
-        direction = -direction
-    direction.normalize()
+        return True
 
-    for adjface in Faces:
-        if adjface.Index == face.Index:
+
+def other_face_edge(current_edge, current_face, Faces, outer_only=False):
+    for face in Faces:
+        if face.Index == current_face.Index:
             continue
 
-        for ei in adjface.Edges:
-            if edge.isSame(ei):
-                found = True
-                break
-        else:
-            found = False
-        if found:
-            break
-    else:
-        adjface = face
-
-    vect = direction.cross(normal)
-    u, v = adjface.__face__.Surface.parameter(pos)
-    vect2 = adjface.__face__.Surface.normal(u, v)
-    scalar = vect.dot(vect2)
-    return scalar < 0
+        Edges = face.OuterWire.Edges if outer_only else face.Edges
+        for edge in Edges:
+            if current_edge.isSame(edge):
+                return face
