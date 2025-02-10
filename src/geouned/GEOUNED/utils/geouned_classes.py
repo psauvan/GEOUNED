@@ -689,7 +689,7 @@ class MetaSurfacesDict(dict):
         plane_region = None
         for cp in reversedCC.Surf.PlaneSeq:
             if type(cp) is list:
-                ORregion = None 
+                ORregion = None
                 for cpp in cp:
                     pid, exist = self.primitive_surfaces.add_plane(cpp, True)
                     if exist:
@@ -697,7 +697,7 @@ class MetaSurfacesDict(dict):
                         if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                             pid = -pid
                     ORregion = BoolRegion.add(ORregion, BoolRegion(0, pid))
-                plane_region = BoolRegion.mult(plane_region,ORregion)
+                plane_region = BoolRegion.mult(plane_region, ORregion)
             else:
                 pid, exist = self.primitive_surfaces.add_plane(cp, True)
                 if exist:
@@ -705,7 +705,6 @@ class MetaSurfacesDict(dict):
                     if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                         pid = -pid
                 plane_region = BoolRegion.mult(plane_region, BoolRegion(0, pid))
-
 
         for cp in reversedCC.Surf.AddPlanes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)

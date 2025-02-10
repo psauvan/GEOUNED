@@ -96,18 +96,18 @@ class BoolVariable(int):
 
     def __hash__(self):
         return hash(self.__int__())
-    
-    def __eq__(self,BV):
+
+    def __eq__(self, BV):
         if type(self) != type(BV):
             return False
-        return self.__int__() == BV.__int__() 
+        return self.__int__() == BV.__int__()
 
     def __abs__(self):
-        if self.__int__() >= 0 :
+        if self.__int__() >= 0:
             return self
         else:
             return -self
-            
+
     def __neg__(self):
         return BoolVariable(-self.__int__(), self.__reference__)
 
@@ -248,9 +248,9 @@ class BoolRegion(int):
 
     def isSameInterface(self, region2):
         if type(region2) is BoolVariable:
-            if self.level > 0 : 
+            if self.level > 0:
                 return 0
-            elif len(self.surfaces) == 1 :
+            elif len(self.surfaces) == 1:
                 if type(self.region) is BoolVariable:
                     if self.region.value() == region2.value():
                         return 1
@@ -268,7 +268,7 @@ class BoolRegion(int):
 
             else:
                 return 0
-        
+
         if self.level != region2.level:
             return 0
         if len(self.surfaces) != len(region2.surfaces):
@@ -587,7 +587,7 @@ class BoolSequence:
         if self.level < 1 and CT is None:
             self.clean()
             return
-  
+
         surf_names = self.get_surfaces_numbers()
         if not surf_names:
             return
@@ -618,7 +618,7 @@ class BoolSequence:
             return False
         if true_set is None or false_set is None:
             return True
-        
+
         val_set = self.get_surfaces_numbers()
         t_set = set(true_set.keys()) & val_set
         f_set = set(false_set.keys()) & val_set
@@ -1047,13 +1047,13 @@ class BoolSequence:
         """Return the list of all surfaces in the BoolSequence definition."""
         if type(self.elements) is bool:
             return set()
-        
+
         if self.base_type is BoolRegion:
             return self.get_regions()
 
         surfSet = set()
         for e in self.elements:
-            if isinstance(e, int):  #include int and BoolVariable
+            if isinstance(e, int):  # include int and BoolVariable
                 surfSet.add(abs(e))
             else:
                 surfSet.update(e.get_surfaces_numbers())

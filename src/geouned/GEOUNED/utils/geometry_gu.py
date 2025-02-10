@@ -341,9 +341,9 @@ class FaceGu(object):
         self.Index = index
 
     def set_outerWire(self, Faces):
-        #self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
+        # self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
         self.OuterWire = self.__face__.OuterWire
-        
+
     def tessellate(self, val, reset=False):
         res = self.__face__.tessellate(val, reset)
         return res
@@ -487,7 +487,6 @@ def set_outerWire(wires, face, Faces):
         if not innerWires(w, face, Faces):
             return w
     print("outer wire not found")
-
 
 
 def innerWires(wire, face, Faces):

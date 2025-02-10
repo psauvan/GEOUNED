@@ -194,7 +194,7 @@ def build_RCC_params(rc):
     if len(rc) == 1:
         loop = False
         init = tuple(plane_dict.keys())[0]
-        planeSeq = [plane_dict[init][1]]        
+        planeSeq = [plane_dict[init][1]]
     else:
         loop = True
         if init is None:
@@ -231,7 +231,7 @@ def build_RCC_params(rc):
                 loop = False
 
         gp = plane_dict[ip][1]
-       
+
         if operator == "OR":
             ORPlanes.append(gp)
             if not loop:
@@ -244,7 +244,7 @@ def build_RCC_params(rc):
 
         operator = nextop
 
-    params = (cylcones,planeSeq,add_planes)
+    params = (cylcones, planeSeq, add_planes)
     return params
 
 
