@@ -1104,7 +1104,7 @@ def planar_edges(edges):
                 center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
             else:
                 return False
-        elif isinstance(ei.Curve, (Part.Circle, Part.Ellispse)):
+        elif isinstance(ei.Curve, (Part.Circle, Part.Ellipse)):
             dir = ei.Curve.Axis
             center = ei.Curve.Center
         else:  # should be a line
