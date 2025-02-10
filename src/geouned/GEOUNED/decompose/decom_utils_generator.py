@@ -16,7 +16,7 @@ from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
 )
-from ..utils.meta_surfaces_utils import region_sign, spline_2D
+from ..utils.meta_surfaces_utils import region_sign, spline_2D, spline_1D
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
@@ -190,6 +190,9 @@ def cyl_edge_plane(face, edges):
 
 
 def plane_spline_curve(edges, face):
+    if spline_1D(edges[0]):
+        return None
+
     zaxis = face.Surface.Axis
 
     pos = edges[0].Curve.value(0)

@@ -1119,8 +1119,17 @@ def planar_edges(edges):
     return True
 
 
+def spline_1D(edge):
+    knots = edge.Curve.getKnots()
+    return edge.Curve.curvature(knots[0]) < 1e-6
+
+
 def spline_2D(edge):
     knots = edge.Curve.getKnots()
+
+    if edge.Curve.curvature(knots[0]) < 1e-6:
+        return False  # straight line
+
     d0 = edge.derivative1At(knots[0])
     if d0.Length < 1e-5:
         return False
