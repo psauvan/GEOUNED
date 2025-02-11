@@ -1,6 +1,7 @@
 import Part
 import FreeCAD
 import numpy
+import math
 
 from .split_function import split_bop
 from .data_classes import Options
@@ -163,6 +164,7 @@ def makeCan(can, box):
     can.Cylinder.build_surface(box)
     can.s1.build_surface(box)
     can.s2.build_surface(box)
+    return  makeCylinderCan(can.Cylinder, can.s1, can.s2)
 
     if can.s1.Type == "Plane":
         scnd1 = False
@@ -209,18 +211,21 @@ def makeCan(can, box):
     return rawCan
 
 
-def makeCylinderCan(cylshape, p1shape, p2shape):
+def makeCylinderCan(cyl, s1, s2):
     options = Options()
-    comsolid = split_bop(cylshape, [p1shape, p2shape], options.splitTolerance, options)
-    s1, s2, s3 = comsolid.Solids
-    v3 = s3.CenterOfMass - s1.CenterOfMass
-    v2 = s2.CenterOfMass - s1.CenterOfMass
-    if v3.dot(v2) < 0:
-        return s1
-    elif v2.Length < v3.Length:
-        return s2
-    else:
-        return s3
+    comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
+    for s in comsolid.Solids:
+        sO = 1 if s1.Orientation == "Reversed" else -1
+        sC = 1 if s1.Configuration == "AND" else -1
+        ss = 1 if sO == sC else -1
+        if ss != check_sign(s, s1.shape):
+            continue
+
+        sO = 1 if s2.Orientation == "Reversed" else -1
+        sC = 1 if s2.Configuration == "AND" else -1
+        ss = 1 if sO == sC else -1
+        if ss == check_sign(s, s2.shape):
+            return ss
 
 
 def makeBoxFaces(box: list):
@@ -397,3 +402,144 @@ def fix_points(point_plane_list: list, vertex_list: list):
                 r = v.Point - planepts[i]
                 if r.Length < tol:
                     planepts[i] = v.Point
+
+def point_inside(solid):
+
+    point = solid.CenterOfMass
+    if solid.isInside(point, 0.0, False):
+        return point
+
+    cut_line = 32
+    cut_box = 4
+
+    v1 = solid.Vertexes[0].Point
+    for vi in range(len(solid.Vertexes) - 1, 0, -1):
+        v2 = solid.Vertexes[vi].Point
+        dv = (v2 - v1) * 0.5
+
+        n = 1
+        while True:
+            for i in range(n):
+                point = v1 + dv * (1 + 0.5 * i)
+                if solid.isInside(point, 0.0, False):
+                    return point
+            n = n * 2
+            dv = dv * 0.5
+            if n > cut_line:
+                break
+
+    BBox = solid.optimalBoundingBox(False)
+    box = [BBox.XMin, BBox.XMax, BBox.YMin, BBox.YMax, BBox.ZMin, BBox.ZMax]
+
+    boxes, centers = divide_box(box)
+    n = 0
+
+    while True:
+        for p in centers:
+            pp = FreeCAD.Vector(p[0], p[1], p[2])
+            if solid.isInside(pp, 0.0, False):
+                return pp
+
+        subbox = []
+        centers = []
+        for b in boxes:
+            btab, ctab = divide_box(b)
+            subbox.extend(btab)
+            centers.extend(ctab)
+        boxes = subbox
+        n = n + 1
+
+        if n == cut_box:
+            print(f"Solid not found in bounding Box (Volume : {solid.Volume})")
+            return None
+
+
+# divide a box into 8 smaller boxes
+def divide_box(Box):
+    xmid = (Box[1] + Box[0]) * 0.5
+    ymid = (Box[3] + Box[2]) * 0.5
+    zmid = (Box[5] + Box[4]) * 0.5
+
+    b1 = (Box[0], xmid, Box[2], ymid, Box[4], zmid)
+    p1 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
+
+    b2 = (xmid, Box[1], Box[2], ymid, Box[4], zmid)
+    p2 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
+
+    b3 = (Box[0], xmid, ymid, Box[3], Box[4], zmid)
+    p3 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
+
+    b4 = (xmid, Box[1], ymid, Box[3], Box[4], zmid)
+    p4 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
+
+    b5 = (Box[0], xmid, Box[2], ymid, zmid, Box[5])
+    p5 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
+
+    b6 = (xmid, Box[1], Box[2], ymid, zmid, Box[5])
+    p6 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
+
+    b7 = (Box[0], xmid, ymid, Box[3], zmid, Box[5])
+    p7 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
+
+    b8 = (xmid, Box[1], ymid, Box[3], zmid, Box[5])
+    p8 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
+
+    return (b1, b2, b3, b4, b5, b6, b7, b8), (p1, p2, p3, p4, p5, p6, p7, p8)
+
+
+def check_sign(solid, surf):
+
+    point = point_inside(solid)
+
+    if surf.type == "plane":
+        normal, d = surf.params
+        r = point - d * normal
+        if normal.dot(r) > 0:
+            return 1
+        else:
+            return -1
+
+    elif surf.type == "cylinder":
+        center, axis, radius = surf.params
+        r = point - center
+        L2 = r.Length * r.Length
+        z = axis.dot(r)
+        z2 = z * z
+        R2 = radius * radius
+        if L2 - z2 > R2:
+            return 1
+        else:
+            return -1
+
+    elif surf.type == "sphere":
+        center, radius = surf.params
+        r = point - center
+        if r.Length > radius:
+            return 1
+        else:
+            return -1
+
+    elif surf.type == "cone":
+        apex, axis, t, dbl = surf.params
+        r = point - apex
+        r.normalize()
+        z = round(axis.dot(r), 15)
+        alpha = math.acos(z)
+
+        if alpha > math.atan(t):
+            return 1
+        else:
+            return -1
+
+    elif surf.type == "torus":
+        center, axis, Ra, R = surf.params
+        r = point - center
+        v = axis.cross(r)
+        if v.Length > 1e-8:
+            v.normalize()
+            t = v.cross(axis)
+            r = r + t * Ra
+        if r.Length > R:
+            return 1
+        else:
+            return -1
