@@ -10,9 +10,7 @@ import Part
 logger = logging.getLogger("general_logger")
 
 from .basic_functions_part1 import (
-    Plane3PtsParams,
     PlaneParams,
-    DiskParams,
     ConeOnlyParams,
     CylinderOnlyParams,
     SphereOnlyParams,
@@ -22,11 +20,9 @@ from .basic_functions_part1 import (
     SphereParams,
     TorusParams,
     MultiPlanesParams,
-    ReverseCanParams,
-    ForwardCanParams,
-    CanParams,
     RoundCornerParams,
     ReversedConeCylParams,
+    CanParams,
 )
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
@@ -193,54 +189,73 @@ class GeounedSurface:
         if params[0] == "Plane":
             self.Type = "Plane"
             self.Surf = PlaneParams(params[1])  # plane point defined as the shortest distance to origin
-        elif params[0] == "Plane3Pts":
-            self.Type = "Plane"
-            self.Surf = Plane3PtsParams(params[1])  # plane point defined with 3 points
-        elif params[0] == "Disk":
-            self.Type = "Disk"
-            self.Surf = DiskParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = "Reversed" 
         elif params[0] == "CylinderOnly":
             self.Type = params[0]
             self.Surf = CylinderOnlyParams(params[1])
+            self.Orientation = None
         elif params[0] == "ConeOnly":
             self.Type = params[0]
             self.Surf = ConeOnlyParams(params[1])
+            self.Orientation = None
         elif params[0] == "SphereOnly":
             self.Type = params[0]
             self.Surf = SphereOnlyParams(params[1])
+            self.Orientation = None
         elif params[0] == "TorusOnly":
             self.Type = params[0]
             self.Surf = TorusOnlyParams(params[1])
+            self.Orientation = None
         elif params[0] == "Cylinder":
             self.Type = params[0]
             self.Surf = CylinderParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = None 
         elif params[0] == "Cone":
             self.Type = params[0]
             self.Surf = ConeParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = None
         elif params[0] == "Sphere":
             self.Type = params[0]
             self.Surf = SphereParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = None
         elif params[0] == "Torus":
             self.Type = params[0]
             self.Surf = TorusParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = None
         elif params[0] == "MultiPlane":
             self.Type = params[0]
             self.Surf = MultiPlanesParams(params[1])
+            self.Orientation = "Reversed"
         elif params[0] == "Can":
             self.Type = params[0]
             self.Surf = CanParams(params[1])
-        # elif params[0] == "ReverseCan":
-        #    self.Type = params[0]
-        #    self.Surf = ReverseCanParams(params[1])
-        # elif params[0] == "ForwardCan":
-        #    self.Type = params[0]
-        #    self.Surf = ForwardCanParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:    
+                self.Orientation = None
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
+            self.Orientation = "Forward"
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
             self.Surf = ReversedConeCylParams(params[1])
+            self.Orientation = "Reversed"
         else:
             print(f"type {params[0]} not found")
 
@@ -255,35 +270,28 @@ class GeounedSurface:
             Box.enlarge(10)
             self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
 
-        elif self.Type == "Disk":
-            if self.Surf.Type == "circle":
-                radius = self.Surf.Radius * 1.5
-                circle = Part.makeCircle(radius, self.Surf.Center, self.Surf.Axis)
-                self.shape = Part.makeFilledFace([circle])
-            else:
-                S1 = self.Surf.Center + self.Surf.majAxis * 1.5  # major axis
-                S2 = self.Surf.Center + self.Surf.minAxis * 1.5  # minor axis
-                ellipse = Part.Ellipse(S1, S2, self.Surf.Center)
-                self.shape = Part.makeFilledFace([ellipse.toShape()])
+        elif self.Type == "Cylinder":
+            cyl = self.Surf.Cylinder
+            self.shape = makeCylinder(cyl.Surf.Axis, cyl.Surf.Center, cyl.Surf.Radius, Box)
 
-        elif self.Type == "CylinderOnly":
-            self.shape = makeCylinder(self.Surf.Axis, self.Surf.Center, self.Surf.Radius, Box)
+        elif self.Type == "Cone":
+            kne = self.Surf.Cone
+            tan = math.tan(kne.Surf.SemiAngle)
+            self.shape = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
 
-        elif self.Type == "ConeOnly":
-            tan = math.tan(self.Surf.SemiAngle)
-            self.shape = makeCone(self.Surf.Axis, self.Surf.Apex, tan, Box)
-
-        elif self.Type == "SphereOnly":
-            rad = self.Surf.Radius
-            pnt = self.Surf.Center
+        elif self.Type == "Sphere":
+            sph = self.Surf.Sphere
+            rad = sph.Surf.Radius
+            pnt = sph.Surf.Center
             self.shape = Part.makeSphere(rad, pnt)
             return
 
-        elif self.Type == "TorusOnly":
-            axis = self.Surf.Axis
-            center = self.Surf.Center
-            majorR = self.Surf.MajorRadius
-            minorR = self.Surf.MinorRadius
+        elif self.Type == "Torus":
+            tor = self.Surf.Torus
+            axis = tor.Surf.Axis
+            center = tor.Surf.Center
+            majorR = tor.Surf.MajorRadius
+            minorR = tor.Surf.MinorRadius
 
             torus = Part.makeTorus(majorR, minorR, center, axis)
             self.shape = torus.Faces[0]

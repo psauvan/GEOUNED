@@ -425,7 +425,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
 
     else:
         coneOnly = gen_cone(face)
-        apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
+        apexPlane = cone_apex_plane(face, Tolerances())
         cylcone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))

@@ -164,7 +164,7 @@ def makeCan(can, box):
     can.Cylinder.build_surface(box)
     can.s1.build_surface(box)
     can.s2.build_surface(box)
-    return  makeCylinderCan(can.Cylinder, can.s1, can.s2)
+    return  makeCylinderCan(can)
 
     if can.s1.Type == "Plane":
         scnd1 = False
@@ -211,18 +211,22 @@ def makeCan(can, box):
     return rawCan
 
 
-def makeCylinderCan(cyl, s1, s2):
+def makeCylinderCan(can):
+    cyl = can.Cylinder
+    s1 = can.s1
+    s2 = can.s2
+
     options = Options()
     comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
     for s in comsolid.Solids:
         sO = 1 if s1.Orientation == "Reversed" else -1
-        sC = 1 if s1.Configuration == "AND" else -1
+        sC = 1 if can.s1_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
         if ss != check_sign(s, s1.shape):
             continue
 
         sO = 1 if s2.Orientation == "Reversed" else -1
-        sC = 1 if s2.Configuration == "AND" else -1
+        sC = 1 if can.s2_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
         if ss == check_sign(s, s2.shape):
             return ss
