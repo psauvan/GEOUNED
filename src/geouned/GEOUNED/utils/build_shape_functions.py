@@ -218,18 +218,18 @@ def makeCylinderCan(can):
 
     options = Options()
     comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
-    for s in comsolid.Solids:
+    for solid in comsolid.Solids:
         sO = 1 if s1.Orientation == "Reversed" else -1
         sC = 1 if can.s1_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
-        if ss != check_sign(s, s1.shape):
+        if ss != check_sign(solid, s1):
             continue
 
         sO = 1 if s2.Orientation == "Reversed" else -1
         sC = 1 if can.s2_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
-        if ss == check_sign(s, s2.shape):
-            return ss
+        if ss == check_sign(solid, s2):
+            return solid
 
 
 def makeBoxFaces(box: list):
@@ -495,55 +495,56 @@ def check_sign(solid, surf):
 
     point = point_inside(solid)
 
-    if surf.type == "plane":
-        normal, d = surf.params
+    if surf.Type == "Plane":
+        normal = surf.Surf.Axis
+        d = normal.dot(surf.Surf.Position)
         r = point - d * normal
         if normal.dot(r) > 0:
             return 1
         else:
             return -1
 
-    elif surf.type == "cylinder":
-        center, axis, radius = surf.params
-        r = point - center
+    elif surf.Type == "Cylinder":
+        cyl = surf.Surf.Cylinder.Surf
+        r = point - cyl.Center
         L2 = r.Length * r.Length
-        z = axis.dot(r)
+        z = cyl.dot(r)
         z2 = z * z
-        R2 = radius * radius
+        R2 = cyl.Radius * cyl.Radius
         if L2 - z2 > R2:
             return 1
         else:
             return -1
 
-    elif surf.type == "sphere":
-        center, radius = surf.params
-        r = point - center
-        if r.Length > radius:
+    elif surf.Type == "Sphere":
+        sph = surf.Surf.Sphere.Surf
+        r = point - sph.Center
+        if r.Length > sph.Radius:
             return 1
         else:
             return -1
 
-    elif surf.type == "cone":
-        apex, axis, t, dbl = surf.params
-        r = point - apex
+    elif surf.Type == "Cone":
+        kne = surf.Surf.Cone.Surf
+        r = point - kne.Apex
         r.normalize()
-        z = round(axis.dot(r), 15)
+        z = round(kne.Axis.dot(r), 15)
         alpha = math.acos(z)
 
-        if alpha > math.atan(t):
+        if alpha > kne.SemiAngle:
             return 1
         else:
             return -1
 
-    elif surf.type == "torus":
-        center, axis, Ra, R = surf.params
-        r = point - center
-        v = axis.cross(r)
+    elif surf.Type == "Torus":
+        tor = surf.Surf.Torus.Surf
+        r = point - tor.Center
+        v = tor.Axis.cross(r)
         if v.Length > 1e-8:
             v.normalize()
-            t = v.cross(axis)
-            r = r + t * Ra
-        if r.Length > R:
+            t = v.cross(tor.Axis)
+            r = r + t * tor.MajorRadius
+        if r.Length > tor.MinorRadius:
             return 1
         else:
             return -1
