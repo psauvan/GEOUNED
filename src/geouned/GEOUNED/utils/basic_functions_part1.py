@@ -295,15 +295,5 @@ class TorusParams:
         self.Torus = params[0]
         self.UPlanes = params[1]
         self.VSurface = params[2]
-        self.Orientation = params[3]
-        self.SOrientation = params[4]
+        self.SOrientation = params[3]
 
-    def __str__(self):
-        outstr = f"""Cone :\n"""
-        outstr += f"{self.Orientation} \n"
-        outstr += f"{self.Torus.__str__()} \n"
-        if self.UPlane:
-            outstr += f"{self.UPlane.__str__()} \n"
-        if self.VSurface:
-            outstr += f"{self.VSurfacePlane.__str__()} \n"
-        return outstr

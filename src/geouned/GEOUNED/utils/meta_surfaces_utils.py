@@ -580,7 +580,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = twoPi(node[0])
+        nd = twoPimod(node[0])
         d = abs(nd - Umax)
         if d < dmax:
             dmax = d

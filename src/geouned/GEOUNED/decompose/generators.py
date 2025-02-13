@@ -6,7 +6,6 @@ from ..utils.functions import (
     build_multip_params,
     build_can_params,
     build_roundC_params,
-    build_fwdcan_params,
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
@@ -206,42 +205,6 @@ def next_multiplanes(solidFaces, plane_index_set):
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)
                 yield mp
-
-
-def next_forwardCan(solid, canface_index):
-    """identify and return all can type in the solid."""
-
-    solidFaces = solid.Faces
-
-    cyl1_plane = []
-    for f in solidFaces:
-        if isinstance(f.Surface, CylinderGu):
-            if f.Index in canface_index:
-                continue
-            if f.Orientation == "Forward":
-                plane_list, cylinder = get_fwdcan_surfaces(f, solidFaces)
-                if plane_list == []:
-                    continue
-
-                if len(plane_list) == 1:
-                    cyl1_plane.append((plane_list, cylinder))
-                    continue
-
-                gd = GeounedSurface(("ForwardCan", build_fwdcan_params(plane_list, cylinder)))
-                canface_index.add(cylinder.Index)
-                for planes in plane_list:
-                    for p in planes:
-                        canface_index.add(p.Index)
-                yield gd
-
-    for plist, cyl in cyl1_plane:
-        gc = GeounedSurface(("ForwardCan", build_fwdcan_params(plist, cyl)))
-        canface_index.add(cyl.Index)
-        for p in plist[0]:
-            canface_index.add(p.Index)
-        yield gc
-
-    return None
 
 
 def next_Can(solid, canface_index):
