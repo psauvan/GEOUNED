@@ -26,11 +26,14 @@ from .cell_definition_functions import (
 logger = logging.getLogger("general_logger")
 
 
-def build_definition(meta_obj, Surfaces):
+def build_definition(meta_obj, Surfaces, simplifyComp=True):
 
     solid_definition = BoolSequence(operator="OR")
     for basic_solid in meta_obj.Solids:
         comp = simple_solid_definition(basic_solid, Surfaces)
+        if simplifyComp:
+            comp.expand_regions_to_boolVar()
+            comp.simplify()
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
 
