@@ -135,34 +135,27 @@ def get_adjacent_cylsurf(cyl, Faces):
         adjIndexes = set()
         surface = cyl.Faces[0].Surface
         for f in cyl.Faces:
-            adj = get_adjacent_cylsurfFace(f, Faces, checkOuter=False)
+            adj = get_adjacent_cylsurfFace(f, Faces)
             for af in adj:
-                if af[0].Surface.isSameSurface(surface):
+                if af.Surface.isSameSurface(surface):
                     continue
-                if af[0].Index not in adjIndexes:
-                    adjIndexes.add(af[0].Index)
+                if af.Index not in adjIndexes:
+                    adjIndexes.add(af.Index)
                     adjacent.append(af)
 
         if len(adjacent) > 2:
             adjacent = most_outer_faces(cyl, adjacent)
-
-        for f in adjacent:
-            if type(f[0].Surface) == CylinderGu:
-                edge = commonEdge(f[0], cyl, outer1_only=False, outer2_only=True)
-                if planar_edges(edge):
-                    f[1] = False
         return adjacent
 
     else:
         return get_adjacent_cylsurfFace(cyl, Faces)
 
 
-def get_adjacent_cylsurfFace(cyl, Faces, checkOuter=True):
+def get_adjacent_cylsurfFace(cyl, Faces):
     adjfaces = []
 
-    # for e in cyl.OuterWire.Edges:
     other_index = set()
-    for e in cyl.Edges:
+    for e in cyl.OuterWire.Edges:
 
         if isinstance(e.Curve, Part.Line):
             continue
@@ -172,19 +165,13 @@ def get_adjacent_cylsurfFace(cyl, Faces, checkOuter=True):
         if otherface.Index in other_index:
             continue
 
-        for ei in otherface.OuterWire.Edges:
-            if ei.isSame(e):
-                outer = True
-                break
-        else:
-            outer = False
         other_index.add(otherface.Index)
-        adjfaces.append([otherface, outer])
+        adjfaces.append(otherface)
 
     delindex = set()
     for i, s1 in enumerate(adjfaces):
         for j, s2 in enumerate(adjfaces[i + 1 :]):
-            if s1[0].isSame(s2[0]):
+            if s1.isSame(s2):
                 delindex.add(j + i + 1)
 
     delindex = list(delindex)
@@ -193,14 +180,6 @@ def get_adjacent_cylsurfFace(cyl, Faces, checkOuter=True):
     for i in delindex:
         del adjfaces[i]
 
-    if len(adjfaces) > 2 and checkOuter:
-        adjfaces = most_outer_faces(cyl, adjfaces)
-
-    for f in adjfaces:
-        if type(f[0].Surface) == CylinderGu:
-            edge = commonEdge(f[0], cyl, outer1_only=False, outer2_only=True)
-            if planar_edges(edge):
-                f[1] = False
     return adjfaces
 
 
@@ -254,7 +233,7 @@ def is_adjacent_cylinder(c1, c2):
 def is_closed_cylinder(shape):
     if type(shape) is not ShellGu:
         umin, umax, vmin, vmax = shape.ParameterRange
-        return twoPimod(umax - umin) == 0
+        return umax - umin > twoPi - 1e-5
 
     Urange = []
     for f in shape.Faces:
@@ -272,16 +251,18 @@ def is_closed_cylinder(shape):
     else:
         Umin0 = Umin
 
+    angle = Umax - Umin
     for umin, umax in Urange[1:]:
         if umax <= Umax:
             continue
         elif umin - Umax < 1e-5:
+            angle += umax - Umax
             Umax = umax
-            if umax - Umin0 > -1e-5:
+            if angle > twoPi - 1e-5:
                 return True
         else:
             return False
-    return "error"
+    return angle > twoPi - 1e-5
 
 
 def get_side_edges(cylinder_faces):
@@ -425,7 +406,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
 
     else:
         coneOnly = gen_cone(face)
-        apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
+        apexPlane = cone_apex_plane(face, Tolerances())
         cylcone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))
@@ -580,7 +561,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = twoPi(node[0])
+        nd = twoPimod(node[0])
         d = abs(nd - Umax)
         if d < dmax:
             dmax = d
@@ -769,7 +750,7 @@ def most_outer_faces(cyl, faces):
 
     dmin = dmax = abs(rmax - rmin)
     for f in faces:
-        d = cyl.Surface.Axis.dot(f[0].CenterOfMass - center)
+        d = cyl.Surface.Axis.dot(f.CenterOfMass - center)
         if abs(d - rmin) < dmin:
             fmin = f
             dmin = abs(d - rmin)
@@ -852,11 +833,13 @@ def region_sign(s1_in, s2, outAngle=False):
         s1 = s1_in
 
     e1 = Edges[0]
+    p0, p1 = e1.ParameterRange
+    pe1 = 0.5 * (p0 + p1)
+    pos = e1.valueAt(pe1)
 
     if isinstance(s1.Surface, PlaneGu):
         normal1 = s1.Surface.Axis if s1.Orientation == "Forward" else -s1.Surface.Axis
     else:
-        pos = e1.Vertexes[0].Point
         u, v = s1.Surface.face.Surface.parameter(pos)
         normal1 = s1.Surface.face.normalAt(u, v)
 
@@ -869,14 +852,11 @@ def region_sign(s1_in, s2, outAngle=False):
         else:
             umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
             arc = abs(umax - umin)
-            pos = e1.Vertexes[0].Point
             u, v = s2.Surface.face.Surface.parameter(pos)
             normal2 = s2.Surface.face.normalAt(u, v)
     else:
         arc = 0
-        pos = e1.Vertexes[0].Point
-        pe = e1.Curve.parameter(pos)
-        direction = e1.derivative1At(pe)
+        direction = e1.derivative1At(pe1)
         direction.normalize()
 
         u, v = s2.Surface.face.Surface.parameter(pos)
@@ -938,134 +918,6 @@ def closed_cylinder(cylinder, solidFaces):
     return cyl_shell, cyl_index, is_closed_cylinder(cyl_shell)
 
 
-def join_wires(wireList):
-    if len(wireList) == 0:
-        return None
-    elif len(wireList) == 1:
-        return wireList[0]
-    elif len(wireList) == 2:
-        merged = merge_two_wires(*wireList)
-        if not merged:
-            return wireList[0]
-        else:
-            return merged
-    else:
-        noneList = []
-        joined = False
-        w1 = wireList[0]
-        for w2 in wireList[1:]:
-            joined_W = merge_two_wires(w1, w2)
-            if joined_W is None:
-                noneList.append(w2)
-            else:
-                joined = True
-                w1 = joined_W
-
-        if joined and len(noneList) > 0:
-            noneList.insert(0, w1)
-            return join_wires(noneList)
-        else:
-            return w1
-
-
-def merge_two_wires(wire1, wire2):
-    if wire1.distToShape(wire2)[0] > 1e-5:
-        return None
-    cmon_vertexes = common_vertexes(wire1, wire2)
-    if len(cmon_vertexes[0]) == 0:
-        return None
-
-    parts1 = cut_wires(cmon_vertexes[0], wire1.OrderedEdges)
-    parts2 = cut_wires(cmon_vertexes[1], wire2.OrderedEdges)
-    joined = []
-    addSame = False
-    i = 0
-    for w1, w2 in zip(parts1, parts2):
-        if same_wire(w1, w2):
-            if not addSame and i != 0:
-                joined.extend(w1)
-                addSame = True
-        else:
-            joined.extend(w1 + w2)
-        i += 1
-    return Part.Wire(joined)
-
-
-def common_vertexes(w1, w2):
-    common1 = []
-    common2 = []
-    for v1 in w1.OrderedVertexes:
-        for v2 in w2.Vertexes:
-            d = v1.Point - v2.Point
-            if d.Length < 1e-6:
-                common1.append(v1)
-                common2.append(v2)
-    return (common1, common2)
-
-
-def cut_wires(cmon_vertexes, wire):
-    vertex_pos, increase = vertex_edge_index(cmon_vertexes, wire)
-    parts = []
-    nval = len(vertex_pos)
-    if increase:
-        for i0 in range(len(vertex_pos)):
-            i1 = (i0 + 1) % nval
-            e0 = max(vertex_pos[i0])
-            e1 = min(vertex_pos[i1])
-            if e0 <= e1:
-                if e1 + 1 == len(wire):
-                    parts.append(wire[e0:])
-                else:
-                    parts.append(wire[e0 : e1 + 1])
-            else:
-                parts.append(wire[e0:] + wire[0 : e1 + 1])
-    else:
-        for i0 in range(len(vertex_pos)):
-            i1 = (i0 + 1) % nval
-            e0 = max(vertex_pos[i1])
-            e1 = min(vertex_pos[i0])
-            if e0 <= e1:
-                if e1 + 1 == len(wire):
-                    parts.append(list(reversed(wire[e0:])))
-                else:
-                    parts.append(list(reversed(wire[e0 : e1 + 1])))
-            else:
-                parts.append(list(reversed(wire[0 : e1 + 1])) + list(reversed(wire[e0:])))
-    return parts
-
-
-def vertex_edge_index(cmon_vertexes, wireEdges):
-    position = []
-    for v in cmon_vertexes:
-        ind = []
-        for i, e in enumerate(wireEdges):
-            if v.isSame(e.Vertexes[0]) or v.isSame(e.Vertexes[1]):
-                ind.append(i)
-                if len(ind) == 2:
-                    break
-        position.append(ind)
-
-    seq = [x[0] for x in position]
-    vmin, vmax = min(seq), max(seq)
-    if seq[0] > seq[1]:
-        if seq[0] == vmax and seq[1] == vmin:
-            increase = True
-        else:
-            increase = False
-    else:
-        if seq[0] == vmin and seq[1] == vmax:
-            increase = False
-        else:
-            increase = True
-
-    for x in position:
-        if x[0] == 0:
-            if x[1] == len(wireEdges) - 1:
-                x[1] = -1
-            break
-    return position, increase
-
-
 def planar_edges(edges):
 
     e0 = edges[0]
@@ -1085,8 +937,8 @@ def planar_edges(edges):
         dir0 = e0.Curve.Axis
         center0 = e0.Curve.Center
     else:  # should be a line
-        dir0 = e0.Curve.direction
-        center0 = e0.Curve.location
+        dir0 = e0.Curve.Direction
+        center0 = e0.Curve.Location
 
     if len(edges) == 1:
         return True
@@ -1145,23 +997,6 @@ def spline_2D(edge):
         if abs(normal_k.dot(norm_0)) > Tolerances().value:
             return False
     return True
-
-
-def same_wire(w1, w2):
-    e1 = w1[0]
-    e2 = w2[0]
-    p1min, p1max = e1.ParameterRange
-    p1 = 0.5 * (p1min + p1max)
-    pos1 = e1.valueAt(p1)
-    v1 = Part.Vertex(pos1)
-    if e2.distToShape(v1)[0] < 1e-5:
-        return True
-    else:
-        p2min, p2max = e2.ParameterRange
-        p2 = 0.5 * (p2min + p2max)
-        pos2 = e2.valueAt(p2)
-        v2 = Part.Vertex(pos2)
-        return e1.distToShape(v2)[0] < 1e-5
 
 
 def twoPimod(x):

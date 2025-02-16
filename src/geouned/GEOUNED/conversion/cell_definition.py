@@ -99,7 +99,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, [], face.Orientation)))
+            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, []), face.Orientation))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
@@ -113,7 +113,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane, [], face.Orientation)))
+            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane, []), face.Orientation))
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 
@@ -125,7 +125,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            sphere = GeounedSurface(("Sphere", (sphereOnly, plane, face.Orientation)))
+            sphere = GeounedSurface(("Sphere", (sphereOnly, plane), face.Orientation))
             sphere_region = Surfaces.add_sphere(sphere)
             component_definition.append(sphere_region)
 
@@ -151,7 +151,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                     if not v_closed:
                         VSurface, surf_orientation = V_torus_surfaces(face, VminMax, Surfaces)
 
-                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, face.Orientation, surf_orientation)))
+                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, surf_orientation), face.Orientation))
                 torus_region = Surfaces.add_torus(torus)
                 component_definition.append(torus_region)
             else:

@@ -6,7 +6,6 @@ from ..utils.functions import (
     build_multip_params,
     build_can_params,
     build_roundC_params,
-    build_fwdcan_params,
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
@@ -50,10 +49,10 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
     for surface in cylinder_generator(solid_GU.Faces, omitfaces):
         yield surface
 
-    for surface in cone_generator(solid_GU.Faces):
+    for surface in cone_generator(solid_GU.Faces, omitfaces):
         yield surface
 
-    for surface in sphere_generator(solid_GU.Faces):
+    for surface in sphere_generator(solid_GU.Faces, omitfaces):
         yield surface
 
     for surface in torus_generator(solid_GU.Faces):
@@ -92,31 +91,26 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
         #            yield plane
 
         #        elif surf == "<Cylinder object>":
-        if surf == "<Cylinder object>":
-            for p in cyl_bound_planes(GUFaces, face):
-                yield p
 
-        elif surf == "<Cone object>":
-            for p in cyl_bound_planes(GUFaces, face):
-                yield p
+        # All boundary cutting planes should be verified if needed really
 
-        elif surf[0:6] == "Sphere":
-            for p in cyl_bound_planes(GUFaces, face):
-                yield p
+        #    if surf == "<Cylinder object>":
+        #        for p in cyl_bound_planes(GUFaces, face):
+        #            yield p
 
-        elif surf == "<Toroid object>":
+        #    elif surf == "<Cone object>":
+        #        for p in cyl_bound_planes(GUFaces, face):
+        #            yield p
+
+        #    elif surf[0:6] == "Sphere":
+        #        for p in cyl_bound_planes(GUFaces, face):
+        #            yield p
+
+        #    elif surf == "<Toroid object>":
+
+        if surf == "<Toroid object>":
             for p in torus_bound_planes(GUFaces, face, tolerances):
                 yield p
-
-        elif surf == "<Plane object>" and False:  # plane3pts part to be removed properly
-            pos = face.CenterOfMass
-            normal = face.Surface.Axis
-            dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-            dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-            points = tuple(v.Point for v in face.Vertexes)
-
-            plane = GeounedSurface(("Plane3Pts", (pos, normal, dim1, dim2, points)))
-            yield p
 
 
 def cylinder_generator(GUFaces, omitfaces):
@@ -135,8 +129,10 @@ def cylinder_generator(GUFaces, omitfaces):
         yield cylinder
 
 
-def cone_generator(GUFaces):
+def cone_generator(GUFaces, omitfaces):
     for face in GUFaces:
+        if face.Index in omitfaces:
+            continue
         surf = str(face.Surface)
         if surf != "<Cone object>":
             continue
@@ -149,8 +145,10 @@ def cone_generator(GUFaces):
         yield cone
 
 
-def sphere_generator(GUFaces):
+def sphere_generator(GUFaces, omitfaces):
     for face in GUFaces:
+        if face.Index in omitfaces:
+            continue
         surf = str(face.Surface)
         if surf[0:6] != "Sphere":
             continue
@@ -206,42 +204,6 @@ def next_multiplanes(solidFaces, plane_index_set):
                     plane_index_set.add(pp.Index)
                 multiplane_list.append(mplanes)
                 yield mp
-
-
-def next_forwardCan(solid, canface_index):
-    """identify and return all can type in the solid."""
-
-    solidFaces = solid.Faces
-
-    cyl1_plane = []
-    for f in solidFaces:
-        if isinstance(f.Surface, CylinderGu):
-            if f.Index in canface_index:
-                continue
-            if f.Orientation == "Forward":
-                plane_list, cylinder = get_fwdcan_surfaces(f, solidFaces)
-                if plane_list == []:
-                    continue
-
-                if len(plane_list) == 1:
-                    cyl1_plane.append((plane_list, cylinder))
-                    continue
-
-                gd = GeounedSurface(("ForwardCan", build_fwdcan_params(plane_list, cylinder)))
-                canface_index.add(cylinder.Index)
-                for planes in plane_list:
-                    for p in planes:
-                        canface_index.add(p.Index)
-                yield gd
-
-    for plist, cyl in cyl1_plane:
-        gc = GeounedSurface(("ForwardCan", build_fwdcan_params(plist, cyl)))
-        canface_index.add(cyl.Index)
-        for p in plist[0]:
-            canface_index.add(p.Index)
-        yield gc
-
-    return None
 
 
 def next_Can(solid, canface_index):
