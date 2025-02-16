@@ -82,33 +82,19 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
             continue
         surf = str(face.Surface)
 
-        #        if surf == "<Plane object>" and not plane3Pts:
-        #            normal = face.Surface.Axis
-        #            pos = face.CenterOfMass
-        #            dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-        #            dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-        #            plane = GeounedSurface(("Plane", (pos, normal, dim1, dim2)))
-        #            yield plane
+        if surf == "<Cylinder object>":
+            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+                yield p
 
-        #        elif surf == "<Cylinder object>":
+        elif surf == "<Cone object>":
+            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+                yield p
 
-        # All boundary cutting planes should be verified if needed really
+        elif surf[0:6] == "Sphere":
+            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+                yield p
 
-        #    if surf == "<Cylinder object>":
-        #        for p in cyl_bound_planes(GUFaces, face):
-        #            yield p
-
-        #    elif surf == "<Cone object>":
-        #        for p in cyl_bound_planes(GUFaces, face):
-        #            yield p
-
-        #    elif surf[0:6] == "Sphere":
-        #        for p in cyl_bound_planes(GUFaces, face):
-        #            yield p
-
-        #    elif surf == "<Toroid object>":
-
-        if surf == "<Toroid object>":
+        elif surf == "<Toroid object>":
             for p in torus_bound_planes(GUFaces, face, tolerances):
                 yield p
 

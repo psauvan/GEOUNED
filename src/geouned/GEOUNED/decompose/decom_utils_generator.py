@@ -9,14 +9,13 @@ import numpy
 import FreeCAD
 import Part
 
-from ..utils.data_classes import Tolerances
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import PlaneGu, TorusGu, other_face_edge
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
 )
-from ..utils.meta_surfaces_utils import region_sign, spline_2D, spline_1D
+from ..utils.meta_surfaces_utils import region_sign, planar_edges
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
@@ -118,15 +117,19 @@ def torus_bound_planes(solidFaces, face, tolerances):
     return planes
 
 
-def cyl_bound_planes(solidFaces, face, Edges=None):
+def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
 
     if Edges is None:
         Edges = face.OuterWire.Edges
     planes = []
 
     for e in Edges:
+        if not planar_edges([e]):
+            continue
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
+            if type(adjacent_face.Surface) is PlaneGu and adjacent_face.Index in omitfaces:
+                continue
             if type(adjacent_face.Surface) is TorusGu:
                 continue  # doesn't create plane if other face is a torus
             if face.Surface.isSameSurface(adjacent_face.Surface):
@@ -134,7 +137,8 @@ def cyl_bound_planes(solidFaces, face, Edges=None):
             plane = cyl_edge_plane(face, [e])
             if plane is not None:
                 planes.append(plane)
-
+    if len(planes) > 2 and type(face) is not Part.Sphere:
+        planes = most_outer_planes(face.Surface.Axis, planes)
     return planes
 
 
@@ -439,3 +443,19 @@ def projection(edge, axis):
                 return p0, pmin
         else:
             return pmin, pmax
+
+
+def most_outer_planes(axis, planes):
+
+    if len(planes) < 3:
+        return planes
+
+    distances = []
+    for i, p in enumerate(planes):
+        proj = axis.dot(p.Surf.Position)
+        distances.append((proj, i))
+
+    distances.sort()
+    i0 = distances[0][1]
+    i1 = distances[-1][1]
+    return (planes[i0], planes[i1])

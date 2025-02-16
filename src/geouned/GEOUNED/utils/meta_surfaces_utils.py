@@ -933,7 +933,7 @@ def planar_edges(edges):
             center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
         else:
             return False
-    elif isinstance(e0.Curve, (Part.Circle, Part.Ellipse)):
+    elif isinstance(e0.Curve, (Part.Circle, Part.Ellipse, Part.Hyperbola, Part.Parabola)):
         dir0 = e0.Curve.Axis
         center0 = e0.Curve.Center
     else:  # should be a line
