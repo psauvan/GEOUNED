@@ -38,8 +38,13 @@ def generic_split(solid, options, tolerances):
             logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
 
         if not comsolid.Solids:
-            comsolid = solid
-        cleaned = remove_solids(comsolid.Solids)
+            cleaned = solid.Solids
+        elif comsolid.Volume == 0:
+            cleaned = solid.Solids
+        elif len(comsolid.Solids) == 1:
+            cleaned = [solid]
+        else:
+            cleaned = remove_solids(comsolid.Solids, solid.Volume)
         if len(cleaned) > 1:
             new_split = True
             break

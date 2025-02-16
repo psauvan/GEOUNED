@@ -10,6 +10,7 @@ from .meta_surfaces_utils import (
     get_adjacent_cylsurf,
     get_join_cone_cyl,
     closed_cylinder,
+    most_outer_faces,
 )
 
 twoPi = 2 * math.pi
@@ -89,14 +90,21 @@ def get_can_surfaces(cylinder, solidFaces):
         return None, None
 
     ext_faces = get_adjacent_cylsurf(cylinder_shell, solidFaces)
-
     surfaces = [cylinder_shell]
+    cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
-    for s, outer in ext_faces:
+    for s in ext_faces:
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))
-        if outer:  # current face is edge is an outer edge of the adjacent face
-            faceindex.add(s.Index)
+        s_value = 1 if r == "AND" else -1
+        if s_value != cyl_value:
+            faceindex.add(s.Index)  # will not split with adjacent surface
+
+    if len(ext_faces) > 2:
+        ext_faces = most_outer_faces(cylinder, ext_faces)
+        for s in reversed(surfaces[1:]):
+            if s[0] not in ext_faces:
+                surfaces.remove(s)
 
     return surfaces, faceindex
 

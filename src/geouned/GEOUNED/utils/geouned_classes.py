@@ -257,7 +257,7 @@ class GeounedSurface:
             self.Surf = ReversedConeCylParams(params[1])
             self.Orientation = "Reversed"
         else:
-            print(f"type {param[0]} not found")
+            print(f"type {params[0]} not found")
 
         self.shape = Face
 
@@ -279,7 +279,7 @@ class GeounedSurface:
             tan = math.tan(kne.Surf.SemiAngle)
             self.shape = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
 
-        elif self.Type == "Sphere" or self.Type == "Sphere Only":
+        elif self.Type == "Sphere" or self.Type == "SphereOnly":
             sph = self.Surf.Sphere if self.Type == "Sphere" else self
             rad = sph.Surf.Radius
             pnt = sph.Surf.Center
@@ -421,7 +421,7 @@ class MetaSurfacesDict(dict):
 
         return newregion
 
-    def add_cylinder(self, cylinder, fuzzy=False): 
+    def add_cylinder(self, cylinder, fuzzy=False):
         cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder)
         if cylinder.Orientation == "Forward":
             cid = -cid
@@ -626,17 +626,19 @@ class MetaSurfacesDict(dict):
                 pid = -pid
 
         if cs is None:
-            if reverseCan.Surf.s1_configuration == "AND" :
-            reverseCan_region = reverseCan_region + BoolRegion(0, pid)
+            reverseCan_region = reverseCan_region + BoolRegion(0, -pid)
         else:
             sid, exist = self.primitive_surfaces.add_surface(reverseCan.Surf.s1, True)
             if reverseCan.Surf.s1.Orientation == "Forward":
-                if reverseCan.Surf.s1_configuration == "AND" :
+                if reverseCan.Surf.s1_configuration == "AND":
                     reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) * BoolRegion(0, sid))
                 else:
-                    reverseCan_region = reverseCan_region + (BoolRegion(0, pid) + BoolRegion(0, -sid))
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) + BoolRegion(0, -sid))
             else:
-                reverseCan_region = reverseCan_region + (BoolRegion(0, pid) * BoolRegion(0, sid))
+                if reverseCan.Surf.s1_configuration == "AND":
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) + BoolRegion(0, -sid))
+                else:
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) * BoolRegion(0, sid))
 
         if reverseCan.Surf.s2.Type == "Plane":
             cp = reverseCan.Surf.s2
@@ -652,17 +654,19 @@ class MetaSurfacesDict(dict):
                 pid = -pid
 
         if cs is None:
-            reverseCan_region = reverseCan_region + BoolRegion(0, pid)
+            reverseCan_region = reverseCan_region + BoolRegion(0, -pid)
         else:
             sid, exist = self.primitive_surfaces.add_surface(reverseCan.Surf.s2, True)
             if reverseCan.Surf.s2.Orientation == "Forward":
-                if reverseCan.Surf.s2_configuration == "AND" :
+                if reverseCan.Surf.s2_configuration == "AND":
                     reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) * BoolRegion(0, sid))
                 else:
-                    reverseCan_region = reverseCan_region + (BoolRegion(0, pid) + BoolRegion(0, -sid))
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) + BoolRegion(0, -sid))
             else:
-                reverseCan_region = reverseCan_region + (BoolRegion(0, pid) * BoolRegion(0, sid))
-
+                if reverseCan.Surf.s2_configuration == "AND":
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) + BoolRegion(0, -sid))
+                else:
+                    reverseCan_region = reverseCan_region + (BoolRegion(0, -pid) * BoolRegion(0, sid))
         add_can = True
         for cs_region in self["RevCan"]:
             boundary = reverseCan_region.isSameInterface(cs_region)

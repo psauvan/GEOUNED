@@ -184,7 +184,7 @@ def set_graveyard_cell(Surfaces, UniverseBox, options, tolerances, numeric_forma
     externalBox = get_universe_complementary(Universe, Surfaces, options, tolerances, numeric_format)
     center = UniverseBox.Center
     radius = 0.51 * UniverseBox.DiagonalLength
-    sphere = GeounedSurface(("Sphere", (GeounedSurface(("SphereOnly", (center, radius))), None, "Forward")))
+    sphere = GeounedSurface(("Sphere", (GeounedSurface(("SphereOnly", (center, radius))), None), "Forward"))
     sph_region = Surfaces.add_sphere(sphere)
 
     sphdef = BoolSequence(operator="AND")

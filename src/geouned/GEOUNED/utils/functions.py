@@ -15,7 +15,7 @@ from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
 from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges
 from ..decompose.decom_utils_generator import cyl_edge_plane
-from ..conversion.cell_definition_functions import  cone_apex_plane
+from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
 
 
@@ -254,12 +254,16 @@ def build_can_params(cs):
     shell = type(cyl_in) is ShellGu
     if not shell:
         cyl = cyl_in
+    else:
+        cyl = cyl_in.Faces[0]
 
     bsurf = []
     for s, r in (sr1, sr2):
 
         if type(s.Surface) is PlaneGu:
             normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
+            if r == "OR":
+                normal = -normal  # plane axis toward cylinder center
             gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
             pa = None
 
@@ -269,12 +273,12 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            if planar_edges(edges):
+            if planar_edges(edges) and False:
                 gs = cyl_edge_plane(cyl, edges)
             else:
                 cylOnly = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
                 pa = cyl_edge_plane(cyl, edges)
-                gs = GeounedSurface(("Cylinder",(cylOnly,pa,None),s.Orientation))
+                gs = GeounedSurface(("Cylinder", (cylOnly, pa, None), s.Orientation))
 
         elif type(s.Surface) is ConeGu:
             if shell:
@@ -282,13 +286,13 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            if planar_edges(edges):
+            if planar_edges(edges) and False:
                 gs = cyl_edge_plane(cyl, edges)
             else:
                 coneOnly = GeounedSurface(("ConeOnly", (s.Surface.Apex, s.Surface.Axis, s.Surface.SemiAngle, 1.0, 1.0)))
                 pa = cyl_edge_plane(cyl, edges)
                 apexPlane = cone_apex_plane(s, Tolerances())
-                gs = GeounedSurface(("Cone",(coneOnly,apexPlane,pa,None),s.Orientation))
+                gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa, None), s.Orientation))
 
         elif type(s.Surface) is SphereGu:
             if shell:
@@ -299,12 +303,12 @@ def build_can_params(cs):
             edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             sphOnly = GeounedSurface(("SphereOnly", (s.Surface.Center, s.Surface.Radius)))
             pa = cyl_edge_plane(cyl, edges)
-            gs = GeounedSurface(("Sphere", (sphOnly,pa),s.Orientation))
+            gs = GeounedSurface(("Sphere", (sphOnly, pa), s.Orientation))
 
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-    gcyl = GeounedSurface(("Cylinder", (cylOnly,None,None),cyl.Orientation))
+    gcyl = GeounedSurface(("Cylinder", (cylOnly, None, None), cyl.Orientation))
 
     return (gcyl, bsurf[0], bsurf[1])
 

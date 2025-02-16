@@ -249,7 +249,6 @@ class SphereParams:
     def __init__(self, params):
         self.Sphere = params[0]
         self.Plane = params[1]
-        self.Orientation = params[2]
 
     def __str__(self):
         outstr = f"""Sphere :\n"""
@@ -296,4 +295,3 @@ class TorusParams:
         self.UPlanes = params[1]
         self.VSurface = params[2]
         self.SOrientation = params[3]
-

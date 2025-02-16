@@ -164,7 +164,7 @@ def makeCan(can, box):
     can.Cylinder.build_surface(box)
     can.s1.build_surface(box)
     can.s2.build_surface(box)
-    return  makeCylinderCan(can)
+    return makeCylinderCan(can)
 
     if can.s1.Type == "Plane":
         scnd1 = False
@@ -218,17 +218,33 @@ def makeCylinderCan(can):
 
     options = Options()
     comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
-    for solid in comsolid.Solids:
+
+    surfcheck = []
+    if s1.Type == "Plane":
+        surfcheck.append((s1, 1))
+    else:
         sO = 1 if s1.Orientation == "Reversed" else -1
         sC = 1 if can.s1_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
-        if ss != check_sign(solid, s1):
-            continue
+        surfcheck.append((s1, ss))
+        if s1.Surf.Plane is not None:
+            surfcheck.append((s1.Surf.Plane, 1))
 
+    if s2.Type == "Plane":
+        surfcheck.append((s2, 1))
+    else:
         sO = 1 if s2.Orientation == "Reversed" else -1
         sC = 1 if can.s2_configuration == "AND" else -1
         ss = 1 if sO == sC else -1
-        if ss == check_sign(solid, s2):
+        surfcheck.append((s2, ss))
+        if s2.Surf.Plane is not None:
+            surfcheck.append((s2.Surf.Plane, 1))
+
+    for solid in comsolid.Solids:
+        for si, ss in surfcheck:
+            if ss != check_sign(solid, si):
+                break
+        else:
             return solid
 
 
@@ -407,6 +423,7 @@ def fix_points(point_plane_list: list, vertex_list: list):
                 if r.Length < tol:
                     planepts[i] = v.Point
 
+
 def point_inside(solid):
 
     point = solid.CenterOfMass
@@ -508,7 +525,7 @@ def check_sign(solid, surf):
         cyl = surf.Surf.Cylinder.Surf
         r = point - cyl.Center
         L2 = r.Length * r.Length
-        z = cyl.dot(r)
+        z = cyl.Axis.dot(r)
         z2 = z * z
         R2 = cyl.Radius * cyl.Radius
         if L2 - z2 > R2:
