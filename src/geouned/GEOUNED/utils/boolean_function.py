@@ -94,6 +94,20 @@ class BoolVariable(int):
         else:
             self.__reference__ = value
 
+    def __hash__(self):
+        return hash(self.__int__())
+
+    def __eq__(self, BV):
+        if type(self) != type(BV):
+            return False
+        return self.__int__() == BV.__int__()
+
+    def __abs__(self):
+        if self.__int__() >= 0:
+            return self
+        else:
+            return -self
+
     def __neg__(self):
         return BoolVariable(-self.__int__(), self.__reference__)
 
@@ -131,6 +145,9 @@ class BoolRegion(int):
         line = f"region {self.__int__():2d} : "
         defline = self.region.__str__()
         return line + defline
+
+    def __hash__(self):
+        return hash(self.__int__())
 
     def __neg__(self):
         if self.level == 0:
@@ -219,7 +236,7 @@ class BoolRegion(int):
 
     def get_surfaces_numbers(self):
         if type(self.region) is BoolVariable:
-            return (abs(self.region.__int__()),)
+            return (abs(self.region),)
         else:
             return self.region.get_surfaces_numbers()
 
@@ -230,6 +247,28 @@ class BoolRegion(int):
             return self.region.to_integer()
 
     def isSameInterface(self, region2):
+        if type(region2) is BoolVariable:
+            if self.level > 0:
+                return 0
+            elif len(self.surfaces) == 1:
+                if type(self.region) is BoolVariable:
+                    if self.region.value() == region2.value():
+                        return 1
+                    elif self.region.value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+                else:
+                    if self.region.elements[0].value() == region2.value():
+                        return 1
+                    elif self.region.elements[0].value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+
+            else:
+                return 0
+
         if self.level != region2.level:
             return 0
         if len(self.surfaces) != len(region2.surfaces):
@@ -549,7 +588,7 @@ class BoolSequence:
             self.clean()
             return
 
-        surf_names = self.get_regions()
+        surf_names = self.get_surfaces_numbers()
         if not surf_names:
             return
 
@@ -558,17 +597,17 @@ class BoolSequence:
             if val_name in newNames:
 
                 if CT is None:
-                    true_set = {val_name.__int__(): True}
-                    false_set = {val_name.__int__(): False}
+                    true_set = {val_name: True}
+                    false_set = {val_name: False}
                 else:
                     true_set, false_set = CT.get_constraint_set(val_name)
 
-                if not self.do_factorize(val_name.__int__(), true_set, false_set):
+                if not self.do_factorize(val_name, true_set, false_set):
                     continue
                 self.factorize(val_name, true_set, false_set)
                 if type(self.elements) is bool:
                     return
-                newNames = self.get_regions()
+                newNames = self.get_surfaces_numbers()
 
     def do_factorize(self, val_name, true_set, false_set):
         """For level 0 sequence check if the factorization would lead to a simplification."""
@@ -589,8 +628,8 @@ class BoolSequence:
 
         value = None
         for val in self.elements:
-            if abs(val.__int__()) == val_name:
-                value = val.__int__()
+            if abs(val) == val_name:
+                value = val
                 break
 
         if value is None:
@@ -625,26 +664,8 @@ class BoolSequence:
         if type(self.elements) is bool:
             return self.elements
         if self.level == 0:
-            if self.base_type == int:
-                signed_surf = set(self.elements)
-                self.elements = list(signed_surf)
-            else:
-                signed_surf_list = self.elements
-                signed_surf_set = set([x.__int__() for x in self.elements])
-                ndel = len(signed_surf_list) - len(signed_surf_set)
-                if ndel > 0:
-                    ic = 0
-                    for _ in range(ndel):
-                        for ic1, x in enumerate(signed_surf_list[ic:]):
-                            nx = signed_surf_list.count(x)
-                            if nx > 1:
-                                ind = signed_surf_list.index(x)
-                                del signed_surf_list[ind]
-                                ic += ic1
-                                break
-                    signed_surf = set([x.__int__() for x in self.elements])
-                else:
-                    signed_surf = signed_surf_set
+            signed_surf = set(self.elements)
+            self.elements = list(signed_surf)
 
             surf_name = self.get_surfaces_numbers()
             if len(signed_surf) == len(surf_name):
@@ -1022,45 +1043,37 @@ class BoolSequence:
         seq.level = 0
         self.elements.insert(0, seq)
 
-    def get_surfaces_numbers(self, expand=False):
+    def get_surfaces_numbers(self):
         """Return the list of all surfaces in the BoolSequence definition."""
         if type(self.elements) is bool:
-            return tuple()
-        surf = set()
+            return set()
+
+        if self.base_type is BoolRegion:
+            return self.get_regions()
+
+        surfSet = set()
         for e in self.elements:
-            if type(e) is int:
-                surf.add(abs(e))
-            elif type(e) is BoolRegion:
-                if expand:
-                    surf.update(e.surfaces)
-                else:
-                    surf.add(abs(e.__int__()))
-            elif type(e) is BoolVariable:
-                surf.add(abs(e.__int__()))
+            if isinstance(e, int):  # include int and BoolVariable
+                surfSet.add(abs(e))
             else:
-                surf.update(e.get_surfaces_numbers(expand=expand))
-        return surf
+                surfSet.update(e.get_surfaces_numbers())
+        return surfSet
 
     def get_regions(self):
         """Return the list of all regions in the BoolSequence definition."""
+        if self.base_type is not BoolRegion:
+            return set()
         if type(self.elements) is bool:
-            return tuple()
+            return set()
         if self.base_type == int:
-            return tuple()
+            return set()
 
-        surf = []
-        regions = []
+        regions = set()
         for e in self.elements:
             if type(e) is BoolRegion:
-                if abs(e.__int__()) not in surf:
-                    regions.append(abs(e))
-                    surf.append(abs(e.__int__()))
+                regions.add(abs(e))
             elif type(e) is BoolSequence:
-                newregions = e.get_regions()
-                for e in newregions:
-                    if abs(e.__int__()) not in surf:
-                        regions.append(abs(e))
-                        surf.append(abs(e.__int__()))
+                regions.update(e.get_regions())
         return regions
 
     def level_update(self):

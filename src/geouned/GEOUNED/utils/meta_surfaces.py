@@ -3,7 +3,15 @@ import math
 
 from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
-from .meta_surfaces_utils import other_face_edge, region_sign, get_adjacent_cylplane, get_join_cone_cyl
+from .geometry_gu import PlaneGu, other_face_edge
+from .meta_surfaces_utils import (
+    region_sign,
+    get_adjacent_cylplane,
+    get_adjacent_cylsurf,
+    get_join_cone_cyl,
+    closed_cylinder,
+    most_outer_faces,
+)
 
 twoPi = 2 * math.pi
 halfPi = 0.5 * math.pi
@@ -76,32 +84,29 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         return [], None
 
 
-def get_revcan_surfaces(cylinder, solidFaces):
-    adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
-    if len(adjacent_planes) not in (1, 2):
+def get_can_surfaces(cylinder, solidFaces):
+    cylinder_shell, faceindex, closed = closed_cylinder(cylinder, solidFaces)
+    if not closed:
         return None, None
 
-    surfaces = []
-    faceindex = set()
-    p1 = adjacent_planes[0]
-    r1 = region_sign(p1, cylinder)
-    if r1 == "OR":
-        surfaces.append(p1)
-        faceindex.add(p1.Index)
+    ext_faces = get_adjacent_cylsurf(cylinder_shell, solidFaces)
+    surfaces = [cylinder_shell]
+    cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
-    if len(adjacent_planes) == 2:
-        p2 = adjacent_planes[1]
-        r2 = region_sign(p2, cylinder)
-        if r2 == "OR":
-            surfaces.append(p2)
-            faceindex.add(p2.Index)
+    for s in ext_faces:
+        r = region_sign(cylinder_shell, s)
+        surfaces.append((s, r))
+        s_value = 1 if r == "AND" else -1
+        if s_value != cyl_value:
+            faceindex.add(s.Index)  # will not split with adjacent surface
 
-    if len(surfaces) > 0:
-        surfaces.append(cylinder)
-        faceindex.add(cylinder.Index)
-        return surfaces, faceindex
-    else:
-        return None, None
+    if len(ext_faces) > 2:
+        ext_faces = most_outer_faces(cylinder, ext_faces)
+        for s in reversed(surfaces[1:]):
+            if s[0] not in ext_faces:
+                surfaces.remove(s)
+
+    return surfaces, faceindex
 
 
 def get_roundcorner_surfaces(cylinder, Faces):
@@ -113,9 +118,10 @@ def get_roundcorner_surfaces(cylinder, Faces):
     p1, p2 = adjacent_planes
     r1, a1 = region_sign(p1, cylinder, outAngle=True)
     r2, a2 = region_sign(p2, cylinder, outAngle=True)
+
     if r1 != r2 or r1 == "OR":
         return None, None
-    if a1 < halfPi + 0.1 or a2 < halfPi + 0.1:
+    if abs(a1 - math.pi) > 0.1 or abs(a2 - math.pi) > 0.1:
         return None, None
 
     face_index = {cylinder.Index, p1.Index, p2.Index}
@@ -124,4 +130,4 @@ def get_roundcorner_surfaces(cylinder, Faces):
 
 
 def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
-    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, Tolerances())
+    return get_join_cone_cyl(face, -1, Faces, multifaces, omitFaces, Tolerances())

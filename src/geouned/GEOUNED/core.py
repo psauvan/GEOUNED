@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 from .code_version import *
 from .conversion import cell_definition as Conv
-from .cuboid.translate import translate
 
 # from .decompose.decom_one import main_split
 from .decompose.decom_one_generators import main_split

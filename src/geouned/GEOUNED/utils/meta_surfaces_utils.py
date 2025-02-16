@@ -5,40 +5,22 @@ import numpy
 
 from collections import OrderedDict
 
-from .geometry_gu import PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu
+from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu, other_face_edge
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
-from ..utils.basic_functions_part1 import is_in_line
+from ..utils.basic_functions_part1 import is_in_line, is_parallel
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 
 twoPi = 2 * math.pi
 
 
 class reversedCCP:
-    def __init__(self, surf):
-        self.Type = type(surf)
-        self.surf_index = set()
-        self.Surf = surf
-
-
-def no_convex_full(mplane_list):
-    """keep planes only all planes are no convex each other"""
-    planes = mplane_list[:]
-    for p in planes:
-        Edges = p.OuterWire.Edges
-        for e in Edges:
-            try:
-                type_curve = type(e.Curve)
-            except:
-                type_curve = None
-            if type_curve is not Part.Line:
-                continue
-            adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
-            if adjacent_plane is not None:
-                sign = region_sign(p, adjacent_plane)
-                if sign == "AND":
-                    return False
-    return True
+    def __init__(self, surfType, params):
+        self.Type = surfType
+        self.Surf_index = set()
+        self.Params = params
+        self.Connections = []
+        self.Index = None
 
 
 def remove_twice_parallel(mplanes):
@@ -87,27 +69,6 @@ def remove_twice_parallel(mplanes):
             mplanes.remove(p)
 
 
-def no_convex(mplane_list):
-    """keep part of no complex plane set"""
-    planes = mplane_list[:]
-    while len(planes) > 1:
-        p = planes.pop()
-        Edges = p.OuterWire.Edges
-        for e in Edges:
-            try:
-                type_curve = type(e.Curve)
-            except:
-                type_curve = None
-            if type_curve is not Part.Line:
-                continue
-            adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
-            if adjacent_plane is not None:
-                sign = region_sign(p, adjacent_plane)
-                if sign == "AND":
-                    return False
-    return True
-
-
 def convex_wire(p):
     Edges = p.OuterWire.Edges
     for e in Edges:
@@ -128,105 +89,6 @@ def convex_wire(p):
         v0 = v1
 
     return Edges
-
-
-def region_sign(p1, s2, outAngle=False):
-    normal1 = p1.Surface.Axis
-    e1 = commonEdge(p1, s2, outer_only=False)
-
-    if isinstance(e1.Curve, Part.Line):
-        direction = e1.Curve.Direction
-
-        if isinstance(s2.Surface, PlaneGu):
-            arc = 0
-            normal2 = s2.Surface.Axis
-            if s2.Orientation == "Reversed":
-                normal2 = -normal2
-        else:
-            umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
-            arc = abs(umax - umin)
-            pos = e1.Vertexes[0].Point
-            u, v = u, v = s2.Surface.face.Surface.parameter(pos)
-
-            normal2 = s2.Surface.face.normalAt(u, v)
-    else:
-        arc = 0
-        pos = e1.Vertexes[0].Point
-        pe = e1.Curve.parameter(pos)
-        direction = e1.derivative1At(pe)
-        direction.normalize()
-
-        u, v = s2.Surface.face.Surface.parameter(pos)
-        normal2 = s2.Surface.face.normalAt(u, v)
-
-    vect = direction.cross(normal1)
-    dprod = vect.dot(normal2)
-    if abs(dprod) < 1e-4:
-        operator = "AND" if abs(dprod) < arc else "OR"
-        if outAngle:
-            return operator, angle(normal1, normal2, operator)
-        else:
-            return operator
-
-    else:
-        if p1.Orientation != e1.Orientation:
-            dprod = -dprod
-        operator = "OR" if dprod < 0 else "AND"
-        if outAngle:
-            return operator, angle(normal1, normal2, operator)
-        else:
-            return operator
-
-
-def angle(v1, v2, operator):
-    d = v1.dot(v2) / (v1.Length * v2.Length)
-    a = math.acos(max(-1, min(1, d)))
-    if operator == "AND":
-        return math.pi - a
-    else:
-        return math.pi + a
-
-
-def other_face_edge(current_edge, current_face, Faces, outer_only=False):
-    for face in Faces:
-        if face.Index == current_face.Index:
-            continue
-
-        Edges = face.OuterWire.Edges if outer_only else face.Edges
-        for edge in Edges:
-            if current_edge.isSame(edge):
-                return face
-
-
-def commonVertex(e1, e2):
-    if e1.distToShape(e2)[0] > 0:
-        return []
-
-    common = []
-    if e1.Vertexes[0].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[0])
-    elif e1.Vertexes[0].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[0])
-
-    if e1.Vertexes[1].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[1])
-    elif e1.Vertexes[1].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[1])
-
-    return common
-
-
-def commonEdge(face1, face2, outer_only=True):
-    if face1.distToShape(face2)[0] > 0:
-        return None
-
-    Edges1 = face1.OuterWire.Edges if outer_only else face1.Edges
-    Edges2 = face2.OuterWire.Edges if outer_only else face2.Edges
-    for e1 in Edges1:
-        for e2 in Edges2:
-            if e1.isSame(e2):
-                return e1
-    return None
 
 
 def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
@@ -265,6 +127,60 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         del planes[i]
 
     return planes
+
+
+def get_adjacent_cylsurf(cyl, Faces):
+    if type(cyl) is ShellGu:
+        adjacent = []
+        adjIndexes = set()
+        surface = cyl.Faces[0].Surface
+        for f in cyl.Faces:
+            adj = get_adjacent_cylsurfFace(f, Faces)
+            for af in adj:
+                if af.Surface.isSameSurface(surface):
+                    continue
+                if af.Index not in adjIndexes:
+                    adjIndexes.add(af.Index)
+                    adjacent.append(af)
+
+        if len(adjacent) > 2:
+            adjacent = most_outer_faces(cyl, adjacent)
+        return adjacent
+
+    else:
+        return get_adjacent_cylsurfFace(cyl, Faces)
+
+
+def get_adjacent_cylsurfFace(cyl, Faces):
+    adjfaces = []
+
+    other_index = set()
+    for e in cyl.OuterWire.Edges:
+
+        if isinstance(e.Curve, Part.Line):
+            continue
+        otherface = other_face_edge(e, cyl, Faces, outer_only=False)
+        if otherface is None:
+            continue
+        if otherface.Index in other_index:
+            continue
+
+        other_index.add(otherface.Index)
+        adjfaces.append(otherface)
+
+    delindex = set()
+    for i, s1 in enumerate(adjfaces):
+        for j, s2 in enumerate(adjfaces[i + 1 :]):
+            if s1.isSame(s2):
+                delindex.add(j + i + 1)
+
+    delindex = list(delindex)
+    delindex.sort()
+    delindex.reverse()
+    for i in delindex:
+        del adjfaces[i]
+
+    return adjfaces
 
 
 def get_adjacent_cylinder_faces(cylinder, Faces):
@@ -314,14 +230,39 @@ def is_adjacent_cylinder(c1, c2):
     return False
 
 
-def is_closed_cylinder(face_list):
+def is_closed_cylinder(shape):
+    if type(shape) is not ShellGu:
+        umin, umax, vmin, vmax = shape.ParameterRange
+        return umax - umin > twoPi - 1e-5
 
-    Umin, Umax, vmin, vmax = face_list[0].ParameterRange
-    for f in face_list[1:]:
+    Urange = []
+    for f in shape.Faces:
         umin, umax, vmin, vmax = f.ParameterRange
-        Umin = min(Umin, umin)
-        Umax = min(Umax, umax)
-    return abs(Umax - Umin) % twoPi < 1e-3
+        umin, umax = twoPimod(umin), twoPimod(umax)
+        if umin > umax:
+            Urange.append((umin - twoPi, umax))
+        else:
+            Urange.append((umin, umax))
+
+    Urange.sort()
+    Umin, Umax = Urange[0]
+    if Umin < 0:
+        Umin0 = Umin + twoPi
+    else:
+        Umin0 = Umin
+
+    angle = Umax - Umin
+    for umin, umax in Urange[1:]:
+        if umax <= Umax:
+            continue
+        elif umin - Umax < 1e-5:
+            angle += umax - Umax
+            Umax = umax
+            if angle > twoPi - 1e-5:
+                return True
+        else:
+            return False
+    return angle > twoPi - 1e-5
 
 
 def get_side_edges(cylinder_faces):
@@ -349,48 +290,6 @@ def get_side_edges(cylinder_faces):
     return (facelow, edgelow, axis), (facehigh, edgehigh, axis)
 
 
-def get_closing_plane(face_edge, Faces, lowSide):
-    cylface, edge, axis = face_edge
-    in_cylinder = face_in_cylinder(edge, cylface)
-    otherface = other_face_edge(edge, cylface, Faces, outer_only=False)
-
-    if isinstance(otherface.Surface, PlaneGu):
-        if not in_cylinder:
-            return None, None
-        if lowSide:
-            if otherface.Surface.Axis.dot(axis) > 0:
-                otherface.Surface.reverse()
-        else:
-            if otherface.Surface.Axis.dot(axis) < 0:
-                otherface.Surface.reverse()
-
-        return otherface, {cylface.Index, otherface.Index}
-    else:
-        planes = cyl_bound_planes(cylface, Faces, lowSide, Edges=(edge,))
-        plane = None
-        index = None
-
-        if planes:
-            if not convex_face_cyl(cylface, edge, otherface):
-                plane = planes[0]
-            else:
-                if in_cylinder:
-                    plane = planes[0]
-                    index = otherface.Index
-        if plane:
-            if lowSide:
-                if plane.Surf.Axis.dot(axis) > 0:
-                    plane.Surf.Axis = -plane.Surf.Axis
-            else:
-                if plane.Surf.Axis.dot(axis) < 0:
-                    plane.Surf.Axis = -plane.Surf.Axis
-        if index:
-            faceindex = {cylface.Index, index}
-        else:
-            faceindex = {cylface.Index}
-        return plane, faceindex
-
-
 def face_in_cylinder(edge, face):
     if isinstance(edge.Curve, Part.BSplineCurve):
         return edge.Curve.getD0(0).dot(face.Surface.Axis) < 0
@@ -404,113 +303,7 @@ def convex_face_cyl(cyl, edge, otherface):
     return v1.dot(v2) < 0
 
 
-def cyl_bound_planes(face, solidFaces, lowSide, Edges=None):
-
-    zaxis = face.Surface.Axis
-    if Edges is None:
-        Edges = face.OuterWire.Edges
-    planes = []
-    for e in Edges:
-        try:
-            curve = str(e.Curve)
-        except:
-            curve = "none"
-
-        adjacent_face = other_face_edge(e, face, solidFaces)
-        if adjacent_face is not None:
-            if type(adjacent_face.Surface) is TorusGu:
-                continue  # doesn't create plane if other face is a torus
-            if face.Surface.isSameSurface(adjacent_face.Surface):
-                continue  # doesn't create plane if other face has same surface
-
-            if curve[0:6] == "Circle":
-                dir = e.Curve.Axis
-                center = e.Curve.Center
-                dim1 = e.Curve.Radius
-                dim2 = e.Curve.Radius
-                if dir.dot(zaxis) > 0 and lowSide:
-                    dir = -dir
-                elif dir.dot(zaxis) < 0 and not lowSide:
-                    dir = -dir
-                plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
-                planes.append(plane)
-
-            elif curve == "<Ellipse object>":
-                dir = e.Curve.Axis
-                center = e.Curve.Center
-                dim1 = e.Curve.MinorRadius
-                dim2 = e.Curve.MajorRadius
-                if dir.dot(zaxis) > 0 and lowSide:
-                    dir = -dir
-                elif dir.dot(zaxis) < 0 and not lowSide:
-                    dir = -dir
-
-                plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
-                planes.append(plane)
-
-            elif curve == "<BSplineCurve object>":
-                planeParams = plane_spline_curve(e, face.Surface.Axis, lowSide)
-                if planeParams is not None:
-                    plane = GeounedSurface(("Plane", planeParams))
-                    planes.append(plane)
-
-    return planes
-
-
-def plane_spline_curve(edge, zaxis, lowSide):
-
-    majoraxis = get_axis_inertia(edge.MatrixOfInertia)
-    curve_2d = True
-    knots = edge.Curve.getKnots()
-    poles = edge.Curve.getPoles()
-    for k in knots:
-        # check if derivative orthogonal to curve normal vector
-        normal_k = edge.derivative1At(k).cross(edge.normalAt(k))
-        normal_k.normalize()
-        if abs(normal_k.dot(majoraxis)) > Tolerances().value:
-            curve_2d = False
-            break
-
-    if curve_2d:
-        return (edge.valueAt(0), majoraxis, 1, 1)
-    else:
-        rmin = (1e15, None)
-        rmax = (-1e15, None)
-        for p in poles:
-            r = majoraxis.dot(p)
-            if rmin[0] > r:
-                rmin = (r, p)
-            if rmax[0] < r:
-                rmax = (r, p)
-
-        rmin = rmin[1]
-        rmax = rmax[1]
-        d = 0.01 * abs(majoraxis.dot(rmax - rmin))
-        vec = majoraxis
-        if majoraxis.dot(zaxis) > 0:
-            if lowSide:
-                vec = -vec
-                point = rmin + d * vec
-            else:
-                point = rmax + d * vec
-        else:
-            if lowSide:
-                point = rmax + d * vec
-            else:
-                vec = -vec
-                point = rmin + d * vec
-
-        return (point, vec, 1, 1)
-
-
-def get_axis_inertia(mat):
-    inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
-    eigval, evect = numpy.linalg.eig(inertialMat)
-
-    return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
-
-
-def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
+def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, tolerances):
     face_index = [face.Index]
     faces = [face]
     joined_faces = []
@@ -550,7 +343,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
         Uval.append(Range[0:2])
         UValmin.append(Range[0])
         UValmax.append(Range[1])
-    if twoPi - AngleRange < 1.0e-2 or AngleRange < 1e-2:
+    if twoPimod(AngleRange) == 0:
         return []
 
     omitFaces.update(sameface_index)
@@ -560,7 +353,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     ifacemax = face_index[UValmax.index(Umax)]
 
     du = twoPi
-    umin = Umin % twoPi
+    umin = twoPimod(Umin)
     for e in GUFaces[ifacemin].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
         u, v = GUFaces[ifacemin].__face__.Surface.parameter(pnt)
@@ -569,7 +362,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
             emin = e
 
     du = twoPi
-    umax = Umax % twoPi
+    umax = twoPimod(Umax)
     for e in GUFaces[ifacemax].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
         u, v = GUFaces[ifacemax].__face__.Surface.parameter(pnt)
@@ -582,12 +375,13 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
 
     normal1 = None
     normal2 = None
+    new_adjacent1 = []
+    new_adjacent2 = []
 
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface, (ConeGu, CylinderGu)):
             if adjacent1.Index not in omitFaces and adjacent1.Orientation == "Reversed":
-                new_adjacent = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
-                joined_faces.extend(new_adjacent)
+                new_adjacent1 = get_join_cone_cyl(adjacent1, face.Index, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent1.Surface, PlaneGu):
                 normal1 = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
@@ -595,26 +389,60 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (ConeGu, CylinderGu)):
             if adjacent2.Index not in omitFaces and adjacent2.Orientation == "Reversed":
-                new_adjacent = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
-                joined_faces.extend(new_adjacent)
+                new_adjacent2 = get_join_cone_cyl(adjacent2, face.Index, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent2.Surface, PlaneGu):
                 normal2 = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
 
     if type(face.Surface) is CylinderGu:
         cylOnly = gen_cylinder(face)
-        cyl_plane, add_planes = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
+        cylcone_plane, add_planes = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
-        facein = reversedCCP(GeounedSurface(("Cylinder", (cylOnly, cyl_plane, add_planes, "Reversed"))))
-        facein.surf_index.update(sameface_index)
+        facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, add_planes))
+        facein.Surf_index.update(sameface_index)
+        facein.Index = face.Index
+        if parent_id >= 0:
+            facein.Connections.append([parent_id, None])
 
     else:
         coneOnly = gen_cone(face)
-        apexPlane = cone_apex_plane(face, "Reversed", Tolerances())
-        cone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
+        apexPlane = cone_apex_plane(face, Tolerances())
+        cylcone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
 
-        facein = reversedCCP(GeounedSurface(("Cone", (coneOnly, apexPlane, cone_plane, add_planes, "Reversed"))))
-        facein.surf_index.update(sameface_index)
+        facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))
+        facein.Surf_index.update(sameface_index)
+        facein.Index = face.Index
+        if parent_id >= 0:
+            facein.Connections.append([parent_id, None])
+
+    if new_adjacent1 or new_adjacent2:
+        umin, umax, vmin, vmax = face.ParameterRange
+        v = 0.5 * (vmin + vmax)
+        pmin = face.valueAt(umin, v)
+        pmax = face.valueAt(umax, v)
+        d = pmax - pmin
+        d.normalize()
+
+        for adj in new_adjacent1:
+            parents = [x[0] for x in adj.Connections]
+            if face.Index in parents:
+                i = parents.index(face.Index)
+                adjPlane = adj.Params[1].Surf
+                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
+                adj.Connections[i][1] = operator
+                facein.Connections.append([adj.Index, operator])
+        joined_faces.extend(new_adjacent1)
+
+        d = -d
+        for adj in new_adjacent2:
+            parents = [x[0] for x in adj.Connections]
+            if face.Index in parents:
+                i = parents.index(face.Index)
+                adjPlane = adj.Params[1].Surf
+                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
+                adj.Connections[i][1] = operator
+                facein.Connections.append([adj.Index, operator])
+        joined_faces.extend(new_adjacent2)
 
     joined_faces.append(facein)
     return joined_faces
@@ -653,10 +481,10 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             UVNode_max = ((PR[1], PR[3]),)
 
     dmin = twoPi
-    Uminr = Umin % twoPi
-    Umaxr = Umax % twoPi
+    Uminr = twoPimod(Umin)
+    Umaxr = twoPimod(Umax)
     for i, node in enumerate(UVNode_min):
-        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        nd = twoPimod(node[0])
         d = abs(nd - Uminr)
         if d < dmin:
             dmin = d
@@ -664,7 +492,7 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = node[0] % twoPi if (abs(node[0]) > 1e-5 and abs(abs(node[0]) - twoPi) > 1e-5) else 0.0
+        nd = twoPimod(node[0])
         d = abs(nd - Umaxr)
         if d < dmax:
             dmax = d
@@ -725,7 +553,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmin = twoPi
     for i, node in enumerate(UVNode_min):
-        nd = node[0] % twoPi
+        nd = twoPimod(node[0])
         d = abs(nd - Umin)
         if d < dmin:
             dmin = d
@@ -733,7 +561,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     dmax = twoPi
     for i, node in enumerate(UVNode_max):
-        nd = node[0] % twoPi
+        nd = twoPimod(node[0])
         d = abs(nd - Umax)
         if d < dmax:
             dmax = d
@@ -833,8 +661,8 @@ def join_range(U0, U1):
 
 def adjust_range(U0, U1):
 
-    V0 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U0]
-    V1 = [0 if (abs(x - twoPi) < 1e-5 or abs(x) < 1e-5) else x % twoPi for x in U1]
+    V0 = [twoPimod(x) for x in U0]
+    V1 = [twoPimod(x) for x in U1]
 
     if abs(V0[0] - V1[1]) < 1e-5:
         imin = 1  # U1[0]
@@ -900,3 +728,282 @@ def closed_circle_edge(planes):
         umin, umax = p.edge.ParameterRange
         angle += umax - umin
     return abs(angle - 2 * math.pi) < 1e-5
+
+
+def most_outer_faces(cyl, faces):
+
+    if type(cyl) is ShellGu:
+        umin, umax, Vmin, Vmax = cyl.Faces[0].ParameterRange
+        for f in cyl.Faces[1:]:
+            umin, umax, vmin, vmax = f.ParameterRange
+            Vmin = min(Vmin, vmin)
+            Vmax = max(Vmax, vmax)
+        cylSurf = cyl.Faces[0].Surface
+        center = cylSurf.Center + cylSurf.Axis * cylSurf.Axis.dot(cyl.CenterOfMass - cylSurf.center)
+        rmin = cylSurf.Axis.dot(cylSurf.value(0, Vmin) - center)
+        rmax = cylSurf.Axis.dot(cylSurf.value(0, Vmax) - center)
+    else:
+        umin, umax, vmin, vmax = cyl.ParameterRange
+        center = cyl.Surface.Center
+        rmin = cyl.Surface.Axis.dot(cyl.valueAt(0, vmin) - center)
+        rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - center)
+
+    dmin = dmax = abs(rmax - rmin)
+    for f in faces:
+        d = cyl.Surface.Axis.dot(f.CenterOfMass - center)
+        if abs(d - rmin) < dmin:
+            fmin = f
+            dmin = abs(d - rmin)
+        if abs(d - rmax) < dmax:
+            fmax = f
+            dmax = abs(d - rmax)
+
+    return (fmin, fmax)
+
+
+def no_convex(mplane_list):
+    """keep part of no complex plane set"""
+    planes = mplane_list[:]
+    while len(planes) > 1:
+        p = planes.pop()
+        Edges = p.OuterWire.Edges
+        for e in Edges:
+            try:
+                type_curve = type(e.Curve)
+            except:
+                type_curve = None
+            if type_curve is not Part.Line:
+                continue
+            adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
+            if adjacent_plane is not None:
+                sign = region_sign(p, adjacent_plane)
+                if sign == "AND":
+                    return False
+    return True
+
+
+def commonVertex(e1, e2):
+    if e1.distToShape(e2)[0] > 0:
+        return []
+
+    common = []
+    if e1.Vertexes[0].Point == e2.Vertexes[0].Point:
+        common.append(e1.Vertexes[0])
+    elif e1.Vertexes[0].Point == e2.Vertexes[1].Point:
+        common.append(e1.Vertexes[0])
+
+    if e1.Vertexes[1].Point == e2.Vertexes[0].Point:
+        common.append(e1.Vertexes[1])
+    elif e1.Vertexes[1].Point == e2.Vertexes[1].Point:
+        common.append(e1.Vertexes[1])
+
+    return common
+
+
+def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
+    if type(face1) is ShellGu:
+        for face in face1.Faces:
+            edges = commonEdgeFace(face, face2, outer1_only, outer2_only)
+            if edges is not None:
+                return edges, face
+        return None, None
+    else:
+        return commonEdgeFace(face1, face2, outer1_only, outer2_only)
+
+
+def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
+    if face1.distToShape(face2)[0] > 0:
+        return None
+
+    edges = []
+    Edges1 = face1.OuterWire.Edges if outer1_only else face1.Edges
+    Edges2 = face2.OuterWire.Edges if outer2_only else face2.Edges
+    for e1 in Edges1:
+        for e2 in Edges2:
+            if e1.isSame(e2):
+                edges.append(e1)
+    return edges
+
+
+def region_sign(s1_in, s2, outAngle=False):
+    if type(s1_in) is ShellGu:
+        Edges, s1 = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
+    else:
+        Edges = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
+        s1 = s1_in
+
+    e1 = Edges[0]
+    p0, p1 = e1.ParameterRange
+    pe1 = 0.5 * (p0 + p1)
+    pos = e1.valueAt(pe1)
+
+    if isinstance(s1.Surface, PlaneGu):
+        normal1 = s1.Surface.Axis if s1.Orientation == "Forward" else -s1.Surface.Axis
+    else:
+        u, v = s1.Surface.face.Surface.parameter(pos)
+        normal1 = s1.Surface.face.normalAt(u, v)
+
+    if isinstance(e1.Curve, Part.Line):
+        direction = e1.Curve.Direction
+
+        if isinstance(s2.Surface, PlaneGu):
+            arc = 0
+            normal2 = s2.Surface.Axis if s2.Orientation == "Forward" else -s2.Surface.Axis
+        else:
+            umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
+            arc = abs(umax - umin)
+            u, v = s2.Surface.face.Surface.parameter(pos)
+            normal2 = s2.Surface.face.normalAt(u, v)
+    else:
+        arc = 0
+        direction = e1.derivative1At(pe1)
+        direction.normalize()
+
+        u, v = s2.Surface.face.Surface.parameter(pos)
+        normal2 = s2.Surface.face.normalAt(u, v)
+
+    vect = direction.cross(normal1)
+    if e1.Orientation == "Reversed":
+        vect = -vect
+
+    dprod = vect.dot(normal2)
+    if abs(dprod) < 1e-4:
+        operator = "AND" if abs(dprod) < arc else "OR"
+        if outAngle:
+            return operator, angle(normal1, normal2, operator)
+        else:
+            return operator
+
+    else:
+        operator = "OR" if dprod < 0 else "AND"
+        if outAngle:
+            return operator, angle(normal1, normal2, operator)
+        else:
+            return operator
+
+
+def angle(v1, v2, operator):
+    d = v1.dot(v2) / (v1.Length * v2.Length)
+    a = math.acos(max(-1, min(1, d)))
+    if operator == "AND":
+        return math.pi - a
+    else:
+        return math.pi + a
+
+
+def closed_cylinder(cylinder, solidFaces):
+    Cylinders = [cylinder]
+    for cyl in solidFaces:
+        if cyl.Index == cylinder.Index:
+            continue
+        if cylinder.Surface.isSameSurface(cyl.Surface):
+            Cylinders.append(cyl)
+
+    if len(Cylinders) > 1:
+        sameIndex = same_faces(
+            Cylinders, Tolerances()
+        )  # return all face connected (direct or indirectly ) to first face (cylinder)
+        sameIndex.insert(0, 0)
+        sameCyl = [Cylinders[i] for i in sameIndex]
+        if len(sameCyl) > 1:
+            cyl_shell = ShellGu(sameCyl)
+            cyl_index = set(cyl_shell.Indexes)
+        else:
+            cyl_shell = cylinder
+            cyl_index = {cylinder.Index}
+    else:
+        cyl_shell = cylinder
+        cyl_index = {cylinder.Index}
+
+    return cyl_shell, cyl_index, is_closed_cylinder(cyl_shell)
+
+
+def planar_edges(edges):
+
+    e0 = edges[0]
+    if type(e0.Curve) is Part.BSplineCurve:
+        d0 = e0.derivative1At(0)
+        if d0.Length < 1e-5:
+            dir0 = e0.Vertexes[1].Point - e0.Vertexes[0].Point
+            dir0.normalize()
+            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+        elif spline_2D(e0):
+            dir0 = e0.derivative1At(0).cross(e0.normalAt(0))
+            dir0.normalize()
+            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+        else:
+            return False
+    elif isinstance(e0.Curve, (Part.Circle, Part.Ellipse)):
+        dir0 = e0.Curve.Axis
+        center0 = e0.Curve.Center
+    else:  # should be a line
+        dir0 = e0.Curve.Direction
+        center0 = e0.Curve.Location
+
+    if len(edges) == 1:
+        return True
+
+    for ei in edges[1:]:
+        if type(ei.Curve) is Part.BSplineCurve:
+            di = ei.derivative1At(0)
+            if di.Length < 1e-5:
+                dir = ei.Vertexes[1].Point - ei.Vertexes[0].Point
+                dir.normalize()
+                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+            elif spline_2D(ei):
+                dir = ei.derivative1At(0).cross(ei.normalAt(0))
+                dir.normalize()
+                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+            else:
+                return False
+        elif isinstance(ei.Curve, (Part.Circle, Part.Ellipse)):
+            dir = ei.Curve.Axis
+            center = ei.Curve.Center
+        else:  # should be a line
+            dir = ei.Curve.direction
+            center = ei.Curve.location
+
+        if not is_parallel(dir0, dir, Tolerances().angle):
+            return False
+        if abs(dir0.dot(center - center0)) > 1e-5:
+            return False
+
+    return True
+
+
+def spline_1D(edge):
+    knots = edge.Curve.getKnots()
+    return edge.Curve.curvature(knots[0]) < 1e-6
+
+
+def spline_2D(edge):
+    knots = edge.Curve.getKnots()
+
+    if edge.Curve.curvature(knots[0]) < 1e-6:
+        return False  # straight line
+
+    d0 = edge.derivative1At(knots[0])
+    if d0.Length < 1e-5:
+        return False
+
+    norm_0 = d0.cross(edge.normalAt(knots[0]))
+    norm_0.normalize()
+
+    for k in knots[1:]:
+        # check if derivative orthogonal to curve normal vector
+        dk = edge.derivative1At(k)
+        normal_k = dk.cross(edge.normalAt(k))
+        normal_k.normalize()
+        if abs(normal_k.dot(norm_0)) > Tolerances().value:
+            return False
+    return True
+
+
+def twoPimod(x):
+    x = x % twoPi
+    if x < 1e-5:
+        return 0.0
+    elif twoPi - x < 1e-5:
+        return 0.0
+    else:
+        return x

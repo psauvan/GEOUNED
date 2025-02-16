@@ -1,9 +1,11 @@
 import Part
 import FreeCAD
 import numpy
+import math
 
 from .split_function import split_bop
 from .data_classes import Options
+from .geometry_gu import PlaneGu
 
 
 def makePlane(normal, position, Box):
@@ -99,11 +101,14 @@ def makeRoundCorner(cylinder, addPlane, planes, config, Box):
     plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
     cut = plane_part.cut(cylinder.shape)
 
+    cylr = None
     for s in cut.Solids:
         if addPlane.Surf.Axis.dot(s.CenterOfMass - addPlane.Surf.Position) > 0:
             cylr = s
             break
 
+    #    if cylr is None:
+    #        return None
     p1box = cylinder_cut_box(cylinder.shape, planes[0])
     p2box = cylinder_cut_box(cylinder.shape, planes[1])
     cylcut = cylinder.shape.cut([p1box, p2box])
@@ -154,82 +159,93 @@ def intersection(sol1, sol2):
     return sol1.cut(d12)
 
 
-def makeCylinderCan(cylinder, plane_list, Box):
+def makeCan(can, box):
 
-    radius = cylinder.Surf.Radius
-    axis = cylinder.Surf.Axis
-    center = cylinder.Surf.Center
-    plane1 = plane_list[0]
-    normal1 = plane1.Surf.Axis
-    pos1 = plane1.Surf.Position
-    if len(plane_list) == 2:
-        plane2 = plane_list[1]
-        normal2 = plane2.Surf.Axis
-        pos2 = plane2.Surf.Position
+    can.Cylinder.build_surface(box)
+    can.s1.build_surface(box)
+    can.s2.build_surface(box)
+    return makeCylinderCan(can)
+
+    if can.s1.Type == "Plane":
+        scnd1 = False
+        p1 = can.s1
+    else:
+        scnd1 = True
+        p1 = can.s1_plane
+        p1.build_surface(box)
+
+    if can.s2.Type == "Plane":
+        scnd2 = False
+        p2 = can.s2
+    else:
+        scnd2 = True
+        p2 = can.s2_plane
+        p2.build_surface(box)
+
+    rawCan = makeCylinderCan(can.Cylinder.shape, p1.shape, p2.shape)
+
+    if scnd1:
+        if can.s1.Type == "SphereOnly":
+            if can.Orientation == can.s1_orientation:
+                rawCan = rawCan.fuse(can.s1.shape)
+            else:
+                rawCan = rawCan.cut(can.s1.shape)
+        else:
+            if can.s1_orientation == "Forward":
+                rawCan = rawCan.cut(can.s1.shape.reversed())
+            else:
+                rawCan = rawCan.cut(can.s1.shape)
+
+    if scnd2:
+        if can.s2.Type == "SphereOnly":
+            if can.Orientation == can.s2_orientation:
+                rawCan = rawCan.fuse(can.s2.shape)
+            else:
+                rawCan = rawCan.cut(can.s2.shape)
+        else:
+            if can.s2_orientation == "Forward":
+                rawCan = rawCan.cut(can.s2.shape.reversed())
+            else:
+                rawCan = rawCan.cut(can.s2.shape)
+
+    return rawCan
+
+
+def makeCylinderCan(can):
+    cyl = can.Cylinder
+    s1 = can.s1
+    s2 = can.s2
 
     options = Options()
+    comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
 
-    g1 = (pos1 - center).dot(normal1) / normal1.dot(axis)
-    pt1 = center + g1 * axis
-
-    axisnorm = axis.dot(normal1)
-    orto = abs(axisnorm) > 1 - 1e-8
-    if len(plane_list) == 2 and orto:
-        orto = abs(axis.dot(normal2)) > 1 - 1e-8
-
-    dmin = axis.dot(Box.getPoint(0) - pt1)
-    dmax = dmin
-    for i in range(1, 8):
-        d = axis.dot(Box.getPoint(i) - pt1)
-        dmin = min(d, dmin)
-        dmax = max(d, dmax)
-    if not orto:
-        height = dmax - dmin
-        dmin -= 0.1 * height
-        dmax += 0.1 * height
-        height = dmax - dmin
-
-        point = pt1 + dmin * axis
-        cylshape = Part.makeCylinder(radius, height, point, axis, 360)
-        planeshape1 = makePlane(normal1, pt1, cylshape.BoundBox)
-
-        if len(plane_list) == 1:
-            comsolid = split_bop(cylshape, [planeshape1], options.splitTolerance, options)
-            s1, s2 = comsolid.Solids
-            v1 = s1.CenterOfMass - pt1
-            if v1.dot(normal1) > 0:
-                return s2
-            else:
-                return s1
-        else:
-            g2 = (pos2 - center).dot(normal2) / normal2.dot(axis)
-            pt2 = center + g2 * axis
-            planeshape2 = makePlane(normal2, pt2, cylshape.BoundBox)
-            comsolid = split_bop(cylshape, [planeshape1, planeshape2], options.splitTolerance, options)
-            s1, s2, s3 = comsolid.Solids
-            v1 = s1.CenterOfMass - pt1
-            v2 = s1.CenterOfMass - pt2
-            if v1.dot(v2) < 0:
-                return s1
-            v1 = s2.CenterOfMass - pt1
-            v2 = s2.CenterOfMass - pt2
-            if v1.dot(v2) < 0:
-                return s2
-            return s3
-
+    surfcheck = []
+    if s1.Type == "Plane":
+        surfcheck.append((s1, 1))
     else:
-        if len(plane_list) == 1:
-            if axisnorm > 0:
-                height = -dmin
-                axis = -axis
-            else:
-                height = dmax
-            return Part.makeCylinder(radius, height, pt1, axis, 360)
+        sO = 1 if s1.Orientation == "Reversed" else -1
+        sC = 1 if can.s1_configuration == "AND" else -1
+        ss = 1 if sO == sC else -1
+        surfcheck.append((s1, ss))
+        if s1.Surf.Plane is not None:
+            surfcheck.append((s1.Surf.Plane, 1))
+
+    if s2.Type == "Plane":
+        surfcheck.append((s2, 1))
+    else:
+        sO = 1 if s2.Orientation == "Reversed" else -1
+        sC = 1 if can.s2_configuration == "AND" else -1
+        ss = 1 if sO == sC else -1
+        surfcheck.append((s2, ss))
+        if s2.Surf.Plane is not None:
+            surfcheck.append((s2.Surf.Plane, 1))
+
+    for solid in comsolid.Solids:
+        for si, ss in surfcheck:
+            if ss != check_sign(solid, si):
+                break
         else:
-            g2 = (plane2.Surf.Position - center).dot(plane2.Surf.Axis) / plane2.Surf.Axis.dot(axis)
-            if g1 > g2:
-                axis = -axis
-            return Part.makeCylinder(radius, abs(g2 - g1), pt1, axis, 360)
+            return solid
 
 
 def makeBoxFaces(box: list):
@@ -406,3 +422,146 @@ def fix_points(point_plane_list: list, vertex_list: list):
                 r = v.Point - planepts[i]
                 if r.Length < tol:
                     planepts[i] = v.Point
+
+
+def point_inside(solid):
+
+    point = solid.CenterOfMass
+    if solid.isInside(point, 0.0, False):
+        return point
+
+    cut_line = 32
+    cut_box = 4
+
+    v1 = solid.Vertexes[0].Point
+    for vi in range(len(solid.Vertexes) - 1, 0, -1):
+        v2 = solid.Vertexes[vi].Point
+        dv = (v2 - v1) * 0.5
+
+        n = 1
+        while True:
+            for i in range(n):
+                point = v1 + dv * (1 + 0.5 * i)
+                if solid.isInside(point, 0.0, False):
+                    return point
+            n = n * 2
+            dv = dv * 0.5
+            if n > cut_line:
+                break
+
+    BBox = solid.optimalBoundingBox(False)
+    box = [BBox.XMin, BBox.XMax, BBox.YMin, BBox.YMax, BBox.ZMin, BBox.ZMax]
+
+    boxes, centers = divide_box(box)
+    n = 0
+
+    while True:
+        for p in centers:
+            pp = FreeCAD.Vector(p[0], p[1], p[2])
+            if solid.isInside(pp, 0.0, False):
+                return pp
+
+        subbox = []
+        centers = []
+        for b in boxes:
+            btab, ctab = divide_box(b)
+            subbox.extend(btab)
+            centers.extend(ctab)
+        boxes = subbox
+        n = n + 1
+
+        if n == cut_box:
+            print(f"Solid not found in bounding Box (Volume : {solid.Volume})")
+            return None
+
+
+# divide a box into 8 smaller boxes
+def divide_box(Box):
+    xmid = (Box[1] + Box[0]) * 0.5
+    ymid = (Box[3] + Box[2]) * 0.5
+    zmid = (Box[5] + Box[4]) * 0.5
+
+    b1 = (Box[0], xmid, Box[2], ymid, Box[4], zmid)
+    p1 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
+
+    b2 = (xmid, Box[1], Box[2], ymid, Box[4], zmid)
+    p2 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
+
+    b3 = (Box[0], xmid, ymid, Box[3], Box[4], zmid)
+    p3 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
+
+    b4 = (xmid, Box[1], ymid, Box[3], Box[4], zmid)
+    p4 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
+
+    b5 = (Box[0], xmid, Box[2], ymid, zmid, Box[5])
+    p5 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
+
+    b6 = (xmid, Box[1], Box[2], ymid, zmid, Box[5])
+    p6 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
+
+    b7 = (Box[0], xmid, ymid, Box[3], zmid, Box[5])
+    p7 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
+
+    b8 = (xmid, Box[1], ymid, Box[3], zmid, Box[5])
+    p8 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
+
+    return (b1, b2, b3, b4, b5, b6, b7, b8), (p1, p2, p3, p4, p5, p6, p7, p8)
+
+
+def check_sign(solid, surf):
+
+    point = point_inside(solid)
+
+    if surf.Type == "Plane":
+        normal = surf.Surf.Axis
+        d = normal.dot(surf.Surf.Position)
+        r = point - d * normal
+        if normal.dot(r) > 0:
+            return 1
+        else:
+            return -1
+
+    elif surf.Type == "Cylinder":
+        cyl = surf.Surf.Cylinder.Surf
+        r = point - cyl.Center
+        L2 = r.Length * r.Length
+        z = cyl.Axis.dot(r)
+        z2 = z * z
+        R2 = cyl.Radius * cyl.Radius
+        if L2 - z2 > R2:
+            return 1
+        else:
+            return -1
+
+    elif surf.Type == "Sphere":
+        sph = surf.Surf.Sphere.Surf
+        r = point - sph.Center
+        if r.Length > sph.Radius:
+            return 1
+        else:
+            return -1
+
+    elif surf.Type == "Cone":
+        kne = surf.Surf.Cone.Surf
+        r = point - kne.Apex
+        r.normalize()
+        z = round(kne.Axis.dot(r), 15)
+        alpha = math.acos(z)
+
+        if alpha > kne.SemiAngle:
+            return 1
+        else:
+            return -1
+
+    elif surf.Type == "Torus":
+        tor = surf.Surf.Torus.Surf
+        r = point - tor.Center
+        v = tor.Axis.cross(r)
+        if v.Length > 1e-8:
+            v.normalize()
+            t = v.cross(tor.Axis)
+            r = r + t * tor.MajorRadius
+        if r.Length > tor.MinorRadius:
+            return 1
+        else:
+            return -1
