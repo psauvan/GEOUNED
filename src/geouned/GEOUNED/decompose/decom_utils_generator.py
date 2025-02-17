@@ -10,7 +10,7 @@ import FreeCAD
 import Part
 
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import PlaneGu, TorusGu, other_face_edge
+from ..utils.geometry_gu import PlaneGu, TorusGu, SphereGu, other_face_edge
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
@@ -137,7 +137,7 @@ def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
             plane = cyl_edge_plane(face, [e])
             if plane is not None:
                 planes.append(plane)
-    if len(planes) > 2 and type(face) is not Part.Sphere:
+    if len(planes) > 2 and type(face.Surface) is not SphereGu:
         planes = most_outer_planes(face.Surface.Axis, planes)
     return planes
 

@@ -5,7 +5,7 @@ import numpy
 
 from collections import OrderedDict
 
-from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, TorusGu, FaceGu, other_face_edge
+from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu, TorusGu, FaceGu, other_face_edge
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
 from ..utils.basic_functions_part1 import is_in_line, is_parallel
@@ -749,9 +749,9 @@ def most_outer_faces(cyl, faces):
         rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - center)
 
     surfPos = []
-    for i,f in enumerate(faces):
+    for i, f in enumerate(faces):
         d = cyl.Surface.Axis.dot(f.CenterOfMass)
-        surfPos.append((d,i))
+        surfPos.append((d, i))
     surfPos.sort()
 
     return (faces[surfPos[0][1]], faces[surfPos[-1][1]])
@@ -864,7 +864,12 @@ def region_sign(s1_in, s2, outAngle=False):
 
     dprod = vect.dot(normal2)
     if abs(dprod) < 1e-4:
-        operator = "AND" if abs(dprod) < arc else "OR"
+        if type(s2.Surface) is SphereGu:
+            operator = "AND" if s2.Orientation == "Forward" else "OR"
+        elif type(s1.Surface) is SphereGu:
+            operator = "AND" if s1.Orientation == "Forward" else "OR"
+        else:
+            operator = "AND" if abs(dprod) < arc else "OR"
         if outAngle:
             return operator, angle(normal1, normal2, operator)
         else:
@@ -917,6 +922,8 @@ def closed_cylinder(cylinder, solidFaces):
 def planar_edges(edges):
 
     e0 = edges[0]
+    if e0.Length < 1e-8:
+        return False
     if type(e0.Curve) is Part.BSplineCurve:
         d0 = e0.derivative1At(0)
         if d0.Length < 1e-5:
