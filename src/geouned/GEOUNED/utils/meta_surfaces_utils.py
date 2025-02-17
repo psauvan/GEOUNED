@@ -748,17 +748,13 @@ def most_outer_faces(cyl, faces):
         rmin = cyl.Surface.Axis.dot(cyl.valueAt(0, vmin) - center)
         rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - center)
 
-    dmin = dmax = abs(rmax - rmin)
-    for f in faces:
-        d = cyl.Surface.Axis.dot(f.CenterOfMass - center)
-        if abs(d - rmin) < dmin:
-            fmin = f
-            dmin = abs(d - rmin)
-        if abs(d - rmax) < dmax:
-            fmax = f
-            dmax = abs(d - rmax)
+    surfPos = []
+    for i,f in enumerate(faces):
+        d = cyl.Surface.Axis.dot(f.CenterOfMass)
+        surfPos.append((d,i))
+    surfPos.sort()
 
-    return (fmin, fmax)
+    return (faces[surfPos[0][1]], faces[surfPos[-1][1]])
 
 
 def no_convex(mplane_list):
