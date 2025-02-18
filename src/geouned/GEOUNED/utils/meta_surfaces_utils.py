@@ -821,6 +821,25 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     return edges
 
 
+def material_direction(pos, face_in, edge):
+    if isinstance(face_in,FaceGu):
+        face = face_in.__face__
+    else:    
+        face = face_in
+
+    pe = edge.Curve.parameter(pos)
+    dir = edge.derivative1At(pe)
+    dir.normalize()
+    if edge.Orientation == "Reversed":
+        dir = -dir
+    u, v = face.Surface.parameter(pos)
+    normalf = face.normalAt(u, v)
+    normalf.normalize()
+    matvec = normalf.cross(dir)
+
+    return matvec, normalf
+
+
 def region_sign(s1_in, s2, outAngle=False):
     if type(s1_in) is ShellGu:
         Edges, s1 = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
@@ -830,39 +849,22 @@ def region_sign(s1_in, s2, outAngle=False):
 
     e1 = Edges[0]
     p0, p1 = e1.ParameterRange
-    pe1 = 0.5 * (p0 + p1)
-    pos = e1.valueAt(pe1)
+    pe = 0.5 * (p1 + p0)
+    pos = e1.Curve.value(pe)
 
-    if isinstance(s1.Surface, PlaneGu):
-        normal1 = s1.Surface.Axis if s1.Orientation == "Forward" else -s1.Surface.Axis
-    else:
-        u, v = s1.Surface.face.Surface.parameter(pos)
-        normal1 = s1.Surface.face.normalAt(u, v)
+    vect, normal1 = material_direction(pos, s1, e1)
 
-    if isinstance(e1.Curve, Part.Line):
-        direction = e1.Curve.Direction
+    u, v = s2.Surface.face.Surface.parameter(pos)
+    normal2 = s2.Surface.face.normalAt(u, v)
 
-        if isinstance(s2.Surface, PlaneGu):
-            arc = 0
-            normal2 = s2.Surface.Axis if s2.Orientation == "Forward" else -s2.Surface.Axis
-        else:
-            umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
-            arc = abs(umax - umin)
-            u, v = s2.Surface.face.Surface.parameter(pos)
-            normal2 = s2.Surface.face.normalAt(u, v)
+    if isinstance(e1.Curve, Part.Line) and not isinstance(s2.Surface, PlaneGu):
+        umin, umax, vmin, vmax = s2.Surface.face.ParameterRange
+        arc = abs(umax - umin)
     else:
         arc = 0
-        direction = e1.derivative1At(pe1)
-        direction.normalize()
-
-        u, v = s2.Surface.face.Surface.parameter(pos)
-        normal2 = s2.Surface.face.normalAt(u, v)
-
-    vect = direction.cross(normal1)
-    if e1.Orientation == "Reversed":
-        vect = -vect
 
     dprod = vect.dot(normal2)
+
     if abs(dprod) < 1e-4:
         if type(s2.Surface) is SphereGu:
             operator = "AND" if s2.Orientation == "Forward" else "OR"

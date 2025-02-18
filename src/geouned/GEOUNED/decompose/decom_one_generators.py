@@ -22,37 +22,8 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, options, tolerances):
-    import FreeCAD
-    def vf(v):
-        return f'({v.x:6.3f} {v.y:6.3f} {v.z:6.3f})'
-    
+def generic_split(solid, options, tolerances):   
     bbox = solid.BoundBox
-    for i,f in enumerate(solid.Faces):
-        f.exportStep(f'f_{i}.stp')
-        print(f'face {i}')
-        for e in f.Edges:
-            if e.Length < 1e-5 :
-                continue
-            p0,p1 = e.ParameterRange
-            pe = 0.5*(p1+p0)
-            pos = e.Curve.value(pe)
-            dir = e.derivative1At(pe)
-            if e.Orientation == "Reversed":
-                dir = -dir
-            if e.curvatureAt(pe) < 1e-5:
-                u,v = f.Surface.parameter(pos)
-                normale = f.Surface.normal(u,v)
-                if f.Orientation == "Reversed" : 
-                    normale = -normale
-            else:    
-                normale = e.normalAt(pe)
-            matvec = dir.cross(normale)
-            print(vf(pos),vf(matvec))
-            #print(vf(normale),vf(normalf))
-
-    exit()        
-
     bbox.enlarge(10)
     cleaned = [solid]
     omitfaces = set()

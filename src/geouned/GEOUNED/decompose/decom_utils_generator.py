@@ -15,7 +15,7 @@ from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
 )
-from ..utils.meta_surfaces_utils import region_sign, planar_edges
+from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
 
 logger = logging.getLogger("general_logger")
 twoPi = math.pi * 2
@@ -155,39 +155,11 @@ def cyl_edge_plane(face, edges):
         planeParams = spline_wires(edges, face)
     else:
         edge = edges[0]
-        if type(edge.Curve) is Part.Circle:
-            dir = edge.Curve.Axis
-            center = edge.Curve.Center
-            dim1 = edge.Curve.Radius
-            dim2 = edge.Curve.Radius
+        if isinstance(edge.Curve, (Part.Circle,Part.Ellipse)) :
             pos = edge.Curve.value(0)
-            u, v = face.__face__.Surface.parameter(pos)
-            normal = face.__face__.Surface.normal(u, v)  # always in the same direction F or R
-            direction = edge.derivative1At(0)
-            direction.normalize()
-            vect = direction.cross(normal)
-            if edge.Orientation == "Reversed":
-                vect = -vect
-            if dir.dot(vect) > 0:
-                dir = -dir
-            planeParams = [center, dir, dim1, dim2]  # toward the center of the cylinder
-
-        elif type(edge.Curve) is Part.Ellipse:
-            dir = edge.Curve.Axis
             center = edge.Curve.Center
-            dim1 = edge.Curve.MinorRadius
-            dim2 = edge.Curve.MajorRadius
-            pos = edge.Curve.value(0)
-            u, v = face.__face__.Surface.parameter(pos)
-            normal = face.__face__.Surface.normal(u, v)
-            direction = edge.derivative1At(0)
-            direction.normalize()
-            vect = direction.cross(normal)
-            if edge.Orientation == "Reversed":
-                vect = -vect
-            if dir.dot(vect) > 0:
-                dir = -dir
-            planeParams = [center, dir, dim1, dim2]  # toward the center of the cylinder
+            vect,normalf = material_direction(pos,face.__face__,edge)
+            planeParams = [center, vect, 1, 1]  
 
     if planeParams is not None:
         return GeounedSurface(("Plane", planeParams))
@@ -203,14 +175,8 @@ def spline_wires(edges, face):
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p0 + p1)
     pos = edge.Curve.value(pe)
-    u, v = face.__face__.Surface.parameter(pos)
-    normal = face.__face__.Surface.normal(u, v)  # Always in the same direction
-    direction = edge.derivative1At(pe)
-    direction.normalize()
+    vect,normalf = material_direction(pos,face.__face__,edge)
 
-    vect = direction.cross(normal)  # vector forward direction Vs Material
-    if edge.Orientation == "Reversed":
-        vect = -vect
     lowSide = zaxis.dot(vect) < 0
 
     rmin = (1e15, None)
