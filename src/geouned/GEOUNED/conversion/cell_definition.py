@@ -5,7 +5,7 @@ import logging
 
 from ..utils import geometry_gu as GU
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner, get_reversed_cone_cylinder
+from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner, get_reversed_cone_cylinder, get_Can
 from ..utils.boolean_function import BoolSequence
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
@@ -59,9 +59,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             omitFaces.update(planeset)
             multiplane_surface = True
 
-        reverseCan = get_reverseCan(solid_gu.Faces, omitFaces)
-        for cs in reverseCan:
-            cs_region = Surfaces.add_reverseCan(cs)
+        RFCan = get_Can(solid_gu.Faces, omitFaces)
+        for cs in RFCan:
+            if cs.Orientation == "Reversed":
+                cs_region = Surfaces.add_reverseCan(cs)
+            else:    
+                cs_region = Surfaces.add_forwardCan(cs)
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)
 

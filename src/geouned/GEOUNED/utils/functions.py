@@ -95,9 +95,34 @@ def get_reverseCan(solidFaces, canface_index=None):
             if f.Orientation == "Reversed":
                 cs, surfindex = get_can_surfaces(f, solidFaces)
                 if cs is not None:
-                    gc = GeounedSurface(("Can", build_can_params(cs)))
+                    gc = GeounedSurface(("Can", build_can_params(cs),f.Orientation))
                     can_list.append(gc)
                     canface_index.update(surfindex)
+
+    if one_value_return:
+        return can_list
+    else:
+        return can_list, canface_index
+
+def get_Can(solidFaces, canface_index=None):
+    """identify and return all can type in the solid."""
+
+    if canface_index is None:
+        canface_index = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
+    can_list = []
+    for f in solidFaces:
+        if isinstance(f.Surface, CylinderGu):
+            if f.Index in canface_index:
+                continue
+            cs, surfindex = get_can_surfaces(f, solidFaces)
+            if cs is not None:
+                gc = GeounedSurface(("Can", build_can_params(cs),f.Orientation))
+                can_list.append(gc)
+                canface_index.update(surfindex)
 
     if one_value_return:
         return can_list

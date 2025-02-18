@@ -351,7 +351,7 @@ class MetaSurfacesDict(dict):
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "RevCan", "RoundC", "RevCC"]
+        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "FwdCan", "RevCan", "RoundC", "RevCC"]
         for name in surfname:
             self[name] = []
 
@@ -605,6 +605,81 @@ class MetaSurfacesDict(dict):
             self["MultiP"].append(newregion)
         else:
             newregion = mp_region if boundary > 0 else -mp_region
+        return newregion
+
+    def add_forwardCan(self, forwardCan):
+        cylCan = forwardCan.Surf.Cylinder
+        cid, exist = self.primitive_surfaces.add_cylinder(cylCan.Surf.Cylinder, True)
+        forwardCan_region = BoolRegion(0, -cid)
+
+        if forwardCan.Surf.s1.Type == "Plane":
+            cp = forwardCan.Surf.s1
+            cs = None
+        else:
+            cp = forwardCan.Surf.s1.Surf.Plane
+            cs = forwardCan.Surf.s1
+
+        pid, exist = self.primitive_surfaces.add_plane(cp, True)
+        if exist:
+            p = self.get_primitive_surface(pid)
+            if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+
+        if cs is None:
+            forwardCan_region = forwardCan_region * BoolRegion(0, pid)
+        else:
+            sid, exist = self.primitive_surfaces.add_surface(forwardCan.Surf.s1, True)
+            if forwardCan.Surf.s1.Orientation == "Forward":
+                if forwardCan.Surf.s1_configuration == "AND":
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) + BoolRegion(0, -sid))
+                else:
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) * BoolRegion(0, sid))
+            else:
+                if forwardCan.Surf.s1_configuration == "AND":
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) * BoolRegion(0, sid))
+                else:
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) + BoolRegion(0, -sid))
+
+        if forwardCan.Surf.s2.Type == "Plane":
+            cp = forwardCan.Surf.s2
+            cs = None
+        else:
+            cp = forwardCan.Surf.s2.Surf.Plane
+            cs = forwardCan.Surf.s2
+
+        pid, exist = self.primitive_surfaces.add_plane(cp, True)
+        if exist:
+            p = self.get_primitive_surface(pid)
+            if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+
+        if cs is None:
+            forwardCan_region = forwardCan_region * BoolRegion(0, pid)
+        else:
+            sid, exist = self.primitive_surfaces.add_surface(forwardCan.Surf.s2, True)
+            if forwardCan.Surf.s2.Orientation == "Forward":
+                if forwardCan.Surf.s2_configuration == "AND":
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) + BoolRegion(0, -sid))
+                else:
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) * BoolRegion(0, sid))
+            else:
+                if forwardCan.Surf.s2_configuration == "AND":
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) * BoolRegion(0, sid))
+                else:
+                    forwardCan_region = forwardCan_region * (BoolRegion(0, pid) + BoolRegion(0, -sid))
+        add_can = True
+        for cs_region in self["FwdCan"]:
+            boundary = forwardCan_region.isSameInterface(cs_region)
+            if abs(boundary) == 1:
+                add_can = False
+                break
+
+        if add_can:
+            self.surfaceNumber += 1
+            newregion = forwardCan_region.copy(self.surfaceNumber)
+            self["FwdCan"].append(newregion)
+        else:
+            newregion = cs_region if boundary > 0 else -cs_region
         return newregion
 
     def add_reverseCan(self, reverseCan):
