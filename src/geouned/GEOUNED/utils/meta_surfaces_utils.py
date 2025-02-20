@@ -878,7 +878,7 @@ def region_sign(s1_in, s2, outAngle=False):
             return operator
 
     else:
-        operator = "OR" if dprod < 0 else "AND"
+        operator = "OR" if dprod > 0 else "AND"
         if outAngle:
             return operator, angle(normal1, normal2, operator)
         else:
@@ -946,7 +946,12 @@ def planar_edges(edges):
         center0 = e0.Curve.Location
 
     if len(edges) == 1:
-        return True
+        if edge_1D(edges[0]):
+            return False
+        else:
+            return True
+
+    oneD = edge_1D(edges[0])
 
     for ei in edges[1:]:
         if type(ei.Curve) is Part.BSplineCurve:
@@ -972,13 +977,22 @@ def planar_edges(edges):
             return False
         if abs(dir0.dot(center - center0)) > 1e-5:
             return False
+        
+        if not edge_1D(ei):
+            oneD = False
+   
+    if oneD :
+        return False
+    else:
+        return True
 
-    return True
 
-
-def spline_1D(edge):
-    knots = edge.Curve.getKnots()
-    return edge.Curve.curvature(knots[0]) < 1e-6
+def edge_1D(edge):
+    if edge.Length < 1e-5:
+        return False
+    p0,p1 = edge.ParameterRange
+    pe = 0.5*(p1+p0)
+    return edge.Curve.curvature(pe) < 1e-6
 
 
 def spline_2D(edge):

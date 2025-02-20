@@ -177,7 +177,7 @@ def spline_wires(edges, face):
     pos = edge.Curve.value(pe)
     vect,normalf = material_direction(pos,face.__face__,edge)
 
-    lowSide = zaxis.dot(vect) < 0
+    lowSide = zaxis.dot(vect) > 0
 
     rmin = (1e15, None)
     rmax = (-1e15, None)

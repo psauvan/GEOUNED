@@ -48,7 +48,12 @@ def makePlane(normal, position, Box):
     return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
 
 
-def makeCylinder(axis, center, radius, Box):
+def makeCylinder(cyl, Box):
+
+    axis = cyl.Axis
+    center = cyl.Center
+    radius = cyl.Radius
+
     dmin = axis.dot((Box.getPoint(0) - center))
     dmax = dmin
     for i in range(1, 8):
@@ -213,39 +218,61 @@ def makeCan(can, box):
 
 def makeCylinderCan(can):
     cyl = can.Cylinder
-    s1 = can.s1
-    s2 = can.s2
+    s12_list = []
+    s12_shapes = []
+    if can.s1 is not None:
+        s12_list.append((can.s1, can.s1_configuration))
+        s12_shapes.append(can.s1.shape)
+    if can.s2 is not None:
+        s12_list.append((can.s2, can.s2_configuration))
+        s12_shapes.append(can.s2.shape)
 
-    options = Options()
-    comsolid = split_bop(cyl.shape, [s1.shape, s2.shape], options.splitTolerance, options)
+    if s12_shapes:
+        options = Options()
+        comsolid = split_bop(cyl.shape, s12_shapes, options.splitTolerance, options)
 
     surfcheck = []
-    if s1.Type == "Plane":
-        surfcheck.append((s1, 1))
-    else:
-        sO = 1 if s1.Orientation == "Reversed" else -1
-        sC = 1 if can.s1_configuration == "AND" else -1
-        ss = 1 if sO == sC else -1
-        surfcheck.append((s1, ss))
-        if s1.Surf.Plane is not None:
-            surfcheck.append((s1.Surf.Plane, 1))
 
-    if s2.Type == "Plane":
-        surfcheck.append((s2, 1))
-    else:
-        sO = 1 if s2.Orientation == "Reversed" else -1
-        sC = 1 if can.s2_configuration == "AND" else -1
-        ss = 1 if sO == sC else -1
-        surfcheck.append((s2, ss))
-        if s2.Surf.Plane is not None:
-            surfcheck.append((s2.Surf.Plane, 1))
-
-    for solid in comsolid.Solids:
-        for si, ss in surfcheck:
-            if ss != check_sign(solid, si):
-                break
+    for s12 in s12_list:
+        si = s12[0]
+        configuration = s12[1]
+        if si.Type == "Plane":
+            surfcheck.append((si, 1))
         else:
-            return solid
+            sO = 1 if si.Orientation == "Reversed" else -1
+            sC = 1 if configuration == "AND" else -1
+            ss = 1 if sO == sC else -1
+            if si.Surf.Plane is None:
+                surfcheck.append((si, ss))
+            else:
+                if ss == 1:
+                    surfcheck.append((si, ss))
+                    surfcheck.append((si.Surf.Plane, 1))
+                else:
+                    surfcheck.append(((si, ss), (si.Surf.Plane, 1)))
+
+    solids = []
+    for solid in comsolid.Solids:
+        point = point_inside(solid)
+        for sp in surfcheck:
+            if type(sp[0]) is tuple:
+                for si, ss in sp:  # "OR" sequence
+                    if ss == check_sign(point, si):
+                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
+                else:
+                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
+            else:
+                si, ss = sp
+                if ss != check_sign(point, si):  # "AND" sequence
+                    break
+        else:
+            solids.append(solid)
+
+    if solids:
+        if len(solids) == 1:
+            return solids[0]
+        else:
+            return solids[0].fuse(solids[1:])
 
 
 def makeBoxFaces(box: list):
@@ -508,15 +535,11 @@ def divide_box(Box):
     return (b1, b2, b3, b4, b5, b6, b7, b8), (p1, p2, p3, p4, p5, p6, p7, p8)
 
 
-def check_sign(solid, surf):
-
-    point = point_inside(solid)
+def check_sign(point, surf):
 
     if surf.Type == "Plane":
-        normal = surf.Surf.Axis
-        d = normal.dot(surf.Surf.Position)
-        r = point - d * normal
-        if normal.dot(r) > 0:
+        pr = point - surf.Surf.Position
+        if surf.Surf.Axis.dot(pr) > 0:
             return 1
         else:
             return -1
