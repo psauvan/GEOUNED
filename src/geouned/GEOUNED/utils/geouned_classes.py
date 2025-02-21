@@ -666,8 +666,11 @@ class MetaSurfacesDict(dict):
                             ap = self.get_primitive_surface(apid)
                             if is_opposite(cs.Surf.ApexPlane.Surf.Axis, ap.Surf.Axis, self.tolerances.pln_angle):
                                 apid = -apid
-                        sregion = sregion + BoolRegion(0, -apid)       
- 
+                        if cs.Orientation == "Reversed":            
+                            sregion = sregion + BoolRegion(0, apid)
+                        else:           
+                            sregion = sregion + BoolRegion(0, -apid)
+
                 if cs.Orientation == "Reversed":
                     forwardCan_region = forwardCan_region * (sregion * pregion)
                 else:
@@ -705,9 +708,9 @@ class MetaSurfacesDict(dict):
                     pid = -pid
 
             pregion = BoolRegion(0,-pid)
-            sregion = BoolRegion(0,sid)
             if cs is not None:
                 sid,exist = self.primitive_surfaces.add_surface(cs, True)
+                sregion = BoolRegion(0,sid)
                 if cs.Type == "Cone" :
                     if cs.Surf.ApexPlane is not None:
                         apid, exist = self.primitive_surfaces.add_plane(cs.Surf.ApexPlane, True)
@@ -715,7 +718,10 @@ class MetaSurfacesDict(dict):
                             ap = self.get_primitive_surface(apid)
                             if is_opposite(cs.Surf.ApexPlane.Surf.Axis, ap.Surf.Axis, self.tolerances.pln_angle):
                                 apid = -apid
-                        sregion = sregion + BoolRegion(0, -apid)       
+                        if cs.Orientation == "Reversed":            
+                            sregion = sregion + BoolRegion(0, apid)
+                        else:           
+                            sregion = sregion + BoolRegion(0, -apid)       
  
                 if cs.Orientation == "Reversed":
                     if configuration == "AND":
