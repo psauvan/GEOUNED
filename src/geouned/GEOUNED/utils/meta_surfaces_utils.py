@@ -822,9 +822,9 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def material_direction(pos, face_in, edge):
-    if isinstance(face_in,FaceGu):
+    if isinstance(face_in, FaceGu):
         face = face_in.__face__
-    else:    
+    else:
         face = face_in
 
     pe = edge.Curve.parameter(pos)
@@ -977,11 +977,11 @@ def planar_edges(edges):
             return False
         if abs(dir0.dot(center - center0)) > 1e-5:
             return False
-        
+
         if not edge_1D(ei):
             oneD = False
-   
-    if oneD :
+
+    if oneD:
         return False
     else:
         return True
@@ -990,8 +990,8 @@ def planar_edges(edges):
 def edge_1D(edge):
     if edge.Length < 1e-5:
         return False
-    p0,p1 = edge.ParameterRange
-    pe = 0.5*(p1+p0)
+    p0, p1 = edge.ParameterRange
+    pe = 0.5 * (p1 + p0)
     return edge.Curve.curvature(pe) < 1e-6
 
 

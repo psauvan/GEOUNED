@@ -341,7 +341,7 @@ class FaceGu(object):
 
     def set_outerWire(self, Faces):
         self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
-        #self.OuterWire = self.__face__.OuterWire
+        # self.OuterWire = self.__face__.OuterWire
 
     def tessellate(self, val, reset=False):
         res = self.__face__.tessellate(val, reset)

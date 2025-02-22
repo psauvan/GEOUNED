@@ -22,7 +22,7 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, options, tolerances):   
+def generic_split(solid, options, tolerances):
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
