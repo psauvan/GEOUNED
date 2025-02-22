@@ -3,7 +3,7 @@ import re
 
 import FreeCAD
 
-from ..utils.functions import GeounedSolid
+from ..utils.geouned_classes import GeounedSolid
 
 logger = logging.getLogger("general_logger")
 

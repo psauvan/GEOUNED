@@ -12,46 +12,413 @@ mix = re.compile(r"(?P<value>([-+]?\d+|\[0+\]))")  # identify signed integer or 
 TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern including F,T,X, or o sequence ( in any order).
 
 
+def BoolSeq_int_to_BoolRegion(Seq):
+    if Seq.base_type != int:
+        return Seq
+    variables = Seq.get_surfaces_numbers()
+    boolvar = dict()
+    for key in variables:
+        boolvar[key] = BoolRegion(key)
+
+    for i, e in enumerate(Seq.elements):
+        if isinstance(e, int):
+            Seq.elements[i] = boolvar[abs(e)] if e > 0 else -boolvar[abs(e)]
+        elif isinstance(e, BoolSequence):
+            Seq.elements[i] = BoolSeq_int_to_BoolRegion(Seq.elements[i])
+    Seq.base_type = BoolRegion
+    return Seq
+
+
+def BoolSeq_int_to_BoolVar(Seq):
+    if Seq.base_type != int:
+        return Seq
+    if type(Seq.elements) is bool:
+        return Seq
+
+    variables = Seq.get_surfaces_numbers()
+    boolvar = dict()
+    for key in variables:
+        boolvar[key] = BoolVariable(key)
+    for i, e in enumerate(Seq.elements):
+        if isinstance(e, int):
+            Seq.elements[i] = boolvar[abs(e)] if e > 0 else -boolvar[abs(e)]
+        elif isinstance(e, BoolSequence):
+            Seq.elements[i] = BoolSeq_int_to_BoolVar(Seq.elements[i])
+    Seq.base_type = BoolVariable
+    return Seq
+
+
+def chg_surf_ref(Seq, surf):
+    if Seq.base_type != BoolVariable:
+        return True
+
+    surfList = Seq.get_surfaces_numbers()
+    if surf in surfList:
+        for e in Seq.elements:
+            if isinstance(e, BoolVariable):
+                if abs(e) == surf:
+                    e.change_ref()
+                    return True
+            else:
+                brk = chg_surf_ref(e, surf)
+                if brk:
+                    return True
+        return False
+    else:
+        return False
+
+
+class surfRef:
+    def __init__(self, value=True):
+        self.__value__ = value
+
+    def switch(self):
+        self.__value__ = not self.__value__
+
+    def ref(self):
+        return self.__value__
+
+
+class BoolVariable(int):
+    def __new__(cls, *args, **kwrds):
+        label = args[0]
+        return super(BoolVariable, cls).__new__(cls, label)
+
+    def __init__(
+        self,
+        label,
+        value=None,
+    ):
+        if value is None:
+            self.__reference__ = surfRef()
+        else:
+            self.__reference__ = value
+
+    def __hash__(self):
+        return hash(self.__int__())
+
+    def __eq__(self, BV):
+        if type(self) != type(BV):
+            return False
+        return self.__int__() == BV.__int__()
+
+    def __abs__(self):
+        if self.__int__() >= 0:
+            return self
+        else:
+            return -self
+
+    def __neg__(self):
+        return BoolVariable(-self.__int__(), self.__reference__)
+
+    def __str__(self):
+        return str(self.value())
+
+    def copy(self):
+        return BoolVariable(self.__int__(), self.__reference__)
+
+    def change_ref(self):
+        self.__reference__.switch()
+
+    def ref(self):
+        return self.__reference__.ref()
+
+    def value(self):
+        return self.__int__() if self.ref() else -self.__int__()
+
+
+class BoolRegion(int):
+    def __new__(cls, *args, **kwrds):
+        label = args[0]
+        return super(BoolRegion, cls).__new__(cls, label)
+
+    def __init__(self, label, definition=None, reverse=False):
+        self.reverse = reverse
+        if definition is None:
+            self.region = BoolVariable(label)
+            self.level = 0
+        else:
+            self.set_definition(definition)
+        self.surfaces = self.get_surfaces_numbers()
+
+    def __str__(self):
+        line = f"region {self.__int__():2d} : "
+        defline = self.region.__str__()
+        return line + defline
+
+    def __hash__(self):
+        return hash(self.__int__())
+
+    def __neg__(self):
+        if self.level == 0:
+            return BoolRegion(-self.__int__(), -self.region, self.reverse)
+        else:
+            return BoolRegion(-self.__int__(), self.region.get_complementary(), self.reverse)
+
+    def __pos__(self):
+        return self
+
+    def __abs__(self):
+        if self >= 0:
+            return self
+        else:
+            return -self
+
+    def __add__(self, def2):
+        if def2 is None:
+            return self
+
+        newdef = BoolSequence(operator="OR")
+        newdef.append(self.region, def2.region)
+        newdef.join_operators()
+        return BoolRegion(0, newdef)
+
+    def __sub__(self, def2):
+        if def2 is None:
+            return self
+
+        newdef = BoolSequence(operator="OR")
+        newdef.append(self.region, -def2.region)
+        newdef.join_operators()
+        return BoolRegion(0, newdef)
+
+    def __mul__(self, def2):
+        if def2 is None:
+            return self
+
+        newdef = BoolSequence(operator="AND")
+        newdef.append(self.region, def2.region)
+        newdef.join_operators()
+        return BoolRegion(0, newdef)
+
+    def __eq__(self, def2):
+        if type(def2) is int:
+            return self.__int__() == def2
+        else:
+            return self.region == def2.region
+
+    def chg_surf_ref(self, surf):
+        if self.level == 0:
+            if surf == abs(self.region):
+                self.region.change_ref()
+        else:
+            chg_surf_ref(self.region, surf)
+
+    def set_definition(self, definition):
+        if isinstance(definition, BoolVariable):
+            self.region = definition
+            self.level = 0
+        elif isinstance(definition, int):
+            self.region = BoolVariable(definition)
+            self.level = 0
+        elif isinstance(definition, str):
+            Seq = BoolSequence(definition)
+            self.region = BoolSeq_int_to_BoolVar(Seq)
+            self.level = self.region.level + 1
+        elif isinstance(definition, BoolSequence):
+            if definition.base_type == int:
+                self.region = BoolSeq_int_to_BoolVar(definition)
+            else:
+                self.region = definition
+            self.level = self.region.level + 1
+
+    def copy(self, newlabel=None, reverse=False):
+        if newlabel:
+            label = newlabel
+        else:
+            label = self.__int__()
+
+        if self.level == 0:
+            return BoolRegion(label, definition=self.region, reverse=self.reverse)
+        else:
+            copydef = self.region.copy()
+            return BoolRegion(label, definition=copydef, reverse=self.reverse)
+
+    def get_surfaces_numbers(self):
+        if type(self.region) is BoolVariable:
+            return (abs(self.region),)
+        else:
+            return self.region.get_surfaces_numbers()
+
+    def to_integer(self):
+        if type(self.region) == BoolVariable:
+            return self.region.value()
+        else:
+            return self.region.to_integer()
+
+    def isSameInterface(self, region2):
+        if type(region2) is BoolVariable:
+            if self.level > 0:
+                return 0
+            elif len(self.surfaces) == 1:
+                if type(self.region) is BoolVariable:
+                    if self.region.value() == region2.value():
+                        return 1
+                    elif self.region.value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+                else:
+                    if self.region.elements[0].value() == region2.value():
+                        return 1
+                    elif self.region.elements[0].value() == -region2.value():
+                        return -1
+                    else:
+                        return 0
+
+            else:
+                return 0
+
+        if self.level != region2.level:
+            return 0
+        if len(self.surfaces) != len(region2.surfaces):
+            return 0
+
+        if type(self.region) is BoolVariable:
+            if self.region.value() == region2.region.value():
+                return 1
+            elif self.region.value() == -region2.region.value():
+                return -1
+            else:
+                return 0
+
+        if self.region == region2.region:
+            return 1
+        elif self.region == region2.region.get_complementary():
+            return -1
+        else:
+            return 0
+
+    def mult(a, b, label=0):
+        if a is None:
+            return b
+        if b is None:
+            return a
+
+        newdef = BoolSequence(operator="AND")
+        newdef.append(a.region, b.region)
+        #  newdef.group_single()
+        newdef.join_operators()
+
+        return BoolRegion(label, newdef)
+
+    def add(a, b, label=0):
+        if a is None:
+            return b
+        if b is None:
+            return a
+
+        newdef = BoolSequence(operator="OR")
+        newdef.append(a.region, b.region)
+        newdef.join_operators()
+        # newdef.group_single()
+        return BoolRegion(label, newdef)
+
+
 class BoolSequence:
     """Class storing Boolean expression and operating on it"""
 
     def __init__(self, definition=None, operator=None):
         if definition:
             self.elements = []
-            self.set_def(definition)
+            if type(definition) is str:
+                self.base_type = int
+                self.set_def(definition)
         else:
             self.elements = []
             self.operator = operator
             self.level = 0
+            self.base_type = None
 
     def __str__(self):
         out = f"{self.operator}["
         if type(self.elements) is bool:
             return " True " if self.elements else " False "
         for e in self.elements:
-            if type(e) is int or type(e) is bool or type(e) is str:
+            if isinstance(e, (bool, int)):
                 out += f" {e} "
             else:
                 out += e.__str__()
-
         out += "] "
         return out
+
+    def __eq__(self, def2):
+        if type(self) != type(def2):
+            return False
+        if self.level != def2.level:
+            return False
+        if self.operator != def2.operator:
+            return False
+        if type(self.elements) != type(def2.elements):
+            return False
+        if type(self.elements) is bool:
+            return self.elements == def2.elements
+        if len(self.elements) != len(def2.elements):
+            return False
+        if self.level == 0:
+            set1 = self.get_lev0_surfaces()
+            set2 = def2.get_lev0_surfaces()
+            return len(set1 - set2) == 0
+        else:
+            if len(self.elements) != len(def2.elements):
+                return False
+            equals = 0
+            temp = def2.elements[:]
+            for e1 in self.elements:
+                for ie, e2 in enumerate(temp):
+                    if e1 == e2:
+                        del temp[ie]
+                        equals += 1
+                        break
+            return equals == len(self.elements)
+
+    def set_Bool_variable(self, positive=True):
+        for i, e in enumerate(self.elements):
+            if isinstance(e, BoolSequence):
+                e.set_Bool_variable(positive)
+            elif type(e) is int:  # isintance does not differ int from BoolRegion
+                if positive:
+                    self.elements[i] = BoolVariable(abs(e), e > 0)
+                else:
+                    self.elements[i] = BoolVariable(e, True)
+
+    def get_lev0_surfaces(self):
+        if self.level > 1:
+            return None
+        surf = set()
+        for e in self.elements:
+            surf.add(e)
+        return surf
 
     def append(self, *seq):
         """Append a BoolSequence Objects. seq may be :
         - An iterable containing allowed BoolSequence Objects
         - A BoolSequence object
-        - An integer value
+        - An BoolRegion object
+        - An integer
         - A Boolean value"""
 
-        if type(self.elements) is bool:
+        if isinstance(self.elements, bool):
             if (self.elements and self.operator == "AND") or (not self.elements and self.operator == "OR"):
                 self.assign(seq)
             return
 
+        if self.base_type is None:
+            for e in seq:
+                if type(e) is bool:
+                    continue
+                elif isinstance(e, BoolSequence):
+                    self.base_type = e.base_type
+                    break
+                else:
+                    self.base_type = type(e)
+                    break
+
         for s in seq:
-            if type(s) is int:
-                level = -1
+            if isinstance(s, int):
+                if type(s) != self.base_type:
+                    raise "All base elements in sequence should have the same type (int, BoolVariable or BoolRegion)"
+
                 if s in self.elements:
                     continue
                 elif -s in self.elements:
@@ -61,7 +428,7 @@ class BoolSequence:
                     else:
                         self.elements = True
                     return
-            elif type(s) is bool:
+            elif isinstance(s, bool):
                 if self.operator == "AND" and s or self.operator == "OR" and not s:
                     continue
                 else:
@@ -69,21 +436,23 @@ class BoolSequence:
                     self.level = -1
                     return
             else:
-                level = s.level
-                if type(s.elements) is bool:
+                if isinstance(s.elements, bool):
                     if self.operator == "AND" and not s.elements or self.operator == "OR" and s.elements:
                         self.level = -1
                         self.elements = s.elements
                         return
                     else:
                         continue
+                else:
+                    if s.base_type != self.base_type:
+                        raise "Base elements of bool sequence should have the same type (int ot BoolRegion)"
 
             self.elements.append(s)
-            self.level = max(self.level, level + 1)
+        self.level_update()
 
     def assign(self, seq):
         """Assign the BoolSequence Seq to the self instance BoolSequence"""
-        if type(seq) is bool:
+        if isinstance(seq, bool):
             self.operator == "AND"
             self.elements = seq
             self.level = -1
@@ -107,7 +476,7 @@ class BoolSequence:
         for i in reversed(indexes):
             del base.elements[i]
 
-        if type(seq.elements) is bool:
+        if isinstance(seq.elements, bool):
             base.elements = seq.elements
             base.level = -1
         else:
@@ -126,7 +495,9 @@ class BoolSequence:
         cp = BoolSequence()
         cp.operator = self.operator
         cp.level = self.level
-        if type(self.elements) is bool:
+        cp.base_type = self.base_type
+
+        if isinstance(self.elements, bool):
             cp.elements = self.elements
         else:
             for e in self.elements:
@@ -136,10 +507,22 @@ class BoolSequence:
                     cp.elements.append(e.copy())
         return cp
 
+    def to_integer(self):
+        if self.base_type == int:
+            return self
+        intSeq = self.copy()
+        for i, e in enumerate(intSeq.elements):
+            if isinstance(e, (BoolRegion, BoolSequence)):
+                intSeq.elements[i] = e.to_integer()
+            else:
+                intSeq.elements[i] = e.value()
+        return intSeq
+
     # TODO rename to snake case, care as multiple functions with same name
     def get_complementary(self):
         c = BoolSequence(operator=self.comp_operator())
         c.level = self.level
+        c.base_type = self.base_type
 
         if self.level == 0:
             for e in self.elements:
@@ -157,10 +540,36 @@ class BoolSequence:
         else:
             return "AND"
 
+    def expand_regions_to_integer(self):
+        for i, e in enumerate(self.elements):
+            if type(e) is BoolRegion:
+                if type(e.region) is BoolVariable:
+                    self.elements[i] = e.region.value()
+                else:
+                    self.elements[i] = e.region.to_integer()
+            elif type(e) is BoolVariable:
+                self.elements[i] = e.value()
+            elif type(e) is BoolSequence:
+                e.expand_regions_to_integer()
+        self.base_type = int
+        self.join_operators()
+
+    def expand_regions_to_boolVar(self):
+        for i, e in enumerate(self.elements):
+            if type(e) is BoolRegion:
+                self.elements[i] = e.region
+            elif type(e) is BoolSequence:
+                e.expand_regions_to_boolVar()
+
+        self.base_type = BoolVariable
+        self.join_operators()
+
     def simplify(self, CT=None, depth=0):
         """Simplification by recursive calls to the inner BoolSequence objects."""
         if self.level > 0:
             for seq in self.elements:
+                if type(seq) is BoolRegion:
+                    continue
                 seq.simplify(CT, depth + 1)
             self.clean()
             self.join_operators()
@@ -188,8 +597,8 @@ class BoolSequence:
             if val_name in newNames:
 
                 if CT is None:
-                    true_set = {abs(val_name): True}
-                    false_set = {abs(val_name): False}
+                    true_set = {val_name: True}
+                    false_set = {val_name: False}
                 else:
                     true_set, false_set = CT.get_constraint_set(val_name)
 
@@ -256,6 +665,8 @@ class BoolSequence:
             return self.elements
         if self.level == 0:
             signed_surf = set(self.elements)
+            self.elements = list(signed_surf)
+
             surf_name = self.get_surfaces_numbers()
             if len(signed_surf) == len(surf_name):
                 return None  # means same surface has not positive and negative value
@@ -270,7 +681,8 @@ class BoolSequence:
         elif not level0:
             self.group_single()
             none_val = False
-            for e in reversed(self.elements):
+            ne = len(self.elements) - 1
+            for ie, e in enumerate(reversed(self.elements)):
                 e.check()
                 if type(e.elements) is bool:
                     res = e.elements
@@ -288,7 +700,7 @@ class BoolSequence:
                     self.elements = True
                     return True
                 else:
-                    self.elements.remove(e)
+                    del self.elements[ne - ie]
 
             if none_val:
                 return None
@@ -313,9 +725,9 @@ class BoolSequence:
         ic = len(self.elements)
         for e in reversed(self.elements):
             ic -= 1
-            if type(e) is int:
+            if isinstance(e, int):
                 if abs(e) == name:
-                    if type(val) is int:
+                    if type(val) is not bool:
                         if name == e:
                             self.elements[ic] = val
                         else:
@@ -336,7 +748,7 @@ class BoolSequence:
                             self.level = -1
                             return
                         else:
-                            self.elements.remove(e)
+                            del self.elements[ic]
 
             else:
                 e.substitute(var, val)
@@ -354,8 +766,9 @@ class BoolSequence:
         """Remove sequences whom elements are boolean values instead of list."""
         if type(self.elements) is bool:
             return self.elements
-        for e in reversed(self.elements):
-            if type(e) is int:
+        ne = len(self.elements) - 1
+        for ie, e in enumerate(reversed(self.elements)):
+            if isinstance(e, int):
                 continue
             eVal = e if self_level else e.clean()
             if type(eVal) is not bool:
@@ -370,7 +783,7 @@ class BoolSequence:
                     self.elements = False
                     self.level = -1
                     return False
-                self.elements.remove(e)
+                del self.elements[ne - ie]
 
         if self.elements == []:
             if self.operator == "OR":
@@ -403,18 +816,24 @@ class BoolSequence:
 
         if len(ANDop) > 1 and self.operator == "AND":
             newSeq = BoolSequence(operator="AND")
+            newSeq.base_type = self.base_type
             for s in ANDop:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
             newSeq.level_update()
+            if newSeq.level == 0:
+                newSeq.check()
             self.append(newSeq)
 
         elif len(ORop) > 1 and self.operator == "OR":
             newSeq = BoolSequence(operator="OR")
+            newSeq.base_type = self.base_type
             for s in ORop:
                 newSeq.elements.extend(s.elements)
                 self.elements.remove(s)
             newSeq.level_update()
+            if newSeq.level == 0:
+                newSeq.check()
             self.append(newSeq)
 
         if self.level > 0 and len(self.elements) == 1:
@@ -423,6 +842,7 @@ class BoolSequence:
             self.level -= 1
             self.join_operators()
 
+        self.level_update()
         if self.level == 0:
             self.check()
             return
@@ -605,17 +1025,19 @@ class BoolSequence:
         if type(self.elements) is bool:
             return
         group = []
-        for e in reversed(self.elements):
-            if type(e) is int:
+        ne = len(self.elements) - 1
+        for ie, e in enumerate(reversed(self.elements)):
+            if isinstance(e, int):
                 group.append(e)
-                self.elements.remove(e)
+                del self.elements[ne - ie]
             elif e.level == 0 and len(e.elements) == 1:
                 group.append(e.elements[0])
-                self.elements.remove(e)
+                del self.elements[ne - ie]
 
         if not group:
             return
         seq = BoolSequence()
+        seq.base_type = self.base_type
         seq.elements.extend(group)
         seq.operator = self.operator
         seq.level = 0
@@ -624,14 +1046,35 @@ class BoolSequence:
     def get_surfaces_numbers(self):
         """Return the list of all surfaces in the BoolSequence definition."""
         if type(self.elements) is bool:
-            return tuple()
-        surf = set()
+            return set()
+
+        if self.base_type is BoolRegion:
+            return self.get_regions()
+
+        surfSet = set()
         for e in self.elements:
-            if type(e) is int:
-                surf.add(abs(e))
+            if isinstance(e, int):  # include int and BoolVariable
+                surfSet.add(abs(e))
             else:
-                surf.update(e.get_surfaces_numbers())
-        return surf
+                surfSet.update(e.get_surfaces_numbers())
+        return surfSet
+
+    def get_regions(self):
+        """Return the list of all regions in the BoolSequence definition."""
+        if self.base_type is not BoolRegion:
+            return set()
+        if type(self.elements) is bool:
+            return set()
+        if self.base_type == int:
+            return set()
+
+        regions = set()
+        for e in self.elements:
+            if type(e) is BoolRegion:
+                regions.add(abs(e))
+            elif type(e) is BoolSequence:
+                regions.update(e.get_regions())
+        return regions
 
     def level_update(self):
         """Update the level value of the BoolSequence."""
@@ -641,7 +1084,7 @@ class BoolSequence:
 
         self.level = 0
         for e in self.elements:
-            if type(e) is int:
+            if isinstance(e, int):
                 continue
             e.level_update()
             self.level = max(e.level + 1, self.level)

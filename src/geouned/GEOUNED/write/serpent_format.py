@@ -9,8 +9,8 @@ from importlib.metadata import version
 import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ..utils.functions import SurfacesDict
-from .functions import change_surf_sign, serpent_surface, write_serpent_cell_def
+from ..utils.geouned_classes import SurfacesDict
+from .functions import serpent_surface, write_serpent_cell_def
 
 logger = logging.getLogger("general_logger")
 
@@ -355,18 +355,6 @@ class SerpentInput:
                 surfList.append(s)
                 temp.del_surface(ind + 1)
         return surfList
-
-    def change_surf_sign(self, p):
-
-        if p.Index not in self.surfaceTable.keys():
-            logger.info(f"{p.Type} Surface {p.Index} not used in cell definition) {p.Surf.Axis} {p.Surf.Position}")
-            return
-
-        for ic in self.surfaceTable[p.Index]:
-            surf = self.Cells[ic].Definition.get_surfaces_numbers()
-            for s in surf:
-                if s == p.Index:
-                    change_surf_sign(s, self.Cells[ic].Definition)
 
     def get_solid_cell_volume(self):
 

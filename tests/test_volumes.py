@@ -135,7 +135,7 @@ def test_skip_solids_when_loading(skip_solids, expected):
 
     # this geometry has 12 solids in it
     geo.load_step_file(filename="testing/inputSTEP/Torus/example.stp", skip_solids=skip_solids)
-    geo.start()
+    geo.run()
     assert geo.filename == "testing/inputSTEP/Torus/example.stp"
     assert geo.skip_solids == skip_solids
 

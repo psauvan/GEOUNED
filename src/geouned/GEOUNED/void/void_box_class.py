@@ -6,11 +6,10 @@ import FreeCAD
 import Part
 
 from ..conversion import cell_definition as Conv
-from ..decompose import decom_one as Decom
-from ..utils.basic_functions_part1 import is_opposite
+from ..decompose.decom_one_generators import main_split
 from ..utils.boolean_function import BoolSequence
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
-from ..utils.functions import GeounedSolid, GeounedSurface
+from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 
 logger = logging.getLogger("general_logger")
 
@@ -26,7 +25,7 @@ class VoidBox:
             self.BoundBox = Enclosure.optimalBoundingBox()
             self.PieceEnclosure = Enclosure
 
-        for m in MetaSolids:
+        for i, m in enumerate(MetaSolids):
             if not m.BoundBox:
                 continue
             if m.BoundBox.isValid():
@@ -170,27 +169,18 @@ class VoidBox:
             center = self.BoundBox.Center
             bBox = self.BoundBox
             for p in self.get_bound_planes():
-                id, exist = Surfaces.add_plane(p, options, tolerances, numeric_format, False)
-                if exist:
-                    s = Surfaces.get_surface(id)
-                    if is_opposite(p.Surf.Axis, s.Surf.Axis):
-                        id = -id
-                if is_opposite(p.Surf.Axis, p.Surf.Position - center):
-                    boxDef.elements.append(id)
-                else:
-                    boxDef.elements.append(-id)
+                plane_region = Surfaces.add_plane(p, False)
+                boxDef.elements.append(plane_region)
                 enclosure = False
             d = options.enlargeBox
 
         else:
             UniverseBox = self.PieceEnclosure.BoundBox
             TempPieceEnclosure = GeounedSolid(None, self.PieceEnclosure)
-            comsolid, err = Decom.SplitSolid(
+            comsolid = main_split(
                 Part.makeCompound(TempPieceEnclosure.Solids),
-                UniverseBox,
                 options,
                 tolerances,
-                numeric_format,
             )
             Surfaces.extend(
                 Decom.extract_surfaces(
@@ -253,10 +243,10 @@ class VoidBox:
         complementary = BoolSequence(operator="AND")
         complementary.append(boxDef)
         if simplify != "no":
-            surfList = voidSolidDef.get_surfaces_numbers()
+            surfList = voidSolidDef.get_surfaces_numbers(expand=True)
 
             if enclosure:
-                surfList.update(boxDef.get_surfaces_numbers())
+                surfList.update(boxDef.get_surfaces_numbers(expand=True))
             else:
                 for s in boxDef.elements:
                     val = s > 0
@@ -270,7 +260,7 @@ class VoidBox:
             if enclosure or res is None:
                 surfaceDict = {}
                 for i in surfList:
-                    surfaceDict[i] = Surfaces.get_surface(i)
+                    surfaceDict[i] = Surfaces.get_primitive_surface(i)
                 CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options)
             else:
                 if res is True:
@@ -288,6 +278,7 @@ class VoidBox:
                 voidSolidDef = cellVoid
 
             for solDef in voidSolidDef.elements:
+                solDef.expand_regions_to_boolVar()
                 newSolid = remove_extra_surfaces(solDef, CTable)
                 if type(newSolid.elements) is not bool:
                     newTemp.append(newSolid)
@@ -312,7 +303,6 @@ class VoidBox:
         if voidSolidDef.level == 0:
             compSeq = voidSolidDef.get_complementary()
         else:
-
             if voidSolidDef.level == 1 and voidSolidDef.operator == "AND":
                 compSeq = BoolSequence(operator="OR")
             else:
@@ -340,15 +330,18 @@ class VoidBox:
 
         if simplify == "full":
             if enclosure:
+                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
                 complementary.simplify(CTable)
             else:
                 compSeq.simplify(CTable)
+                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
         else:
             compSeq.simplify(None)
             complementary.simplify(None)
             complementary.append(compSeq)
+            complementary.expand_regions_to_boolVar()
 
         complementary.clean()
         complementary.level_update()

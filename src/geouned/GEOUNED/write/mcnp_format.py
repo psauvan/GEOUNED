@@ -10,8 +10,9 @@ from importlib.metadata import version
 import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ..utils.functions import SurfacesDict
-from .functions import CardLine, change_surf_sign, mcnp_surface, write_mcnp_cell_def
+from ..utils.geouned_classes import SurfacesDict
+from ..utils.boolean_function import BoolVariable
+from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
 
@@ -22,9 +23,6 @@ class McnpInput:
         self,
         Meta,
         Surfaces,
-        options,
-        tolerances,
-        numeric_format,
         title,
         volSDEF,
         volCARD,
@@ -38,9 +36,9 @@ class McnpInput:
         self.U0CARD = UCARD
         self.dummyMat = dummyMat
         self.Cells = Meta
-        self.options = options
-        self.tolerances = tolerances
-        self.numeric_format = numeric_format
+        self.options = Surfaces.options
+        self.tolerances = Surfaces.tolerances
+        self.numeric_format = Surfaces.numeric_format
         self.Options = {
             "Volume": self.VolCARD,
             "Particle": ("n", "p"),
@@ -52,10 +50,10 @@ class McnpInput:
         if isinstance(self.step_filename, (tuple, list)):
             self.step_filename = "; ".join(self.step_filename)
 
-        self.get_surface_table()
         self.simplify_planes(Surfaces)
+        self.get_cell_surf_summary()
 
-        self.Surfaces = self.sorted_surfaces(Surfaces)
+        self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
 
         return
@@ -113,9 +111,10 @@ C ##########################################################
 C   ______ _______  _____      _     _ __   _ _______ ______  
 C  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\ 
 C  |_____| |______ |_____|     |_____| |  \\_| |______ |_____/
-C Version : {version('geouned')}
-C FreeCAD Version : {freeCAD_Version} 
 """
+        # C Version : {version('geouned')}
+        # C FreeCAD Version : {freeCAD_Version}
+        # """
 
         Information = f"""C
 C *************************************************************
@@ -155,6 +154,10 @@ C **************************************************************
             self.inpfile.write(comment)
             return
 
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
+            return
+
         if cell.Material == 0:
             cellHeader = f"{index:<5d} {0:<5d}  "
         else:
@@ -177,7 +180,7 @@ C **************************************************************
         """Write the surfaces in MCNP format"""
 
         MCNP_def = mcnp_surface(
-            surface.Index,
+            surface.bVar.__int__(),
             surface.Type,
             surface.Surf,
             self.options,
@@ -286,8 +289,7 @@ C **************************************************************
             comment += "C \n"
         return comment
 
-    def get_surface_table(self):
-        self.surfaceTable = {}
+    def get_cell_surf_summary(self):
         self.__solidCells__ = 0
         self.__cells__ = 0
         self.__materials__ = set()
@@ -296,42 +298,39 @@ C **************************************************************
             if CellObj.__id__ is None:
                 continue
             self.__cells__ += 1
+
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
-            surf = CellObj.Definition.get_surfaces_numbers()
             if not CellObj.Void:
                 self.__solidCells__ += 1
-            for index in surf:
-                if index in self.surfaceTable.keys():
-                    self.surfaceTable[index].add(i)
-                else:
-                    self.surfaceTable[index] = {i}
+            CellObj.Definition.expand_regions_to_integer()
+
         return
 
     def simplify_planes(self, Surfaces):
 
-        for p in Surfaces["PX"]:
+        for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
                 p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
-        for p in Surfaces["PY"]:
+        for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
-        for p in Surfaces["PZ"]:
+        for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
         if self.options.prnt3PPlane:
             for p in Surfaces["P"]:
                 if p.Surf.pointDef:
                     axis, d = points_to_coeffs(p.Surf.Points)
                     if is_opposite(axis, p.Surf.Axis):
-                        self.change_surf_sign(p)
+                        p.bVar.change_ref()
 
         return
 
@@ -339,23 +338,12 @@ C **************************************************************
         temp = SurfacesDict(Surfaces)
         surfList = []
         for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            s = temp.get_surface(ind + 1)
+            bvar = BoolVariable(ind + 1)
+            s = temp.get_surface(bvar)
             if s is not None:
                 surfList.append(s)
-                temp.del_surface(ind + 1)
+                temp.del_surface(bvar)
         return surfList
-
-    def change_surf_sign(self, p):
-
-        if p.Index not in self.surfaceTable.keys():
-            logger.info(f"{p.Type} Surface {p.Index} not used in cell definition) {p.Surf.Axis} {p.Surf.Position}")
-            return
-
-        for ic in self.surfaceTable[p.Index]:
-            surf = self.Cells[ic].Definition.get_surfaces_numbers()
-            for s in surf:
-                if s == p.Index:
-                    change_surf_sign(s, self.Cells[ic].Definition)
 
     def get_solid_cell_volume(self):
 
