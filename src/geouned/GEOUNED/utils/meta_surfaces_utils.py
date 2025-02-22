@@ -733,24 +733,13 @@ def closed_circle_edge(planes):
 def most_outer_faces(cyl, faces):
 
     if type(cyl) is ShellGu:
-        umin, umax, Vmin, Vmax = cyl.Faces[0].ParameterRange
-        for f in cyl.Faces[1:]:
-            umin, umax, vmin, vmax = f.ParameterRange
-            Vmin = min(Vmin, vmin)
-            Vmax = max(Vmax, vmax)
         cylSurf = cyl.Faces[0].Surface
-        center = cylSurf.Center + cylSurf.Axis * cylSurf.Axis.dot(cyl.CenterOfMass - cylSurf.center)
-        rmin = cylSurf.Axis.dot(cylSurf.value(0, Vmin) - center)
-        rmax = cylSurf.Axis.dot(cylSurf.value(0, Vmax) - center)
     else:
-        umin, umax, vmin, vmax = cyl.ParameterRange
-        center = cyl.Surface.Center
-        rmin = cyl.Surface.Axis.dot(cyl.valueAt(0, vmin) - center)
-        rmax = cyl.Surface.Axis.dot(cyl.valueAt(0, vmax) - center)
+        cylSurf = cyl.Surface
 
     surfPos = []
     for i, f in enumerate(faces):
-        d = cyl.Surface.Axis.dot(f.CenterOfMass)
+        d = cylSurf.Axis.dot(f.CenterOfMass)
         surfPos.append((d, i))
     surfPos.sort()
 
