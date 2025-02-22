@@ -408,7 +408,7 @@ class NumericFormat:
         C_r (str, optional): Cylinder radius. Defaults to "12f".
         C_xyz (str, optional): Cylinder center. Defaults to "12f".
         K_xyz (str, optional): Cone apex. Defaults to "13.6e".
-        K_tan2 (str, optional): Cone tan^2 value. Defaults to "12f".
+        K_tan2 (str, optional): Cone tan^2 value. Defaults to "13.6e".
         T_r (str, optional): Torus radii. Defaults to "14.7e".
         T_xyz (str, optional): Torus center. Defaults to "14.7e".
         GQ_1to6 (str, optional): GQ 1 to 6 coefficients (order 2 x2,y2,z2,xy,...). Defaults to "18.15f".
@@ -426,7 +426,7 @@ class NumericFormat:
         C_r: str = "12f",
         C_xyz: str = "12f",
         K_xyz: str = "13.6e",
-        K_tan2: str = "12f",
+        K_tan2: str = "13.6e",
         T_r: str = "14.7e",
         T_xyz: str = "14.7e",
         GQ_1to6: str = "18.15f",
@@ -605,7 +605,7 @@ class Settings:
             that solids defined has separated solids are read by FreeCAD
             as a single compound solid (and will produce only one MCNP
             cell). In this case compSolids should be set to False. Defaults
-            to True.
+            to False.
         simplify (str, optional): Simplify the cell definition considering
             relative surfaces position and using Boolean logics. Available
             options are: "no" no optimization, "void" only void cells are
@@ -641,7 +641,7 @@ class Settings:
         matFile: str = "",
         voidGen: bool = True,
         debug: bool = False,
-        compSolids: bool = True,
+        compSolids: bool = False,
         simplify: str = "no",
         exportSolids: typing.Optional[str] = None,
         minVoidSize: float = 200.0,  # units mm
@@ -769,9 +769,17 @@ class Settings:
     def voidMat(self, voidMat: list):
         if not isinstance(voidMat, list):
             raise TypeError(f"geouned.Settings.voidMat should be a list, not a {type(voidMat)}")
-        for entry in voidMat:
-            if not isinstance(entry, int):
-                raise TypeError(f"geouned.Settings.voidMat should be a list of ints, not a {type(entry)}")
+        if len(voidMat) == 3:
+            entry0, entry1, entry2 = voidMat
+            if not isinstance(entry0, int):
+                raise TypeError(f"first entry of geouned.Settings.voidMat should be an int, not a {type(entry0)}")
+            if not isinstance(entry1, int):
+                if not isinstance(entry1, float):
+                    raise TypeError(f"second entry of geouned.Settings.voidMat should be an int or float, not a {type(entry1)}")
+            if not isinstance(entry2, str):
+                raise TypeError(f"third entry of geouned.Settings.voidMat should be a str, not a {type(entry2)}")
+        elif len(voidMat) > 0:
+            raise TypeError(f"geouned.Settings.voidMat should be a list with 3 elements or void list")
         self._voidMat = voidMat
 
     @property
