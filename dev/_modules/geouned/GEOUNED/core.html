@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>geouned.GEOUNED.core &#8212; GEOUNED 0.1.dev1+g4f60c4f documentation</title>
+    <title>geouned.GEOUNED.core &#8212; GEOUNED 0.1.dev1+ga749a6b documentation</title>
   
   
   
@@ -15,39 +15,44 @@
     document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
   </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
   
   <!-- Loaded before other Sphinx assets -->
-  <link href="../../../_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-<link href="../../../_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+  <link href="../../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
 
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
   
-  <link href="../../../_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
-<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
-<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
-
-    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=a746c00c" />
-  
+  <!-- So that users can add custom icons -->
+  <script src="../../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
   <!-- Pre-loaded scripts that we'll load fully later -->
-  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
-<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
-  <script src="../../../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../_static/documentation_options.js?v=019b1dac"></script>
-    <script src="../../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../../_static/documentation_options.js?v=39619aa0"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = '_modules/geouned/GEOUNED/core';</script>
     <script>
-        DOCUMENTATION_OPTIONS.theme_version = '0.15.4';
+        DOCUMENTATION_OPTIONS.theme_version = '0.16.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://raw.githubusercontent.com/GEOUNED-org/GEOUNED/dev/docs/version_switcher.json';
         DOCUMENTATION_OPTIONS.theme_switcher_version_match = '0.1';
-        DOCUMENTATION_OPTIONS.show_version_warning_banner = false;
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            false;
         </script>
     <link rel="index" title="Index" href="../../../genindex.html" />
     <link rel="search" title="Search" href="../../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.1.dev1+ga749a6b" />
   </head>
   
   
@@ -63,19 +68,8 @@
     <i class="fa-solid fa-arrow-up"></i>Back to top</button>
 
   
-  <input type="checkbox"
-          class="sidebar-toggle"
-          id="pst-primary-sidebar-checkbox"/>
-  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
-  
-  <input type="checkbox"
-          class="sidebar-toggle"
-          id="pst-secondary-sidebar-checkbox"/>
-  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
-  
-  <div class="search-button__wrapper">
-    <div class="search-button__overlay"></div>
-    <div class="search-button__search-container">
+  <dialog id="pst-search-dialog">
+    
 <form class="bd-search d-flex align-items-center"
       action="../../../search.html"
       method="get">
@@ -83,7 +77,6 @@
   <input type="search"
          class="form-control"
          name="q"
-         id="search-input"
          placeholder="Search the docs ..."
          aria-label="Search the docs ..."
          autocomplete="off"
@@ -91,8 +84,8 @@
          autocapitalize="off"
          spellcheck="false"/>
   <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-  </div>
+</form>
+  </dialog>
 
   <div class="pst-async-banner-revealer d-none">
   <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
@@ -109,28 +102,24 @@
   <div class="col-lg-3 navbar-header-items__start">
     
       <div class="navbar-item">
-<script>
-document.write(`
-  <div class="version-switcher__container dropdown">
-    <button id="pst-version-switcher-button-2"
-      type="button"
-      class="version-switcher__button btn btn-sm dropdown-toggle"
-      data-bs-toggle="dropdown"
-      aria-haspopup="listbox"
-      aria-controls="pst-version-switcher-list-2"
-      aria-label="Version switcher list"
-    >
-      Choose version  <!-- this text may get changed later by javascript -->
-      <span class="caret"></span>
-    </button>
-    <div id="pst-version-switcher-list-2"
-      class="version-switcher__menu dropdown-menu list-group-flush py-0"
-      role="listbox" aria-labelledby="pst-version-switcher-button-2">
-      <!-- dropdown will be populated by javascript on page load -->
-    </div>
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
   </div>
-`);
-</script></div>
+</div></div>
     
       <div class="navbar-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
@@ -159,15 +148,15 @@ document.write(`
   <ul class="bd-navbar-elements navbar-nav">
     
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../install/index.html">
-    Install
+  <a class="nav-link nav-internal" href="../../../quick_install_guide.html">
+    Quick Install Guide
   </a>
 </li>
 
 
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../usage/index.html">
-    Usage
+  <a class="nav-link nav-internal" href="../../../users_guide/index.html">
+    Users Guide
   </a>
 </li>
 
@@ -180,15 +169,8 @@ document.write(`
 
 
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../methodology.html">
-    Methodology
-  </a>
-</li>
-
-
-<li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../developer_guide.html">
-    Developer guide
+  <a class="nav-link nav-internal" href="../../../developers_guide.html">
+    Developers guide
   </a>
 </li>
 
@@ -203,29 +185,21 @@ document.write(`
         <div class="navbar-item navbar-persistent--container">
           
 
- <script>
- document.write(`
-   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="fa-solid fa-magnifying-glass"></i>
-    <span class="search-button__default-text">Search</span>
-    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
-   </button>
- `);
- </script>
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
         </div>
       
       
         <div class="navbar-item">
 
-<script>
-document.write(`
-  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
-    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
-    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
-  </button>
-`);
-</script></div>
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
       
         <div class="navbar-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
@@ -250,15 +224,11 @@ document.write(`
   
     <div class="navbar-persistent--mobile">
 
- <script>
- document.write(`
-   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="fa-solid fa-magnifying-glass"></i>
-    <span class="search-button__default-text">Search</span>
-    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
-   </button>
- `);
- </script>
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
     </div>
   
 
@@ -275,7 +245,8 @@ document.write(`
       
         
       
-      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
         
 
   
@@ -291,15 +262,15 @@ document.write(`
   <ul class="bd-navbar-elements navbar-nav">
     
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../install/index.html">
-    Install
+  <a class="nav-link nav-internal" href="../../../quick_install_guide.html">
+    Quick Install Guide
   </a>
 </li>
 
 
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../usage/index.html">
-    Usage
+  <a class="nav-link nav-internal" href="../../../users_guide/index.html">
+    Users Guide
   </a>
 </li>
 
@@ -312,15 +283,8 @@ document.write(`
 
 
 <li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../methodology.html">
-    Methodology
-  </a>
-</li>
-
-
-<li class="nav-item ">
-  <a class="nav-link nav-internal" href="../../../developer_guide.html">
-    Developer guide
+  <a class="nav-link nav-internal" href="../../../developers_guide.html">
+    Developers guide
   </a>
 </li>
 
@@ -336,15 +300,11 @@ document.write(`
         
           <div class="navbar-item">
 
-<script>
-document.write(`
-  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
-    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
-    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
-  </button>
-`);
-</script></div>
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
         
           <div class="navbar-item"><ul class="navbar-icon-links"
     aria-label="Icon Links">
@@ -368,9 +328,14 @@ document.write(`
   
   
   <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
   </div>
-  
-  <div id="rtd-footer-container"></div>
 
 
       </div>
@@ -388,8 +353,6 @@ document.write(`
       
         <div class="header-article-item">
 
-
-
 <nav aria-label="Breadcrumb" class="d-print-none">
   <ul class="bd-breadcrumbs">
     
@@ -401,7 +364,7 @@ document.write(`
     
     <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
     
-    <li class="breadcrumb-item active" aria-current="page">geouned.GEOUNED.core</li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">geouned.GEOUNED.core</span></li>
   </ul>
 </nav>
 </div>
@@ -419,29 +382,29 @@ document.write(`
                 <article class="bd-article">
                   
   <h1>Source code for geouned.GEOUNED.core</h1><div class="highlight"><pre>
-<span></span><span class="kn">import</span> <span class="nn">json</span>
-<span class="kn">import</span> <span class="nn">logging</span>
-<span class="kn">import</span> <span class="nn">typing</span>
-<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
-<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">get_type_hints</span>
-<span class="kn">from</span> <span class="nn">importlib.metadata</span> <span class="kn">import</span> <span class="n">version</span>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">typing</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_type_hints</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">importlib.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">version</span>
 
-<span class="kn">import</span> <span class="nn">FreeCAD</span>
-<span class="kn">import</span> <span class="nn">Part</span>
-<span class="kn">from</span> <span class="nn">tqdm</span> <span class="kn">import</span> <span class="n">tqdm</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">FreeCAD</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">Part</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
 
-<span class="kn">from</span> <span class="nn">.code_version</span> <span class="kn">import</span> <span class="o">*</span>
-<span class="kn">from</span> <span class="nn">.conversion</span> <span class="kn">import</span> <span class="n">cell_definition</span> <span class="k">as</span> <span class="n">Conv</span>
-<span class="kn">from</span> <span class="nn">.cuboid.translate</span> <span class="kn">import</span> <span class="n">translate</span>
-<span class="kn">from</span> <span class="nn">.decompose</span> <span class="kn">import</span> <span class="n">decom_one</span> <span class="k">as</span> <span class="n">Decom</span>
-<span class="kn">from</span> <span class="nn">.loadfile</span> <span class="kn">import</span> <span class="n">load_step</span> <span class="k">as</span> <span class="n">Load</span>
-<span class="kn">from</span> <span class="nn">.utils</span> <span class="kn">import</span> <span class="n">functions</span> <span class="k">as</span> <span class="n">UF</span>
-<span class="kn">from</span> <span class="nn">.utils.boolean_solids</span> <span class="kn">import</span> <span class="n">build_c_table_from_solids</span>
-<span class="kn">from</span> <span class="nn">.utils.data_classes</span> <span class="kn">import</span> <span class="n">NumericFormat</span><span class="p">,</span> <span class="n">Options</span><span class="p">,</span> <span class="n">Settings</span><span class="p">,</span> <span class="n">Tolerances</span>
-<span class="kn">from</span> <span class="nn">.void</span> <span class="kn">import</span> <span class="n">void</span> <span class="k">as</span> <span class="n">void</span>
-<span class="kn">from</span> <span class="nn">.write.functions</span> <span class="kn">import</span> <span class="n">write_mcnp_cell_def</span>
-<span class="kn">from</span> <span class="nn">.write.write_files</span> <span class="kn">import</span> <span class="n">write_geometry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.code_version</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.conversion</span><span class="w"> </span><span class="kn">import</span> <span class="n">cell_definition</span> <span class="k">as</span> <span class="n">Conv</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.cuboid.translate</span><span class="w"> </span><span class="kn">import</span> <span class="n">translate</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.decompose</span><span class="w"> </span><span class="kn">import</span> <span class="n">decom_one</span> <span class="k">as</span> <span class="n">Decom</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.loadfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_step</span> <span class="k">as</span> <span class="n">Load</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">functions</span> <span class="k">as</span> <span class="n">UF</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.utils.boolean_solids</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_c_table_from_solids</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.utils.data_classes</span><span class="w"> </span><span class="kn">import</span> <span class="n">NumericFormat</span><span class="p">,</span> <span class="n">Options</span><span class="p">,</span> <span class="n">Settings</span><span class="p">,</span> <span class="n">Tolerances</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.void</span><span class="w"> </span><span class="kn">import</span> <span class="n">void</span> <span class="k">as</span> <span class="n">void</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.write.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">write_mcnp_cell_def</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.write.write_files</span><span class="w"> </span><span class="kn">import</span> <span class="n">write_geometry</span>
 
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;general_logger&quot;</span><span class="p">)</span>
 <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;GEOUNED version </span><span class="si">{</span><span class="n">version</span><span class="p">(</span><span class="s1">&#39;geouned&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -450,7 +413,7 @@ document.write(`
 
 <div class="viewcode-block" id="CadToCsg">
 <a class="viewcode-back" href="../../../python_api.html#geouned.CadToCsg">[docs]</a>
-<span class="k">class</span> <span class="nc">CadToCsg</span><span class="p">:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CadToCsg</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Base class for the conversion of CAD to CSG models</span>
 
 <span class="sd">    Args:</span>
@@ -471,7 +434,7 @@ document.write(`
 <span class="sd">            attributes values.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">options</span><span class="p">:</span> <span class="n">Options</span> <span class="o">=</span> <span class="n">Options</span><span class="p">(),</span>
         <span class="n">tolerances</span><span class="p">:</span> <span class="n">Tolerances</span> <span class="o">=</span> <span class="n">Tolerances</span><span class="p">(),</span>
@@ -491,31 +454,31 @@ document.write(`
         <span class="bp">self</span><span class="o">.</span><span class="n">skip_solids</span> <span class="o">=</span> <span class="p">[]</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">options</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">options</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_options</span>
 
     <span class="nd">@options</span><span class="o">.</span><span class="n">setter</span>
-    <span class="k">def</span> <span class="nf">options</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Options</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">options</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Options</span><span class="p">):</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Options</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;geouned.CadToCsg.options should be an instance of geouned.Options, not a </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_options</span> <span class="o">=</span> <span class="n">value</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">tolerances</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">tolerances</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tolerances</span>
 
     <span class="nd">@tolerances</span><span class="o">.</span><span class="n">setter</span>
-    <span class="k">def</span> <span class="nf">tolerances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">tolerances</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">tolerances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">tolerances</span><span class="p">):</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Tolerances</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;geouned.CadToCsg.tolerances should be an instance of geouned.Tolerances, not a </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_tolerances</span> <span class="o">=</span> <span class="n">value</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">numeric_format</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">numeric_format</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_numeric_format</span>
 
     <span class="nd">@numeric_format</span><span class="o">.</span><span class="n">setter</span>
-    <span class="k">def</span> <span class="nf">numeric_format</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">numeric_format</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">numeric_format</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">numeric_format</span><span class="p">):</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">NumericFormat</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;geouned.CadToCsg.numeric_format should be an instance of geouned.NumericFormat, not a </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
@@ -523,18 +486,18 @@ document.write(`
         <span class="bp">self</span><span class="o">.</span><span class="n">_numeric_format</span> <span class="o">=</span> <span class="n">value</span>
 
     <span class="nd">@property</span>
-    <span class="k">def</span> <span class="nf">settings</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">settings</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_settings</span>
 
     <span class="nd">@settings</span><span class="o">.</span><span class="n">setter</span>
-    <span class="k">def</span> <span class="nf">settings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">settings</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">settings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">settings</span><span class="p">):</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Settings</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;geouned.CadToCsg.settings should be an instance of geouned.Settings, not a </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_settings</span> <span class="o">=</span> <span class="n">value</span>
 
 <div class="viewcode-block" id="CadToCsg.export_csg">
 <a class="viewcode-back" href="../../../python_api.html#geouned.CadToCsg.export_csg">[docs]</a>
-    <span class="k">def</span> <span class="nf">export_csg</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">export_csg</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;Converted with GEOUNED&quot;</span><span class="p">,</span>
         <span class="n">geometryName</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;csg&quot;</span><span class="p">,</span>
@@ -630,7 +593,7 @@ document.write(`
 <div class="viewcode-block" id="CadToCsg.from_json">
 <a class="viewcode-back" href="../../../python_api.html#geouned.CadToCsg.from_json">[docs]</a>
     <span class="nd">@classmethod</span>
-    <span class="k">def</span> <span class="nf">from_json</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_json</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a CadToCsg instance, runs CadToCsg.load_Step_file(), runs</span>
 <span class="sd">        CadToCsg.start() and returns the instance. Populating the arguments for</span>
 <span class="sd">        the methods that are run by looking for keys with the same name as the</span>
@@ -691,7 +654,7 @@ document.write(`
 
 <div class="viewcode-block" id="CadToCsg.load_step_file">
 <a class="viewcode-back" href="../../../python_api.html#geouned.CadToCsg.load_step_file">[docs]</a>
-    <span class="k">def</span> <span class="nf">load_step_file</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_step_file</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">filename</span><span class="p">:</span> <span class="n">typing</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
         <span class="n">skip_solids</span><span class="p">:</span> <span class="n">typing</span><span class="o">.</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
@@ -753,7 +716,7 @@ document.write(`
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">meta_list</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">enclosure_list</span></div>
 
 
-    <span class="k">def</span> <span class="nf">_export_solids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_export_solids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Export all the solid volumes from the loaded geometry to a STEP file.</span>
 
 <span class="sd">        Args:</span>
@@ -771,7 +734,7 @@ document.write(`
             <span class="n">solids</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">Solids</span><span class="p">)</span>
         <span class="n">Part</span><span class="o">.</span><span class="n">makeCompound</span><span class="p">(</span><span class="n">solids</span><span class="p">)</span><span class="o">.</span><span class="n">exportStep</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span>
 
-    <span class="k">def</span> <span class="nf">_get_geometry_bounding_box</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">padding</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_geometry_bounding_box</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">padding</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Get the bounding box of the geometry.</span>
 
@@ -784,7 +747,7 @@ document.write(`
         <span class="c1"># set up Universe</span>
         <span class="n">meta_list</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">meta_list</span>
 
-        <span class="n">Box</span> <span class="o">=</span> <span class="n">meta_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">BoundBox</span>
+        <span class="n">Box</span> <span class="o">=</span> <span class="n">meta_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">optimalBoundingBox</span><span class="p">()</span>
         <span class="n">xmin</span> <span class="o">=</span> <span class="n">Box</span><span class="o">.</span><span class="n">XMin</span>
         <span class="n">xmax</span> <span class="o">=</span> <span class="n">Box</span><span class="o">.</span><span class="n">XMax</span>
         <span class="n">ymin</span> <span class="o">=</span> <span class="n">Box</span><span class="o">.</span><span class="n">YMin</span>
@@ -794,12 +757,13 @@ document.write(`
         <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">meta_list</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
             <span class="c1"># MIO. This was removed since in HELIAS the enclosure cell is the biggest one</span>
             <span class="c1"># if m.IsEnclosure: continue</span>
-            <span class="n">xmin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">XMin</span><span class="p">,</span> <span class="n">xmin</span><span class="p">)</span>
-            <span class="n">xmax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">XMax</span><span class="p">,</span> <span class="n">xmax</span><span class="p">)</span>
-            <span class="n">ymin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">YMin</span><span class="p">,</span> <span class="n">ymin</span><span class="p">)</span>
-            <span class="n">ymax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">YMax</span><span class="p">,</span> <span class="n">ymax</span><span class="p">)</span>
-            <span class="n">zmin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">ZMin</span><span class="p">,</span> <span class="n">zmin</span><span class="p">)</span>
-            <span class="n">zmax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">BoundBox</span><span class="o">.</span><span class="n">ZMax</span><span class="p">,</span> <span class="n">zmax</span><span class="p">)</span>
+            <span class="n">optBox</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">optimalBoundingBox</span><span class="p">()</span>
+            <span class="n">xmin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">XMin</span><span class="p">,</span> <span class="n">xmin</span><span class="p">)</span>
+            <span class="n">xmax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">XMax</span><span class="p">,</span> <span class="n">xmax</span><span class="p">)</span>
+            <span class="n">ymin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">YMin</span><span class="p">,</span> <span class="n">ymin</span><span class="p">)</span>
+            <span class="n">ymax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">YMax</span><span class="p">,</span> <span class="n">ymax</span><span class="p">)</span>
+            <span class="n">zmin</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">ZMin</span><span class="p">,</span> <span class="n">zmin</span><span class="p">)</span>
+            <span class="n">zmax</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">optBox</span><span class="o">.</span><span class="n">ZMax</span><span class="p">,</span> <span class="n">zmax</span><span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">geometry_bounding_box</span> <span class="o">=</span> <span class="n">FreeCAD</span><span class="o">.</span><span class="n">BoundBox</span><span class="p">(</span>
             <span class="n">FreeCAD</span><span class="o">.</span><span class="n">Vector</span><span class="p">(</span><span class="n">xmin</span> <span class="o">-</span> <span class="n">padding</span><span class="p">,</span> <span class="n">ymin</span> <span class="o">-</span> <span class="n">padding</span><span class="p">,</span> <span class="n">zmin</span> <span class="o">-</span> <span class="n">padding</span><span class="p">),</span>
@@ -807,7 +771,7 @@ document.write(`
         <span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">geometry_bounding_box</span>
 
-    <span class="k">def</span> <span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 
         <span class="n">startTime</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
 
@@ -1013,7 +977,7 @@ document.write(`
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Translation time of solid cells </span><span class="si">{</span><span class="n">tempTime1</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">tempTime0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Translation time of void cells </span><span class="si">{</span><span class="n">tempTime2</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">tempTime1</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-    <span class="k">def</span> <span class="nf">_decompose_solids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">meta</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_decompose_solids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">meta</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
 
         <span class="k">if</span> <span class="n">meta</span><span class="p">:</span>
             <span class="n">meta_list</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">meta_list</span>
@@ -1083,7 +1047,7 @@ document.write(`
 
 
 
-<span class="k">def</span> <span class="nf">update_comment</span><span class="p">(</span><span class="n">meta</span><span class="p">,</span> <span class="n">idLabel</span><span class="p">):</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">update_comment</span><span class="p">(</span><span class="n">meta</span><span class="p">,</span> <span class="n">idLabel</span><span class="p">):</span>
     <span class="k">if</span> <span class="n">meta</span><span class="o">.</span><span class="n">__commentInfo__</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">return</span>
     <span class="k">if</span> <span class="n">meta</span><span class="o">.</span><span class="n">__commentInfo__</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -1092,7 +1056,7 @@ document.write(`
     <span class="n">meta</span><span class="o">.</span><span class="n">set_comments</span><span class="p">(</span><span class="n">void</span><span class="o">.</span><span class="n">void_comment_line</span><span class="p">((</span><span class="n">meta</span><span class="o">.</span><span class="n">__commentInfo__</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">newLabel</span><span class="p">)))</span>
 
 
-<span class="k">def</span> <span class="nf">process_cones</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">coneInfo</span><span class="p">,</span> <span class="n">Surfaces</span><span class="p">,</span> <span class="n">UniverseBox</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">tolerances</span><span class="p">,</span> <span class="n">numeric_format</span><span class="p">):</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">process_cones</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">coneInfo</span><span class="p">,</span> <span class="n">Surfaces</span><span class="p">,</span> <span class="n">UniverseBox</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">tolerances</span><span class="p">,</span> <span class="n">numeric_format</span><span class="p">):</span>
     <span class="n">cellId</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">coneInfo</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
     <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">MetaList</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">__id__</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">cellId</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">m</span><span class="o">.</span><span class="n">Void</span><span class="p">:</span>
@@ -1126,7 +1090,7 @@ document.write(`
             <span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">print_warning_solids</span><span class="p">(</span><span class="n">warnSolids</span><span class="p">,</span> <span class="n">warnEnclosures</span><span class="p">):</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">print_warning_solids</span><span class="p">(</span><span class="n">warnSolids</span><span class="p">,</span> <span class="n">warnEnclosures</span><span class="p">):</span>
 
     <span class="n">solids_logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;solids_logger&quot;</span><span class="p">)</span>
 
@@ -1155,7 +1119,7 @@ document.write(`
         <span class="n">solids_logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">join_meta_lists</span><span class="p">(</span><span class="n">MList</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">UF</span><span class="o">.</span><span class="n">GeounedSolid</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">join_meta_lists</span><span class="p">(</span><span class="n">MList</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">UF</span><span class="o">.</span><span class="n">GeounedSolid</span><span class="p">]:</span>
 
     <span class="n">newMetaList</span> <span class="o">=</span> <span class="n">MList</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="k">if</span> <span class="n">MList</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
@@ -1168,7 +1132,7 @@ document.write(`
     <span class="k">return</span> <span class="n">newMetaList</span>
 
 
-<span class="k">def</span> <span class="nf">exclude_cells</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">labelList</span><span class="p">):</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">exclude_cells</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">labelList</span><span class="p">):</span>
     <span class="n">voidMeta</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">MetaList</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">IsEnclosure</span><span class="p">:</span>
@@ -1184,7 +1148,7 @@ document.write(`
     <span class="k">return</span> <span class="n">voidMeta</span>
 
 
-<span class="k">def</span> <span class="nf">sort_enclosure</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">meta_void</span><span class="p">,</span> <span class="n">offSet</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">sort_enclosure</span><span class="p">(</span><span class="n">MetaList</span><span class="p">,</span> <span class="n">meta_void</span><span class="p">,</span> <span class="n">offSet</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
 
     <span class="n">newList</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">meta_void</span><span class="p">:</span>
@@ -1279,8 +1243,8 @@ document.write(`
   </div>
   
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
-  <script src="../../../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
-<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1300,7 +1264,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.4.7.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.1.
     <br/>
   </p>
 </div>
@@ -1313,7 +1277,8 @@ document.write(`
       
         <div class="footer-item">
 <p class="theme-version">
-  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.4.
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
 </p></div>
       
     </div>
