@@ -291,7 +291,6 @@ def build_can_params(cs):
             if r == "OR":
                 normal = -normal  # plane axis toward cylinder center
             gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
-            pa = None
 
         elif type(s.Surface) is CylinderGu:
             if shell:
@@ -299,14 +298,18 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            cylOnly = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
             pa = cyl_edge_plane(cyl, edges)
-            if not planar_edges(edges):
-                # move sligtly the plane position toward boundary surface center
-                cr = cylOnly.Surf.Center - pa.Surf.Position
-                d = cr - cr.dot(cylOnly.Surf.Axis) * cylOnly.Surf.Axis
-                pa.Surf.Position = pa.Surf.Position + 0.01 * d
-            gs = GeounedSurface(("Cylinder", (cylOnly, pa, None), s.Orientation))
+            if r is None:
+                r = "AND" if s.Orientation == "Forward" else "OR"
+                gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
+            else:
+                cylOnly = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
+                if not planar_edges(edges):
+                    # move sligtly the plane position toward boundary surface center
+                    cr = cylOnly.Surf.Center - pa.Surf.Position
+                    d = cr - cr.dot(cylOnly.Surf.Axis) * cylOnly.Surf.Axis
+                    pa.Surf.Position = pa.Surf.Position + 0.01 * d
+                gs = GeounedSurface(("Cylinder", (cylOnly, pa, None), s.Orientation))
 
         elif type(s.Surface) is ConeGu:
             if shell:

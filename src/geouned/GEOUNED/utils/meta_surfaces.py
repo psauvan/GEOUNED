@@ -3,7 +3,7 @@ import math
 
 from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_same_plane
-from .geometry_gu import PlaneGu, other_face_edge
+from .geometry_gu import CylinderGu, other_face_edge
 from .meta_surfaces_utils import (
     region_sign,
     get_adjacent_cylplane,
@@ -11,6 +11,8 @@ from .meta_surfaces_utils import (
     get_join_cone_cyl,
     closed_cylinder,
     most_outer_faces,
+    commonEdge,
+    planar_edges,
 )
 
 twoPi = 2 * math.pi
@@ -94,6 +96,14 @@ def get_can_surfaces(cylinder, solidFaces):
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
     for s in ext_faces:
+        if type(s.Surface) is CylinderGu:
+            if abs(s.Surface.Radius-cylinder.Surface.Radius) < 1e-6:
+                edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=True)
+                if edges is not None:
+                    if planar_edges(edges):
+                        surfaces.append((s, None))
+                        continue            
+
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))
         s_value = 1 if r == "AND" else -1
