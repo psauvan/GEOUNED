@@ -121,12 +121,15 @@ class Plane3PtsParams:
 
 
 class PlaneParams:
-    def __init__(self, params, real=True):
+    def __init__(self, params):
         self.Position = params[0]
         self.Axis = params[1]
         self.dimL1 = params[2]
         self.dimL2 = params[3]
-        self.real = real
+        if len(params) > 4:
+            self.real = params[4]
+        else:
+            self.real = True
         self.pointDef = False
 
     def __str__(self):

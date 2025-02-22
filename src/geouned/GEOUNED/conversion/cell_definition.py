@@ -63,7 +63,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         for cs in RFCan:
             if cs.Orientation == "Reversed":
                 cs_region = Surfaces.add_reverseCan(cs)
-            else:    
+            else:
                 cs_region = Surfaces.add_forwardCan(cs)
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)

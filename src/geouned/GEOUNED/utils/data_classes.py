@@ -238,6 +238,8 @@ class Tolerances:
         tor_distance: float = 1.0e-4,
         tor_angle: float = 1.0e-4,
         min_area: float = 1.0e-2,
+        add_pln_distance: float = 1.0e-2,
+        add_pln_angle: float = 1.0e-2,
     ):
 
         self.relativeTol = relativeTol
@@ -255,6 +257,8 @@ class Tolerances:
         self.tor_distance = tor_distance
         self.tor_angle = tor_angle
         self.min_area = min_area
+        self.add_pln_distance = add_pln_distance
+        self.add_pln_angle = add_pln_angle
 
     @property
     def relativeTol(self):
@@ -395,6 +399,26 @@ class Tolerances:
         if not isinstance(tor_angle, float):
             raise TypeError(f"geouned.Tolerances.tor_angle should be a float, not a {type(tor_angle)}")
         self._tor_angle = tor_angle
+
+    @property
+    def add_pln_distance(self):
+        return self._add_pln_distance
+
+    @add_pln_distance.setter
+    def add_pln_distance(self, add_pln_distance: float):
+        if not isinstance(add_pln_distance, float):
+            raise TypeError(f"geouned.Tolerances.add_pln_distance should be a float, not a {type(add_pln_distance)}")
+        self._add_pln_distance = add_pln_distance
+
+    @property
+    def add_pln_angle(self):
+        return self._add_pln_angle
+
+    @add_pln_angle.setter
+    def add_pln_angle(self, add_pln_angle: float):
+        if not isinstance(add_pln_angle, float):
+            raise TypeError(f"geouned.Tolerances.add_pln_angle should be a float, not a {type(add_pln_angle)}")
+        self._add_pln_angle = add_pln_angle
 
     @property
     def min_area(self):

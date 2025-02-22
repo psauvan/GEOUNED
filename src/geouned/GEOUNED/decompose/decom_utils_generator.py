@@ -155,11 +155,14 @@ def cyl_edge_plane(face, edges):
         planeParams = spline_wires(edges, face)
     else:
         edge = edges[0]
-        if isinstance(edge.Curve, (Part.Circle,Part.Ellipse)) :
+        if isinstance(edge.Curve, (Part.Circle, Part.Ellipse)):
             pos = edge.Curve.value(0)
             center = edge.Curve.Center
-            vect,normalf = material_direction(pos,face.__face__,edge)
-            planeParams = [center, vect, 1, 1]  
+            dir = edge.Curve.Axis
+            vect, normalf = material_direction(pos, face.__face__, edge)
+            if dir.dot(vect) < 0:
+                dir = -dir
+            planeParams = [center, dir, 1, 1, False]
 
     if planeParams is not None:
         return GeounedSurface(("Plane", planeParams))
@@ -175,7 +178,7 @@ def spline_wires(edges, face):
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p0 + p1)
     pos = edge.Curve.value(pe)
-    vect,normalf = material_direction(pos,face.__face__,edge)
+    vect, normalf = material_direction(pos, face.__face__, edge)
 
     lowSide = zaxis.dot(vect) > 0
 
@@ -225,7 +228,7 @@ def spline_wires(edges, face):
             else:
                 point = rmin - d * vec
 
-        return [point, vec, 1, 1]  # toward the center of the cylinder
+        return [point, vec, 1, 1, False]  # toward the center of the cylinder
 
 
 def get_axis_inertia(mat):

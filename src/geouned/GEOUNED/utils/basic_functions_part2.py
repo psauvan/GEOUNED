@@ -40,17 +40,20 @@ def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_for
         fuzzy_logger.info(f"{cyl1str} {cyl2str}")
 
 
-def is_same_plane(p1, p2, options, tolerances, numeric_format, fuzzy=(False, 0)):
-    if is_parallel(p1.Axis, p2.Axis, tolerances.pln_angle):
+def is_same_plane(p1, p2, options, tolerances, numeric_format, fuzzy=(False, 0), stdtol=True):
+    pln_angle = tolerances.pln_angle if stdtol else tolerances.add_pln_angle
+    pln_distance = tolerances.pln_distance if stdtol else tolerances.add_pln_distance
+
+    if is_parallel(p1.Axis, p2.Axis, pln_angle):
         d1 = p1.Axis.dot(p1.Position)
         d2 = p2.Axis.dot(p2.Position)
-        if is_opposite(p1.Axis, p2.Axis, tolerances.pln_angle):
+        if is_opposite(p1.Axis, p2.Axis, pln_angle):
             d2 = -d2
         d = abs(d1 - d2)
         if tolerances.relativeTol:
-            tol = tolerances.pln_distance * max(p2.dimL1, p2.dimL2)
+            tol = pln_distance * max(p2.dimL1, p2.dimL2)
         else:
-            tol = tolerances.pln_distance
+            tol = pln_distance
 
         isSame, is_fuzzy = is_in_tolerance(d, tol, 0.5 * tol, 2 * tol)
         if is_fuzzy and fuzzy[0]:
