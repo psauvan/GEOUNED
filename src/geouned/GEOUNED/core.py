@@ -14,7 +14,6 @@ from tqdm import tqdm
 from .code_version import *
 from .conversion import cell_definition as Conv
 
-# from .decompose.decom_one import main_split
 from .decompose.decom_one_generators import main_split
 from .loadfile import load_step as Load
 from .utils.geouned_classes import GeounedSolid, SurfacesDict, MetaSurfacesDict
@@ -27,7 +26,7 @@ from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
 
 logger = logging.getLogger("general_logger")
-# logger.info(f"GEOUNED version {version('geouned')}")
+logger.info(f"GEOUNED version {version('geouned')}")
 logger.info(f"FreeCAD version {'.'.join(FreeCAD.Version()[:3])}")
 
 
