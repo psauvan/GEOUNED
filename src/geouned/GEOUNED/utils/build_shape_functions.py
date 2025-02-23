@@ -101,7 +101,7 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
     return Part.makeShell(makeBoxFaces(plane_points))
 
 
-def makeRoundCorner(cylinder, addPlane, planes, config, Box):
+def makeRoundCorner_old(cylinder, addPlane, planes, config, Box):
     cylinder.build_surface(Box)
     plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
     cut = plane_part.cut(cylinder.shape)
@@ -120,6 +120,49 @@ def makeRoundCorner(cylinder, addPlane, planes, config, Box):
 
     solid = cylr.fuse(cylcut)
     return solid.removeSplitter()
+
+
+def makeRoundCorner(roundCorner, Orientation, Box):
+    cut_shapes = []
+    surfcheck = []
+    one = 1 if Orientation == "Forward" else -1
+
+    for p in roundCorner.Planes:
+        p.build_surface(Box)
+        cut_shapes.append(p.shape)
+        surfcheck.append((p, one))
+
+    for c in roundCorner.Cylinders:
+        c.Surf.Cylinder.build_surface(Box)
+        cut_shapes.append(c.Surf.Cylinder.shape)
+        surfcheck.append(((c, -1), (c.Surf.Plane, 1)))
+
+    options = Options()
+    box_shape = Part.makeBox(Box.XLength, Box.YLength, Box.ZLength, FreeCAD.Vector(Box.XMin, Box.YMin, Box.ZMin))
+    comsolid = split_bop(box_shape, cut_shapes, options.splitTolerance, options)
+
+    solids = []
+    for solid in comsolid.Solids:
+        point = point_inside(solid)
+        for sp in surfcheck:
+            if type(sp[0]) is tuple:
+                for si, ss in sp:  # "OR" sequence
+                    if ss == check_sign(point, si):
+                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
+                else:
+                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
+            else:
+                si, ss = sp
+                if ss != check_sign(point, si):  # "AND" sequence
+                    break
+        else:
+            solids.append(solid)
+
+    if solids:
+        if len(solids) == 1:
+            return solids[0]
+        else:
+            return solids[0].fuse(solids[1:])
 
 
 def cylinder_cut_box(cylinder, plane):

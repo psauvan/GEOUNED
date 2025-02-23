@@ -862,14 +862,17 @@ def region_sign(s1_in, s2, outAngle=False):
         else:
             operator = "AND" if abs(dprod) < arc else "OR"
         if outAngle:
-            return operator, angle(normal1, normal2, operator)
+            vect2, _ = material_direction(pos, s2, e1)
+            return operator, angle(vect, -vect2, operator)
         else:
             return operator
 
     else:
         operator = "OR" if dprod > 0 else "AND"
         if outAngle:
-            return operator, angle(normal1, normal2, operator)
+            vect2, _ = material_direction(pos, s2, e1)
+            # oposite of vect2 because evaluated with e1 and not the edge corresponding to surface2
+            return operator, angle(vect, -vect2, operator)
         else:
             return operator
 
@@ -878,9 +881,9 @@ def angle(v1, v2, operator):
     d = v1.dot(v2) / (v1.Length * v2.Length)
     a = math.acos(max(-1, min(1, d)))
     if operator == "AND":
-        return math.pi - a
+        return a
     else:
-        return math.pi + a
+        return twoPi - a
 
 
 def closed_cylinder(cylinder, solidFaces):

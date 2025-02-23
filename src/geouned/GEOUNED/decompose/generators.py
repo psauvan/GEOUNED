@@ -218,11 +218,10 @@ def next_roundCorner(solid, cornerface_index):
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
                 continue
-            if f.Orientation == "Forward":
-                rc, surfindex = get_roundcorner_surfaces(f, solidFaces)
-                if rc is not None:
-                    gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
-                    cornerface_index.update(surfindex)
-                    yield gc
+            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
+            if rc is not None:
+                gc = GeounedSurface(("RoundCorner", build_roundC_params(rc), f.Orientation))
+                cornerface_index.update(surfindex)
+                yield gc
 
     return None

@@ -182,7 +182,6 @@ class GeounedSolid:
 class GeounedSurface:
 
     def __init__(self, params, Face=None):
-
         self.Index0 = 0
         self.bVar = None
         self.region = None
@@ -251,7 +250,7 @@ class GeounedSurface:
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
-            self.Orientation = "Forward"
+            self.Orientation = params[2]
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
             self.Surf = ReversedConeCylParams(params[1])
@@ -260,8 +259,10 @@ class GeounedSurface:
             print(f"type {params[0]} not found")
 
         self.shape = Face
-
         return
+
+    def __eq__(self, s2):
+        return self.Surf == s2.Surf
 
     def build_surface(self, boundBox):
 
@@ -317,7 +318,7 @@ class GeounedSurface:
 
         elif self.Type == "RoundCorner":
             Box.enlarge(10)
-            self.shape = makeRoundCorner(self.Surf.Cylinder, self.Surf.AddPlane, self.Surf.Planes, self.Surf.Configuration, Box)
+            self.shape = makeRoundCorner(self.Surf, self.Orientation, Box)
 
         elif self.Type == "ReversedConeCylinder":
             # No need to build shape since this shape not used in decomposition
@@ -839,15 +840,22 @@ class MetaSurfacesDict(dict):
         return newregion
 
     def add_roundCorner(self, roundC):
-        cid, exist_c = self.primitive_surfaces.add_cylinder(roundC.Surf.Cylinder, True)
+        roundC_region = None
+        orientation = roundC.Orientation
+        for cyl in roundC.Surf.Cylinders:
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl.Surf.Cylinder, True)
+            pid, exist_p = self.primitive_surfaces.add_plane(cyl.Surf.Plane, True)
+            if exist_p:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(cyl.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
 
-        pid, exist_p = self.primitive_surfaces.add_plane(roundC.Surf.AddPlane, True)
-        if exist_p:
-            p = self.get_primitive_surface(pid)
-            if is_opposite(roundC.Surf.AddPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                pid = -pid
-
-        roundC_region = BoolRegion(0, -cid) + BoolRegion(0, pid)
+            if orientation == "Forward":
+                cyl_region = BoolRegion(0, -cid) + BoolRegion(0, pid)
+                roundC_region = BoolRegion.mult(roundC_region, cyl_region)
+            else:
+                cyl_region = BoolRegion(0, cid) * BoolRegion(0, -pid)
+                roundC_region = BoolRegion.add(roundC_region, cyl_region)
 
         for cp in roundC.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(cp, True)
@@ -856,9 +864,10 @@ class MetaSurfacesDict(dict):
                 if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
 
-            if roundC.Surf.Configuration == "AND":
+            if orientation == "Forward":
                 roundC_region = roundC_region * BoolRegion(0, pid)
             else:
+                # here plane doesn't change sign because always oriented toward material
                 roundC_region = roundC_region + BoolRegion(0, pid)
 
         add_corner = True
