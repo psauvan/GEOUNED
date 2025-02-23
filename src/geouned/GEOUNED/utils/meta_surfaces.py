@@ -144,7 +144,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
-            f = other_face_edge(edge, p1, Faces)
+            f = other_face_edge(edge, newplane, Faces)
             if type(f.Surface) != CylinderGu:
                 continue
             if f.Index in cylinders_set:
