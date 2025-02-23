@@ -254,7 +254,9 @@ def remove_solids(Solids, Volume):
 
     if len(Solids) == 1:
         try:
-            Solids[0] = Solids[0].removeSplitter()
+            rs = Solids[0].removeSplitter()
+            if rs.isValid():
+                Solids[0] = rs
         except:
             pass
         return Solids
@@ -272,7 +274,11 @@ def remove_solids(Solids, Volume):
 
     for i, sol in enumerate(Solids_Clean):
         try:
-            Solids_Clean[i] = sol.removeSplitter()
+            rs = sol.removeSplitter()
+            if rs.isValid():
+                Solids_Clean[i] = rs
+            else:
+                Solids_Clean[i] = sol
         except:
             Solids_Clean[i] = sol
     return Solids_Clean

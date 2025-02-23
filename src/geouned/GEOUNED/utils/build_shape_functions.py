@@ -3,7 +3,7 @@ import FreeCAD
 import numpy
 import math
 
-from .split_function import split_bop
+from .split_function import split_bop, single_tool_split
 from .data_classes import Options
 from .geometry_gu import PlaneGu
 
@@ -139,7 +139,7 @@ def makeRoundCorner(roundCorner, Orientation, Box):
 
     options = Options()
     box_shape = Part.makeBox(Box.XLength, Box.YLength, Box.ZLength, FreeCAD.Vector(Box.XMin, Box.YMin, Box.ZMin))
-    comsolid = split_bop(box_shape, cut_shapes, options.splitTolerance, options)
+    comsolid = single_tool_split(box_shape, cut_shapes, options.splitTolerance, options)
 
     solids = []
     for solid in comsolid.Solids:
@@ -160,9 +160,10 @@ def makeRoundCorner(roundCorner, Orientation, Box):
 
     if solids:
         if len(solids) == 1:
-            return solids[0]
+            solid = solids[0]
         else:
-            return solids[0].fuse(solids[1:])
+            solid = solids[0].fuse(solids[1:])
+        return solid
 
 
 def cylinder_cut_box(cylinder, plane):

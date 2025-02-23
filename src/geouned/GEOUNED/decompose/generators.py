@@ -22,6 +22,10 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
     solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=False)
 
     if meta_surface:
+
+        for can in next_Can(solid_GU, omitfaces):
+            yield can
+
         for rdc in next_roundCorner(solid_GU, omitfaces):
             yield rdc
 
@@ -30,9 +34,6 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
         # for can in next_reverseCan(solid_GU, omitfaces):
         #    yield can
-
-        for can in next_Can(solid_GU, omitfaces):
-            yield can
 
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
         omitfaces.update(extPlanes)
