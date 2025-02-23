@@ -132,6 +132,19 @@ class PlaneParams:
             self.real = True
         self.pointDef = False
 
+    def __eq__(self, p2):
+        if type(p2) is not PlaneParams:
+            return False
+        r = self.Position - p2.Position
+        if r.Length > 1e-8:
+            return False
+
+        d = self.Axis.dot(p2.Axis)
+        if abs(d - 1) > 1e-8:
+            return False
+        else:
+            return True
+
     def __str__(self):
         pos = self.Axis.dot(self.Position)
         outstr = f"""Plane :
@@ -147,6 +160,23 @@ class CylinderOnlyParams:
         self.Radius = params[2]
         self.dimL = params[3]
         self.real = real
+
+    def __eq__(self, c2):
+        if type(c2) is not CylinderParams:
+            return False
+
+        if abs(self.Radius - c2.Radius) > 1.0e-8:
+            return False
+
+        r = self.Center - c2.Center
+        if r.Length > 1e-8:
+            return False
+
+        d = self.Axis.dot(c2.Axis)
+        if abs(d - 1) > 1e-8:
+            return False
+        else:
+            return True
 
     def __str__(self):
         outstr = f"""Cylinder :
@@ -165,6 +195,23 @@ class ConeOnlyParams:
         self.dimR = params[4]
         self.real = real
 
+    def __eq__(self, c2):
+        if type(c2) is not ConeParams:
+            return False
+
+        if abs(self.SemiAngle - c2.SemiAngle) > 1.0e-8:
+            return False
+
+        r = self.apex - c2.Apex
+        if r.Length > 1e-8:
+            return False
+
+        d = self.Axis.dot(c2.Axis)
+        if abs(d - 1) > 1e-8:
+            return False
+        else:
+            return True
+
     def __str__(self):
         outstr = f"""Cone :
     Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
@@ -177,6 +224,19 @@ class SphereOnlyParams:
     def __init__(self, params):
         self.Center = params[0]
         self.Radius = params[1]
+
+    def __eq__(self, s2):
+        if type(s2) is not SphereParams:
+            return False
+
+        if abs(self.Radius - s2.Radius) > 1.0e-8:
+            return False
+
+        r = self.Center - s2.Center
+        if r.Length > 1e-8:
+            return False
+        else:
+            return True
 
     def __str__(self):
         outstr = f"""Sphere :
@@ -191,6 +251,26 @@ class TorusOnlyParams:
         self.Axis = params[1]
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
+
+    def __eq__(self, t2):
+        if type(t2) is not TorusParams:
+            return False
+
+        if abs(self.MajorRadius - t2.MajorRadius) > 1.0e-8:
+            return False
+
+        if abs(self.MinorRadius - t2.MinorRadius) > 1.0e-8:
+            return False
+
+        r = self.Center - t2.Center
+        if r.Length > 1e-8:
+            return False
+
+        d = self.Axis.dot(t2.Axis)
+        if abs(d - 1) > 1e-8:
+            return False
+        else:
+            return True
 
     def __str__(self):
         outstr = f"""Torus :
@@ -227,18 +307,7 @@ class CanParams:
 class RoundCornerParams:
     def __init__(self, params):
         self.Planes = params[1]
-        self.Cylinder = params[0][0]
-        self.AddPlane = params[0][1]
-        self.Configuration = params[2]
-
-    def __str__(self):
-        outstr = f"""RoundCorner :\n"""
-        outstr += f"{self.Configuration} \n"
-        outstr += f"{self.Cylinder.__str__()} \n"
-        outstr += f"{self.AddPlane.__str__()} \n"
-        for p in self.Planes:
-            outstr += f"{p.__str__()} \n"
-        return outstr
+        self.Cylinders = params[0]
 
 
 class ReversedConeCylParams:

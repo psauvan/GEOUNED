@@ -144,12 +144,11 @@ def get_roundCorner(solidFaces, cornerface_index=None):
         if isinstance(f.Surface, CylinderGu):
             if f.Index in cornerface_index:
                 continue
-            if f.Orientation == "Forward":
-                rc, surfindex = get_roundcorner_surfaces(f, solidFaces)
-                if rc is not None:
-                    gc = GeounedSurface(("RoundCorner", build_roundC_params(rc)))
-                    cornerface_index.update(surfindex)
-                    corner_list.append(gc)
+            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
+            if rc is not None:
+                gc = GeounedSurface(("RoundCorner", build_roundC_params(rc), f.Orientation))
+                cornerface_index.update(surfindex)
+                corner_list.append(gc)
 
     if one_value_return:
         return corner_list
@@ -182,21 +181,33 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
         return conecyl_list, conecylface_index
 
 
-def build_roundC_params(rc):
-    cyl, p1, p2 = rc[0]
-    configuration = rc[1]
+def build_roundC_params(rc_list):
 
-    gcyl = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-    pos_orientation = "Reversed" if configuration == "AND" else "Forward"
-    p1Axis = p1.Surface.Axis if p1.Orientation == pos_orientation else -p1.Surface.Axis
-    p2Axis = p2.Surface.Axis if p2.Orientation == pos_orientation else -p2.Surface.Axis
+    cylinder_list = []
+    plane_list = []
+    for cyl, p1, p2 in rc_list:
+        cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+        gpa = get_additional_corner_plane(cyl, p1, p2)
+        gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa, None), cyl.Orientation))
+        cylinder_list.append(gcyl)
 
-    gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1Axis, 1.0, 1.0)))
-    gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2Axis, 1.0, 1.0)))
+        p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
+        p2Axis = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
+        gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1Axis, 1.0, 1.0)))
+        gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2Axis, 1.0, 1.0)))
+        plane_list.extend((gp1, gp2))
 
-    gpa = get_additional_corner_plane(cyl, p1, p2)
+    if len(plane_list) > 2:
+        i = 0
+        while i < len(plane_list) - 1:
+            pi = plane_list[i]
+            n = len(plane_list) - 1
+            for j, pj in enumerate(reversed(plane_list[i + 1 :])):
+                if pi == pj:
+                    del plane_list[n - j]
+            i += 1
 
-    params = ((gcyl, gpa), (gp1, gp2), configuration)
+    params = (cylinder_list, plane_list)
     return params
 
 
@@ -406,8 +417,9 @@ def get_additional_corner_plane(cyl, p1, p2):
     e1 = Edges1[0]
     e2 = Edges2[0]
     point1 = e1.Vertexes[0].Point
-    point21 = e2.Vertexes[0].Point
-    point22 = e2.Vertexes[1].Point
+    p1, p2 = e2.ParameterRange
+    point21 = e2.valueAt(p1)
+    point22 = e2.valueAt(p2)
     v21 = point21 - point1
     v22 = point22 - point1
     dt1 = abs(cyl.Surface.Axis.dot(v21))
