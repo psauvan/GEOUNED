@@ -21,7 +21,6 @@ class CsgToCad:
         input_filename: str,
         csg_format: str,
         output_filename: str = "cad_from_csg",
-        bounding_box: typing.Tuple[int, int, int, int, int, int] = (-1000, -1000, -1000, 1000, 1000, 1000),
         universe_start: int = 0,
         level_max: str = "all",
         cell_range_type: str = "all",
@@ -84,7 +83,6 @@ class CsgToCad:
         Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
 
         UnivCell = CadCell()
-        UnivCell.shape = UnivCell.makeBox(FreeCAD.BoundBox(*bounding_box))
 
         # TODO make these variable names lower case in the downstream code
 

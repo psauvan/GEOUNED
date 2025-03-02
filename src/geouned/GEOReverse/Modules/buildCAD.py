@@ -1,7 +1,9 @@
 import BOPTools.SplitAPI
+import FreeCAD
 
 from .buildSolidCell import FuseSolid
 from .Utils.booleanFunction import BoolSequence
+from .Utils.boundBox import solid_plane
 
 
 def buildCAD(UnivCell, data, config):
@@ -132,7 +134,9 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
 
-            bBox = ContainerCell.shape.BoundBox
+            solid_box = solid_plane(NTcell)
+            bBox = solid_box.get_boundBox()
+            bBox.enlarge(100)
 
             debug = False
             if debug:
