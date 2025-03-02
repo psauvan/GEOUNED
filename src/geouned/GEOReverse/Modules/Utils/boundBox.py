@@ -7,11 +7,15 @@ twoPi = math.pi * 2
 
 
 class solid_plane:
-    def __init__(self, NTcell):
-        plane_dict, surf_to_plane_dict = quadric_to_plane(NTcell.surfaces)
-        self.planes = plane_dict
-        self.definition = plane_definition(NTcell.definition.copy(), surf_to_plane_dict)
-
+    def __init__(self, NTcell=None):
+        if NTcell is None:
+            self.Planes = None
+            self.definition = None
+        else:    
+            plane_dict, surf_to_plane_dict = quadric_to_plane(NTcell.surfaces)
+            self.planes = plane_dict
+            self.definition = plane_definition(NTcell.definition.copy(), surf_to_plane_dict)
+        
     def isInside(self, point):
         surf_value = dict()
         for p_index, p in self.planes.items():
@@ -30,7 +34,21 @@ class solid_plane:
             return inside
 
     def get_boundBox(self):
-
+        if self.definition.operator == "OR" and self.definition.level > 0:
+            bBox = FreeCAD.BoundBox()
+            for definition in self.definition.elements:
+                compsol = solid_plane()
+                compsol.definition = definition
+                comp_planes=dict()
+                for p in compsol.definition.get_surfaces_numbers():
+                    comp_planes[p] = self.planes[p]
+                compsol.planes = comp_planes
+                bBox.add(compsol.get_component_boundBox())
+            return bBox
+        else:
+            return self.get_component_boundBox()    
+    
+    def get_component_boundBox(self):
         axis_list = ("x", "y", "z")
         point_list = plane_intersect(tuple(self.planes.values()))
 
