@@ -1,6 +1,7 @@
 import FreeCAD
 import Part
 import math
+import numpy
 from .booleanFunction import BoolSequence
 
 twoPi = math.pi * 2
@@ -11,43 +12,79 @@ class solid_plane:
         if NTcell is None:
             self.Planes = None
             self.definition = None
-        else:    
+            self.surf_to_plane = None
+        else:
             plane_dict, surf_to_plane_dict = quadric_to_plane(NTcell.surfaces)
             self.planes = plane_dict
+            self.surf_to_plane = surf_to_plane_dict
             self.definition = plane_definition(NTcell.definition.copy(), surf_to_plane_dict)
-        
+
+    def export_surf_planes(self, box):
+
+        surf = set(self.surf_to_plane.keys())
+        surf_planes = set()
+        for s in surf:
+            planes = []
+            for p in self.surf_to_plane[s]:
+                if p not in self.surf_to_plane.keys():
+                    break
+                normal, position = self.planes[p].Axis, self.planes[p].Position
+                planes.append(makePlane(normal, position, box))
+                surf_planes.add(p)
+            else:
+                compsurf = Part.Compound(planes)
+                if compsurf is not None:
+                    compsurf.exportStep(f"psurf_{s}.stp")
+
+        all_planes = set(self.planes.keys())
+        for p in all_planes - surf_planes:
+            normal, position = self.planes[p].Axis, self.planes[p].Position
+            compsurf = makePlane(normal, position, box)
+            if compsurf is not None:
+                compsurf.exportStep(f"psurf_{p}.stp")
+
     def isInside(self, point):
         surf_value = dict()
         for p_index, p in self.planes.items():
             normal, pointPlane = p.Axis, p.Position
-            pt = FreeCAD.Vector(point.X, point.Y, point.Z)
+            pt = FreeCAD.Vector(point.x, point.y, point.z)
             r = pt - pointPlane
             dot = normal.dot(r)
-            if abs(dot) < 1e-2:
-                surf_value[p_index] = None
+            if abs(dot) < 0.1:
+                surf_value[p_index] = True   # assume inside even close to the external side of surface
             else:
                 surf_value[p_index] = dot > 0  # assume inside even outside close to th surface
         inside = self.definition.evaluate(surf_value)
-        if inside is None:
-            return True  # if result is not means point on surface => inside
-        else:
-            return inside
+        return inside
 
-    def get_boundBox(self):
+    def get_boundBox(self, enlarge=0):
         if self.definition.operator == "OR" and self.definition.level > 0:
             bBox = FreeCAD.BoundBox()
             for definition in self.definition.elements:
                 compsol = solid_plane()
                 compsol.definition = definition
-                comp_planes=dict()
+                comp_planes = dict()
                 for p in compsol.definition.get_surfaces_numbers():
                     comp_planes[p] = self.planes[p]
                 compsol.planes = comp_planes
-                bBox.add(compsol.get_component_boundBox())
-            return bBox
+                compsol.surf_to_plane = self.surf_to_plane
+                compBox = compsol.get_component_boundBox()
+                if compBox is not None:
+                    bBox.add(compBox)
         else:
-            return self.get_component_boundBox()    
-    
+            bBox = self.get_component_boundBox()
+
+        if enlarge > 0:
+            dx = (bBox.XMax - bBox.XMin) * 0.5 * (1 + enlarge)
+            dy = (bBox.YMax - bBox.YMin) * 0.5 * (1 + enlarge)
+            dz = (bBox.ZMax - bBox.ZMin) * 0.5 * (1 + enlarge)
+            x0 = 0.5 * (bBox.XMax + bBox.XMin)
+            y0 = 0.5 * (bBox.YMax + bBox.YMin)
+            z0 = 0.5 * (bBox.ZMax + bBox.ZMin)
+            return FreeCAD.BoundBox(x0 - dx, y0 - dy, z0 - dz, x0 + dx, y0 + dy, z0 + dz)
+        else:
+            return bBox
+
     def get_component_boundBox(self):
         axis_list = ("x", "y", "z")
         point_list = plane_intersect(tuple(self.planes.values()))
@@ -59,7 +96,7 @@ class solid_plane:
                 if self.isInside(point):
                     box_lim.append(pointaxis(point, axis))
                     break
-            s_point = reversed(remove_points(s_point, pointaxis(point, axis), axis, True))
+            s_point = remove_points(s_point, pointaxis(point, axis), axis, True)
 
             for point in s_point:
                 if self.isInside(point):
@@ -67,7 +104,10 @@ class solid_plane:
                     break
             point_list = remove_points(s_point, pointaxis(point, axis), axis, False)
 
-        return FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+        if len(box_lim) == 6:
+            return FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+        else:
+            return None
 
 
 def quadric_to_plane(surfaces):
@@ -152,8 +192,10 @@ def cone_to_planes(cone):
         pi = Part.Plane(apex, -ni)
         cplanes.append(pi)
         phi += dphi
-    pa = Part.Plane(apex, axis)
-    cplanes.append(pa)
+
+    if not dbl:
+        pa = Part.Plane(apex, axis)
+        cplanes.append(pa)
     return cplanes
 
 
@@ -253,7 +295,8 @@ def plane_intersect(plane_list):
                 inter = line.intersect(p3)
                 if len(inter[0]) == 0:
                     continue
-                point_list.append(inter[0][0])
+                p = inter[0][0]
+                point_list.append(FreeCAD.Vector(p.X,p.Y,p.Z))
             j += 1
     return point_list
 
@@ -262,46 +305,108 @@ def sort_point(point_list, axis):
     axis_points = []
     if axis == "x":
         for i, point in enumerate(point_list):
-            axis_points.append((point.X, i))
+            if abs(point.Length) < 1.0e8:
+                axis_points.append((point.x, i))
     elif axis == "y":
         for i, point in enumerate(point_list):
-            axis_points.append((point.Y, i))
+            if abs(point.Length) < 1.0e8:
+                axis_points.append((point.y, i))
     elif axis == "z":
         for i, point in enumerate(point_list):
-            axis_points.append((point.Z, i))
+            if abs(point.Length) < 1.0e8:
+                axis_points.append((point.z, i))
     else:
         print("bad axis name")
 
     axis_points.sort()
     sorted_points = (point_list[x[1]] for x in axis_points)
-    return sorted_points
+    return tuple(sorted_points)
 
 
 def remove_points(point_list, value, axis, lower):
+    kept_points = []
     if axis == "x":
         if lower:
-            kept_points = filter(lambda p: p.X >= value, point_list)
+            for p in point_list[::-1]:
+                if p.x < value:
+                    break
+                kept_points.append(p)
         else:
-            kept_points = filter(lambda p: p.X <= value, point_list)
+             for p in point_list:
+                if p.x < value:
+                    break
+                kept_points.append(p)
     elif axis == "y":
         if lower:
-            kept_points = filter(lambda p: p.Y >= value, point_list)
+            for p in point_list[::-1]:
+                if p.y < value:
+                    break
+                kept_points.append(p)
         else:
-            kept_points = filter(lambda p: p.Y <= value, point_list)
+            for p in point_list:
+                if p.y < value:
+                    break
+                kept_points.append(p)
     elif axis == "z":
         if lower:
-            kept_points = filter(lambda p: p.Z >= value, point_list)
+            for p in point_list[::-1]:
+                if p.z < value:
+                    break
+                kept_points.append(p)
         else:
-            kept_points = filter(lambda p: p.Z <= value, point_list)
+            for p in point_list:
+                if p.z < value:
+                    break
+                kept_points.append(p)
     else:
         print("bad axis name")
-    return list(kept_points)
+    return kept_points
 
 
 def pointaxis(p, axis):
     if axis == "x":
-        return p.X
+        return p.x
     elif axis == "y":
-        return p.Y
+        return p.y
     elif axis == "z":
-        return p.Z
+        return p.z
+
+
+def makePlane(normal, position, Box):
+
+    p0 = normal.dot(position)
+
+    pointEdge = []
+    for i in range(12):
+        edge = Box.getEdge(i)
+        p1 = normal.dot(edge[0])
+        p2 = normal.dot(edge[1])
+        d0 = p0 - p1
+        d1 = p2 - p1
+        if d1 != 0:
+            a = d0 / d1
+            if a >= 0 and a <= 1:
+                pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
+
+    if len(pointEdge) == 0:
+        return None  # Plane does not cross box
+
+    s = FreeCAD.Vector((0, 0, 0))
+    for v in pointEdge:
+        s = s + v
+    s = s / len(pointEdge)
+
+    vtxvec = []
+    for v in pointEdge:
+        vtxvec.append(v - s)
+
+    X0 = vtxvec[0]
+    Y0 = normal.cross(X0)
+
+    orden = []
+    for i, v in enumerate(vtxvec):
+        phi = numpy.arctan2(v.dot(Y0), v.dot(X0))
+        orden.append((phi, i))
+    orden.sort()
+
+    return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))

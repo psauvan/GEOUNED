@@ -1,4 +1,5 @@
 import BOPTools.SplitAPI
+from tqdm import tqdm
 import FreeCAD
 
 from .buildSolidCell import FuseSolid
@@ -106,7 +107,7 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
 
     print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
     fails = []
-    for NTcell in Universe.values():
+    for NTcell in tqdm(Universe.values(), desc="build cell"):
         if duplicate:
             if NTcell.shape:
                 buildShape = False
@@ -130,13 +131,17 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
             NTcell = NTcell.copy()
 
         if buildShape:
-            print(f"Level :{CC.level + 1}  build Cell {NTcell.name} ")
+            # print(f"Level :{CC.level + 1}  build Cell {NTcell.name} ")
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
 
             solid_box = solid_plane(NTcell)
-            bBox = solid_box.get_boundBox()
-            bBox.enlarge(100)
+            bBox = solid_box.get_boundBox(0.1)
+            if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
+                NTcell.shape = None
+                print(f"Cell {NTcell.name} BoundBox is null")
+                fails.append(NTcell.name)
+                continue
 
             debug = False
             if debug:
