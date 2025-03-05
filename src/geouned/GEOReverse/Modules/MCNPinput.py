@@ -34,19 +34,17 @@ class McnpInput:
         self.Transformations = self.__getTransList__()
         return
 
-    def GetFilteredCells(self, Surfaces, config):
-        levels, contLevels, Universes = self.GetLevelStructure()
+    def GetFilteredCells(self, Surfaces, Ustart, depth, matcel_list):
+        levels, Universes = self.GetLevelStructure()
 
         FilteredCells = {}
-
-        Ustart = config["Ustart"]
         subUniverses = getSubUniverses(Ustart, Universes)
         subUniverses.add(Ustart)
 
-        if config["levelMax"] == "all":
+        if depth == -1:
             levelMax = len(levels)
         else:
-            levelMax = config["levelMax"] + 1
+            levelMax = depth + 1
 
         levelUniverse = set()
         for lev in range(0, levelMax):
@@ -59,7 +57,7 @@ class McnpInput:
                 del Universes[U]
 
         for U in Universes.keys():
-            FilteredCells[U] = selectCells(Universes[U], config)
+            FilteredCells[U] = selectCells(Universes[U], matcel_list)
             processSurfaces(FilteredCells[U], Surfaces)
 
         # change the surface name in surface dict
@@ -130,7 +128,7 @@ class McnpInput:
             currentLevel = nextLevel
             nextLevel = []
 
-        return univLevel, contLevel, Universe_dict
+        return univLevel, Universe_dict
 
     def GetCells(self, U=None, Fill=None):
         cell_cards = {}
@@ -149,9 +147,10 @@ class McnpInput:
 
         return cell_cards
 
-    def GetSurfaces(self, scale=1.0):
+    def GetSurfaces(self):
         surf_cards = {}
         number = 1
+        scale = 10  # change cm units to mm
         for c in self.__inputcards__:
             if c.ctype != mp.CID.surface:
                 continue

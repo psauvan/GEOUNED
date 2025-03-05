@@ -3,27 +3,25 @@ from tqdm import tqdm
 import FreeCAD
 
 from .buildSolidCell import FuseSolid
+from .Objects import CadCell
 from .Utils.booleanFunction import BoolSequence
-from .Utils.boundBox import solid_plane
+from .Utils.boundBox import solid_plane_box
 
 
-def buildCAD(UnivCell, data, config):
+def buildCAD(data, config):
 
     UniverseCut = True
     if "Ustart" not in config.keys():
         config["Ustart"] = 0
     if "levelMax" not in config.keys():
         config["levelMax"] = "all"
+
+    UnivCell = CadCell()
     UnivCell.name = 0
     UnivCell.Fill = config["Ustart"]
 
     # read all surfaces definition
-    if config["format"] == "mcnp":
-        factor = 10
-    else:
-        factor = 1
-
-    modelSurfaces = data.GetSurfaces(scale=factor)  # scale change cm in mcnp to mm in CAD Obj
+    modelSurfaces = data.GetSurfaces()  # scale units change are carried out in GetSurfaces method
 
     # read Cells and group into universes
     print(config)
@@ -135,7 +133,7 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
 
-            solid_box = solid_plane(NTcell)
+            solid_box = solid_plane_box(NTcell)
             bBox = solid_box.get_boundBox(0.1)
             if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
                 NTcell.shape = None

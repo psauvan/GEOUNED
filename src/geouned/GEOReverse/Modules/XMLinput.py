@@ -22,19 +22,18 @@ class XmlInput:
         self.__inputcards__ = list(get_cards(root))
         return
 
-    def GetFilteredCells(self, Surfaces, config):
+    def GetFilteredCells(self, Surfaces, Ustart, depth, matcel_list):
         levels, contLevels, Universes = self.GetLevelStructure()
 
         FilteredCells = {}
 
-        Ustart = config["Ustart"]
         subUniverses = getSubUniverses(Ustart, Universes)
         subUniverses.add(Ustart)
 
-        if config["levelMax"] == "all":
+        if depth == -1:
             levelMax = len(levels)
         else:
-            levelMax = config["levelMax"] + 1
+            levelMax = depth + 1
 
         levelUniverse = set()
         for lev in range(0, levelMax):
@@ -47,7 +46,7 @@ class XmlInput:
                 del Universes[U]
 
         for U in Universes.keys():
-            FilteredCells[U] = selectCells(Universes[U], config)
+            FilteredCells[U] = selectCells(Universes[U], matcel_list)
             processSurfaces(FilteredCells[U], Surfaces)
 
         # change the surface name in surface dict
@@ -121,9 +120,10 @@ class XmlInput:
 
         return cell_cards
 
-    def GetSurfaces(self, scale=1.0):
+    def GetSurfaces(self):
         surf_cards = {}
         number = 1
+        scale = 1.0  # don't change CAD units
         for c in self.__inputcards__:
             if c.type != "surface":
                 continue

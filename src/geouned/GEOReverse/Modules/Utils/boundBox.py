@@ -7,8 +7,8 @@ from .booleanFunction import BoolSequence
 twoPi = math.pi * 2
 
 
-class solid_plane:
-    def __init__(self, NTcell=None):
+class solid_plane_box:
+    def __init__(self, NTcell=None, settings=make_box_options):
         if NTcell is None:
             self.Planes = None
             self.definition = None
@@ -18,6 +18,9 @@ class solid_plane:
             self.planes = plane_dict
             self.surf_to_plane = surf_to_plane_dict
             self.definition = plane_definition(NTcell.definition.copy(), surf_to_plane_dict)
+
+        self.insolid_tolerance = settings.insolid_tolerance
+        self.universe_radius = settings.universe_radius
 
     def export_surf_planes(self, box):
 
@@ -50,8 +53,8 @@ class solid_plane:
             pt = FreeCAD.Vector(point.x, point.y, point.z)
             r = pt - pointPlane
             dot = normal.dot(r)
-            if abs(dot) < 0.1:
-                surf_value[p_index] = True   # assume inside even close to the external side of surface
+            if abs(dot) < self.insolid_tolerance:
+                surf_value[p_index] = True  # assume inside even close to the external side of surface
             else:
                 surf_value[p_index] = dot > 0  # assume inside even outside close to th surface
         inside = self.definition.evaluate(surf_value)
@@ -61,7 +64,7 @@ class solid_plane:
         if self.definition.operator == "OR" and self.definition.level > 0:
             bBox = FreeCAD.BoundBox()
             for definition in self.definition.elements:
-                compsol = solid_plane()
+                compsol = solid_plane_box()
                 compsol.definition = definition
                 comp_planes = dict()
                 for p in compsol.definition.get_surfaces_numbers():
@@ -87,7 +90,7 @@ class solid_plane:
 
     def get_component_boundBox(self):
         axis_list = ("x", "y", "z")
-        point_list = plane_intersect(tuple(self.planes.values()))
+        point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius)
 
         box_lim = []
         for axis in axis_list:
@@ -125,12 +128,26 @@ def quadric_to_plane(surfaces):
             planes[s_index] = Part.Plane(position, normal)
         else:
             surf_planes = convert_to_planes(s)
-            p_index = []
-            for p in surf_planes:
-                planes[next_index] = p
-                p_index.append(next_index)
-                next_index += 1
-            surf_planes_dict[s_index] = p_index
+            if s.type == "torus":
+                extplanes, inplanes = surf_planes
+                p_ext = []
+                p_in = []
+                for p in extplanes:
+                    planes[next_index] = p
+                    p_ext.append(next_index)
+                    next_index += 1
+                for p in inplanes:
+                    planes[next_index] = p
+                    p_in.append(next_index)
+                    next_index += 1
+                surf_planes_dict[s_index] = (p_ext, p_in)
+            else:
+                p_index = []
+                for p in surf_planes:
+                    planes[next_index] = p
+                    p_index.append(next_index)
+                    next_index += 1
+                surf_planes_dict[s_index] = p_index
     return planes, surf_planes_dict
 
 
@@ -143,6 +160,8 @@ def convert_to_planes(s):
         return sphere_to_planes(s)
     elif s.type == "torus":
         return torus_to_planes(s)
+    elif s.type == "paraboloid":
+        return []  # I have to think how approximate paraboloid with planes
 
 
 def get_orto_axis(axis):
@@ -222,35 +241,62 @@ def sphere_to_planes(sphere):
 
 
 def torus_to_planes(torus):
-    center, axis, majorRadius, minor1, minor2 = torus.params
-    minorRadius = max(minor1, minor2)
+    center, axis, majorRadius, minorR, minorA = torus.params
 
     x = FreeCAD.Vector(1, 0, 0)
     y = FreeCAD.Vector(0, 1, 0)
     z = FreeCAD.Vector(0, 0, 1)
 
-    dist = majorRadius + minorRadius
+    dist = majorRadius + minorR
+    difR = majorRadius - minorR
     if abs(abs(axis.dot(x)) - 1) < 1e-5:
-        r1 = center + x * minorRadius
-        r2 = center - x * minorRadius
+        r1 = center + x * minorA
+        r2 = center - x * minorA
         r3 = center + y * dist
         r4 = center - y * dist
         r5 = center + z * dist
         r6 = center - z * dist
+        if difR > 0:
+            r7 = center + y * difR
+            r8 = center - y * difR
+            r9 = center + z * difR
+            r10 = center - z * difR
+            p7 = Part.Plane(r7, y)
+            p8 = Part.Plane(r8, -y)
+            p9 = Part.Plane(r9, z)
+            p10 = Part.Plane(r10, -z)
     elif abs(abs(axis.dot(y)) - 1) < 1e-5:
         r1 = center + x * dist
         r2 = center - x * dist
-        r3 = center + y * minorRadius
-        r4 = center - y * minorRadius
+        r3 = center + y * minorA
+        r4 = center - y * minorA
         r5 = center + z * dist
         r6 = center - z * dist
+        if difR > 0:
+            r7 = center + x * difR
+            r8 = center - x * difR
+            r9 = center + z * difR
+            r10 = center - z * difR
+            p7 = Part.Plane(r7, x)
+            p8 = Part.Plane(r8, -x)
+            p9 = Part.Plane(r9, z)
+            p10 = Part.Plane(r10, -z)
     elif abs(abs(axis.dot(z)) - 1) < 1e-5:
         r1 = center + x * dist
         r2 = center - x * dist
         r3 = center + y * dist
         r4 = center - y * dist
-        r5 = center + z * minorRadius
-        r6 = center - z * minorRadius
+        r5 = center + z * minorA
+        r6 = center - z * minorA
+        if difR > 0:
+            r7 = center + x * difR
+            r8 = center - x * difR
+            r9 = center + y * difR
+            r10 = center - y * difR
+            p7 = Part.Plane(r7, x)
+            p8 = Part.Plane(r8, -x)
+            p9 = Part.Plane(r9, y)
+            p10 = Part.Plane(r10, -y)
 
     p1 = Part.Plane(r1, -x)
     p2 = Part.Plane(r2, x)
@@ -258,14 +304,31 @@ def torus_to_planes(torus):
     p4 = Part.Plane(r4, y)
     p5 = Part.Plane(r5, -z)
     p6 = Part.Plane(r6, z)
-    return (p1, p2, p3, p4, p5, p6)
+    external_planes = (p1, p2, p3, p4, p5, p6)
+    if difR > 0:
+        central_planes = (p7, p8, p9, p10)
+    else:
+        central_planes = tuple()
+    return (external_planes, central_planes)
 
 
 def plane_definition(seq, surf_index):
     for s, planes in surf_index.items():
-        pm = BoolSequence(" ".join((str(p) for p in planes)))
-        pp = BoolSequence(":".join((str(-p) for p in planes)))
+        if len(planes) == 0:
+            continue
+        if type(planes[0]) is list:
+            extplanes, inplanes = planes
+            extm = BoolSequence(" ".join((str(p) for p in extplanes)))
+            if len(inplanes) > 0:
+                inm = BoolSequence(":".join((str(p) for p in inplanes)))
+                pm = BoolSequence(operator="AND")
+                pm.append(extm, inm)
+            else:
+                pm = extm
+        else:
+            pm = BoolSequence(" ".join((str(p) for p in planes)))
 
+        pp = pm.get_complementary()
         change_surf(seq, -s, pm)
         change_surf(seq, s, pp)
 
@@ -282,7 +345,7 @@ def change_surf(seq, old, new):
     seq.join_operators()
 
 
-def plane_intersect(plane_list):
+def plane_intersect(plane_list, u_radius):
     point_list = []
     for i, p1 in enumerate(plane_list[0:-2]):
         j = i + 1
@@ -296,7 +359,9 @@ def plane_intersect(plane_list):
                 if len(inter[0]) == 0:
                     continue
                 p = inter[0][0]
-                point_list.append(FreeCAD.Vector(p.X,p.Y,p.Z))
+                p = FreeCAD.Vector(p.X, p.Y, p.Z)
+                if p.Length < u_radius:
+                    point_list.append(p)
             j += 1
     return point_list
 
@@ -305,16 +370,13 @@ def sort_point(point_list, axis):
     axis_points = []
     if axis == "x":
         for i, point in enumerate(point_list):
-            if abs(point.Length) < 1.0e8:
-                axis_points.append((point.x, i))
+            axis_points.append((point.x, i))
     elif axis == "y":
         for i, point in enumerate(point_list):
-            if abs(point.Length) < 1.0e8:
-                axis_points.append((point.y, i))
+            axis_points.append((point.y, i))
     elif axis == "z":
         for i, point in enumerate(point_list):
-            if abs(point.Length) < 1.0e8:
-                axis_points.append((point.z, i))
+            axis_points.append((point.z, i))
     else:
         print("bad axis name")
 
@@ -332,8 +394,8 @@ def remove_points(point_list, value, axis, lower):
                     break
                 kept_points.append(p)
         else:
-             for p in point_list:
-                if p.x < value:
+            for p in point_list[::-1]:
+                if p.x > value:
                     break
                 kept_points.append(p)
     elif axis == "y":
@@ -343,8 +405,8 @@ def remove_points(point_list, value, axis, lower):
                     break
                 kept_points.append(p)
         else:
-            for p in point_list:
-                if p.y < value:
+            for p in point_list[::-1]:
+                if p.y > value:
                     break
                 kept_points.append(p)
     elif axis == "z":
@@ -354,8 +416,8 @@ def remove_points(point_list, value, axis, lower):
                     break
                 kept_points.append(p)
         else:
-            for p in point_list:
-                if p.z < value:
+            for p in point_list[::-1]:
+                if p.z > value:
                     break
                 kept_points.append(p)
     else:
