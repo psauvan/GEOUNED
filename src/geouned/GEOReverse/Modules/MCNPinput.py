@@ -23,6 +23,7 @@ from .Objects import (
 )
 from .Parser import parser as mp
 from .remh import CellCardString, remove_hash
+from .Objects import CadCell
 
 
 # TODO rename as there are two classes with this name
@@ -34,7 +35,7 @@ class McnpInput:
         self.Transformations = self.__getTransList__()
         return
 
-    def GetFilteredCells(self, Surfaces, Ustart, depth, matcel_list):
+    def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
         levels, Universes = self.GetLevelStructure()
 
         FilteredCells = {}
@@ -47,24 +48,24 @@ class McnpInput:
             levelMax = depth + 1
 
         levelUniverse = set()
-        for lev in range(0, levelMax):
+        for lev in range(0, levelMax-1):
             for U in levels[lev]:
                 levelUniverse.add(U)
         subUniverses = subUniverses.intersection(levelUniverse)
 
-        for U in list(Universes.keys()):
+        for U in tuple(Universes.keys()):
             if U not in subUniverses:
                 del Universes[U]
 
         for U in Universes.keys():
             FilteredCells[U] = selectCells(Universes[U], matcel_list)
-            processSurfaces(FilteredCells[U], Surfaces)
+            processSurfaces(FilteredCells[U], self.surfaces)
 
         # change the surface name in surface dict
         newSurfaces = {}
-        for k in Surfaces.keys():
-            newkey = Surfaces[k].id
-            newSurfaces[newkey] = Surfaces[k]
+        for k in self.surfaces.keys():
+            newkey = self.surfaces[k].id
+            newSurfaces[newkey] = self.surfaces[k]
 
         for U, universe in FilteredCells.items():
             substituteLikeCell(universe, newSurfaces)
@@ -72,7 +73,7 @@ class McnpInput:
             # set cell as CAD cell Object
             for cname, c in universe.items():
                 # print(cname,c.geom.str)
-                universe[cname] = CadCell(c)
+                universe[cname] = CadCell(c,settings=settings)
 
         return levels, FilteredCells, newSurfaces
 
@@ -130,6 +131,39 @@ class McnpInput:
 
         return univLevel, Universe_dict
 
+    def GetCell(self, name, settings, process=True):
+        for c in self.__inputcards__:
+            if c.ctype != mp.CID.cell:
+                continue
+            c.get_values()
+            if c.name != name:
+                continue
+
+            c = CellCardString("".join(c.lines))
+            if c.TRCL:
+                c.TRCL = TransformationMatrix(c.TRCL, self.Transformations)
+            if c.TR:
+                c.TR = TransformationMatrix(c.TR, self.Transformations)
+            setExplicitCellDefinition({c.name:c})
+
+            if not process:
+                return c
+                
+            processSurfaces({c.name:c},self.surfaces)
+            newSurfaces = {}
+            for k in self.surfaces.keys():
+                newkey = self.surfaces[k].id
+                newSurfaces[newkey] = self.surfaces[k]
+            
+            if c.likeCell:
+                c.geom = self.getCell(c.likeCell, settings, process=False).geom
+                c.likeCell = None
+                substituteLikeCell({c.name:c}, newSurfaces)		
+            
+            c = CadCell(c, settings = settings)
+            c.setSurfaces(newSurfaces)
+            return c
+    
     def GetCells(self, U=None, Fill=None):
         cell_cards = {}
         for c in self.__inputcards__:
@@ -144,7 +178,6 @@ class McnpInput:
                 cell_cards[c.name] = c
             elif Fill_cell == Fill and Fill is not None:
                 cell_cards[c.name] = c
-
         return cell_cards
 
     def GetSurfaces(self):
@@ -159,8 +192,7 @@ class McnpInput:
             surf_cards[c.name] = (c.stype, c.scoefs, c.TR, number)
             number += 1
 
-        # return surface as surface Objects type
-        return Get_primitive_surfaces(surf_cards, scale)
+        self.surfaces = Get_primitive_surfaces(surf_cards, scale)
 
     def __getTransList__(self):
         trl = {}

@@ -323,6 +323,8 @@ class Card(object):
         Replace integers in the meaningfull part with format specifiers, and
         populate the `values` attribute.
         """
+        if self.values != []:
+            return 
         self._protect_nums()
         if self.ctype == CID.cell:
             inpt, vt = _split_cell(self.input, self)

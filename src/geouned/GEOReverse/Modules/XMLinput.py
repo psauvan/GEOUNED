@@ -22,8 +22,8 @@ class XmlInput:
         self.__inputcards__ = list(get_cards(root))
         return
 
-    def GetFilteredCells(self, Surfaces, Ustart, depth, matcel_list):
-        levels, contLevels, Universes = self.GetLevelStructure()
+    def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
+        levels, Universes = self.GetLevelStructure()
 
         FilteredCells = {}
 
@@ -47,20 +47,20 @@ class XmlInput:
 
         for U in Universes.keys():
             FilteredCells[U] = selectCells(Universes[U], matcel_list)
-            processSurfaces(FilteredCells[U], Surfaces)
+            processSurfaces(FilteredCells[U], self.surfaces)
 
         # change the surface name in surface dict
         newSurfaces = {}
-        for k in Surfaces.keys():
-            newkey = Surfaces[k].id
-            newSurfaces[newkey] = Surfaces[k]
+        for k in self.surfaces.keys():
+            newkey = self.surfaces[k].id
+            newSurfaces[newkey] = self.surfaces[k]
 
         for U, universe in FilteredCells.items():
 
             # set cell as CAD cell Object
             for cname, c in universe.items():
                 # print(cname,c.geom.str)
-                universe[cname] = CadCell(c)
+                universe[cname] = CadCell(c, settings = settings)
 
         return levels, FilteredCells, newSurfaces
 
@@ -102,7 +102,24 @@ class XmlInput:
             currentLevel = nextLevel
             nextLevel = []
 
-        return univLevel, contLevel, Universe_dict
+        return univLevel, Universe_dict
+    
+    def GetCell(self, name, settings):
+        for c in self.__inputcards__:
+            if c.ctype != "cell":
+                continue
+            if c.name != name:
+                continue			
+        
+            processSurfaces({c.name:c},self.surfaces)
+            newSurfaces = {}
+            for k in self.surfaces.keys():
+                newkey = self.surfaces[k].id
+                newSurfaces[newkey] = self.surfaces[k]
+            
+            c = CadCell(c, settings = settings)
+            c.setSurfaces(newSurfaces)
+            return c
 
     def GetCells(self, U=None, Fill=None):
         cell_cards = {}
@@ -130,8 +147,7 @@ class XmlInput:
             surf_cards[c.name] = (c.stype, c.scoefs, number)
             number += 1
 
-        # return surface as surface Objects type
-        return Get_primitive_surfaces(surf_cards, scale)
+        self.surfaces = Get_primitive_surfaces(surf_cards, scale)
 
 
 def selectCells(cellList, config):

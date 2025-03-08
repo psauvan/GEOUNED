@@ -1,6 +1,7 @@
 import Part
 
-from .options import Options
+from .data_class import Options
+
 from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Utils.booleanFunction import BoolSequence
 

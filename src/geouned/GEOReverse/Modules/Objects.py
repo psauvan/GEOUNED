@@ -7,10 +7,44 @@ import Part
 from .buildSolidCell import BuildSolid
 from .remh import Cline
 from .Utils.booleanFunction import BoolSequence, outer_terms
+from .data_class import BoxSettings
+
+
+class Material_Cell_Filter():
+    def __init__(self, type: int = None, range: list = None):
+        if range is not None:
+            self.range=range[:]
+        else:
+            self.range=[]
+
+        if type is not None:
+            if type not in ("all", "include", "exclude"):
+                self.type = 'all'
+            else:
+                self.type = type
+        else:
+            self.type = 'all'
+
+    def set_type(self, type: str):
+        if type not in ("all", "include", "exclude"):
+            return
+        self.type = type
+
+    def add_range(self, a: int, b: int):
+        if type(a) is not int:
+            return
+        if type(b) is not int:
+            return
+        self.range.extend(range(a, b + 1))
+
+    def add_value(self, a: int):
+        if type(a) is not int:
+            return
+        self.range.append(a)
 
 
 class CadCell:
-    def __init__(self, stringCell=None):
+    def __init__(self, stringCell: str = None, settings: BoxSettings = BoxSettings()):
 
         if not stringCell:
             self.surfaces = {}
@@ -42,9 +76,10 @@ class CadCell:
             self.__defTerms__ = None
             self.__operator__ = None
             self.__setDefinition__(stringCell)
+        self.settings = settings
 
     def copy(self):
-        cpCell = CadCell()
+        cpCell = CadCell(settings=self.settings)
         cpCell.surfaceList = self.surfaceList[:]
         cpCell.surfaces = {}
         for name, s in self.surfaces.items():

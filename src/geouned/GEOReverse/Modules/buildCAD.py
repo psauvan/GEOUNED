@@ -8,56 +8,6 @@ from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import solid_plane_box
 
 
-def buildCAD(data, config):
-
-    UniverseCut = True
-    if "Ustart" not in config.keys():
-        config["Ustart"] = 0
-    if "levelMax" not in config.keys():
-        config["levelMax"] = "all"
-
-    UnivCell = CadCell()
-    UnivCell.name = 0
-    UnivCell.Fill = config["Ustart"]
-
-    # read all surfaces definition
-    modelSurfaces = data.GetSurfaces()  # scale units change are carried out in GetSurfaces method
-
-    # read Cells and group into universes
-    print(config)
-    levels, UniverseCells, modelSurfaces = data.GetFilteredCells(modelSurfaces, config)
-
-    # assign to each cell the surfaces belonging to the cell
-    AssignSurfaceToCell(UniverseCells, modelSurfaces)
-
-    #    print(UniverseCells[0][120].definition.str)
-    #    print(UniverseCells[0][120].surfaces)
-    #    CT=build_c_table_from_solids(UnivCell.shape,UniverseCells[0][70],option='full')
-    #    print(CT)
-    #    simply = BoolSequence(UniverseCells[0][70].definition.str)
-    #    print('antesSimply',simply)
-    #    simply.simplify(CT)
-    #    print('despues',simply)
-    # exit()
-
-    # dictionnary of the cells filled with a given Universe U
-    # universeContainers = get_universe_containers(levels,UniverseCells)
-
-    UnivCell.level = None
-    levelMax = config["levelMax"]
-    Ustart = config["Ustart"]
-    if levelMax == "all":
-        levelMax = len(levels)
-
-    for lev, Univ in levels.items():
-        if Ustart in Univ:
-            UnivCell.level = lev - 1
-            break
-    startInfo = (Ustart, levelMax)
-
-    return BuildUniverse(startInfo, UnivCell, UniverseCells, universeCut=UniverseCut)
-
-
 def interferencia(container, cell, mode="slice"):
 
     if mode == "common":
@@ -97,56 +47,57 @@ def get_universe_containers(levels, Universes):
     return Ucontainer
 
 
-def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, duplicate=False):
-    CADUniverse = []
+def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True):
 
+    CADUniverse = []
     Ustart, levelMax = startInfo
     Universe = AllUniverses[Ustart]
 
     print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
     fails = []
-    for NTcell in tqdm(Universe.values(), desc="build cell"):
-        if duplicate:
-            if NTcell.shape:
-                buildShape = False
-                if ContainerCell.CurrentTR:
-                    cell = NTcell.copy()
-                    cell.transformSolid(ContainerCell.CurrentTR)
-                else:
-                    cell = NTcell
+    #for NTcell in tqdm(Universe.values(), desc="build cell"):
+    for NTcell in Universe.values():
+        if NTcell.shape:
+            buildShape = False
+            if ContainerCell.CurrentTR:
+                cell = NTcell.copy()
+                cell.transformSolid(ContainerCell.CurrentTR)
             else:
-                CTRF = None
-                buildShape = True
-                if ContainerCell.CurrentTR:
-                    CC = ContainerCell.copy()
-                    CC.transformSolid(CC.CurrentTR, reverse=True)
-                else:
-                    CC = ContainerCell
+                cell = NTcell
         else:
-            CTRF = ContainerCell.CurrentTR
-            CC = ContainerCell
+            CTRF = None
             buildShape = True
-            NTcell = NTcell.copy()
 
         if buildShape:
-            # print(f"Level :{CC.level + 1}  build Cell {NTcell.name} ")
+            
+            print(NTcell.name)
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
 
-            solid_box = solid_plane_box(NTcell)
+            if ContainerCell.shape is not None:
+                external_box = ContainerCell.shape.BoundBox
+                if ContainerCell.CurrentTR:
+                    external_box = external_box.transformed(ContainerCell.CurrentTR.inverse())
+            else:
+                external_box = None
+
+            solid_box = solid_plane_box(NTcell, outbox=external_box)
             bBox = solid_box.get_boundBox(0.1)
             if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
-                NTcell.shape = None
-                print(f"Cell {NTcell.name} BoundBox is null")
-                fails.append(NTcell.name)
-                continue
+                if external_box is not None:
+                    bBox = external_box
+                else:
+                    NTcell.shape = None
+                    print(f"Cell {NTcell.name} BoundBox is null")
+                    fails.append(NTcell.name)
+                    continue
 
             debug = False
             if debug:
-                NTcell.buildShape(bBox, surfTR=CTRF, simplify=False)
+                NTcell.buildShape(bBox, simplify=False)
             else:
                 try:
-                    NTcell.buildShape(bBox, surfTR=CTRF, simplify=False)
+                    NTcell.buildShape(bBox, simplify=False)
                 except:
                     print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)
@@ -154,14 +105,9 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
             if NTcell.shape is None:
                 continue
 
-            if duplicate:
-                if ContainerCell.CurrentTR:
-                    cell = NTcell.copy()
-                    cell.transformSolid(ContainerCell.CurrentTR)
-                else:
-                    cell = NTcell
-            else:
-                cell = NTcell
+            cell = NTcell.copy()
+            if ContainerCell.CurrentTR:
+                cell.transformSolid(ContainerCell.CurrentTR)
 
         if universeCut and ContainerCell.shape:
             cell.shape = interferencia(ContainerCell, cell)
@@ -172,7 +118,7 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
             if ContainerCell.CurrentTR:
                 cell.CurrentTR = ContainerCell.CurrentTR.multiply(cell.TRFL)
             cell.level = ContainerCell.level + 1
-            univ, ff = BuildUniverse((cell.FILL, levelMax), cell, AllUniverses, universeCut=universeCut)
+            univ, ff = BuildUniverseCells((cell.FILL, levelMax), cell, AllUniverses, universeCut=universeCut)
             CADUniverse.append(univ)
             fails.extend(ff)
 
@@ -180,7 +126,7 @@ def BuildUniverse(startInfo, ContainerCell, AllUniverses, universeCut=True, dupl
 
 
 def makeTree(CADdoc, CADCells):
-
+    
     label, universeCADCells = CADCells
     groupObj = CADdoc.addObject("App::Part", "Materials")
 
@@ -188,7 +134,7 @@ def makeTree(CADdoc, CADCells):
 
     CADObj = {}
     for i, c in enumerate(universeCADCells):
-        if type(c) is tuple:
+        if isinstance(c,(tuple,list)):
             groupObj.addObject(makeTree(CADdoc, c))
         else:
             featObj = CADdoc.addObject("Part::FeaturePython", f"solid{i}")
@@ -201,7 +147,7 @@ def makeTree(CADdoc, CADCells):
 
     for mat, matGroup in CADObj.items():
         groupMatObj = CADdoc.addObject("App::Part", "Materials")
-        groupMatObj.Label = f"Material_{mat}"
+        groupMatObj.Label = f"Material_{mat}_{label[0]}{label[1]}"
         groupMatObj.addObjects(matGroup)
         groupObj.addObject(groupMatObj)
 

@@ -3,24 +3,33 @@ import Part
 import math
 import numpy
 from .booleanFunction import BoolSequence
+from ..data_class import BoxSettings
+from ..Objects import CadCell
 
 twoPi = math.pi * 2
 
 
 class solid_plane_box:
-    def __init__(self, NTcell=None, settings=make_box_options):
-        if NTcell is None:
+    def __init__(self, NTCell = None, outbox=None):
+        if NTCell is None:
             self.Planes = None
             self.definition = None
             self.surf_to_plane = None
+            self.insolid_tolerance = BoxSettings().insolid_tolerance
+            self.universe_radius = BoxSettings().universe_radius
+            self.universe_center = FreeCAD.Vector(0, 0, 0)
         else:
-            plane_dict, surf_to_plane_dict = quadric_to_plane(NTcell.surfaces)
+            plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition,NTCell.surfaces)
             self.planes = plane_dict
             self.surf_to_plane = surf_to_plane_dict
-            self.definition = plane_definition(NTcell.definition.copy(), surf_to_plane_dict)
+            self.definition = plane_definition(NTCell.definition.copy(), surf_to_plane_dict)
+            self.insolid_tolerance = NTCell.settings.insolid_tolerance
+            self.universe_radius = NTCell.settings.universe_radius
+            self.universe_center = FreeCAD.Vector(0, 0, 0)
 
-        self.insolid_tolerance = settings.insolid_tolerance
-        self.universe_radius = settings.universe_radius
+        if outbox:
+            self.universe_radius = outbox.DiagonalLength * 0.5
+            self.universe_center = outbox.Center
 
     def export_surf_planes(self, box):
 
@@ -54,21 +63,26 @@ class solid_plane_box:
             r = pt - pointPlane
             dot = normal.dot(r)
             if abs(dot) < self.insolid_tolerance:
-                surf_value[p_index] = True  # assume inside even close to the external side of surface
+                surf_value[p_index] = None  # undefined value for point close to the surface
             else:
-                surf_value[p_index] = dot > 0  # assume inside even outside close to th surface
+                surf_value[p_index] = dot > 0
         inside = self.definition.evaluate(surf_value)
-        return inside
+
+        # if point close to the surface assume inside the solid independently if inside or outside
+        return True if inside is None else inside
 
     def get_boundBox(self, enlarge=0):
         if self.definition.operator == "OR" and self.definition.level > 0:
             bBox = FreeCAD.BoundBox()
             for definition in self.definition.elements:
                 compsol = solid_plane_box()
+                compsol.universe_center = self.universe_center
+                compsol.universe_radius = self.universe_radius
                 compsol.definition = definition
                 comp_planes = dict()
                 for p in compsol.definition.get_surfaces_numbers():
-                    comp_planes[p] = self.planes[p]
+                    if p in self.planes.keys():
+                        comp_planes[p] = self.planes[p]
                 compsol.planes = comp_planes
                 compsol.surf_to_plane = self.surf_to_plane
                 compBox = compsol.get_component_boundBox()
@@ -76,6 +90,8 @@ class solid_plane_box:
                     bBox.add(compBox)
         else:
             bBox = self.get_component_boundBox()
+            if bBox is None:
+                bBox = FreeCAD.BoundBox(0,0,0,0,0,0)
 
         if enlarge > 0:
             dx = (bBox.XMax - bBox.XMin) * 0.5 * (1 + enlarge)
@@ -90,8 +106,12 @@ class solid_plane_box:
 
     def get_component_boundBox(self):
         axis_list = ("x", "y", "z")
-        point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius)
-
+        point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius, self.universe_center)
+        myfic = open('point.txt','w')
+        for p in point_list:
+            myfic.write(f'{p.x} {p.y} {p.z}\n')
+        myfic.close() 
+        exit()   
         box_lim = []
         for axis in axis_list:
             s_point = sort_point(point_list, axis)
@@ -113,22 +133,42 @@ class solid_plane_box:
             return None
 
 
-def quadric_to_plane(surfaces):
+def quadric_to_plane(cellDef,surfaces):
 
     surf_planes_dict = dict()
     planes = dict()
-    surf_index = list(surfaces.keys())
-    surf_index.sort()
-    next_index = surf_index[-1] + 1
 
-    for s_index, s in surfaces.items():
+    surf_index = cellDef.signedSurfaces()
+    next=list({abs(s) for s in surf_index})
+    next.sort()
+    next_index = next[-1] + 1
+    apex = []
+
+    for s_index in surf_index:
+        pos = s_index > 0
+        s_index = abs(s_index)
+        s = surfaces[s_index]
         if s.type == "plane":
             normal, d = s.params
             position = normal * d
             planes[s_index] = Part.Plane(position, normal)
         else:
-            surf_planes = convert_to_planes(s)
-            if s.type == "torus":
+            surf_planes = convert_to_planes(s,pos)
+            if s.type == "cone":
+                apex.append(s.params[0])
+                dbl = s.params[3]
+                p_index = []
+                for p in surf_planes:
+                    planes[next_index] = p
+                    p_index.append(next_index)
+                    next_index += 1
+                
+                if dbl :
+                    surf_planes_dict[s_index] = ('dblcone',p_index)
+                else:
+                    surf_planes_dict[s_index] = p_index    
+
+            elif s.type == "torus":
                 extplanes, inplanes = surf_planes
                 p_ext = []
                 p_in = []
@@ -140,7 +180,7 @@ def quadric_to_plane(surfaces):
                     planes[next_index] = p
                     p_in.append(next_index)
                     next_index += 1
-                surf_planes_dict[s_index] = (p_ext, p_in)
+                surf_planes_dict[s_index] = ('torus',p_ext, p_in)
             else:
                 p_index = []
                 for p in surf_planes:
@@ -151,17 +191,20 @@ def quadric_to_plane(surfaces):
     return planes, surf_planes_dict
 
 
-def convert_to_planes(s):
+def convert_to_planes(s,pos):
     if s.type == "cylinder":
-        return cylinder_to_planes(s)
+        return cylinder_to_planes(s,pos)
     elif s.type == "cone":
-        return cone_to_planes(s)
+        return cone_to_planes(s,pos)
     elif s.type == "sphere":
-        return sphere_to_planes(s)
+        return sphere_to_planes(s,pos)
     elif s.type == "torus":
-        return torus_to_planes(s)
+        return torus_to_planes(s,pos)
     elif s.type == "paraboloid":
         return []  # I have to think how approximate paraboloid with planes
+    else:
+        print(f'{s.type} not implemented for boundbox'  )
+        return []
 
 
 def get_orto_axis(axis):
@@ -180,8 +223,9 @@ def get_orto_axis(axis):
     return v, w
 
 
-def cylinder_to_planes(cyl):
+def cylinder_to_planes(cyl,pos):
     center, axis, radius = cyl.params
+    if pos : radius = radius * 0.70710678
     x, y = get_orto_axis(axis)
     r1 = center + x * radius
     r2 = center - x * radius
@@ -195,8 +239,9 @@ def cylinder_to_planes(cyl):
     return (p1, p2, p3, p4)
 
 
-def cone_to_planes(cone):
+def cone_to_planes(cone,pos):
     apex, axis, t, dbl = cone.params
+    if pos : t = t * 0.70710678
     sa = math.atan(t)
     nface = 4
     x, y = get_orto_axis(axis)
@@ -212,14 +257,15 @@ def cone_to_planes(cone):
         cplanes.append(pi)
         phi += dphi
 
-    if not dbl:
-        pa = Part.Plane(apex, axis)
-        cplanes.append(pa)
+    pa = Part.Plane(apex, axis)
+    cplanes.append(pa)      
+            
     return cplanes
 
 
-def sphere_to_planes(sphere):
+def sphere_to_planes(sphere,pos):
     center, radius = sphere.params
+    if pos : radius = radius * 0.70710678
     x = FreeCAD.Vector(1, 0, 0)
     y = FreeCAD.Vector(0, 1, 0)
     z = FreeCAD.Vector(0, 0, 1)
@@ -240,15 +286,21 @@ def sphere_to_planes(sphere):
     return (p1, p2, p3, p4, p5, p6)
 
 
-def torus_to_planes(torus):
+def torus_to_planes(torus,pos):
     center, axis, majorRadius, minorR, minorA = torus.params
 
     x = FreeCAD.Vector(1, 0, 0)
     y = FreeCAD.Vector(0, 1, 0)
     z = FreeCAD.Vector(0, 0, 1)
 
-    dist = majorRadius + minorR
-    difR = majorRadius - minorR
+    if pos:
+        dist = (majorRadius + minorR) * 0.70710678
+        difR = majorRadius - minorR
+    else:     
+        dist = majorRadius + minorR
+        difR = (majorRadius - minorR) * 0.70710678
+
+
     if abs(abs(axis.dot(x)) - 1) < 1e-5:
         r1 = center + x * minorA
         r2 = center - x * minorA
@@ -316,15 +368,22 @@ def plane_definition(seq, surf_index):
     for s, planes in surf_index.items():
         if len(planes) == 0:
             continue
-        if type(planes[0]) is list:
-            extplanes, inplanes = planes
-            extm = BoolSequence(" ".join((str(p) for p in extplanes)))
-            if len(inplanes) > 0:
-                inm = BoolSequence(":".join((str(p) for p in inplanes)))
-                pm = BoolSequence(operator="AND")
-                pm.append(extm, inm)
-            else:
-                pm = extm
+        if type(planes[0]) is str:
+            if planes[0] == 'torus':
+                extplanes, inplanes = planes[1:3]
+                extm = BoolSequence(" ".join((str(p) for p in extplanes)))
+                if len(inplanes) > 0:
+                    inm = BoolSequence(":".join((str(p) for p in inplanes)))
+                    pm = BoolSequence(operator="AND")
+                    pm.append(extm, inm)
+                else:
+                    pm = extm
+            elif planes[0] == 'dblcone':
+                cplanes = planes[1]
+                cone1 = BoolSequence(" ".join((str(p) for p in cplanes)))
+                cone2 = BoolSequence(" ".join((str(-p) for p in cplanes)))
+                pm = BoolSequence(operator='OR')
+                pm.append(cone1,cone2)
         else:
             pm = BoolSequence(" ".join((str(p) for p in planes)))
 
@@ -341,12 +400,18 @@ def change_surf(seq, old, new):
             change_surf(e, old, new)
         else:
             if e == old:
-                seq.elements[i] = new
+                if new is None:
+                    seq.elements[i] = seq.operator == "AND"
+                else:    
+                    seq.elements[i] = new
+    seq.clean()                
     seq.join_operators()
 
 
-def plane_intersect(plane_list, u_radius):
+def plane_intersect(plane_list, u_radius, u_center):
     point_list = []
+    origin = u_center.Length == 0
+
     for i, p1 in enumerate(plane_list[0:-2]):
         j = i + 1
         for p2 in plane_list[i + 1 : -1]:
@@ -360,7 +425,8 @@ def plane_intersect(plane_list, u_radius):
                     continue
                 p = inter[0][0]
                 p = FreeCAD.Vector(p.X, p.Y, p.Z)
-                if p.Length < u_radius:
+                d = p if origin else p - u_center
+                if d.Length < u_radius:
                     point_list.append(p)
             j += 1
     return point_list
@@ -382,8 +448,30 @@ def sort_point(point_list, axis):
 
     axis_points.sort()
     sorted_points = (point_list[x[1]] for x in axis_points)
-    return tuple(sorted_points)
+    removed = remove_close_points(list(sorted_points))
+    return removed
 
+def remove_close_points(sorted_list):
+    if len(sorted_list)<2:
+        return sorted_list
+    new_points=[]
+    p = sorted_list.pop()
+    new_points.append(p)
+    while len(sorted_list) > 0:
+        nextp = sorted_list.pop()
+        dp = p-nextp
+        while (dp.Length < 0.1 ):
+            if len(sorted_list) > 0:
+                nextp = sorted_list.pop()
+                dp = p-nextp
+            else:
+                break
+        else:
+            p = nextp        
+            new_points.append(p)
+    new_points.reverse()        
+    return new_points    
+        
 
 def remove_points(point_list, value, axis, lower):
     kept_points = []
