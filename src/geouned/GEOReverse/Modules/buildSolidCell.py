@@ -93,7 +93,7 @@ def BuildDepth(cell, cutShape, mode, baseBox, simplify=False, loop=0):
 def BuildSolidParts(cell, base, mode):
 
     # part if several base in input
-    if type(base) is list or type(base) is tuple:
+    if isinstance(base,(list,tuple)):
         fullPart = []
         cutPart = []
         for b in base:

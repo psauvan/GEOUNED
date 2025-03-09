@@ -18,11 +18,13 @@ class BoxSettings:
     def __init__(
         self,
         universe_radius: float = 1.0e8,  # units mm
+        max_solid_length:float = 5e4,    # units mm
         insolid_tolerance: float = 0.1,  # units mm
     ):
 
         self.universe_radius = universe_radius
         self.insolid_tolerance = insolid_tolerance
+        self.max_solid_length = max_solid_length
 
     @property
     def universe_radius(self):
@@ -30,7 +32,7 @@ class BoxSettings:
 
     @universe_radius.setter
     def universe_radius(self, universe_radius: float):
-        if not isinstance(universe_radius, float):
+        if not isinstance(universe_radius, (float,int)):
             raise TypeError(f"geoReverse.Settings.universe_radius should be a float, not a {type(universe_radius)}")
         self._universe_radius = universe_radius
 
@@ -40,6 +42,16 @@ class BoxSettings:
 
     @insolid_tolerance.setter
     def insolid_tolerance(self, insolid_tolerance: float):
-        if not isinstance(insolid_tolerance, float):
+        if not isinstance(insolid_tolerance, (float,int)):
             raise TypeError(f"geoReverse.Settings.insolid_tolerance should be a float, not a {type(insolid_tolerance)}")
         self._insolid_tolerance = insolid_tolerance
+
+    @property
+    def max_solid_length(self):
+        return self._max_solid_length
+
+    @max_solid_length.setter
+    def max_solid_length(self, max_solid_length: float):
+        if not isinstance(max_solid_length, (float,int)):
+            raise TypeError(f"geoReverse.Settings.max_solid_length should be a float, not a {type(max_solid_length)}")
+        self._max_solid_length = max_solid_length

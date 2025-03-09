@@ -941,29 +941,29 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
             params = (p, v, R1, R2)
 
         if Stype == "plane":
-            surfaces[Sid] = Plane(number, params, trsf)
+            surfaces[Sid] = Plane(Sid,number, params, trsf)
         elif Stype == "sphere":
-            surfaces[Sid] = Sphere(number, params, trsf)
+            surfaces[Sid] = Sphere(Sid,number, params, trsf)
         elif Stype == "cylinder" or Stype == "can":
-            surfaces[Sid] = Cylinder(number, params, trsf, Stype == "can")
+            surfaces[Sid] = Cylinder(Sid,number, params, trsf, Stype == "can")
         elif Stype == "cylinder_elliptic" or Stype == "ecan":
-            surfaces[Sid] = EllipticCylinder(number, params, trsf, Stype == "ecan")
+            surfaces[Sid] = EllipticCylinder(Sid,number, params, trsf, Stype == "ecan")
         elif Stype == "cylinder_hyperbolic":
-            surfaces[Sid] = HyperbolicCylinder(number, params, trsf)
+            surfaces[Sid] = HyperbolicCylinder(Sid,number, params, trsf)
         elif Stype == "cone" or Stype == "tcone":
-            surfaces[Sid] = Cone(number, params, trsf, Stype == "tcone")
+            surfaces[Sid] = Cone(Sid,number, params, trsf, Stype == "tcone")
         elif Stype == "cone_elliptic":
-            surfaces[Sid] = EllipticCone(number, params, trsf)
+            surfaces[Sid] = EllipticCone(Sid,number, params, trsf)
         elif Stype == "hyperboloid":
-            surfaces[Sid] = Hyperboloid(number, params, trsf)
+            surfaces[Sid] = Hyperboloid(Sid,number, params, trsf)
         elif Stype == "ellipsoid":
-            surfaces[Sid] = Ellipsoid(number, params, trsf)
+            surfaces[Sid] = Ellipsoid(Sid,number, params, trsf)
         elif Stype == "paraboloid":
-            surfaces[Sid] = Paraboloid(number, params, trsf)
+            surfaces[Sid] = Paraboloid(Sid,number, params, trsf)
         elif Stype == "torus":
-            surfaces[Sid] = Torus(number, params, trsf)
+            surfaces[Sid] = Torus(Sid,number, params, trsf)
         elif Stype == "box":
-            surfaces[Sid] = Box(number, params, trsf)
+            surfaces[Sid] = Box(Sid,number, params, trsf)
         else:
             print("Undefined", Sid, Stype)
             print(MCNPtype, number, MCNPparams)

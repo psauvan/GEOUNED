@@ -409,15 +409,15 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
         #                get_quadric_surface(params)
 
         if Stype == "plane":
-            surfaces[Sid] = Plane(number, params)
+            surfaces[Sid] = Plane(Sid,number, params)
         elif Stype == "sphere":
-            surfaces[Sid] = Sphere(number, params)
+            surfaces[Sid] = Sphere(Sid,number, params)
         elif Stype == "cylinder":
-            surfaces[Sid] = Cylinder(number, params)
+            surfaces[Sid] = Cylinder(Sid,number, params)
         elif Stype == "cone":
-            surfaces[Sid] = Cone(number, params)
+            surfaces[Sid] = Cone(Sid,number, params)
         elif Stype == "torus":
-            surfaces[Sid] = Torus(number, params)
+            surfaces[Sid] = Torus(Sid,number, params)
         else:
             print("Undefined", Sid)
             print(MCNPtype, number, MCNPparams)

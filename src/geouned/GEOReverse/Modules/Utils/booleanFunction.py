@@ -643,3 +643,4 @@ def is_integer(x):
         return True
     except:
         return False
+    

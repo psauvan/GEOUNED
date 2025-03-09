@@ -3,7 +3,6 @@ from tqdm import tqdm
 import FreeCAD
 
 from .buildSolidCell import FuseSolid
-from .Objects import CadCell
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import solid_plane_box
 
@@ -56,7 +55,8 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
     print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
     fails = []
     #for NTcell in tqdm(Universe.values(), desc="build cell"):
-    for NTcell in Universe.values():
+    for i,NTcell in enumerate(Universe.values()):
+        print(i,NTcell.name)
         if NTcell.shape:
             buildShape = False
             if ContainerCell.CurrentTR:
@@ -69,8 +69,6 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             buildShape = True
 
         if buildShape:
-            
-            print(NTcell.name)
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
 
@@ -81,23 +79,12 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = None
 
-            solid_box = solid_plane_box(NTcell, outbox=external_box)
-            bBox = solid_box.get_boundBox(0.1)
-            if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
-                if external_box is not None:
-                    bBox = external_box
-                else:
-                    NTcell.shape = None
-                    print(f"Cell {NTcell.name} BoundBox is null")
-                    fails.append(NTcell.name)
-                    continue
-
             debug = False
             if debug:
-                NTcell.buildShape(bBox, simplify=False)
+                NTcell.buildShape(external_box, simplify=False)
             else:
                 try:
-                    NTcell.buildShape(bBox, simplify=False)
+                    NTcell.buildShape(external_box, simplify=False)
                 except:
                     print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)

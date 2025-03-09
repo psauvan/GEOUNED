@@ -4,7 +4,6 @@ import math
 import numpy
 from .booleanFunction import BoolSequence
 from ..data_class import BoxSettings
-from ..Objects import CadCell
 
 twoPi = math.pi * 2
 
@@ -17,6 +16,7 @@ class solid_plane_box:
             self.surf_to_plane = None
             self.insolid_tolerance = BoxSettings().insolid_tolerance
             self.universe_radius = BoxSettings().universe_radius
+            self.max_solid_length = BoxSettings().max_solid_length
             self.universe_center = FreeCAD.Vector(0, 0, 0)
         else:
             plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition,NTCell.surfaces)
@@ -25,6 +25,7 @@ class solid_plane_box:
             self.definition = plane_definition(NTCell.definition.copy(), surf_to_plane_dict)
             self.insolid_tolerance = NTCell.settings.insolid_tolerance
             self.universe_radius = NTCell.settings.universe_radius
+            self.max_solid_length = NTCell.settings.max_solid_length
             self.universe_center = FreeCAD.Vector(0, 0, 0)
 
         if outbox:
@@ -78,6 +79,7 @@ class solid_plane_box:
                 compsol = solid_plane_box()
                 compsol.universe_center = self.universe_center
                 compsol.universe_radius = self.universe_radius
+                compsol.max_solid_length = self.max_solid_length
                 compsol.definition = definition
                 comp_planes = dict()
                 for p in compsol.definition.get_surfaces_numbers():
@@ -88,10 +90,30 @@ class solid_plane_box:
                 compBox = compsol.get_component_boundBox()
                 if compBox is not None:
                     bBox.add(compBox)
+        elif self.definition.operator == "AND" and self.definition.level > 0:
+            bBox = None
+            for definition in self.definition.elements:
+                compsol = solid_plane_box()
+                compsol.universe_center = self.universe_center
+                compsol.universe_radius = self.universe_radius
+                compsol.max_solid_length = self.max_solid_length
+                compsol.definition = definition
+                comp_planes = dict()
+                for p in compsol.definition.get_surfaces_numbers():
+                    if p in self.planes.keys():
+                        comp_planes[p] = self.planes[p]
+                compsol.planes = comp_planes
+                compsol.surf_to_plane = self.surf_to_plane
+                compBox = compsol.get_component_boundBox()
+                if compBox is not None:
+                    if bBox is not None:
+                        bBox.intersected(compBox)
+                    else:
+                        bBox = compBox    
         else:
             bBox = self.get_component_boundBox()
             if bBox is None:
-                bBox = FreeCAD.BoundBox(0,0,0,0,0,0)
+                bBox = FreeCAD.BoundBox()
 
         if enlarge > 0:
             dx = (bBox.XMax - bBox.XMin) * 0.5 * (1 + enlarge)
@@ -107,20 +129,23 @@ class solid_plane_box:
     def get_component_boundBox(self):
         axis_list = ("x", "y", "z")
         point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius, self.universe_center)
-        myfic = open('point.txt','w')
-        for p in point_list:
-            myfic.write(f'{p.x} {p.y} {p.z}\n')
-        myfic.close() 
-        exit()   
+#        inertia_matrix(point_list)
         box_lim = []
+        if point_list == []:
+            return None
+        
         for axis in axis_list:
             s_point = sort_point(point_list, axis)
+            if s_point == []:
+                return None
             for point in s_point:
                 if self.isInside(point):
                     box_lim.append(pointaxis(point, axis))
-                    break
-            s_point = remove_points(s_point, pointaxis(point, axis), axis, True)
-
+                    break      
+            
+            s_point = remove_points(s_point, pointaxis(point, axis), axis, True, self.max_solid_length)
+            if s_point == []:
+                return None
             for point in s_point:
                 if self.isInside(point):
                     box_lim.append(pointaxis(point, axis))
@@ -363,7 +388,6 @@ def torus_to_planes(torus,pos):
         central_planes = tuple()
     return (external_planes, central_planes)
 
-
 def plane_definition(seq, surf_index):
     for s, planes in surf_index.items():
         if len(planes) == 0:
@@ -391,6 +415,7 @@ def plane_definition(seq, surf_index):
         change_surf(seq, -s, pm)
         change_surf(seq, s, pp)
 
+    seq.join_operators()
     return seq
 
 
@@ -447,7 +472,7 @@ def sort_point(point_list, axis):
         print("bad axis name")
 
     axis_points.sort()
-    sorted_points = (point_list[x[1]] for x in axis_points)
+    sorted_points = list(point_list[x[1]] for x in axis_points)    
     removed = remove_close_points(list(sorted_points))
     return removed
 
@@ -473,14 +498,16 @@ def remove_close_points(sorted_list):
     return new_points    
         
 
-def remove_points(point_list, value, axis, lower):
+def remove_points(point_list, value, axis, lower, Lmax = None):
     kept_points = []
     if axis == "x":
         if lower:
+            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.x < value:
                     break
-                kept_points.append(p)
+                if p.x < upper_value:
+                    kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.x > value:
@@ -488,10 +515,12 @@ def remove_points(point_list, value, axis, lower):
                 kept_points.append(p)
     elif axis == "y":
         if lower:
+            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.y < value:
                     break
-                kept_points.append(p)
+                if p.y < upper_value:
+                    kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.y > value:
@@ -499,10 +528,12 @@ def remove_points(point_list, value, axis, lower):
                 kept_points.append(p)
     elif axis == "z":
         if lower:
+            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.z < value:
                     break
-                kept_points.append(p)
+                if p.z < upper_value:
+                    kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.z > value:
@@ -560,3 +591,32 @@ def makePlane(normal, position, Box):
     orden.sort()
 
     return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
+
+def inertia_matrix(points):
+    npoints = len(points)
+    numpy_points = numpy.ndarray((npoints,3))
+    for i,p in enumerate(points):
+        numpy_points[i] = numpy.array((p.x,p.y,p.z))
+
+    x0 = numpy.sum(numpy_points[:,0])/npoints
+    y0 = numpy.sum(numpy_points[:,1])/npoints
+    z0 = numpy.sum(numpy_points[:,2])/npoints
+    Sxx = numpy.sum(numpy_points[:,0]*numpy_points[:,0])
+    Syy = numpy.sum(numpy_points[:,1]*numpy_points[:,1])
+    Szz = numpy.sum(numpy_points[:,2]*numpy_points[:,2])
+    Sxy = numpy.sum(numpy_points[:,0]*numpy_points[:,1])
+    Sxz = numpy.sum(numpy_points[:,0]*numpy_points[:,2])
+    Syz = numpy.sum(numpy_points[:,1]*numpy_points[:,2])
+
+    Ixx = Sxx/npoints - x0*x0
+    Iyy = Syy/npoints - y0*y0
+    Izz = Szz/npoints - z0*z0
+    Ixy = Sxy/npoints - x0*y0
+    Ixz = Sxz/npoints - x0*z0
+    Iyz = Syz/npoints - y0*z0
+
+    inertia_matrix = numpy.array(((Ixx,Ixy,Ixz),
+                                  (Ixy,Iyy,Iyz),
+                                  (Ixz,Iyz,Izz)))
+    eigvalue,vectors = numpy.linalg.eig(inertia_matrix)
+    return
