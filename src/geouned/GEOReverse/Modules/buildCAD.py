@@ -79,7 +79,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = None
 
-            debug = False
+            debug = True
             if debug:
                 NTcell.buildShape(external_box, simplify=False)
             else:

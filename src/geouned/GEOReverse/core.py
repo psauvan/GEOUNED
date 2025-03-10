@@ -39,6 +39,7 @@ class CsgToCad:
             # read all surfaces definition
 
         self.geometry.GetSurfaces()  # scale units change are carried out in GetSurfaces method
+        self.GetLevelStructure()
 
     def cell_filter(self, type='all', cells=None):
         """select cell to build export the CSG geometry in OpenMC or MCNP format to a CAD model."""
@@ -130,7 +131,7 @@ class CsgToCad:
             "mat": (self.mat_range_type, self.mat_range),
             "cell": (self.cell_range_type, self.cell_range),
         }
-        levels, UniverseCells, modelSurfaces = self.geometry.GetFilteredCells(U, depth, matcel_list,self.settings)
+        UniverseCells, modelSurfaces = self.geometry.GetFilteredCells(U, depth, matcel_list,self.settings)
 
         # assign to each cell the surfaces belonging to the cell
         AssignSurfaceToCell(UniverseCells, modelSurfaces)
@@ -139,9 +140,9 @@ class CsgToCad:
         levelMax = depth
         Ustart = U
         if levelMax == -1:
-            levelMax = len(levels)
+            levelMax = len(self.levels)
 
-        for lev, Univ in levels.items():
+        for lev, Univ in self.levels.items():
             if Ustart in Univ:
                 UnivCell.level = lev - 1
                 break

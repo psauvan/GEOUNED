@@ -277,6 +277,7 @@ class BoolSequence:
 
     # join redundant operators in sequence
     def join_operators(self):
+        self.level_update()
         if self.level == 0:
             return
         if type(self.elements) is bool:

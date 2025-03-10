@@ -36,29 +36,29 @@ class McnpInput:
         return
 
     def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
-        levels, Universes = self.GetLevelStructure()
 
         FilteredCells = {}
-        subUniverses = getSubUniverses(Ustart, Universes)
+        subUniverses = getSubUniverses(Ustart, self.Universes)
         subUniverses.add(Ustart)
 
         if depth == -1:
-            levelMax = len(levels)
+            levelMax = len(self.levels)
         else:
             levelMax = depth + 1
 
         levelUniverse = set()
         for lev in range(0, levelMax-1):
-            for U in levels[lev]:
+            for U in self.levels[lev]:
                 levelUniverse.add(U)
         subUniverses = subUniverses.intersection(levelUniverse)
 
-        for U in tuple(Universes.keys()):
+        Ukeys = list(self.Universes.keys())
+        for U in Ukeys:
             if U not in subUniverses:
-                del Universes[U]
+                del Ukeys[U]
 
-        for U in Universes.keys():
-            FilteredCells[U] = selectCells(Universes[U], matcel_list)
+        for U in Ukeys:
+            FilteredCells[U] = selectCells(self.Universes[U], matcel_list)
             processSurfaces(FilteredCells[U], self.surfaces)
 
         # change the surface name in surface dict
@@ -75,7 +75,7 @@ class McnpInput:
                 # print(cname,c.geom.str)
                 universe[cname] = CadCell(c,settings=settings)
 
-        return levels, FilteredCells, newSurfaces
+        return FilteredCells, newSurfaces
 
     def GetLevelStructure(self):
         containers = []
@@ -129,7 +129,8 @@ class McnpInput:
             currentLevel = nextLevel
             nextLevel = []
 
-        return univLevel, Universe_dict
+        self.levels = univLevel, 
+        self.Universes = Universe_dict
 
     def GetCell(self, name, settings, process=True):
         for c in self.__inputcards__:
