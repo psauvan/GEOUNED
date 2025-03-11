@@ -790,7 +790,8 @@ def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
         for face in face1.Faces:
             edges = commonEdgeFace(face, face2, outer1_only, outer2_only)
             if edges is not None:
-                return edges, face
+                if len(edges) > 0:
+                    return edges, face
         return None, None
     else:
         return commonEdgeFace(face1, face2, outer1_only, outer2_only)
@@ -806,7 +807,7 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     for e1 in Edges1:
         for e2 in Edges2:
             if e1.isSame(e2):
-                edges.append(e1)
+                edges.append(e1)        
     return edges
 
 
@@ -914,7 +915,8 @@ def closed_cylinder(cylinder, solidFaces):
 
 
 def planar_edges(edges):
-
+    if len(edges) == 0:
+        return False
     e0 = edges[0]
     if e0.Length < 1e-8:
         return False
