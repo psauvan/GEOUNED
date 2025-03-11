@@ -43,7 +43,7 @@ class XmlInput:
         Ukeys = list(self.Universes.keys())
         for U in Ukeys:
             if U not in subUniverses:
-                del Ukeys[U]
+                Ukeys.remove(U)
 
         for U in Ukeys:
             FilteredCells[U] = selectCells(self.Universes[U], matcel_list)

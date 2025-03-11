@@ -1167,6 +1167,9 @@ def is_commented(l):
         res = True
         # print 'is_com "c"',
     # print 'is_com', res
+    elif "$" in l:
+        if l[0:l.index("$")].strip() == "":
+            res = True
     return res
 
 

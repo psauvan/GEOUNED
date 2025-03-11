@@ -53,9 +53,9 @@ class McnpInput:
         subUniverses = subUniverses.intersection(levelUniverse)
 
         Ukeys = list(self.Universes.keys())
-        for U in Ukeys:
+        for U in reversed(Ukeys):
             if U not in subUniverses:
-                del Ukeys[U]
+                Ukeys.remove(U)
 
         for U in Ukeys:
             FilteredCells[U] = selectCells(self.Universes[U], matcel_list)
@@ -86,7 +86,8 @@ class McnpInput:
             if c.ctype != mp.CID.cell:
                 continue
             c.get_values()
-            cstr = CellCardString("".join(c.lines))
+            c.get_input()
+            cstr = CellCardString("\n".join(c.input))
 
             if cstr.TRCL:
                 cstr.TRCL = TransformationMatrix(cstr.TRCL, self.Transformations)
@@ -129,7 +130,7 @@ class McnpInput:
             currentLevel = nextLevel
             nextLevel = []
 
-        self.levels = univLevel, 
+        self.levels = univLevel 
         self.Universes = Universe_dict
 
     def GetCell(self, name, settings, process=True):
@@ -139,8 +140,9 @@ class McnpInput:
             c.get_values()
             if c.name != name:
                 continue
-
-            c = CellCardString("".join(c.lines))
+            
+            c.get_input()
+            c = CellCardString("\n".join(c.input))
             if c.TRCL:
                 c.TRCL = TransformationMatrix(c.TRCL, self.Transformations)
             if c.TR:

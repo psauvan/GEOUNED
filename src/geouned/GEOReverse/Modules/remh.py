@@ -548,8 +548,6 @@ class CellCardString:
             else:
                 linecut = cellcard.str.count("\n")
 
-            cellcard.restore_comments()
-
             # look for the last line geometry string
             if linecut != 0:
                 pos = 0
@@ -569,7 +567,6 @@ class CellCardString:
                 m = trans.search(self.parm.str)
                 if m:
                     self.hproc = False
-                self.parm.restore_comments()
             else:
                 self.geom = Cline(cellcard.str)
                 self.parm = Cline("")
@@ -678,7 +675,8 @@ def remove_hash(cards, cname, keepComments=True):
     def remove(card, cname, keepComments):
         """remove complementary operator and subtitute by complementary cell"""
         if "parser.Card" in str(type(card)):
-            celline = "".join(card.lines)
+            card.get_input()
+            celline = "\n".join(card.input)
             cardstr = CellCardString(celline)
         else:
             cardstr = card

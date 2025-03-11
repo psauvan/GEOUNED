@@ -54,9 +54,9 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
     print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
     fails = []
-    #for NTcell in tqdm(Universe.values(), desc="build cell"):
-    for i,NTcell in enumerate(Universe.values()):
-        print(i,NTcell.name)
+    for NTcell in tqdm(Universe.values(), desc="build cell"):
+    #for i,NTcell in enumerate(Universe.values()):
+        #print(i,NTcell.name)
         if NTcell.shape:
             buildShape = False
             if ContainerCell.CurrentTR:
@@ -79,7 +79,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = None
 
-            debug = True
+            debug = False
             if debug:
                 NTcell.buildShape(external_box, simplify=False)
             else:
