@@ -101,21 +101,23 @@ class CsgToCad:
             "cell": (self.cell_range_type, self.cell_range),
         }
 
-        UniverseCells, modelSurfaces = self.geometry.GetFilteredCells( UnivCell.FILL, depth, matcel_list)
+        UniverseCells, modelSurfaces = self.geometry.GetFilteredCells( UnivCell.FILL, depth, matcel_list,self.settings)
         AssignSurfaceToCell(UniverseCells, modelSurfaces)
 
         UnivCell.level = None
         levelMax = depth
         Ustart = UnivCell.FILL
         if levelMax == -1:
-            levelMax = len(levels)
+            levelMax = len(self.geometry.levels)
 
-        for lev, Univ in levels.items():
+        for lev, Univ in self.geometry.levels.items():
             if Ustart in Univ:
                 UnivCell.level = lev - 1
                 break
         startInfo = (Ustart, levelMax)
         CADCells, fails = BuildUniverseCells(startInfo, UnivCell, UniverseCells, universeCut=True)
+        if fails:
+            print("failed cell conversion:", fails)
         self.buildCAD_list.append(CADCells)
         
     def build_universe(self, U=0, depth=-1):
@@ -151,7 +153,7 @@ class CsgToCad:
         CADCells, fails = BuildUniverseCells(startInfo, UnivCell, UniverseCells, universeCut=UniverseCut)
         self.buildCAD_list.append(CADCells)
         if fails:
-            print("failed in conversion", fails)
+            print("failed cell conversion:", fails)
 
     def export_cad(self, output_filename: str = "cad_from_csg"):
         """export the CSG geometry in OpenMC or MCNP format to a CAD model.

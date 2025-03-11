@@ -86,7 +86,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
                 try:
                     NTcell.buildShape(external_box, simplify=False)
                 except:
-                    print(f"fail converting cell {NTcell.name}")
+                    #print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)
 
             if NTcell.shape is None:
