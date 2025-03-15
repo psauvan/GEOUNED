@@ -23,28 +23,37 @@ class XmlInput:
         return
 
     def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
+   
+        if depth == 0:
+            Ukeys = (Ustart,)
+        else:
+            subUniverses = getSubUniverses(Ustart, self.Universes)
+            subUniverses.add(Ustart)
+
+            for lev, Univ in self.levels.items():
+                if Ustart in Univ:
+                    break
+            else:
+                raise ValueError(f"Universe {Ustart} not found in the model")
+
+            if depth == -1:
+                levelMax = len(self.levels) - 1
+            else:
+                levelMax = min(lev + depth, len(self.levels) - 1)
+
+            levelUniverse = set()
+            for clev in range(lev, levelMax + 1):
+                for U in self.levels[clev]:
+                    levelUniverse.add(U)
+
+            # select only universes wich are subuniverse of Ustart
+            subUniverses = subUniverses.intersection(levelUniverse)
+            Ukeys = list(self.Universes.keys())
+            for U in Ukeys:
+                if U not in subUniverses:
+                    Ukeys.remove(U)
 
         FilteredCells = {}
-
-        subUniverses = getSubUniverses(Ustart, self.Universes)
-        subUniverses.add(Ustart)
-
-        if depth == -1:
-            levelMax = len(self.levels)
-        else:
-            levelMax = depth + 1
-
-        levelUniverse = set()
-        for lev in range(0, levelMax):
-            for U in self.levels[lev]:
-                levelUniverse.add(U)
-        subUniverses = subUniverses.intersection(levelUniverse)
-
-        Ukeys = list(self.Universes.keys())
-        for U in Ukeys:
-            if U not in subUniverses:
-                Ukeys.remove(U)
-
         for U in Ukeys:
             FilteredCells[U] = selectCells(self.Universes[U], matcel_list)
             processSurfaces(FilteredCells[U], self.surfaces)
@@ -56,10 +65,8 @@ class XmlInput:
             newSurfaces[newkey] = self.surfaces[k]
 
         for U, universe in FilteredCells.items():
-
             # set cell as CAD cell Object
             for cname, c in universe.items():
-                # print(cname,c.geom.str)
                 universe[cname] = CadCell(c, settings=settings)
 
         return FilteredCells, newSurfaces
@@ -67,6 +74,7 @@ class XmlInput:
     def GetLevelStructure(self):
         containers = []
         Universe_dict = {}
+        containers_label = set()
 
         for c in self.__inputcards__:
             if c.type != "cell":
@@ -77,13 +85,27 @@ class XmlInput:
 
             if c.FILL:
                 containers.append(c)
+                containers_label.append(c.FILL)
 
-        currentLevel = [0]
+        if 0 in Universe_dict.keys():
+            root_universe = 0
+        else:
+            for k in Universe_dict.keys():
+                if k not in containers_label:
+                    root_universe = k
+                    break
+
+        # check all Universe have container cell
+        for k in Universe_dict.keys():
+            if k not in containers_label and k != root_universe:
+                raise RuntimeError(f"Universe {k} has not container cell.")
+        
+        currentLevel = [root_universe]
         nextLevel = []
         contLevel = {0: [(0, 0)]}
-        univLevel = {0: {0}}
+        univLevel = {0: {root_universe}}
+        
         level = 0
-
         while True:
             level += 1
             contLevel[level] = []
@@ -101,6 +123,11 @@ class XmlInput:
                 break
             currentLevel = nextLevel
             nextLevel = []
+
+        lmax = len(univLevel)
+        del univLevel[lmax - 1]
+        for k in univLevel.keys():
+            univLevel[k] = tuple(univLevel[k])
 
         self.level = univLevel
         self.Universes = Universe_dict

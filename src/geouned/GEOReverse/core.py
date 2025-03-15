@@ -78,7 +78,7 @@ class CsgToCad:
 
         Args:
             type (str, optional): Filtering type. Allowed values "all", "include", "exclude". Default to all.
-            cells (None, list, tuple, optional): List of cells to include or exclude. If type is "all" has no effect. Default to None
+            materials (None, list, tuple, optional): List of cells to include or exclude. If type is "all" has no effect. Default to None
         """
 
         if type in ("exclude", "include", "all"):
