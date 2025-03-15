@@ -55,9 +55,6 @@ def BuildDepth(cell, cutShape, mode, baseBox, simplify=False, loop=0):
     newCutShape = []
     for i, CS in enumerate(cutShape):
         cbaseBox = baseBox
-        # CS.base.exportStep('CS_{}_{}.stp'.format(i,str(cell.definition)))
-        # CTable =build_c_table_from_solids(cell.makeBox(CS.base.BoundBox),cell.surfaces,option='full')
-        # cell.definition.simplify(CTable)
         cell.definition.group_single()
 
         if type(cell.definition.elements) is not bool:
@@ -75,8 +72,7 @@ def BuildDepth(cell, cutShape, mode, baseBox, simplify=False, loop=0):
             else:
                 cellParts = []
                 for e in cell.definition.elements:
-                    sub = cell.getSubCell(e)
-                    part = BuildDepth(sub, CS, mode, baseBox, simplify, loop=loop)
+                    part = BuildDepth(cell.getSubCell(e), CS, mode, baseBox, simplify, loop=loop)
                     cellParts.extend(part)
 
                 JB = joinBase(cellParts)
@@ -93,7 +89,7 @@ def BuildDepth(cell, cutShape, mode, baseBox, simplify=False, loop=0):
 def BuildSolidParts(cell, base, mode):
 
     # part if several base in input
-    if isinstance(base,(list,tuple)):
+    if isinstance(base, (list, tuple)):
         fullPart = []
         cutPart = []
         for b in base:

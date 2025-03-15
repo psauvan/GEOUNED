@@ -252,7 +252,7 @@ class BoolSequence:
         for e in reversed(self.elements):
             if type(e) is int:
                 continue
-           
+
             eVal = e if type(e) is bool else e.clean()
             if type(eVal) is bool:
                 if eVal and self.operator == "OR":
@@ -531,15 +531,16 @@ class BoolSequence:
                 lev = e.level + 1
             newlev = max(lev, newlev)
         self.level = newlev
-    
+
     def signedSurfaces(self):
         signed = set()
         for e in self.elements:
             if type(e) is BoolSequence:
                 signed.update(e.signedSurfaces())
             else:
-                signed.add(e) 
-        return signed           
+                signed.add(e)
+        return signed
+
 
 def outer_terms(expression, value="number"):
     if value == "number":
@@ -644,4 +645,3 @@ def is_integer(x):
         return True
     except:
         return False
-    

@@ -11,21 +11,20 @@ from .Utils.boundBox import solid_plane_box
 from .data_class import BoxSettings
 
 
-
-class Material_Cell_Filter():
+class Material_Cell_Filter:
     def __init__(self, type: int = None, range: list = None):
         if range is not None:
-            self.range=range[:]
+            self.range = range[:]
         else:
-            self.range=[]
+            self.range = []
 
         if type is not None:
             if type not in ("all", "include", "exclude"):
-                self.type = 'all'
+                self.type = "all"
             else:
                 self.type = type
         else:
-            self.type = 'all'
+            self.type = "all"
 
     def set_type(self, type: str):
         if type not in ("all", "include", "exclude"):
@@ -62,6 +61,8 @@ class CadCell:
             self.MAT = 0  # material number
             self.CurrentTR = None
             self.level = None
+            self.cell_seq = None
+            self.hash_def = None
             self.__defTerms__ = None
             self.__operator__ = None
         else:
@@ -74,10 +75,19 @@ class CadCell:
             self.MAT = stringCell.MAT  # material number
             self.CurrentTR = self.TRFL
             self.level = None
+            self.cell_seq = stringCell.cellSeq
+            self.hash_def = stringCell.hashDef
 
             self.__defTerms__ = None
             self.__operator__ = None
             self.__setDefinition__(stringCell)
+            self.surfaceList = self.definition.get_surfaces_numbers()
+            """  
+            self.surfaceList = set(self.definition.get_surfaces_numbers())
+            if self.hash_def:
+                for cdef in self.hash_def.values():
+                    self.surfaceList.update(cdef.get_surfaces_numbers())
+            self.surfaceList=tuple(self.surfaceList)  """
         self.settings = settings
         self.BoundBox = None
 
@@ -100,6 +110,8 @@ class CadCell:
         cpCell.FILL = self.FILL
         cpCell.MAT = self.MAT
         cpCell.level = self.level
+        cpCell.hash_def = self.hash_def
+        cpCell.cell_seq = self.cell_seq
 
         if self.CurrentTR is not None:
             cpCell.CurrentTR = self.CurrentTR.submatrix(4)
@@ -175,42 +187,34 @@ class CadCell:
     def makeBox(self, boundBox):
         box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
         return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
-    
-    def build_BoundBox(self,externalBox):
-            solid_box = solid_plane_box(self, outbox=externalBox)
-            bBox = solid_box.get_boundBox(0.1)
-            if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
-                if externalBox is not None:
-                    bBox = externalBox
-                else:
-                    bBox = None
-                    print(f"Cell {self.name} BoundBox is null")
-            self.BoundBox = bBox  
 
-    def buildShape(self, externalBox=None, force=False, surfTR=None, simplify=False, fuse=False):
+    def build_BoundBox(self, externalBox, hashbox):
+        solid_box = solid_plane_box(self, outbox=externalBox)
+        bBox = solid_box.get_boundBox(hashBox=hashbox, enlarge=0.1)
+        if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
+            if externalBox is not None:
+                bBox = externalBox
+            else:
+                bBox = None
+                print(f"Cell {self.name} BoundBox is null")
+        self.BoundBox = bBox
 
-        if self.BoundBox is None:
-            self.build_BoundBox(externalBox)
-            if self.BoundBox is None:
-                if externalBox is not None:
-                    self.BoundBox = externalBox
-                else:
-                    self.shape = None
-                    print(f"no available boundbox cannot build shape {self.name}")  
-                    return
+    def buildShape(self, boundBox, force=False, surfTR=None, simplify=False, fuse=False):
+
         if self.shape is not None and not force:
             return
         if surfTR:
             self.transformSurfaces(surfTR)
 
+        self.BoundBox = boundBox
         if self.definition.level > 0 and self.definition.operator == "OR":
             cutShape = []
             for seq in self.definition.elements:
                 subcell = self.getSubCell(seq)
-                subcell.build_BoundBox(self.BoundBox)
+                subcell.build_BoundBox(self.BoundBox, False)
                 subShape = BuildSolid(subcell, self.BoundBox, simplify=simplify)
                 cutShape.extend(subShape)
-        else:    
+        else:
             cutShape = BuildSolid(self, self.BoundBox, simplify=simplify)
 
         # TODO consider making this step conditional on fuse
@@ -261,7 +265,6 @@ class CadCell:
         self.definition.remove_cr()
         self.definition.remove_multispace()
         self.definition.remove_redundant()
-        self.surfaceList = self.definition.get_surfaces_numbers()
 
 
 class Plane:
@@ -336,7 +339,7 @@ class Sphere:
         self.shape = None
         self.params = params
         if params[1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[1]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[1]}")
         if tr:
             self.transform(tr)
 
@@ -362,7 +365,7 @@ class Cylinder:
         self.params = params
         self.truncated = truncated
         if params[2] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2]}")
         if tr:
             self.transform(tr)
 
@@ -411,7 +414,7 @@ class Cone:
         self.params = params
         self.truncated = truncated
         if params[2] <= 0:
-            print(f'{self.type} surface {label} has a zero semi-angle value.')
+            print(f"{self.type} surface {label} has a zero semi-angle value.")
         if tr:
             self.transform(tr)
 
@@ -464,9 +467,9 @@ class EllipticCone:
         self.shape = None
         self.params = params
         if params[3][0] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[3][0]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[3][0]}")
         if params[3][1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[3][1]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[3][1]}")
         if tr:
             self.transform(tr)
 
@@ -510,9 +513,9 @@ class Hyperboloid:
         self.shape = None
         self.params = params
         if params[2][0] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][0]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][0]}")
         if params[2][1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][1]}')    
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][1]}")
         if tr:
             self.transform(tr)
 
@@ -549,9 +552,9 @@ class Ellipsoid:
         self.shape = None
         self.params = params
         if params[2][0] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][0]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][0]}")
         if params[2][1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][1]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][1]}")
         if tr:
             self.transform(tr)
 
@@ -580,9 +583,9 @@ class EllipticCylinder:
         self.params = params
         self.truncated = truncated
         if params[2][0] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][0]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][0]}")
         if params[2][1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][1]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][1]}")
         if tr:
             self.transform(tr)
 
@@ -627,9 +630,9 @@ class HyperbolicCylinder:
         self.shape = None
         self.params = params
         if params[2][0] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][0]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][0]}")
         if params[2][1] <= 0:
-            print(f'{self.type} surface {label} has a bad radius value: {params[2][1]}')
+            print(f"{self.type} surface {label} has a bad radius value: {params[2][1]}")
 
         if tr:
             self.transform(tr)
@@ -672,7 +675,7 @@ class Paraboloid:
         self.shape = None
         self.params = params
         if params[2] == 0:
-            print(f'{self.type} surface {label} has a zero focal')
+            print(f"{self.type} surface {label} has a zero focal")
 
         if tr:
             self.transform(tr)
@@ -698,16 +701,16 @@ class Paraboloid:
 
         length = max(abs(dmin), abs(dmax))
         axis.normalize()
-        
+
         dist = []
         for i in range(6):
-            d = axis.dot(boundBox.getPoint(i)-center)
+            d = axis.dot(boundBox.getPoint(i) - center)
             dist.append(abs(d))
         dist.sort()
         rmin = math.sqrt(4 * focal * dist[0])
         rmax = math.sqrt(4 * focal * dist[-1])
-        if (rmax-rmin)/rmin < 0.01 :
-            r = 0.5*(rmin+rmax)
+        if (rmax - rmin) / rmin < 0.01:
+            r = 0.5 * (rmin + rmax)
             self.shape = Part.makeCylinder(r, length, center, axis, 360)
         else:
             self.shape = makeParaboloid(center, axis, focal, length)
@@ -721,11 +724,11 @@ class Torus:
         self.shape = None
         self.params = params
         if params[2] < 0:
-            print(f'{self.type} surface {label} has a negative major radius: {params[2]}')
+            print(f"{self.type} surface {label} has a negative major radius: {params[2]}")
         if params[3] <= 0:
-            print(f'{self.type} surface {label} has a bad minor radius a value: {params[3]}')
+            print(f"{self.type} surface {label} has a bad minor radius a value: {params[3]}")
         if params[4] <= 0:
-            print(f'{self.type} surface {label} has a bad minor radius b value: {params[4]}')
+            print(f"{self.type} surface {label} has a bad minor radius b value: {params[4]}")
 
         if tr:
             self.transform(tr)
@@ -755,11 +758,11 @@ class Box:
         self.shape = None
         self.params = params
         if params[1].Length <= 0:
-            print(f'{self.type} surface {label} has a bad X dimension: {params[1]}')
+            print(f"{self.type} surface {label} has a bad X dimension: {params[1]}")
         if params[2].Length <= 0:
-            print(f'{self.type} surface {label} has a bad Y dimension: {params[2]}')
+            print(f"{self.type} surface {label} has a bad Y dimension: {params[2]}")
         if params[3].Length <= 0:
-            print(f'{self.type} surface {label} has a bad Z dimension: {params[3]}')
+            print(f"{self.type} surface {label} has a bad Z dimension: {params[3]}")
 
         if tr:
             self.transform(tr)

@@ -60,7 +60,7 @@ class XmlInput:
             # set cell as CAD cell Object
             for cname, c in universe.items():
                 # print(cname,c.geom.str)
-                universe[cname] = CadCell(c, settings = settings)
+                universe[cname] = CadCell(c, settings=settings)
 
         return FilteredCells, newSurfaces
 
@@ -104,22 +104,22 @@ class XmlInput:
 
         self.level = univLevel
         self.Universes = Universe_dict
-        return 
-    
+        return
+
     def GetCell(self, name, settings):
         for c in self.__inputcards__:
             if c.ctype != "cell":
                 continue
             if c.name != name:
-                continue			
-        
-            processSurfaces({c.name:c},self.surfaces)
+                continue
+
+            processSurfaces({c.name: c}, self.surfaces)
             newSurfaces = {}
             for k in self.surfaces.keys():
                 newkey = self.surfaces[k].id
                 newSurfaces[newkey] = self.surfaces[k]
-            
-            c = CadCell(c, settings = settings)
+
+            c = CadCell(c, settings=settings)
             c.setSurfaces(newSurfaces)
             return c
 
@@ -411,15 +411,15 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
         #                get_quadric_surface(params)
 
         if Stype == "plane":
-            surfaces[Sid] = Plane(Sid,number, params)
+            surfaces[Sid] = Plane(Sid, number, params)
         elif Stype == "sphere":
-            surfaces[Sid] = Sphere(Sid,number, params)
+            surfaces[Sid] = Sphere(Sid, number, params)
         elif Stype == "cylinder":
-            surfaces[Sid] = Cylinder(Sid,number, params)
+            surfaces[Sid] = Cylinder(Sid, number, params)
         elif Stype == "cone":
-            surfaces[Sid] = Cone(Sid,number, params)
+            surfaces[Sid] = Cone(Sid, number, params)
         elif Stype == "torus":
-            surfaces[Sid] = Torus(Sid,number, params)
+            surfaces[Sid] = Torus(Sid, number, params)
         else:
             print("Undefined", Sid)
             print(MCNPtype, number, MCNPparams)

@@ -30,7 +30,7 @@ def interferencia(container, cell, mode="slice"):
 def AssignSurfaceToCell(UniverseCells, modelSurfaces):
 
     for Uid, uniCells in UniverseCells.items():
-        for cId, c in uniCells.items():
+        for c in uniCells.values():
             c.setSurfaces(modelSurfaces)
 
 
@@ -54,9 +54,9 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
     print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
     fails = []
-    #for NTcell in tqdm(Universe.values(), desc="build cell"):
-    for i,NTcell in enumerate(Universe.values()):
-        print(i,NTcell.name)
+    for NTcell in tqdm(Universe.values(), desc="build cell"):
+        # for i,NTcell in enumerate(Universe.values()):
+        # print(i,NTcell.name)
         if NTcell.shape:
             buildShape = False
             if ContainerCell.CurrentTR:
@@ -71,6 +71,9 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         if buildShape:
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
+            if NTcell.hash_def:
+                for c, cdef in NTcell.hash_def.items():
+                    NTcell.hash_def[c] = BoolSequence(cdef.str)
 
             if ContainerCell.shape is not None:
                 external_box = ContainerCell.shape.BoundBox
@@ -81,12 +84,14 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
             debug = False
             if debug:
-                NTcell.buildShape(external_box, simplify=False)
+                NTcell.build_BoundBox(external_box, True)
+                NTcell.buildShape(NTcell.BoundBox, simplify=False)
             else:
                 try:
-                    NTcell.buildShape(external_box, simplify=False)
+                    NTcell.build_BoundBox(external_box, True)
+                    NTcell.buildShape(NTcell.BoundBox, simplify=False)
                 except:
-                    #print(f"fail converting cell {NTcell.name}")
+                    # print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)
 
             if NTcell.shape is None:
@@ -113,7 +118,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
 
 def makeTree(CADdoc, CADCells):
-    
+
     label, universeCADCells = CADCells
     groupObj = CADdoc.addObject("App::Part", "Materials")
 
@@ -121,7 +126,7 @@ def makeTree(CADdoc, CADCells):
 
     CADObj = {}
     for i, c in enumerate(universeCADCells):
-        if isinstance(c,(tuple,list)):
+        if isinstance(c, (tuple, list)):
             groupObj.addObject(makeTree(CADdoc, c))
         else:
             featObj = CADdoc.addObject("Part::FeaturePython", f"solid{i}")

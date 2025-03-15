@@ -807,7 +807,7 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     for e1 in Edges1:
         for e2 in Edges2:
             if e1.isSame(e2):
-                edges.append(e1)        
+                edges.append(e1)
     return edges
 
 

@@ -324,7 +324,7 @@ class Card(object):
         populate the `values` attribute.
         """
         if self.values != []:
-            return 
+            return
         self._protect_nums()
         if self.ctype == CID.cell:
             inpt, vt = _split_cell(self.input, self)
@@ -1168,7 +1168,7 @@ def is_commented(l):
         # print 'is_com "c"',
     # print 'is_com', res
     elif "$" in l:
-        if l[0:l.index("$")].strip() == "":
+        if l[0 : l.index("$")].strip() == "":
             res = True
     return res
 

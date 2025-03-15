@@ -22,7 +22,7 @@ from .Objects import (
     Torus,
 )
 from .Parser import parser as mp
-from .remh import CellCardString, remove_hash
+from .remh import CellCardString, remove_hash, hash_sequence
 from .Objects import CadCell
 
 
@@ -47,7 +47,7 @@ class McnpInput:
             levelMax = depth + 1
 
         levelUniverse = set()
-        for lev in range(0, levelMax-1):
+        for lev in range(0, levelMax - 1):
             for U in self.levels[lev]:
                 levelUniverse.add(U)
         subUniverses = subUniverses.intersection(levelUniverse)
@@ -73,7 +73,7 @@ class McnpInput:
             # set cell as CAD cell Object
             for cname, c in universe.items():
                 # print(cname,c.geom.str)
-                universe[cname] = CadCell(c,settings=settings)
+                universe[cname] = CadCell(c, settings=settings)
 
         return FilteredCells, newSurfaces
 
@@ -130,7 +130,7 @@ class McnpInput:
             currentLevel = nextLevel
             nextLevel = []
 
-        self.levels = univLevel 
+        self.levels = univLevel
         self.Universes = Universe_dict
 
     def GetCell(self, name, settings, process=True):
@@ -140,33 +140,33 @@ class McnpInput:
             c.get_values()
             if c.name != name:
                 continue
-            
+
             c.get_input()
             c = CellCardString("\n".join(c.input))
             if c.TRCL:
                 c.TRCL = TransformationMatrix(c.TRCL, self.Transformations)
             if c.TR:
                 c.TR = TransformationMatrix(c.TR, self.Transformations)
-            setExplicitCellDefinition({c.name:c})
+            setExplicitCellDefinition({c.name: c})
 
             if not process:
                 return c
-                
-            processSurfaces({c.name:c},self.surfaces)
+
+            processSurfaces({c.name: c}, self.surfaces)
             newSurfaces = {}
             for k in self.surfaces.keys():
                 newkey = self.surfaces[k].id
                 newSurfaces[newkey] = self.surfaces[k]
-            
+
             if c.likeCell:
                 c.geom = self.getCell(c.likeCell, settings, process=False).geom
                 c.likeCell = None
-                substituteLikeCell({c.name:c}, newSurfaces)		
-            
-            c = CadCell(c, settings = settings)
+                substituteLikeCell({c.name: c}, newSurfaces)
+
+            c = CadCell(c, settings=settings)
             c.setSurfaces(newSurfaces)
             return c
-    
+
     def GetCells(self, U=None, Fill=None):
         cell_cards = {}
         for c in self.__inputcards__:
@@ -351,12 +351,16 @@ def selectCells(cellList, config):
                     if name in config["cell"][1]:
                         selected[name] = c  # Fill cell are not tested against material number
 
-    # remove complementary in cell of the universe
     for cname, c in selected.items():
+        hashcellDef, cellSeq = hash_sequence(cellList, cname)
         c.geom = remove_hash(cellList, cname)
 
-    if not selected:
-        raise ValueError("No cells selected. Check input or selection criteria in config file.")
+        if len(cellSeq.get_surfaces_numbers()) > 1:
+            c.cellSeq = cellSeq
+            c.hashDef = hashcellDef
+
+    #    if not selected:
+    #        raise ValueError("No cells selected. Check input or selection criteria in config file.")
 
     return selected
 
@@ -387,6 +391,7 @@ def processSurfaces(UCells, Surfaces):
     for cname, c in UCells.items():
         c.geom.remove_comments(full=True)
         pos = 0
+        c.geom.newLabel = True
         while True:
             m = number.search(c.geom.str, pos)
             if not m:
@@ -400,6 +405,28 @@ def processSurfaces(UCells, Surfaces):
                 print(m)
                 print(c.geom.str)
             pos = c.geom.replace(surf, Surfaces[surf].id, pos)
+
+        if c.hashDef is not None:
+            for hdef in c.hashDef.values():
+                if hdef.newLabel:
+                    continue
+                else:
+                    hdef.newLabel = True
+                hdef.remove_comments(full=True)
+                pos = 0
+                while True:
+                    m = number.search(hdef.str, pos)
+                    if not m:
+                        break
+                    if "#" in m.group():
+                        pos = m.end()
+                        continue
+                    surf = int(m.group())
+                    if surf == 0:
+                        print(c.name)
+                        print(m)
+                        print(hdef.str)
+                    pos = hdef.replace(surf, Surfaces[surf].id, pos)
 
 
 def getTransMatrix(trsf, unit="", scale=10.0):
@@ -944,29 +971,29 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
             params = (p, v, R1, R2)
 
         if Stype == "plane":
-            surfaces[Sid] = Plane(Sid,number, params, trsf)
+            surfaces[Sid] = Plane(Sid, number, params, trsf)
         elif Stype == "sphere":
-            surfaces[Sid] = Sphere(Sid,number, params, trsf)
+            surfaces[Sid] = Sphere(Sid, number, params, trsf)
         elif Stype == "cylinder" or Stype == "can":
-            surfaces[Sid] = Cylinder(Sid,number, params, trsf, Stype == "can")
+            surfaces[Sid] = Cylinder(Sid, number, params, trsf, Stype == "can")
         elif Stype == "cylinder_elliptic" or Stype == "ecan":
-            surfaces[Sid] = EllipticCylinder(Sid,number, params, trsf, Stype == "ecan")
+            surfaces[Sid] = EllipticCylinder(Sid, number, params, trsf, Stype == "ecan")
         elif Stype == "cylinder_hyperbolic":
-            surfaces[Sid] = HyperbolicCylinder(Sid,number, params, trsf)
+            surfaces[Sid] = HyperbolicCylinder(Sid, number, params, trsf)
         elif Stype == "cone" or Stype == "tcone":
-            surfaces[Sid] = Cone(Sid,number, params, trsf, Stype == "tcone")
+            surfaces[Sid] = Cone(Sid, number, params, trsf, Stype == "tcone")
         elif Stype == "cone_elliptic":
-            surfaces[Sid] = EllipticCone(Sid,number, params, trsf)
+            surfaces[Sid] = EllipticCone(Sid, number, params, trsf)
         elif Stype == "hyperboloid":
-            surfaces[Sid] = Hyperboloid(Sid,number, params, trsf)
+            surfaces[Sid] = Hyperboloid(Sid, number, params, trsf)
         elif Stype == "ellipsoid":
-            surfaces[Sid] = Ellipsoid(Sid,number, params, trsf)
+            surfaces[Sid] = Ellipsoid(Sid, number, params, trsf)
         elif Stype == "paraboloid":
-            surfaces[Sid] = Paraboloid(Sid,number, params, trsf)
+            surfaces[Sid] = Paraboloid(Sid, number, params, trsf)
         elif Stype == "torus":
-            surfaces[Sid] = Torus(Sid,number, params, trsf)
+            surfaces[Sid] = Torus(Sid, number, params, trsf)
         elif Stype == "box":
-            surfaces[Sid] = Box(Sid,number, params, trsf)
+            surfaces[Sid] = Box(Sid, number, params, trsf)
         else:
             print("Undefined", Sid, Stype)
             print(MCNPtype, number, MCNPparams)
