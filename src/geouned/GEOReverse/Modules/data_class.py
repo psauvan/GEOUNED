@@ -3,24 +3,27 @@ class Options:
 
 
 class BoxSettings:
-    """Settings for changing the way the CAD to CSG conversion is done
+    """Parameters used in the solids boundbox generation. Optimized dimensions can reduce
+    the translation time.
 
     Args:
-        universe_radius (float, optional): Radius of the CAD universe. Used
-        to generate solid boundboxes. If this parameter is adjusted to the
-        aproximate size of the full geometry to convert, boundbox solid
-        generation will be faster. Units mm. Defaults to 1.0e8.
-        insolid_tolerance (float, optional): Distance from the solid nearest
-        surface to a point for which a point outside the solid is assumed
+        universe_radius (float, optional): Maxium radius of the CAD universe.
+        Solids with coordinates x^2+y^2+z*2 > universe_radius^2 will be cut or not represented.
+        Units mm. Defaults to 1.0e8.
+        max_solid_length (float, optional): Maxium length in any direction of any solids in the model.
+        Any solids with maximum length > max_solid_length may be cut.
+        Units mm. Defaults to 5.0e4.
+        insolid_tolerance (float, optional): Maximum distance from the nearest
+        surface of the solid, for which a point outside the solid is assumed
         inside the solid. Used only for boundbox generation. Units mm.
-        Defaults to 0.1 .
+        Defaults to 1 .
     """
 
     def __init__(
         self,
         universe_radius: float = 1.0e8,  # units mm
         max_solid_length: float = 5e4,  # units mm
-        insolid_tolerance: float = 0.1,  # units mm
+        insolid_tolerance: float = 1,  # units mm
     ):
 
         self.universe_radius = universe_radius

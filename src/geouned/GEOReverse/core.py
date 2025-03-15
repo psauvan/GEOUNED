@@ -1,5 +1,6 @@
 import FreeCAD
 import Import
+import typing
 
 from pathlib import Path
 
@@ -13,9 +14,15 @@ from .Modules.XMLinput import XmlInput
 
 
 class CsgToCad:
-    """Base class for the conversion of CSG to CAD models"""
+    """Base class for the conversion of CSG to CAD models
 
-    def __init__(self, settings: BoxSettings):
+    Args:
+        BoxSettings (geouned.BoxSettings, optional): Adjust the default parameters
+        for the solid boundbox creation. Defaults to a geouned.BoxSettings with default
+        attributes values.
+    """
+
+    def __init__(self, settings: BoxSettings = BoxSettings()):
         self.settings = settings
         self.cell_range_type = "all"
         self.cell_range = None
@@ -24,10 +31,14 @@ class CsgToCad:
         self.buildCAD_list = []
 
     def read_csg_file(self, input_filename: str, csg_format: str):
-        """get geometry definition from OpenMC XML or MCNP input.
+        """Reads the geometry definition from MCNP or OpenMC XML input.
+
         Args:
             input_filename (str): The filename and path of the input CSG text file.
-            csg_format (str): The format of the CSG input file, options are 'openmc_xml' or 'mcnp'"""
+            csg_format (str): The format of the CSG input file, options are 'mcnp' or 'openmc_xml'
+
+        Raises:
+            ValueError: If the csg_format is not 'openmc_xml' or 'mcnp' then a ValueError is raised."""
 
         if csg_format == "mcnp":
             self.geometry = McnpInput(input_filename)
@@ -38,11 +49,17 @@ class CsgToCad:
             raise ValueError(msg)
             # read all surfaces definition
 
+        self.input_filename = input_filename
         self.geometry.GetSurfaces()  # scale units change are carried out in GetSurfaces method
         self.geometry.GetLevelStructure()
 
-    def cell_filter(self, type="all", cells=None):
-        """select cell to build export the CSG geometry in OpenMC or MCNP format to a CAD model."""
+    def cell_filter(self, type: str = "all", cells: typing.Union[None, list, tuple] = None):
+        """Selects the cells to build from the CSG geometry in MCNP or OpenMC format and export to the CAD model.
+
+        Args:
+            type (str, optional): Filtering type. Allowed values "all", "include", "exclude". Default to all.
+            cells (None, list, tuple, optional): List of cells to include or exclude. If type is "all" has no effect. Default to None
+        """
 
         if type in ("exclude", "include", "all"):
             self.cell_range_type = type
@@ -57,7 +74,12 @@ class CsgToCad:
                 self.cell_range_type = "all"
 
     def material_filter(self, type="all", materials=None):
-        """select material to build export the CSG geometry in OpenMC or MCNP format to a CAD model."""
+        """Selects the materials of the cells to build from the CSG geometry in MCNP or OpenMC format and export to the CAD model.
+
+        Args:
+            type (str, optional): Filtering type. Allowed values "all", "include", "exclude". Default to all.
+            cells (None, list, tuple, optional): List of cells to include or exclude. If type is "all" has no effect. Default to None
+        """
 
         if type in ("exclude", "include", "all"):
             self.mat_range_type = type
@@ -71,11 +93,17 @@ class CsgToCad:
             if self.mat_range_type == "exclude":
                 self.mat_range_type = "all"
 
-    def build_container(self, cell_name, depth=-1):
+    def build_container(self, cell_label: int, depth: int = -1):
+        """Build the universe contained in the cell "cell_label". The level of nested universes to consider is
+        controlled by the parameter "depth". The universe is located inside the container cell according to the transformation.
 
-        print(f"Build container cell {cell_name}")
+        Args:
+            cell_label (int): Label of the cell containing the universe to convert.
+            depth (int, optional): Depth level of the nested to considered. Default to -1 (all nested universes)."""
+
+        print(f"Build container cell {cell_label}")
         # get and build container universe
-        UnivCell = self.geometry.GetCell(cell_name, self.settings)
+        UnivCell = self.geometry.GetCell(cell_label, self.settings)
         UnivCell.definition = BoolSequence(UnivCell.definition.str)
 
         solid_box = solid_plane_box(UnivCell)
@@ -120,7 +148,13 @@ class CsgToCad:
             print("failed cell conversion:", fails)
         self.buildCAD_list.append(CADCells)
 
-    def build_universe(self, U=None, depth=-1):
+    def build_universe(self, U: typing.Union[None, int] = None, depth: int = -1):
+        """Build the universe U. The level of nested universes is to consider is controlled by the parameter "depth".
+        The universe is build in its own coordinate system.
+
+        Args:
+            U (int, optional): Value of the universe to convert. Default to None (root universe).
+            depth (int, optional): Depth level of the nested to considered. Default to -1 (all nested universes)."""
 
         UniverseCut = True
         # UnivCell is the virtual(infinite) cell container
@@ -164,17 +198,17 @@ class CsgToCad:
         if fails:
             print("failed cell conversion:", fails)
 
-    def export_cad(self, output_filename: str = "cad_from_csg"):
+    def export_cad(self, output_filename: str = ""):
         """export the CSG geometry in OpenMC or MCNP format to a CAD model.
 
         Args:
             output_filename (str, optional): The filename stem and path of the output file created.
                 Two files will be created with the '.step' suffix and one with the 'FCStd' suffix.
-                Defaults to 'cad_from_csg'.
-
-        Raises:
-            ValueError: If the csg_format is not 'openmc_xml' or 'mcnp' then a ValueError is raised.
+                Defaults to name of the csg file + stp.
         """
+
+        if output_filename == "":
+            output_filename = Path(self.input_filename).name
 
         Path(output_filename).parent.mkdir(parents=True, exist_ok=True)
 
