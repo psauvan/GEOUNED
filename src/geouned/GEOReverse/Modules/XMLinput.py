@@ -23,7 +23,7 @@ class XmlInput:
         return
 
     def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
-   
+
         if depth == 0:
             Ukeys = (Ustart,)
         else:
@@ -99,12 +99,12 @@ class XmlInput:
         for k in Universe_dict.keys():
             if k not in containers_label and k != root_universe:
                 raise RuntimeError(f"Universe {k} has not container cell.")
-        
+
         currentLevel = [root_universe]
         nextLevel = []
         contLevel = {0: [(0, 0)]}
         univLevel = {0: {root_universe}}
-        
+
         level = 0
         while True:
             level += 1
