@@ -73,6 +73,7 @@ class CsgToCad:
 
     def build_container(self, cell_name, depth=-1):
 
+        print(f"Build container cell {cell_name}")
         # get and build container universe
         UnivCell = self.geometry.GetCell(cell_name, self.settings)
         UnivCell.definition = BoolSequence(UnivCell.definition.str)
@@ -85,10 +86,10 @@ class CsgToCad:
 
         debug = False
         if debug:
-            UnivCell.buildShape(bBox, hashbox=True, simplify=False)
+            UnivCell.buildShape(bBox, simplify=False)
         else:
             try:
-                UnivCell.buildShape(bBox, hashbox=True, simplify=False)
+                UnivCell.buildShape(bBox, simplify=False)
             except:
                 print(f"fail converting cell {UnivCell.name}")
 
@@ -101,52 +102,63 @@ class CsgToCad:
         UniverseCells, modelSurfaces = self.geometry.GetFilteredCells(UnivCell.FILL, depth, matcel_list, self.settings)
         AssignSurfaceToCell(UniverseCells, modelSurfaces)
 
-        UnivCell.level = None
-        levelMax = depth
         Ustart = UnivCell.FILL
-        if levelMax == -1:
-            levelMax = len(self.geometry.levels)
-
+        UnivCell.level = None
         for lev, Univ in self.geometry.levels.items():
             if Ustart in Univ:
-                UnivCell.level = lev - 1
+                UnivCell.level = lev
                 break
+
+        if depth == -1:
+            levelMax = len(self.geometry.levels)
+        else:
+            levelMax = min(lev + depth, len(self.geometry.levels))
+
         startInfo = (Ustart, levelMax)
         CADCells, fails = BuildUniverseCells(startInfo, UnivCell, UniverseCells, universeCut=True)
         if fails:
             print("failed cell conversion:", fails)
         self.buildCAD_list.append(CADCells)
 
-    def build_universe(self, U=0, depth=-1):
+    def build_universe(self, U=None, depth=-1):
 
         UniverseCut = True
+        # UnivCell is the virtual(infinite) cell container
         UnivCell = CadCell(settings=self.settings)
-        UnivCell.name = 0
-        UnivCell.Fill = U
-        UnivCell.MAT = 0
+        if U == None:
+            root_universe = self.geometry.levels[0][0]
+        else:
+            root_universe = U
+
+        UnivCell.FILL = root_universe
+        UnivCell.name = None
+        UnivCell.MAT = None
 
         # read Cells and group into universes
         matcel_list = {
             "mat": (self.mat_range_type, self.mat_range),
             "cell": (self.cell_range_type, self.cell_range),
         }
-        UniverseCells, modelSurfaces = self.geometry.GetFilteredCells(U, depth, matcel_list, self.settings)
+        # get all cells of the universe U and subuniverses in the FILL cell of universe U
+        # depth level for searching for nested universes
+        UniverseCells, modelSurfaces = self.geometry.GetFilteredCells(root_universe, depth, matcel_list, self.settings)
 
         # assign to each cell the surfaces belonging to the cell
         AssignSurfaceToCell(UniverseCells, modelSurfaces)
 
+        Ustart = root_universe
         UnivCell.level = None
-        levelMax = depth
-        Ustart = U
-        if levelMax == -1:
-            levelMax = len(self.geometry.levels)
-
         for lev, Univ in self.geometry.levels.items():
             if Ustart in Univ:
-                UnivCell.level = lev - 1
+                UnivCell.level = lev
                 break
-        startInfo = (Ustart, levelMax)
 
+        if depth == -1:
+            levelMax = len(self.geometry.levels) - 1
+        else:
+            levelMax = min(lev + depth, len(self.geometry.levels) - 1)
+
+        startInfo = (Ustart, levelMax)
         CADCells, fails = BuildUniverseCells(startInfo, UnivCell, UniverseCells, universeCut=UniverseCut)
         self.buildCAD_list.append(CADCells)
         if fails:

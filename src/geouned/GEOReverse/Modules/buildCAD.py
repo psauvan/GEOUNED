@@ -52,7 +52,10 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
     Ustart, levelMax = startInfo
     Universe = AllUniverses[Ustart]
 
-    print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
+    if ContainerCell.name is not None:
+        print(f"Build Universe {ContainerCell.FILL} in container cell {ContainerCell.name}")
+    else:
+        print(f"Build Universe {ContainerCell.FILL}")
     fails = []
     for NTcell in tqdm(Universe.values(), desc="build cell"):
         # for i,NTcell in enumerate(Universe.values()):
@@ -104,7 +107,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         if universeCut and ContainerCell.shape:
             cell.shape = interferencia(ContainerCell, cell)
 
-        if not cell.FILL or ContainerCell.level + 1 == levelMax:
+        if not cell.FILL or ContainerCell.level + 1 > levelMax:
             CADUniverse.append(cell)
         else:
             if ContainerCell.CurrentTR:

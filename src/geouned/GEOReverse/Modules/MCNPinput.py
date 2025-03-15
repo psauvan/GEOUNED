@@ -37,26 +37,36 @@ class McnpInput:
 
     def GetFilteredCells(self, Ustart, depth, matcel_list, settings):
 
-        FilteredCells = {}
-        subUniverses = getSubUniverses(Ustart, self.Universes)
-        subUniverses.add(Ustart)
-
-        if depth == -1:
-            levelMax = len(self.levels)
+        if depth == 0:
+            Ukeys = (Ustart,)
         else:
-            levelMax = depth + 1
+            subUniverses = getSubUniverses(Ustart, self.Universes)
+            subUniverses.add(Ustart)
 
-        levelUniverse = set()
-        for lev in range(0, levelMax - 1):
-            for U in self.levels[lev]:
-                levelUniverse.add(U)
-        subUniverses = subUniverses.intersection(levelUniverse)
+            for lev, Univ in self.levels.items():
+                if Ustart in Univ:
+                    break
+            else:
+                raise ValueError(f"Universe {Ustart} not found in the model")
 
-        Ukeys = list(self.Universes.keys())
-        for U in reversed(Ukeys):
-            if U not in subUniverses:
-                Ukeys.remove(U)
+            if depth == -1:
+                levelMax = len(self.levels) - 1
+            else:
+                levelMax = min(lev + depth, len(self.levels) - 1)
 
+            levelUniverse = set()
+            for clev in range(lev, levelMax + 1):
+                for U in self.levels[clev]:
+                    levelUniverse.add(U)
+
+            # select only universes wich are subuniverse of Ustart
+            subUniverses = subUniverses.intersection(levelUniverse)
+            Ukeys = list(self.Universes.keys())
+            for U in reversed(Ukeys):
+                if U not in subUniverses:
+                    Ukeys.remove(U)
+
+        FilteredCells = {}
         for U in Ukeys:
             FilteredCells[U] = selectCells(self.Universes[U], matcel_list)
             processSurfaces(FilteredCells[U], self.surfaces)
@@ -96,6 +106,7 @@ class McnpInput:
             cellCards[c.name] = cstr
 
         setExplicitCellDefinition(cellCards)
+        containers_label = set()
         for cname, c in cellCards.items():
             if c.U is None:
                 c.U = 0
@@ -105,24 +116,34 @@ class McnpInput:
 
             if c.FILL:
                 containers.append(c)
+                containers_label.add(c.FILL)
 
-        currentLevel = [0]
+        if 0 in Universe_dict.keys():
+            root_universe = 0
+        else:
+            for k in Universe_dict.keys():
+                if k not in containers_label:
+                    root_universe = k
+                    break
+
+        # check all Universe have container cell
+        for k in Universe_dict.keys():
+            if k not in containers_label and k != root_universe:
+                raise RuntimeError(f"Universe {k} has not container cell.")
+
+        currentLevel = [root_universe]
         nextLevel = []
-        contLevel = {0: [(0, 0)]}
-        univLevel = {0: {0}}
+        univLevel = {0: {root_universe}}
         level = 0
 
         while True:
             level += 1
-            contLevel[level] = []
             univLevel[level] = set()
             for c in reversed(containers):
                 if c.U in currentLevel:
                     c.Level = level
                     nextLevel.append(c.FILL)
-                    contLevel[level].append((c.U, c.name))
                     univLevel[level].add(c.FILL)
-
                     containers.remove(c)
 
             if nextLevel == []:
@@ -130,6 +151,10 @@ class McnpInput:
             currentLevel = nextLevel
             nextLevel = []
 
+        lmax = len(univLevel)
+        del univLevel[lmax - 1]
+        for k in univLevel.keys():
+            univLevel[k] = tuple(univLevel[k])
         self.levels = univLevel
         self.Universes = Universe_dict
 
