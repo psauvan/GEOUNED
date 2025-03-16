@@ -85,14 +85,16 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = None
 
-            debug = False
+            debug = True
             if debug:
-                NTcell.build_BoundBox(external_box, True)
-                NTcell.buildShape(NTcell.BoundBox, simplify=False)
+                NTcell.build_BoundBox(external_box)
+                NTcell.externalBox = NTcell.boundBox 
+                NTcell.buildShape(simplify=False)
             else:
                 try:
-                    NTcell.build_BoundBox(external_box, True)
-                    NTcell.buildShape(NTcell.BoundBox, simplify=False)
+                    NTcell.build_BoundBox(external_box)
+                    NTcell.externalBox = NTcell.boundBox
+                    NTcell.buildShape(simplify=False)
                 except:
                     # print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)

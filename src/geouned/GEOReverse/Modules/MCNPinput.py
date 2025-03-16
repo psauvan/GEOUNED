@@ -432,6 +432,8 @@ def processSurfaces(UCells, Surfaces):
             pos = c.geom.replace(surf, Surfaces[surf].id, pos)
 
         if c.hashDef is not None:
+            if c.name == 100009:
+                print('pause')
             for hdef in c.hashDef.values():
                 if hdef.newLabel:
                     continue

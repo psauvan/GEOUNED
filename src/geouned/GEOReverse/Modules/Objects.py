@@ -89,11 +89,14 @@ class CadCell:
                     self.surfaceList.update(cdef.get_surfaces_numbers())
             self.surfaceList=tuple(self.surfaceList)  """
         self.settings = settings
-        self.BoundBox = None
-
+        self.boundBox = None
+        self.externalBox = None
+        
     def copy(self):
         cpCell = CadCell(settings=self.settings)
         cpCell.surfaceList = self.surfaceList[:]
+        cpCell.externalBox = self.externalBox
+        cpCell.BoundBox = self.boundBox
         cpCell.surfaces = {}
         for name, s in self.surfaces.items():
             cpCell.surfaces[name] = s.copy()
@@ -117,10 +120,7 @@ class CadCell:
             cpCell.CurrentTR = self.CurrentTR.submatrix(4)
 
         if self.shape is not None:
-            cpCell.shape = self.shape.copy()
-
-        if self.BoundBox is not None:
-            cpCell.BoundBox = FreeCAD.BoundBox(self.BoundBox)
+            cpCell.shape = self.shape.copy()           
 
         return cpCell
 
@@ -128,8 +128,9 @@ class CadCell:
 
         subCell = self.copy()
         subCell.definition = seq.copy()
+        subCell.build_BoundBox(self.externalBox, enlarge=0.1)
         subCell.shape = None
-        subCell.BoundBox = None
+
         subCell.surfaceList = subCell.definition.get_surfaces_numbers()
         for s in tuple(subCell.surfaces.keys()):
             if s not in subCell.surfaceList:
@@ -184,38 +185,34 @@ class CadCell:
             self.__defTerms__, self.__operator__ = outer_terms(self.definition.str)
         return self.__defTerms__, self.__operator__
 
-    def makeBox(self, boundBox):
+    def makeBox(self):
+        if self.boundBox.Orientation == "Forward":
+            boundBox = self.boundBox.Box
+        else:    
+            boundBox = self.externalBox.Box
         box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
         return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
 
-    def build_BoundBox(self, externalBox, hashbox):
+    def build_BoundBox(self, externalBox, enlarge = 0):
         solid_box = solid_plane_box(self, outbox=externalBox)
-        bBox = solid_box.get_boundBox(hashBox=hashbox, enlarge=0.1)
-        if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
-            if externalBox is not None:
-                bBox = externalBox
-            else:
-                bBox = None
-                print(f"Cell {self.name} BoundBox is null")
-        self.BoundBox = bBox
+        bBox = solid_box.get_boundBox(enlarge=enlarge)
+        self.boundBox = bBox
 
-    def buildShape(self, boundBox, force=False, surfTR=None, simplify=False, fuse=False):
+    def buildShape(self, force=False, surfTR=None, simplify=False, fuse=False):
 
         if self.shape is not None and not force:
             return
         if surfTR:
             self.transformSurfaces(surfTR)
 
-        self.BoundBox = boundBox
         if self.definition.level > 0 and self.definition.operator == "OR":
             cutShape = []
             for seq in self.definition.elements:
                 subcell = self.getSubCell(seq)
-                subcell.build_BoundBox(self.BoundBox, False)
-                subShape = BuildSolid(subcell, self.BoundBox, simplify=simplify)
+                subShape = BuildSolid(subcell, simplify=simplify)
                 cutShape.extend(subShape)
         else:
-            cutShape = BuildSolid(self, self.BoundBox, simplify=simplify)
+            cutShape = BuildSolid(self, simplify=simplify)
 
         # TODO consider making this step conditional on fuse
         # if fuse or True:

@@ -9,7 +9,7 @@ twoPi = math.pi * 2
 
 
 class myBox:
-    def __init__(self, boundBox=None, orientation="Forward"):
+    def __init__(self, boundBox=None, orientation=None):
         self.Box = boundBox
         self.Orientation = orientation
 
@@ -85,8 +85,8 @@ class solid_plane_box:
                     self.hash_def[name] = plane_definition(NTCell.hash_def[name], surf_to_plane_dict)"""
         self.outbox = outbox
         if outbox:
-            self.universe_radius = outbox.DiagonalLength * 0.5
-            self.universe_center = outbox.Center
+            self.universe_radius = outbox.Box.DiagonalLength * 0.5
+            self.universe_center = outbox.Box.Center
 
     def export_surf_planes(self, box):
 
@@ -162,44 +162,43 @@ class solid_plane_box:
             cpsol.hash_def = self.hash_def
         return cpsol
 
-    def get_boundBox(self, hashBox=False, forwarBox=True, enlarge=0):
-
-        if self.hash_def is not None and hashBox:
-            return self.build_multi_boundBox(enlarge)
-
-        if self.definition.operator == "OR" and self.definition.level > 0:
-            bBox = FreeCAD.BoundBox()
-            for definition in self.definition.elements:
-                compsol = self.copy(definition)
-                compBox = compsol.get_component_boundBox(forwarBox)
-                if compBox is not None:
-                    bBox.add(compBox)
-
-        elif self.definition.operator == "AND" and self.definition.level > 0:
-            bBox = None
-            for definition in self.definition.elements:
-                compsol = self.copy(definition)
-                compBox = compsol.get_component_boundBox(forwarBox)
-                if compBox is not None:
-                    if bBox is not None:
-                        bBox.intersected(compBox)
-                    else:
-                        bBox = compBox
-        else:
-            bBox = self.get_component_boundBox(forwarBox)
-            if bBox is None:
-                bBox = FreeCAD.BoundBox()
-
-        if enlarge > 0:
+    def get_boundBox(self, enlarge=0):
+        mBox = self.build_box_depth()
+        bBox = mBox.Box      
+        if bBox is not None and enlarge > 0:
             dx = (bBox.XMax - bBox.XMin) * 0.5 * (1 + enlarge)
             dy = (bBox.YMax - bBox.YMin) * 0.5 * (1 + enlarge)
             dz = (bBox.ZMax - bBox.ZMin) * 0.5 * (1 + enlarge)
             x0 = 0.5 * (bBox.XMax + bBox.XMin)
             y0 = 0.5 * (bBox.YMax + bBox.YMin)
             z0 = 0.5 * (bBox.ZMax + bBox.ZMin)
-            return FreeCAD.BoundBox(x0 - dx, y0 - dy, z0 - dz, x0 + dx, y0 + dy, z0 + dz)
+            bBox = FreeCAD.BoundBox(x0 - dx, y0 - dy, z0 - dz, x0 + dx, y0 + dy, z0 + dz)
+            mBox.Box = bBox
+        return mBox
+
+    def build_box_depth(self):
+     
+        if self.definition.level == 0 :
+            return self.get_component_boundBox()
         else:
-            return bBox
+            box_list = []
+            if type(self.definition.elements) is bool:
+                return myBox(None,'forward') if self.definition.elements else myBox(None,'Reversed') 
+            for c in self.definition.elements:
+                cbox = self.copy(c)
+                box = cbox.build_box_depth()
+                box_list.append(box) 
+            
+            fullBox = myBox()    
+            if self.definition.operator == "AND":       
+                for box in box_list:
+                    fullBox.mult(box)
+            else:   
+                for box in box_list:
+                    fullBox.add(box)
+                   
+            return fullBox 
+
 
     def build_multi_boundBox(self, enlarge=0):
         boxes = dict()
@@ -215,43 +214,73 @@ class solid_plane_box:
                 boxes[name] = myBox(None, orientation)
             else:
                 boxes[name] = myBox(
-                    newsol.get_boundBox(hashBox=False, forwarBox=orientation == "forward", enlarge=enlarge), orientation
+                    newsol.get_boundBox(hashBox=False, forwardBox=orientation == "forward", enlarge=enlarge), orientation
                 )
 
         multiBox = operate_box(self.cell_seq, boxes)
         return multiBox.Box
 
-    def get_component_boundBox(self, forwardBox=True):
+    def get_component_boundBox(self, cutBoundary = False):
         axis_list = ("x", "y", "z")
-        point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius, self.universe_center)
-        #        inertia_matrix(point_list)
+
+        orientation = self.get_box_orientation()
+        if not cutBoundary:
+            if orientation == "Undefined":
+                cutBoundary = True
+                orientation = "Forward"
+        else:        
+            if orientation == "Undefined":
+                orientation = "Forward"
+        
+        point_list = plane_intersect(tuple(self.planes.values()), self.universe_radius, self.universe_center, cutBoundary)
         box_lim = []
-        if point_list == []:
-            return None
+        if point_list: 
+            for axis in axis_list:
+                s_point = sort_point(point_list, axis)
+                if s_point == []:
+                    return None
+                for point in s_point:
+                    if self.isInside(point, orientation=="Forward"):
+                        box_lim.append(pointaxis(point, axis))
+                        break
 
-        for axis in axis_list:
-            s_point = sort_point(point_list, axis)
-            if s_point == []:
-                return None
-            for point in s_point:
-                if self.isInside(point, forwardBox):
-                    box_lim.append(pointaxis(point, axis))
-                    break
+                s_point = remove_points(s_point, pointaxis(point, axis), axis, True, self.max_solid_length)
+                if s_point == []:
+                    return None
+                for point in s_point:
+                    if self.isInside(point, orientation=="Forward"):
+                        box_lim.append(pointaxis(point, axis))
+                        break
+                point_list = remove_points(s_point, pointaxis(point, axis), axis, False)
 
-            s_point = remove_points(s_point, pointaxis(point, axis), axis, True, self.max_solid_length)
-            if s_point == []:
-                return None
-            for point in s_point:
-                if self.isInside(point, forwardBox):
-                    box_lim.append(pointaxis(point, axis))
-                    break
-            point_list = remove_points(s_point, pointaxis(point, axis), axis, False)
+        if len(box_lim) < 6:
+           if cutBoundary:
+               return myBox(None,orientation)
+           else:
+               return self.get_component_boundBox(True)
+        else:   
+            box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+            return myBox(box,orientation)
 
-        if len(box_lim) == 6:
-            return FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+    def get_box_orientation(self):
+        ninside = 0
+        universeBox = FreeCAD.BoundBox(-self.universe_radius,
+                                       -self.universe_radius,
+                                       -self.universe_radius,
+                                       self.universe_radius,
+                                       self.universe_radius,
+                                       self.universe_radius
+                                       )
+        for i in range(8):
+            p = universeBox.getPoint(i)
+            if self.isInside(p, True):
+                ninside += 1
+        if ninside == 8:
+            return 'Reversed'
+        elif ninside == 0:
+            return 'Forward'
         else:
-            return None
-
+            return "Undefined"       
 
 def quadric_to_plane(cellDef, surfaces):
 
@@ -553,29 +582,160 @@ def change_surf(seq, old, new):
         seq.clean()
 
 
-def plane_intersect(plane_list, u_radius, u_center):
+def plane_intersect(plane_list, u_radius, u_center, cutBoundary):
     point_list = []
     origin = u_center.Length == 0
-
-    for i, p1 in enumerate(plane_list[0:-2]):
-        j = i + 1
-        for p2 in plane_list[i + 1 : -1]:
-            line = p1.intersect(p2)
-            if len(line) == 0:
-                continue
-            line = line[0]
-            for p3 in plane_list[j + 1 :]:
-                inter = line.intersect(p3)
-                if len(inter[0]) == 0:
+    if not cutBoundary:
+        for i, p1 in enumerate(plane_list[0:-2]):
+            j = i + 1
+            for p2 in plane_list[i + 1 : -1]:
+                line = p1.intersect(p2)
+                if len(line) == 0:
                     continue
-                p = inter[0][0]
-                p = FreeCAD.Vector(p.X, p.Y, p.Z)
-                d = p if origin else p - u_center
-                if d.Length < u_radius:
-                    point_list.append(p)
-            j += 1
+                line = line[0]
+                for p3 in plane_list[j + 1 :]:
+                    inter = line.intersect(p3)
+                    if len(inter[0]) == 0:
+                        continue
+                    p = inter[0][0]
+                    p = FreeCAD.Vector(p.X, p.Y, p.Z)
+                    d = p if origin else p - u_center
+                    if d.Length < u_radius:
+                        point_list.append(p)
+                j += 1
+    else:
+        XYZ = (FreeCAD.Vector(1,0,0),
+               FreeCAD.Vector(0,1,0),
+               FreeCAD.Vector(0,0,1),
+        )
+        pxm  = Part.Plane(XYZ[0],FreeCAD.Vector(-u_radius,0,0))
+        pxp  = Part.Plane(XYZ[0],FreeCAD.Vector(u_radius,0,0))
+        pym  = Part.Plane(XYZ[1],FreeCAD.Vector(0,-u_radius,0))
+        pyp  = Part.Plane(XYZ[1],FreeCAD.Vector(0,u_radius,0))
+        pzm  = Part.Plane(XYZ[2],FreeCAD.Vector(0,0,-u_radius))
+        pzp  = Part.Plane(XYZ[2],FreeCAD.Vector(0,0,u_radius))
+        PXYZ = (pxm,pxp,pym,pyp,pzm,pzp)
+        
+        universeBox = FreeCAD.BoundBox(-u_radius,
+                                       -u_radius,
+                                       -u_radius,
+                                       u_radius,
+                                       u_radius,
+                                       u_radius,
+                                       )
+
+        for i, p1 in enumerate(plane_list[0:]):
+            j = i + 1
+            point_list.extend(plane_boundary(p1,u_radius))
+            for p2 in plane_list[i + 1 : ]:
+                line = p1.intersect(p2)
+                if len(line) == 0:
+                    continue
+                line = line[0]
+                point_list.extend(line_boundary(line,PXYZ))
+                for p3 in plane_list[j + 1 :]:
+                    inter = line.intersect(p3)
+                    if len(inter[0]) == 0:
+                        continue
+                    p = inter[0][0]
+                    p = FreeCAD.Vector(p.X, p.Y, p.Z)
+                    d = p if origin else p - u_center
+                    if d.Length < u_radius:
+                        point_list.append(p)
+
+        for i in range(8):
+            p = universeBox.getPoint(i)
+            point_list.append(p)
+
+    return point_list
+       
+
+def plane_boundary(plane,radius):
+    a,b,c, = plane.Axis.x,plane.Axis.y,plane.Axis.z
+    d = plane.Axis.dot(plane.Position) / radius
+
+    point_list = []
+    if abs(c) > 1e-12 :
+        cinv = 1/c
+        z = (d-(a+b))*cinv
+        if -1 <= z <= 1:
+            point = radius*FreeCAD.Vector(1,1,z)
+            point_list.append(point)
+
+        z = (d-(a-b))*cinv
+        if -1 <= z <= 1:
+            point = radius*FreeCAD.Vector(1,-1,z)
+            point_list.append(point)
+
+        z = (d-(-a+b))*cinv
+        if -1 <= z <= 1:
+            point = radius*FreeCAD.Vector(-1,1,z)
+            point_list.append(point)
+
+        z = (d-(-a-b))*cinv
+        if -1 <= z <= 1:
+            point = radius*FreeCAD.Vector(-1,-1,z)
+            point_list.append(point)
+
+    if abs(a) > 1e-12 :
+        ainv = 1/a
+        x = (d-(b+c))*ainv
+        if -1 <= x <= 1:
+            point = radius*FreeCAD.Vector(x,1,1)
+            point_list.append(point)
+
+        x = (d-(b-c))*ainv
+        if -1 <= x <= 1:
+            point = radius*FreeCAD.Vector(x,1,-1)
+            point_list.append(point)
+
+        x = (d-(-b+c))*ainv
+        if -1 <= x <= 1:
+            point = radius*FreeCAD.Vector(x,-1,1)
+            point_list.append(point)
+
+        x = (d-(-b-c))*ainv
+        if -1 <= x <= 1:
+            point = radius*FreeCAD.Vector(x,-1,-1)
+            point_list.append(point)
+    
+    if abs(b) > 1e-12 :
+        binv = 1/b
+        y = (d-(c+a))*binv
+        if -1 <= y <= 1:
+            point = radius*FreeCAD.Vector(1,y,1)
+            point_list.append(point)
+
+        y = (d-(c-a))*binv
+        if -1 <= y <= 1:
+            point = radius*FreeCAD.Vector(-1,y,1)
+            point_list.append(point)
+
+        y = (d-(-c+a))*binv
+        if -1 <= y <= 1:
+            point = radius*FreeCAD.Vector(1,y,-1)
+            point_list.append(point)
+
+        y = (d-(-c-a))*binv
+        if -1 <= y <= 1:
+            point = radius*FreeCAD.Vector(-1,y,-1)
+            point_list.append(point)    
+
     return point_list
 
+         
+def line_boundary(line,PXYZ):
+    points = []
+    for plane in PXYZ:
+        inter = line.intersect(plane)
+        if len(inter[0]) == 0:
+            continue
+        p = inter[0][0]
+        p = FreeCAD.Vector(p.X, p.Y, p.Z)
+        points.append(p)
+        if len(points) == 2:
+            return points
+    return points               
 
 def sort_point(point_list, axis):
     axis_points = []
