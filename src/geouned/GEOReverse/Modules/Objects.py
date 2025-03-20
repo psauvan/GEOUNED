@@ -7,45 +7,15 @@ import Part
 from .buildSolidCell import BuildSolid
 from .remh import Cline
 from .Utils.booleanFunction import BoolSequence, outer_terms
-from .Utils.boundBox import solid_plane_box
+from .Utils.boundBox import solid_plane_box, myBox
 from .data_class import BoxSettings
-
-
-class Material_Cell_Filter:
-    def __init__(self, type: int = None, range: list = None):
-        if range is not None:
-            self.range = range[:]
-        else:
-            self.range = []
-
-        if type is not None:
-            if type not in ("all", "include", "exclude"):
-                self.type = "all"
-            else:
-                self.type = type
-        else:
-            self.type = "all"
-
-    def set_type(self, type: str):
-        if type not in ("all", "include", "exclude"):
-            return
-        self.type = type
-
-    def add_range(self, a: int, b: int):
-        if type(a) is not int:
-            return
-        if type(b) is not int:
-            return
-        self.range.extend(range(a, b + 1))
-
-    def add_value(self, a: int):
-        if type(a) is not int:
-            return
-        self.range.append(a)
 
 
 class CadCell:
     def __init__(self, stringCell: str = None, settings: BoxSettings = BoxSettings()):
+
+        self.settings = settings
+        self.boundBox = None
 
         if not stringCell:
             self.surfaces = {}
@@ -65,6 +35,10 @@ class CadCell:
             self.hash_def = None
             self.__defTerms__ = None
             self.__operator__ = None
+            self.externalBox = None
+            self.solid_plane = None
+            self.boundBox = None
+
         else:
             self.surfaces = None
             self.shape = None
@@ -75,28 +49,21 @@ class CadCell:
             self.MAT = stringCell.MAT  # material number
             self.CurrentTR = self.TRFL
             self.level = None
-            self.cell_seq = stringCell.cellSeq
-            self.hash_def = stringCell.hashDef
 
             self.__defTerms__ = None
             self.__operator__ = None
             self.__setDefinition__(stringCell)
             self.surfaceList = self.definition.get_surfaces_numbers()
-            """  
-            self.surfaceList = set(self.definition.get_surfaces_numbers())
-            if self.hash_def:
-                for cdef in self.hash_def.values():
-                    self.surfaceList.update(cdef.get_surfaces_numbers())
-            self.surfaceList=tuple(self.surfaceList)  """
-        self.settings = settings
-        self.boundBox = None
-        self.externalBox = None
-        
+            self.externalBox = None
+            self.solid_plane = None
+            self.boundBox = None
+
     def copy(self):
         cpCell = CadCell(settings=self.settings)
+        cpCell.solid_plane = self.solid_plane.copy()
         cpCell.surfaceList = self.surfaceList[:]
         cpCell.externalBox = self.externalBox
-        cpCell.BoundBox = self.boundBox
+        cpCell.boundBox = self.boundBox
         cpCell.surfaces = {}
         for name, s in self.surfaces.items():
             cpCell.surfaces[name] = s.copy()
@@ -113,14 +80,12 @@ class CadCell:
         cpCell.FILL = self.FILL
         cpCell.MAT = self.MAT
         cpCell.level = self.level
-        cpCell.hash_def = self.hash_def
-        cpCell.cell_seq = self.cell_seq
 
         if self.CurrentTR is not None:
             cpCell.CurrentTR = self.CurrentTR.submatrix(4)
 
         if self.shape is not None:
-            cpCell.shape = self.shape.copy()           
+            cpCell.shape = self.shape.copy()
 
         return cpCell
 
@@ -128,8 +93,8 @@ class CadCell:
 
         subCell = self.copy()
         subCell.definition = seq.copy()
-        subCell.build_BoundBox(self.externalBox, enlarge=0.1)
         subCell.shape = None
+        subCell.boundBox = None
 
         subCell.surfaceList = subCell.definition.get_surfaces_numbers()
         for s in tuple(subCell.surfaces.keys()):
@@ -138,48 +103,6 @@ class CadCell:
 
         return subCell
 
-    # not used
-    #
-    #    def split(self,nparts=2):
-    #
-    #        if nparts == 1:
-    #            return (self,None)
-    #        terms,operador = self.getOuterTerms()
-    #        nelemts = int(len(terms)/nparts)
-    #        subDefList = []
-    #
-    #        if operador == 'AND':
-    #          for i in range(nparts-1):
-    #             newdef = ') ('.join(terms[i*nelemts:(i+1)*nelemts])
-    #             newdef = '({})'.format(newdef)
-    #             subDefList.append(newdef)
-    #          newdef = ') ('.join(terms[(nparts-1)*nelemts:])
-    #          newdef = '({})'.format(newdef)
-    #          subDefList.append(newdef)
-    #
-    #        else:
-    #          for i in range(nparts-1):
-    #             newdef = '):('.join(terms[i*nelemts:(i+1)*nelemts])
-    #             newdef = '({})'.format(newdef)
-    #             subDefList.append(newdef)
-    #          newdef = '):('.join(terms[(nparts-1)*nelemts:])
-    #          newdef = '({})'.format(newdef)
-    #          subDefList.append(newdef)
-    #
-    #
-    #        subCellList=[]
-    #        for df in subDefList:
-    #           subCell = self.copy()
-    #           subCell.definition= Cline(df)
-    #           subCell.shape = None
-    #           subCell.surfaceList  = subCell.definition.get_surfaces_numbers()
-    #           for s in tuple(subCell.surfaces.keys()) :
-    #               if s not in subCell.surfaceList: del(subCell.surfaces[s])
-    #
-    #           subCellList.append(subCell)
-    #
-    #        return subCellList,operador
-
     def getOuterTerms(self):
         if not self.__defTerms__:
             self.__defTerms__, self.__operator__ = outer_terms(self.definition.str)
@@ -187,16 +110,31 @@ class CadCell:
 
     def makeBox(self):
         if self.boundBox.Orientation == "Forward":
-            boundBox = self.boundBox.Box
-        else:    
+            if self.boundBox.Box is None:
+                boundBox = self.externalBox.Box
+            else:
+                boundBox = self.boundBox.Box
+        else:
             boundBox = self.externalBox.Box
         box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
         return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
 
-    def build_BoundBox(self, externalBox, enlarge = 0):
-        solid_box = solid_plane_box(self, outbox=externalBox)
-        bBox = solid_box.get_boundBox(enlarge=enlarge)
-        self.boundBox = bBox
+    def build_BoundBox(self, externalBox=None, enlarge=0):
+
+        if externalBox:
+            outBox = externalBox
+        elif self.externalBox:
+            outBox = externalBox
+        else:
+            r = self.settings.universe_radius
+            outBox = myBox(FreeCAD.BoundBox(-r, -r, -r, r, r, r), "Forward")
+
+        if self.solid_plane is None:
+            self.solid_plane = solid_plane_box(self, outbox=outBox)
+        elif not self.solid_plane.outBox.sameBox(outBox):
+            self.solid_plane = solid_plane_box(self, outbox=outBox)
+
+        self.boundBox = self.solid_plane.get_boundBox(enlarge=enlarge)
 
     def buildShape(self, force=False, surfTR=None, simplify=False, fuse=False):
 
@@ -205,20 +143,7 @@ class CadCell:
         if surfTR:
             self.transformSurfaces(surfTR)
 
-        if self.definition.level > 0 and self.definition.operator == "OR":
-            cutShape = []
-            for seq in self.definition.elements:
-                subcell = self.getSubCell(seq)
-                subShape = BuildSolid(subcell, simplify=simplify)
-                cutShape.extend(subShape)
-        else:
-            cutShape = BuildSolid(self, simplify=simplify)
-
-        # TODO consider making this step conditional on fuse
-        # if fuse or True:
-        #     self.shape = FuseSolid(cutShape)
-        # else:
-        #     self.shape = Part.makeCompound(cutShape)
+        cutShape = BuildSolid(self)
         self.shape = FuseSolid(cutShape)
 
     def buildSurfaceShape(self, boundBox):

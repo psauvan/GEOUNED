@@ -4,7 +4,7 @@ import FreeCAD
 
 from .buildSolidCell import FuseSolid
 from .Utils.booleanFunction import BoolSequence
-from .Utils.boundBox import solid_plane_box
+from .Utils.boundBox import myBox
 
 
 def interferencia(container, cell, mode="slice"):
@@ -74,25 +74,25 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         if buildShape:
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
-            if NTcell.hash_def:
-                for c, cdef in NTcell.hash_def.items():
-                    NTcell.hash_def[c] = BoolSequence(cdef.str)
 
             if ContainerCell.shape is not None:
-                external_box = ContainerCell.shape.BoundBox
+                external_box = myBox(ContainerCell.shape.BoundBox, "Forward")
                 if ContainerCell.CurrentTR:
-                    external_box = external_box.transformed(ContainerCell.CurrentTR.inverse())
+                    external_box.Box = external_box.Box.transformed(ContainerCell.CurrentTR.inverse())
             else:
                 external_box = None
 
+            #            external_box = myBox(
+            #                FreeCAD.BoundBox(9183.9,56.19999999999999,383.50001,9379.700000000003,568.8,856.5000100000009),
+            #                'Forward')
             debug = True
             if debug:
-                NTcell.build_BoundBox(external_box)
-                NTcell.externalBox = NTcell.boundBox 
+                NTcell.build_BoundBox(external_box, enlarge=0.1)
+                NTcell.externalBox = NTcell.boundBox
                 NTcell.buildShape(simplify=False)
             else:
                 try:
-                    NTcell.build_BoundBox(external_box)
+                    NTcell.build_BoundBox(external_box, enlarge=0.1)
                     NTcell.externalBox = NTcell.boundBox
                     NTcell.buildShape(simplify=False)
                 except:

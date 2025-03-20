@@ -16,7 +16,7 @@ def getPart(slist):
     return sol
 
 
-def BuildSolid(cell,mode="oneByOne", simplify=False):
+def BuildSolid(cell, mode="oneByOne", simplify=False):
 
     cutCell = cell.makeBox()
     # cell.definition = BoolSequence(cell.definition.str)
