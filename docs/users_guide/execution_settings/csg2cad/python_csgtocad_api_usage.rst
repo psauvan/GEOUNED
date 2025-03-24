@@ -34,7 +34,6 @@ Remember that the arguments are described in the `Python API reference section <
 
     my_settings = geouned.BoxSettings(
         universe_radius=1.0e8, 
-        max_solid_length=5e4,  
         insolid_tolerance=0.1, 
     )
 

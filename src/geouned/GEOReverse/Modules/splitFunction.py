@@ -125,8 +125,33 @@ def space_decomposition(solids, surfaces):
     return component, good_solids
 
 
-# find one point inside a solid (region)
 def point_inside(solid):
+
+    point = solid.CenterOfMass
+    if solid.isInside(point, 0.0, False):
+        return point
+
+    L = 0.5 * abs(solid.Volume) ** 0.33333
+    for face in solid.Faces:
+        u0, u1, v0, v1 = face.ParameterRange
+        u = 0.5 * (u0 + u1)
+        v = 0.5 * (v0 + v1)
+        if face.isPartOfDomain(u, v):
+            normal = -face.normalAt(u, v)
+            pos = face.valueAt(u, v)
+            n = 1
+            d = L
+            for i in range(4):
+                d = d * 0.5
+                n = n * 2
+                for j in range(n - 1, 0, -2):
+                    point = pos + (d * j) * normal
+                    if solid.isInside(point, 0.0, False):
+                        return point
+
+
+# find one point inside a solid (region)
+def point_inside_org(solid):
 
     cut_line = 32
     cut_box = 4

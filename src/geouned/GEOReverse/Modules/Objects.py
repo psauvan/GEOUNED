@@ -31,8 +31,6 @@ class CadCell:
             self.MAT = 0  # material number
             self.CurrentTR = None
             self.level = None
-            self.cell_seq = None
-            self.hash_def = None
             self.__defTerms__ = None
             self.__operator__ = None
             self.externalBox = None
