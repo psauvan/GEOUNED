@@ -10,7 +10,18 @@ twoPi = math.pi * 2
 
 class myBox:
     def __init__(self, boundBox=None, orientation=None):
-        self.Box = boundBox
+
+        if boundBox is not None:
+            if boundBox.XLength <= 1e-12:
+                self.Box = None
+            elif boundBox.YLength <= 1e-12:
+                self.Box = None
+            elif boundBox.ZLength <= 1e-12:
+                self.Box = None
+            else:
+                self.Box = boundBox
+        else:
+            self.Box = None
         self.Orientation = orientation
 
     def add(self, box):
@@ -63,6 +74,12 @@ class myBox:
             self.Orientation = "Forward"
 
     def sameBox(self, box):
+        if self.Box is None or box.Box is None:
+            if self.Box is None and box.Box is None:
+                return self.Orientation == box.Orientation
+            else:
+                return False
+
         for i in range(6):
             p1 = self.Box.getPoint(i)
             p2 = box.Box.getPoint(i)
@@ -80,13 +97,11 @@ class solid_plane_box:
             self.surf_to_plane = None
             self.insolid_tolerance = BoxSettings().insolid_tolerance
             self.universe_radius = BoxSettings().universe_radius
-            self.max_solid_length = BoxSettings().max_solid_length
             self.universe_center = FreeCAD.Vector(0, 0, 0)
             self.orientation = None
         else:
             self.insolid_tolerance = NTCell.settings.insolid_tolerance
             self.universe_radius = NTCell.settings.universe_radius
-            self.max_solid_length = NTCell.settings.max_solid_length
             self.surfaces = NTCell.surfaces
             plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition, NTCell.surfaces, orientation)
             self.planes = plane_dict
@@ -157,7 +172,6 @@ class solid_plane_box:
     def copy(self, newdefinition=None, rebuild=False):
         cpsol = solid_plane_box()
         cpsol.insolid_tolerance = self.insolid_tolerance
-        cpsol.max_solid_length = self.max_solid_length
         cpsol.universe_radius = self.universe_radius
         cpsol.universe_center = self.universe_center
         cpsol.outBox = self.outBox
@@ -186,13 +200,12 @@ class solid_plane_box:
         mBox = self.build_box_depth()
         bBox = mBox.Box
         if bBox is not None and enlarge > 0:
-            dx = (bBox.XMax - bBox.XMin) * (1 + enlarge)
-            dy = (bBox.YMax - bBox.YMin) * (1 + enlarge)
-            dz = (bBox.ZMax - bBox.ZMin) * (1 + enlarge)
-            x0 = 0.5 * (bBox.XMax + bBox.XMin)
-            y0 = 0.5 * (bBox.YMax + bBox.YMin)
-            z0 = 0.5 * (bBox.ZMax + bBox.ZMin)
-            bBox = FreeCAD.BoundBox(x0 - dx, y0 - dy, z0 - dz, x0 + dx, y0 + dy, z0 + dz)
+            dx = (bBox.XMax - bBox.XMin) * enlarge
+            dy = (bBox.YMax - bBox.YMin) * enlarge
+            dz = (bBox.ZMax - bBox.ZMin) * enlarge
+            bBox = FreeCAD.BoundBox(
+                bBox.XMin - dx, bBox.YMin - dy, bBox.ZMin - dz, bBox.XMax + dx, bBox.YMax + dy, bBox.ZMax + dz
+            )
             mBox.Box = bBox
         return mBox
 
@@ -213,29 +226,38 @@ class solid_plane_box:
             if self.definition.operator == "AND":
                 for box in box_list:
                     fullBox.mult(box)
+                    if fullBox.Box is None and fullBox.Orientation == "Forward":
+                        break
             else:
                 for box in box_list:
                     fullBox.add(box)
+                    if fullBox.Box is None and fullBox.Orientation == "Reversed":
+                        break
 
             return fullBox
 
-    def get_component_boundBox(self):
+    def get_component_boundBox(self, cutBoundary=False):
         axis_list = ("x", "y", "z")
 
         orientation = self.get_box_orientation()
-        # if not cutBoundary:
-        #     if orientation == "Undefined":
-        #         cutBoundary = True
-        #         orientation = "Forward"
-        # else:
-        #     if orientation == "Undefined":
-        #         orientation = "Forward"
-        if orientation == "Undefined":
-            orientation = "Forward"
+        if not cutBoundary:
+            if orientation == "Undefined":
+                cutBoundary = True
+                orientation = "Forward"
+        else:
+            if orientation == "Undefined":
+                orientation = "Forward"
+        # if orientation == "Undefined":
+        #    orientation = "Forward"
 
-        point_list = plane_intersect(tuple(self.planes.values()), self.outBox.Box, True)
+        point_list = plane_intersect(tuple(self.planes.values()), self.outBox.Box, cutBoundary)
         box_lim = []
-        if point_list:
+        if len(point_list) < 6:
+            if not cutBoundary:
+                return self.get_component_boundBox(True)
+            else:
+                return myBox(None, orientation)
+        else:
             for axis in axis_list:
                 s_point = sort_point(point_list, axis)
                 if s_point == []:
@@ -245,7 +267,7 @@ class solid_plane_box:
                         box_lim.append(pointaxis(point, axis))
                         break
 
-                s_point = remove_points(s_point, pointaxis(point, axis), axis, True, self.max_solid_length)
+                s_point = remove_points(s_point, pointaxis(point, axis), axis, True)
                 if s_point == []:
                     return None
                 for point in s_point:
@@ -254,20 +276,26 @@ class solid_plane_box:
                         break
                 point_list = remove_points(s_point, pointaxis(point, axis), axis, False)
 
-        if len(box_lim) < 6:
-            return myBox(None, orientation)
-        else:
-            box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
-            return myBox(box, orientation)
+            # if len(box_lim) < 6:
+            #    return myBox(None, orientation)
+            # else:
+            #    box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+            #    return myBox(box, orientation)
 
-    #
-    #           if cutBoundary:
-    #               return myBox(None,orientation)
-    #           else:
-    #               return self.get_component_boundBox(True)
-    #        else:
-    #            box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
-    #            return myBox(box,orientation)
+            if len(box_lim) < 6:
+                if cutBoundary:
+                    return myBox(None, orientation)
+                else:
+                    return self.get_component_boundBox(True)
+            else:
+                box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+                if box.XLength < 1e-12 or box.YLength < 1e-12 or box.ZLength < 1e-12:
+                    if cutBoundary:
+                        return myBox(None, orientation)
+                    else:
+                        return self.get_component_boundBox(True)
+                else:
+                    return myBox(box, orientation)
 
     def get_box_orientation(self):
         ninside = 0
@@ -762,12 +790,10 @@ def remove_points(point_list, value, axis, lower, Lmax=None):
     kept_points = []
     if axis == "x":
         if lower:
-            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.x < value:
                     break
-                if p.x < upper_value:
-                    kept_points.append(p)
+                kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.x > value:
@@ -775,12 +801,10 @@ def remove_points(point_list, value, axis, lower, Lmax=None):
                 kept_points.append(p)
     elif axis == "y":
         if lower:
-            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.y < value:
                     break
-                if p.y < upper_value:
-                    kept_points.append(p)
+                kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.y > value:
@@ -788,12 +812,10 @@ def remove_points(point_list, value, axis, lower, Lmax=None):
                 kept_points.append(p)
     elif axis == "z":
         if lower:
-            upper_value = value + Lmax
             for p in point_list[::-1]:
                 if p.z < value:
                     break
-                if p.z < upper_value:
-                    kept_points.append(p)
+                kept_points.append(p)
         else:
             for p in point_list[::-1]:
                 if p.z > value:

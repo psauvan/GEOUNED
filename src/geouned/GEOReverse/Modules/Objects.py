@@ -129,12 +129,14 @@ class CadCell:
             r = self.settings.universe_radius
             outBox = myBox(FreeCAD.BoundBox(-r, -r, -r, r, r, r), "Forward")
 
-        if self.solid_plane is None:
-            self.solid_plane = solid_plane_box(self, outbox=outBox)
-        elif not self.solid_plane.outBox.sameBox(outBox):
-            self.solid_plane = solid_plane_box(self, outbox=outBox)
-
-        self.boundBox = self.solid_plane.get_boundBox(enlarge=enlarge)
+        if outBox.Box is None:
+            self.boundBox = outBox
+        else:
+            if self.solid_plane is None:
+                self.solid_plane = solid_plane_box(self, outbox=outBox)
+            elif not self.solid_plane.outBox.sameBox(outBox):
+                self.solid_plane = solid_plane_box(self, outbox=outBox)
+            self.boundBox = self.solid_plane.get_boundBox(enlarge=enlarge)
 
     def buildShape(self, force=False, surfTR=None, simplify=False, fuse=False):
 

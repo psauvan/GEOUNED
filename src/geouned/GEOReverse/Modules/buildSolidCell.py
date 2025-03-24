@@ -54,7 +54,7 @@ def BuildDepth(cell, base):
                     subcell = cell.getSubCell(e)
                     keep = []
                     if part is not None:
-                        subcell.build_BoundBox(cell.externalBox, enlarge=0.1)
+                        subcell.build_BoundBox(cell.externalBox, enlarge=20)
                         part, keep = filterparts(part, subcell.boundBox)
                         if len(part) == 0:
                             if len(keep) == 0:
@@ -74,7 +74,7 @@ def BuildDepth(cell, base):
                 newBase.extend(cellParts)
                 # JB = joinBase(cellParts)
                 # if JB.base is not None:
-                #    newBase.append(JB)
+                #   newBase.append(JB)
 
         elif cell.definition.elements:
             newBase.append(CS)
@@ -88,6 +88,7 @@ def BuildSolidParts(cell, base):
     if isinstance(base, (list, tuple)):
         fullPart = []
         cutPart = []
+
         for b in base:
             fullList, cutList = BuildSolidParts(cell, b)
             fullPart.extend(fullList)
@@ -103,8 +104,11 @@ def BuildSolidParts(cell, base):
     if base:
         boundBox = base.base.BoundBox
     else:
-        cell.build_BoundBox(cell.externalBox, enlarge=0.1)
+        cell.build_BoundBox(cell.externalBox, enlarge=0.2)
         boundBox = cell.boundBox.Box
+
+    if boundBox is None:
+        return [], []
 
     surfaces = tuple(cell.surfaces.values())
     cell.buildSurfaceShape(boundBox)
@@ -112,28 +116,26 @@ def BuildSolidParts(cell, base):
     if not surfaces:
         print("not cutting surfaces")
         return tuple(base.base), tuple()
+
     if base is None:
         base = SplitBase(cell.makeBox())
-        full, cut = SplitSolid(base, surfaces, cell, tolerance=Options.splitTolerance)
+
+    planes = []
+    others = []
+    for s in surfaces:
+        if s.type == "plane":
+            planes.append(s)
+        else:
+            others.append(s)
+
+    if planes:
+        full, cut = SplitSolid(base, planes, cell, tolerance=Options.splitTolerance)
     else:
-        planes = []
-        others = []
-        for s in surfaces:
-            if s.type == "plane":
-                planes.append(s)
-            else:
-                others.append(s)
+        full = []
+        cut = base
 
-        if planes:
-            full, cut = SplitSolid(base, planes, cell, tolerance=Options.splitTolerance)
-        else:
-            full = []
-            cut = base
-
-        for surf in others:
-            newf, cut = SplitSolid(cut, (surf,), cell, tolerance=Options.splitTolerance)
-        else:
-            newf = []
+    for surf in others:
+        newf, cut = SplitSolid(cut, (surf,), cell, tolerance=Options.splitTolerance)
         full.extend(newf)
 
     # if len(full) > 1:
@@ -186,20 +188,15 @@ def filterparts(parts, cellBox):
             continue
         cBox = myBox(cellBox.Box, "Forward")
         pbb = p.base.BoundBox
-        # pbb = p.base.optimalBoundingBox()
-        # pbb.enlarge(pbb.DiagonalLength*0.1)
+
         pBox = myBox(pbb, "Forward")
         cBox.mult(pBox)
         if cBox.Box is None:
             if cellBox.Orientation == "Reversed":
                 keep_part.append(p)
-            else:
-                continue
-        elif cBox.sameBox(pBox):
-            if cellBox.Orientation == "Forward":
-                process_part.append(p)
-            else:
-                continue
+        #  elif cBox.sameBox(pBox):
+        #      if cellBox.Orientation == "Forward":
+        #          process_part.append(p)
         else:
             process_part.append(p)
     return process_part, keep_part
