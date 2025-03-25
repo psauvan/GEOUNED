@@ -6,16 +6,20 @@ import Part
 
 
 class SplitBase:
-    def __init__(self, base, knownSurf={}):
+    def __init__(self, base, knownSurf={}, orientation="Forward"):
         self.base = base
         self.knownSurf = knownSurf
+        self.orientation = orientation
 
 
 def joinBase(baseList):
     shape = []
     surf = {}
     removedKeys = []
+    fwd = True
     for b in baseList:
+        if b.orientation == "Reversed":
+            fwd = False
         if b.base is not None:
             shape.append(b.base)
         for k, v in b.knownSurf.items():
@@ -31,7 +35,8 @@ def joinBase(baseList):
                     removedKeys.append(k)
 
     newbase = FuseSolid(shape)
-    return SplitBase(newbase, surf)
+    orientation = "Forward" if fwd else "Reversed"
+    return SplitBase(newbase, surf, orientation)
 
 
 # TODO rename this function as there are two with the name name
@@ -47,6 +52,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
     cutPart = []
 
     # part if several base in input
+    orientation = cellObj.boundBox.Orientation
     if type(base) is list or type(base) is tuple:
         for b in base:
             fullList, cutList = SplitSolid(b, surfacesCut, cellObj, tolerance=tolerance)
@@ -83,9 +89,9 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
         #  sol.exportStep('solid_{}{}.stp'.format(name,ii))
 
         if inSolid:
-            fullPart.append(SplitBase(sol, pos))
+            fullPart.append(SplitBase(sol, pos, orientation))
         elif inSolid is None:
-            cutPart.append(SplitBase(sol, pos))
+            cutPart.append(SplitBase(sol, pos, orientation))
     return fullPart, cutPart
 
 

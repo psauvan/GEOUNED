@@ -121,11 +121,13 @@ class CadCell:
 
         if externalBox:
             outBox = externalBox
+            self.externalBox = externalBox
         elif self.externalBox:
-            outBox = externalBox
+            outBox = self.externalBox
         else:
             r = self.settings.universe_radius
             outBox = myBox(FreeCAD.BoundBox(-r, -r, -r, r, r, r), "Forward")
+            self.externalBox = outBox
 
         if outBox.Box is None:
             self.boundBox = outBox

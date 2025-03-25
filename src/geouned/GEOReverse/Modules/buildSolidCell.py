@@ -1,7 +1,7 @@
 import Part
 from .data_class import Options
 
-from .splitFunction import SplitBase, SplitSolid, joinBase
+from .splitFunction import SplitBase, SplitSolid
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import myBox
 
@@ -55,7 +55,7 @@ def BuildDepth(cell, base):
                     keep = []
                     if part is not None:
                         subcell.build_BoundBox(cell.externalBox, enlarge=20)
-                        part, keep = filterparts(part, subcell.boundBox)
+                        part, keep = filterparts(part, subcell)
                         if len(part) == 0:
                             if len(keep) == 0:
                                 break
@@ -105,7 +105,10 @@ def BuildSolidParts(cell, base):
         boundBox = base.base.BoundBox
     else:
         cell.build_BoundBox(cell.externalBox, enlarge=0.2)
-        boundBox = cell.boundBox.Box
+        if cell.boundBox.Orientation == "Reversed":
+            boundBox = cell.externalBox.Box
+        else:
+            boundBox = cell.boundBox.Box
 
     if boundBox is None:
         return [], []
@@ -118,7 +121,7 @@ def BuildSolidParts(cell, base):
         return tuple(base.base), tuple()
 
     if base is None:
-        base = SplitBase(cell.makeBox())
+        base = SplitBase(cell.makeBox(), orientation=cell.boundBox.Orientation)
 
     planes = []
     others = []
@@ -179,9 +182,11 @@ def FuseSolid(parts):
     return solid
 
 
-def filterparts(parts, cellBox):
+def filterparts_org(parts, cellBox):
     process_part = []
     keep_part = []
+    if type(parts) is SplitBase:
+        parts = (parts,)
     for p in parts:
         if p is None:
             process_part.append(p)
@@ -197,6 +202,40 @@ def filterparts(parts, cellBox):
         #  elif cBox.sameBox(pBox):
         #      if cellBox.Orientation == "Forward":
         #          process_part.append(p)
+        else:
+            process_part.append(p)
+    return process_part, keep_part
+
+
+def filterparts(parts, cell):
+    process_part = []
+    keep_part = []
+    cellBox = cell.boundBox
+    built = False
+    if type(parts) is SplitBase:
+        parts = (parts,)
+    for p in parts:
+        if p is None:
+            process_part.append(p)
+            continue
+        cBox = myBox(cellBox.Box, "Forward")
+        pbb = p.base.BoundBox
+
+        pBox = myBox(pbb, "Forward")
+        cBox.mult(pBox)
+        if cBox.Box is None:
+            if p.orientation == "Forward":
+                if cellBox.Orientation == "Reversed":
+                    keep_part.append(p)
+            else:
+                if cellBox.Orientation == "Reversed":
+                    process_part.append(p)
+                else:
+                    if not built:
+                        built = True
+                        cellpart = BuildDepth(cell, None)
+                        keep_part.extend(cellpart)
+
         else:
             process_part.append(p)
     return process_part, keep_part

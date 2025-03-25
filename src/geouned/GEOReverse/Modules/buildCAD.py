@@ -86,21 +86,23 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             #            external_box = myBox(
             #                FreeCAD.BoundBox(9183.9,56.19999999999999,383.50001,9379.700000000003,568.8,856.5000100000009),
             #                'Forward')
-            debug = False
+            debug = True
             if debug:
                 NTcell.build_BoundBox(external_box, enlarge=0.2)
-                if NTcell.boundBox.Box is None:
+                if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
                     NTcell.shape = None
                 else:
-                    NTcell.externalBox = NTcell.boundBox
+                    if NTcell.boundBox.Orientation == "Forward":
+                        NTcell.externalBox = NTcell.boundBox
                     NTcell.buildShape(simplify=False)
             else:
                 try:
                     NTcell.build_BoundBox(external_box, enlarge=0.2)
-                    if NTcell.boundBox.Box is None:
+                    if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
                         NTcell.shape = None
                     else:
-                        NTcell.externalBox = NTcell.boundBox
+                        if NTcell.boundBox.Orientation == "Forward":
+                            NTcell.externalBox = NTcell.boundBox
                         NTcell.buildShape(simplify=False)
                 except:
                     # print(f"fail converting cell {NTcell.name}")
