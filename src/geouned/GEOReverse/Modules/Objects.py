@@ -337,8 +337,8 @@ class Cone:
         self.shape = None
         self.params = params
         self.truncated = truncated
-        if params[2] <= 0:
-            print(f"{self.type} surface {label} has a zero semi-angle value.")
+        # if params[2] <= 0:
+        #    print(f"{self.type} surface {label} has a zero semi-angle value.")
         if tr:
             self.transform(tr)
 

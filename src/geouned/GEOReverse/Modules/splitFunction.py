@@ -145,15 +145,12 @@ def point_inside(solid):
         if face.isPartOfDomain(u, v):
             normal = -face.normalAt(u, v)
             pos = face.valueAt(u, v)
-            n = 1
             d = L
-            for i in range(4):
+            for i in range(12):
                 d = d * 0.5
-                n = n * 2
-                for j in range(n - 1, 0, -2):
-                    point = pos + (d * j) * normal
-                    if solid.isInside(point, 0.0, False):
-                        return point
+                point = pos + d * normal
+                if solid.isInside(point, 0.0, False):
+                    return point
 
 
 # find one point inside a solid (region)

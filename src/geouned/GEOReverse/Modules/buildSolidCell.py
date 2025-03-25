@@ -1,7 +1,7 @@
 import Part
 from .data_class import Options
 
-from .splitFunction import SplitBase, SplitSolid
+from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import myBox
 
@@ -68,7 +68,16 @@ def BuildDepth(cell, base):
             else:
                 cellParts = []
                 for e in cell.definition.elements:
-                    part = BuildDepth(cell.getSubCell(e), CS)
+                    subcell = cell.getSubCell(e)
+                    if CS is not None:
+                        subcell.build_BoundBox(cell.externalBox, enlarge=20)
+                        part, keep = filterparts(CS, subcell)
+                        cellParts.extend(keep)
+                        if len(part) == 0:
+                            continue
+                    else:
+                        part = CS
+                    part = BuildDepth(subcell, part)
                     cellParts.extend(part)
 
                 newBase.extend(cellParts)
@@ -104,7 +113,8 @@ def BuildSolidParts(cell, base):
     if base:
         boundBox = base.base.BoundBox
     else:
-        cell.build_BoundBox(cell.externalBox, enlarge=0.2)
+        if cell.boundBox is None:
+            cell.build_BoundBox(cell.externalBox, enlarge=0.2)
         if cell.boundBox.Orientation == "Reversed":
             boundBox = cell.externalBox.Box
         else:
@@ -230,12 +240,10 @@ def filterparts(parts, cell):
             else:
                 if cellBox.Orientation == "Reversed":
                     process_part.append(p)
-                else:
                     if not built:
                         built = True
                         cellpart = BuildDepth(cell, None)
                         keep_part.extend(cellpart)
-
         else:
             process_part.append(p)
     return process_part, keep_part
