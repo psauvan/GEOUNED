@@ -250,7 +250,8 @@ class solid_plane_box:
         # if orientation == "Undefined":
         #    orientation = "Forward"
 
-        point_list = plane_intersect(tuple(self.planes.values()), self.outBox.Box, cutBoundary)
+        planes_inter = tuple(self.planes[x] for x in self.definition.get_surfaces_numbers())
+        point_list = plane_intersect(planes_inter, self.outBox.Box, cutBoundary)
         box_lim = []
         if len(point_list) < 6:
             if not cutBoundary:

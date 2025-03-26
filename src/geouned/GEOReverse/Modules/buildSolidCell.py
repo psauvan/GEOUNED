@@ -55,6 +55,13 @@ def BuildDepth(cell, base):
                     keep = []
                     if part is not None:
                         subcell.build_BoundBox(cell.externalBox, enlarge=20)
+                        if subcell.boundBox.Box is None:
+                            if subcell.boundBox.Orientation == "Reversed":
+                                continue
+                            else:
+                                part = []
+                                break
+
                         part, keep = filterparts(part, subcell)
                         if len(part) == 0:
                             if len(keep) == 0:
@@ -71,6 +78,13 @@ def BuildDepth(cell, base):
                     subcell = cell.getSubCell(e)
                     if CS is not None:
                         subcell.build_BoundBox(cell.externalBox, enlarge=20)
+                        if subcell.boundBox.Box is None:
+                            if subcell.boundBox.Orientation == "Reversed":
+                                if type(CS) is SplitBase:
+                                    cellParts.append(CS)
+                                else:
+                                    cellParts.extend(CS)
+                            continue
                         part, keep = filterparts(CS, subcell)
                         cellParts.extend(keep)
                         if len(part) == 0:
