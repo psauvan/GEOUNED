@@ -106,18 +106,22 @@ class CsgToCad:
         UnivCell = self.geometry.GetCell(cell_label, self.settings)
         UnivCell.definition = BoolSequence(UnivCell.definition.str)
 
-        solid_box = solid_plane_box(UnivCell)
-        bBox = solid_box.get_boundBox(hashBox=True, enlarge=0.1)
-        if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
+        UnivCell.build_BoundBox(enlarge=0.2)
+        if UnivCell.boundBox.Orientation == "Forward" and UnivCell.boundBox.Box is None:
             UnivCell.shape = None
             print(f"Cell {UnivCell.name} BoundBox is null")
+            return
+        else:
+            if UnivCell.boundBox.Orientation == "Forward":
+                UnivCell.externalBox = UnivCell.boundBox
 
-        debug = False
+
+        debug = True
         if debug:
-            UnivCell.buildShape(bBox, simplify=False)
+            UnivCell.buildShape(simplify=False)
         else:
             try:
-                UnivCell.buildShape(bBox, simplify=False)
+                UnivCell.buildShape(simplify=False)
             except:
                 print(f"fail converting cell {UnivCell.name}")
 

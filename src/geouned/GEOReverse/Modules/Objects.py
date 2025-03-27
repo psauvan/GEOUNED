@@ -631,9 +631,12 @@ class Paraboloid:
             d = axis.dot(boundBox.getPoint(i) - center)
             dist.append(abs(d))
         dist.sort()
-        rmin = math.sqrt(4 * focal * dist[0])
-        rmax = math.sqrt(4 * focal * dist[-1])
-        if (rmax - rmin) / rmin < 0.01:
+        rmax = dist[-1]
+        if rmax <= 0 : 
+            return
+        if rmin < 0 :
+            rmin = 0
+        if (rmax - rmin) / rmax < 0.01:
             r = 0.5 * (rmin + rmax)
             self.shape = Part.makeCylinder(r, length, center, axis, 360)
         else:

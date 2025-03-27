@@ -17,9 +17,7 @@ def getPart(slist):
 
 
 def BuildSolid(cell):
-
     cell.cleanUndefined()
-
     celParts = BuildDepth(cell, base=None)
     celParts = getPart(celParts)
     shapeParts = []
@@ -94,10 +92,10 @@ def BuildDepth(cell, base):
                     part = BuildDepth(subcell, part)
                     cellParts.extend(part)
 
-                newBase.extend(cellParts)
-                # JB = joinBase(cellParts)
-                # if JB.base is not None:
-                #   newBase.append(JB)
+                #newBase.extend(cellParts)
+                JB = joinBase(cellParts)
+                if JB.base is not None:
+                    newBase.append(JB)
 
         elif cell.definition.elements:
             newBase.append(CS)
