@@ -62,12 +62,19 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
 
     # part if base is shape object
 
+    if abs(base.base.Volume / base.base.Area) < 1e-2:
+        return fullPart, cutPart
+
     Tools = tuple(s.shape for s in surfacesCut)
     # for s in surfacesCut:
     #    print(s.type,s.params,s.id)
     #    s.shape.exportStep('tool{}.stp'.format(s.id))
     # base.base.exportStep('base.stp')
-    Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
+    try:
+        Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
+    except:
+        Solids = []
+
     if not Solids:
         Solids = [base.base]
     partPositions, partSolids = space_decomposition(Solids, surfacesCut)

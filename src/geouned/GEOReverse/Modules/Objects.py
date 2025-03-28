@@ -115,7 +115,10 @@ class CadCell:
         else:
             boundBox = self.externalBox.Box
         box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
-        return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
+        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+            return None
+        else:
+            return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
 
     def build_BoundBox(self, externalBox=None, enlarge=0):
 
@@ -615,32 +618,27 @@ class Paraboloid:
 
     def buildShape(self, boundBox):
         center, axis, focal = self.params
-
-        dmin = axis.dot(boundBox.getPoint(0) - center)
-        dmax = dmin
-        for i in range(1, 8):
-            d = axis.dot(boundBox.getPoint(i) - center)
-            dmin = min(d, dmin)
-            dmax = max(d, dmax)
-
-        length = max(abs(dmin), abs(dmax))
         axis.normalize()
 
         dist = []
-        for i in range(6):
+        for i in range(8):
             d = axis.dot(boundBox.getPoint(i) - center)
-            dist.append(abs(d))
+            dist.append(d)
         dist.sort()
-        rmax = dist[-1]
-        if rmax <= 0 : 
+        dmin, dmax = dist[0], dist[-1]
+        if dmax <= 0:
             return
-        if rmin < 0 :
-            rmin = 0
+        if dmin < 0:
+            dmin = 0
+
+        rmin = math.sqrt(4 * focal * dmin)
+        rmax = math.sqrt(4 * focal * dmax)
+
         if (rmax - rmin) / rmax < 0.01:
             r = 0.5 * (rmin + rmax)
-            self.shape = Part.makeCylinder(r, length, center, axis, 360)
+            self.shape = Part.makeCylinder(r, dmax, center, axis, 360)
         else:
-            self.shape = makeParaboloid(center, axis, focal, length)
+            self.shape = makeParaboloid(center, axis, focal, dmax)
 
 
 class Torus:

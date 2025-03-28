@@ -115,7 +115,6 @@ class CsgToCad:
             if UnivCell.boundBox.Orientation == "Forward":
                 UnivCell.externalBox = UnivCell.boundBox
 
-
         debug = True
         if debug:
             UnivCell.buildShape(simplify=False)

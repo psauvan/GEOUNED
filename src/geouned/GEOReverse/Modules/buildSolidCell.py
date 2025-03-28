@@ -92,7 +92,7 @@ def BuildDepth(cell, base):
                     part = BuildDepth(subcell, part)
                     cellParts.extend(part)
 
-                #newBase.extend(cellParts)
+                # newBase.extend(cellParts)
                 JB = joinBase(cellParts)
                 if JB.base is not None:
                     newBase.append(JB)
@@ -143,7 +143,10 @@ def BuildSolidParts(cell, base):
         return tuple(base.base), tuple()
 
     if base is None:
-        base = SplitBase(cell.makeBox(), orientation=cell.boundBox.Orientation)
+        cellBox = cell.makeBox()
+        if cellBox is None:
+            return [], []
+        base = SplitBase(cellBox, orientation=cell.boundBox.Orientation)
 
     planes = []
     others = []
@@ -153,11 +156,12 @@ def BuildSolidParts(cell, base):
         else:
             others.append(s)
 
+    cut = base
+    full = []
     if planes:
-        full, cut = SplitSolid(base, planes, cell, tolerance=Options.splitTolerance)
-    else:
-        full = []
-        cut = base
+        for p in planes:
+            newf, cut = SplitSolid(cut, (p,), cell, tolerance=Options.splitTolerance)
+            full.extend(newf)
 
     for surf in others:
         newf, cut = SplitSolid(cut, (surf,), cell, tolerance=Options.splitTolerance)

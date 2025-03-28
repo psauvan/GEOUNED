@@ -1029,7 +1029,7 @@ def points_to_coeffs(scf):
 def get_parabola_parameters(eVal, eVect, T, U):
     iaxis, comp = U[1]
     center = FreeCAD.Vector(T)
-    axis = FreeCAD.Vector(eVect[iaxis][0])
+    axis = FreeCAD.Vector(eVect[iaxis])
     e1 = eVal[(iaxis + 1) % 3]
     focal = comp / (4 * e1)
     if focal < 0:

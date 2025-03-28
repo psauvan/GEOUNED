@@ -398,7 +398,7 @@ def convert_to_planes(s, pos):
     elif s.type == "torus":
         return torus_to_planes(s, pos)
     elif s.type == "paraboloid":
-        return []  # I have to think how approximate paraboloid with planes
+        return parabola_to_planes(s, pos)
     else:
         print(f"{s.type} not implemented for boundbox")
         return []
@@ -572,6 +572,47 @@ def torus_to_planes(torus, pos):
     else:
         central_planes = tuple()
     return (external_planes, central_planes)
+
+
+def parabola_to_planes(parabola, pos):
+    # parabola approximated by plane tanget to the curve
+    # plane separation such that distance from plane to curve < a*x0 (a parameter < 1, x0 absica of tangent point )
+    # the sequence of tangent points is xn+1 = xn * (1 - sqrt(2*a))
+    # initial point x0 is calculated suche that after n iteration the last y = xn^2 / (4*focal) is < rmax, where rmax is the maximin universe distance
+    # x0 = b^n * sqrt(4*focal*rmax)  whith b =  (1 - sqrt(2*a); n number of tangent planes to consider
+    #
+
+    center, axis, focal = parabola.params
+    nt = 7
+    a = 0.22
+    rmax = 7.5e5
+    b = 1 - math.sqrt(2 * a)
+    x0 = b**nt * math.sqrt(4 * focal * rmax)
+
+    axis.normalize()
+    x, y = get_orto_axis(axis)
+    dphi = twoPi / 4
+    phi = 0
+
+    p0 = Part.Plane(center, axis)
+    cplanes = [p0]
+    focal = float(focal)
+    xp = x0
+    for n in range(nt + 1):
+        zi = 0.25 * xp * xp / focal
+        for i in range(4):
+            rho = x * math.cos(phi) + y * math.sin(phi)
+            vec = y * math.cos(phi) - x * math.sin(phi)
+            slope = 2 * focal * rho + xp * axis  # slope xp/(2*focal)
+            xe = center + xp * rho + zi * axis
+            normal = vec.cross(slope)
+            normal.normalize()
+            pi = Part.Plane(xe, normal)
+            cplanes.append(pi)
+            phi += dphi
+        xp = xp / b
+
+    return cplanes
 
 
 def plane_definition(seq, surf_index, orientation):
