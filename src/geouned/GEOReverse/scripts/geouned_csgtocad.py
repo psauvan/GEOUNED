@@ -42,9 +42,10 @@ def main():
     geo.build_universe()
 
     if "export_cad" in config.keys():
-       geo.export_cad(**config["export_cad"])
+        geo.export_cad(**config["export_cad"])
     else:
-       geo.export_cad() 
+        geo.export_cad()
+
 
 if __name__ == "__main__":
     main()
