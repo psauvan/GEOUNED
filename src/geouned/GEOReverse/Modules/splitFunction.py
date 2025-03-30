@@ -52,7 +52,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
     cutPart = []
 
     # part if several base in input
-    orientation = cellObj.boundBox.Orientation
+
     if type(base) is list or type(base) is tuple:
         for b in base:
             fullList, cutList = SplitSolid(b, surfacesCut, cellObj, tolerance=tolerance)
@@ -61,22 +61,27 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
         return fullPart, cutPart
 
     # part if base is shape object
+    # resulting cell orientation is "Reversed" only if both
+    # cells have reversed orientations
+    if cellObj.boundBox.Orientation == base.orientation:
+        orientation = cellObj.boundBox.Orientation
+    else:
+        orientation = "Forward"
 
     if abs(base.base.Volume / base.base.Area) < 1e-2:
         return fullPart, cutPart
 
     Tools = tuple(s.shape for s in surfacesCut)
-    # for s in surfacesCut:
-    #    print(s.type,s.params,s.id)
-    #    s.shape.exportStep('tool{}.stp'.format(s.id))
-    # base.base.exportStep('base.stp')
-    try:
-        Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
-    except:
-        Solids = []
-
-    if not Solids:
+    if Tools[0] is not None:
+        try:
+            Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
+        except:
+            Solids = []
+        if not Solids:
+            Solids = [base.base]
+    else:
         Solids = [base.base]
+
     partPositions, partSolids = space_decomposition(Solids, surfacesCut)
 
     for pos, sol in zip(partPositions, partSolids):
@@ -140,7 +145,7 @@ def space_decomposition(solids, surfaces):
 
 def point_inside(solid):
 
-    point = solid.CenterOfMass
+    point = solid.Solids[0].CenterOfMass
     if solid.isInside(point, 0.0, False):
         return point
 

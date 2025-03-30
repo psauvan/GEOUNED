@@ -58,9 +58,6 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         print(f"Build Universe {ContainerCell.FILL}")
     fails = []
     for NTcell in tqdm(Universe.values(), desc="build cell"):
-        # for i,NTcell in enumerate(Universe.values()):
-        # if i in(3413,3555,3625) : print(i,NTcell.name)
-        # continue
 
         if NTcell.shape:
             buildShape = False
@@ -84,10 +81,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = None
 
-            #            external_box = myBox(
-            #                FreeCAD.BoundBox(9183.9,56.19999999999999,383.50001,9379.700000000003,568.8,856.5000100000009),
-            #                'Forward')
-            debug = True
+            debug = False
             if debug:
                 NTcell.build_BoundBox(external_box, enlarge=0.2)
                 if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
@@ -106,7 +100,6 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
                             NTcell.externalBox = NTcell.boundBox
                         NTcell.buildShape(simplify=False)
                 except:
-                    # print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)
 
             if NTcell.shape is None:

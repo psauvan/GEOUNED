@@ -236,6 +236,7 @@ class Plane:
                     pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
 
         if len(pointEdge) == 0:
+            self.shape = None
             return
         s = FreeCAD.Vector((0, 0, 0))
         for v in pointEdge:

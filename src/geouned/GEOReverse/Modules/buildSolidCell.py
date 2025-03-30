@@ -31,7 +31,6 @@ def BuildDepth(cell, base):
     if cell.definition.level == 0:
         # if base is None build solid from cell boundBox
         # else base is build solid split by cell surfaces
-
         base, cut = BuildSolidParts(cell, base)
         return base
 
@@ -52,7 +51,7 @@ def BuildDepth(cell, base):
                     subcell = cell.getSubCell(e)
                     keep = []
                     if part is not None:
-                        subcell.build_BoundBox(cell.externalBox, enlarge=20)
+                        subcell.build_BoundBox(cell.externalBox, enlarge=10)
                         if subcell.boundBox.Box is None:
                             if subcell.boundBox.Orientation == "Reversed":
                                 continue
@@ -75,7 +74,7 @@ def BuildDepth(cell, base):
                 for e in cell.definition.elements:
                     subcell = cell.getSubCell(e)
                     if CS is not None:
-                        subcell.build_BoundBox(cell.externalBox, enlarge=20)
+                        subcell.build_BoundBox(cell.externalBox, enlarge=10)
                         if subcell.boundBox.Box is None:
                             if subcell.boundBox.Orientation == "Reversed":
                                 if type(CS) is SplitBase:
@@ -124,6 +123,8 @@ def BuildSolidParts(cell, base):
 
     if base:
         boundBox = base.base.BoundBox
+        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+            return [], []
     else:
         if cell.boundBox is None:
             cell.build_BoundBox(cell.externalBox, enlarge=0.2)
@@ -158,14 +159,20 @@ def BuildSolidParts(cell, base):
 
     cut = base
     full = []
-    if planes:
-        for p in planes:
-            newf, cut = SplitSolid(cut, (p,), cell, tolerance=Options.splitTolerance)
-            full.extend(newf)
+    for p in planes:
+        newf, cut = SplitSolid(cut, (p,), cell, tolerance=Options.splitTolerance)
+        full.extend(newf)
+        if len(cut) == 0:
+            break
 
     for surf in others:
         newf, cut = SplitSolid(cut, (surf,), cell, tolerance=Options.splitTolerance)
         full.extend(newf)
+        if len(cut) == 0:
+            break
+
+    if type(cut) is SplitBase:
+        cut = [cut]
 
     # if len(full) > 1:
     #    full = [joinBase(full)]
@@ -208,31 +215,6 @@ def FuseSolid(parts):
     return solid
 
 
-def filterparts_org(parts, cellBox):
-    process_part = []
-    keep_part = []
-    if type(parts) is SplitBase:
-        parts = (parts,)
-    for p in parts:
-        if p is None:
-            process_part.append(p)
-            continue
-        cBox = myBox(cellBox.Box, "Forward")
-        pbb = p.base.BoundBox
-
-        pBox = myBox(pbb, "Forward")
-        cBox.mult(pBox)
-        if cBox.Box is None:
-            if cellBox.Orientation == "Reversed":
-                keep_part.append(p)
-        #  elif cBox.sameBox(pBox):
-        #      if cellBox.Orientation == "Forward":
-        #          process_part.append(p)
-        else:
-            process_part.append(p)
-    return process_part, keep_part
-
-
 def filterparts(parts, cell):
     process_part = []
     keep_part = []
@@ -255,7 +237,8 @@ def filterparts(parts, cell):
                     keep_part.append(p)
             else:
                 if cellBox.Orientation == "Reversed":
-                    process_part.append(p)
+                    # process_part.append(p)
+                    keep_part.append(p)
                     if not built:
                         built = True
                         cellpart = BuildDepth(cell, None)
