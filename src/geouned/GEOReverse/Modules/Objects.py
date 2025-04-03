@@ -31,8 +31,6 @@ class CadCell:
             self.MAT = 0  # material number
             self.CurrentTR = None
             self.level = None
-            self.cell_seq = None
-            self.hash_def = None
             self.__defTerms__ = None
             self.__operator__ = None
             self.externalBox = None
@@ -49,8 +47,6 @@ class CadCell:
             self.MAT = stringCell.MAT  # material number
             self.CurrentTR = self.TRFL
             self.level = None
-            self.cell_seq = stringCell.cellSeq
-            self.hash_def = stringCell.hashDef
 
             self.__defTerms__ = None
             self.__operator__ = None
@@ -82,17 +78,12 @@ class CadCell:
         cpCell.FILL = self.FILL
         cpCell.MAT = self.MAT
         cpCell.level = self.level
-        cpCell.hash_def = self.hash_def
-        cpCell.cell_seq = self.cell_seq
 
         if self.CurrentTR is not None:
             cpCell.CurrentTR = self.CurrentTR.submatrix(4)
 
         if self.shape is not None:
             cpCell.shape = self.shape.copy()
-
-        if self.BoundBox is not None:
-            cpCell.BoundBox = FreeCAD.BoundBox(self.BoundBox)
 
         return cpCell
 
