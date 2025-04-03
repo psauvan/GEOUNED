@@ -1,7 +1,7 @@
 Python Package Usage
 ====================
 
-The main class is ``CsgToCad()`` which converts Constructive Solid Geometry (CSG) to CAD. Class has changed singificantly since version 1.5.2. 
+The main class is ``CsgToCad()`` which converts Constructive Solid Geometry (CSG) to CAD. Class has changed singificantly since version 1.5.x. 
 The most relevant modification are: no need to specify external boundbox dimensions anymore, new methods to load, process and write geometry have been added.
 The new available methods are ``CsgToCad().read_csg_file()``, ``CsgToCad().build_universe()``, ``CsgToCad().build_container()`` and ``CsgToCad().export_cad()``.
 Also methods for cell and material selection were added ``CsgToCad().cell_filter()``, ``CsgToCad().material_filter()``.
@@ -34,7 +34,6 @@ Remember that the arguments are described in the `Python API reference section <
 
     my_settings = geouned.BoxSettings(
         universe_radius=1.0e8, 
-        max_solid_length=5e4,  
         insolid_tolerance=0.1, 
     )
 
@@ -74,5 +73,5 @@ If a universe number is passed as argument this universe will be build. The dept
 Default to -1 (all nested universes). If a universe is not build because it is in a lower level, its container cell will be included instead.   
 
 ``CsgToCad().build_container()`` will build the universe contained the container cell "cell_label". The argurment passed to this method is the cell label in which
-the universe is located. This method will build the universe and locate it inside the container with corresponding transformation (universe region will be 
+the universe is located. This method will build the universe and locate it inside the container with the corresponding transformation (universe region will be 
 delimited by the container cell boundaries). In this method the argument "depth" can be used to limit the number of nested universes.

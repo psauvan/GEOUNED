@@ -10,9 +10,6 @@ class BoxSettings:
         universe_radius (float, optional): Maxium radius of the CAD universe.
         Solids with coordinates x^2+y^2+z*2 > universe_radius^2 will be cut or not represented.
         Units mm. Defaults to 1.0e8.
-        max_solid_length (float, optional): Maxium length in any direction of any solids in the model.
-        Any solids with maximum length > max_solid_length may be cut.
-        Units mm. Defaults to 5.0e4.
         insolid_tolerance (float, optional): Maximum distance from the nearest
         surface of the solid, for which a point outside the solid is assumed
         inside the solid. Used only for boundbox generation. Units mm.
@@ -22,13 +19,11 @@ class BoxSettings:
     def __init__(
         self,
         universe_radius: float = 1.0e8,  # units mm
-        max_solid_length: float = 5e4,  # units mm
         insolid_tolerance: float = 1,  # units mm
     ):
 
         self.universe_radius = universe_radius
         self.insolid_tolerance = insolid_tolerance
-        self.max_solid_length = max_solid_length
 
     @property
     def universe_radius(self):
@@ -49,13 +44,3 @@ class BoxSettings:
         if not isinstance(insolid_tolerance, (float, int)):
             raise TypeError(f"geoReverse.Settings.insolid_tolerance should be a float, not a {type(insolid_tolerance)}")
         self._insolid_tolerance = insolid_tolerance
-
-    @property
-    def max_solid_length(self):
-        return self._max_solid_length
-
-    @max_solid_length.setter
-    def max_solid_length(self, max_solid_length: float):
-        if not isinstance(max_solid_length, (float, int)):
-            raise TypeError(f"geoReverse.Settings.max_solid_length should be a float, not a {type(max_solid_length)}")
-        self._max_solid_length = max_solid_length

@@ -4,7 +4,7 @@ import FreeCAD
 
 from .buildSolidCell import FuseSolid
 from .Utils.booleanFunction import BoolSequence
-from .Utils.boundBox import solid_plane_box
+from .Utils.boundBox import myBox
 
 
 def interferencia(container, cell, mode="slice"):
@@ -58,8 +58,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         print(f"Build Universe {ContainerCell.FILL}")
     fails = []
     for NTcell in tqdm(Universe.values(), desc="build cell"):
-        # for i,NTcell in enumerate(Universe.values()):
-        # print(i,NTcell.name)
+
         if NTcell.shape:
             buildShape = False
             if ContainerCell.CurrentTR:
@@ -79,22 +78,31 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
                     NTcell.hash_def[c] = BoolSequence(cdef.str)
 
             if ContainerCell.shape is not None:
-                external_box = ContainerCell.shape.BoundBox
+                external_box = myBox(ContainerCell.shape.BoundBox, "Forward")
                 if ContainerCell.CurrentTR:
-                    external_box = external_box.transformed(ContainerCell.CurrentTR.inverse())
+                    external_box.Box = external_box.Box.transformed(ContainerCell.CurrentTR.inverse())
             else:
                 external_box = None
 
             debug = False
             if debug:
-                NTcell.build_BoundBox(external_box, True)
-                NTcell.buildShape(NTcell.BoundBox, simplify=False)
+                NTcell.build_BoundBox(external_box, enlarge=0.2)
+                if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
+                    NTcell.shape = None
+                else:
+                    if NTcell.boundBox.Orientation == "Forward":
+                        NTcell.externalBox = NTcell.boundBox
+                    NTcell.buildShape(simplify=False)
             else:
                 try:
-                    NTcell.build_BoundBox(external_box, True)
-                    NTcell.buildShape(NTcell.BoundBox, simplify=False)
+                    NTcell.build_BoundBox(external_box, enlarge=0.2)
+                    if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
+                        NTcell.shape = None
+                    else:
+                        if NTcell.boundBox.Orientation == "Forward":
+                            NTcell.externalBox = NTcell.boundBox
+                        NTcell.buildShape(simplify=False)
                 except:
-                    # print(f"fail converting cell {NTcell.name}")
                     fails.append(NTcell.name)
 
             if NTcell.shape is None:

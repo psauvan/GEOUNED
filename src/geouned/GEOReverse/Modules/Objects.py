@@ -7,45 +7,15 @@ import Part
 from .buildSolidCell import BuildSolid
 from .remh import Cline
 from .Utils.booleanFunction import BoolSequence, outer_terms
-from .Utils.boundBox import solid_plane_box
+from .Utils.boundBox import solid_plane_box, myBox
 from .data_class import BoxSettings
-
-
-class Material_Cell_Filter:
-    def __init__(self, type: int = None, range: list = None):
-        if range is not None:
-            self.range = range[:]
-        else:
-            self.range = []
-
-        if type is not None:
-            if type not in ("all", "include", "exclude"):
-                self.type = "all"
-            else:
-                self.type = type
-        else:
-            self.type = "all"
-
-    def set_type(self, type: str):
-        if type not in ("all", "include", "exclude"):
-            return
-        self.type = type
-
-    def add_range(self, a: int, b: int):
-        if type(a) is not int:
-            return
-        if type(b) is not int:
-            return
-        self.range.extend(range(a, b + 1))
-
-    def add_value(self, a: int):
-        if type(a) is not int:
-            return
-        self.range.append(a)
 
 
 class CadCell:
     def __init__(self, stringCell: str = None, settings: BoxSettings = BoxSettings()):
+
+        self.settings = settings
+        self.boundBox = None
 
         if not stringCell:
             self.surfaces = {}
@@ -65,6 +35,10 @@ class CadCell:
             self.hash_def = None
             self.__defTerms__ = None
             self.__operator__ = None
+            self.externalBox = None
+            self.solid_plane = None
+            self.boundBox = None
+
         else:
             self.surfaces = None
             self.shape = None
@@ -82,18 +56,16 @@ class CadCell:
             self.__operator__ = None
             self.__setDefinition__(stringCell)
             self.surfaceList = self.definition.get_surfaces_numbers()
-            """  
-            self.surfaceList = set(self.definition.get_surfaces_numbers())
-            if self.hash_def:
-                for cdef in self.hash_def.values():
-                    self.surfaceList.update(cdef.get_surfaces_numbers())
-            self.surfaceList=tuple(self.surfaceList)  """
-        self.settings = settings
-        self.BoundBox = None
+            self.externalBox = None
+            self.solid_plane = None
+            self.boundBox = None
 
     def copy(self):
         cpCell = CadCell(settings=self.settings)
+        cpCell.solid_plane = self.solid_plane.copy()
         cpCell.surfaceList = self.surfaceList[:]
+        cpCell.externalBox = self.externalBox
+        cpCell.boundBox = self.boundBox
         cpCell.surfaces = {}
         for name, s in self.surfaces.items():
             cpCell.surfaces[name] = s.copy()
@@ -129,7 +101,8 @@ class CadCell:
         subCell = self.copy()
         subCell.definition = seq.copy()
         subCell.shape = None
-        subCell.BoundBox = None
+        subCell.boundBox = None
+
         subCell.surfaceList = subCell.definition.get_surfaces_numbers()
         for s in tuple(subCell.surfaces.keys()):
             if s not in subCell.surfaceList:
@@ -137,91 +110,54 @@ class CadCell:
 
         return subCell
 
-    # not used
-    #
-    #    def split(self,nparts=2):
-    #
-    #        if nparts == 1:
-    #            return (self,None)
-    #        terms,operador = self.getOuterTerms()
-    #        nelemts = int(len(terms)/nparts)
-    #        subDefList = []
-    #
-    #        if operador == 'AND':
-    #          for i in range(nparts-1):
-    #             newdef = ') ('.join(terms[i*nelemts:(i+1)*nelemts])
-    #             newdef = '({})'.format(newdef)
-    #             subDefList.append(newdef)
-    #          newdef = ') ('.join(terms[(nparts-1)*nelemts:])
-    #          newdef = '({})'.format(newdef)
-    #          subDefList.append(newdef)
-    #
-    #        else:
-    #          for i in range(nparts-1):
-    #             newdef = '):('.join(terms[i*nelemts:(i+1)*nelemts])
-    #             newdef = '({})'.format(newdef)
-    #             subDefList.append(newdef)
-    #          newdef = '):('.join(terms[(nparts-1)*nelemts:])
-    #          newdef = '({})'.format(newdef)
-    #          subDefList.append(newdef)
-    #
-    #
-    #        subCellList=[]
-    #        for df in subDefList:
-    #           subCell = self.copy()
-    #           subCell.definition= Cline(df)
-    #           subCell.shape = None
-    #           subCell.surfaceList  = subCell.definition.get_surfaces_numbers()
-    #           for s in tuple(subCell.surfaces.keys()) :
-    #               if s not in subCell.surfaceList: del(subCell.surfaces[s])
-    #
-    #           subCellList.append(subCell)
-    #
-    #        return subCellList,operador
-
     def getOuterTerms(self):
         if not self.__defTerms__:
             self.__defTerms__, self.__operator__ = outer_terms(self.definition.str)
         return self.__defTerms__, self.__operator__
 
-    def makeBox(self, boundBox):
-        box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
-        return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
-
-    def build_BoundBox(self, externalBox, hashbox):
-        solid_box = solid_plane_box(self, outbox=externalBox)
-        bBox = solid_box.get_boundBox(hashBox=hashbox, enlarge=0.1)
-        if bBox.XLength < 1e-6 or bBox.YLength < 1e-6 or bBox.ZLength < 1e-6:
-            if externalBox is not None:
-                bBox = externalBox
+    def makeBox(self):
+        if self.boundBox.Orientation == "Forward":
+            if self.boundBox.Box is None:
+                boundBox = self.externalBox.Box
             else:
-                bBox = None
-                print(f"Cell {self.name} BoundBox is null")
-        self.BoundBox = bBox
+                boundBox = self.boundBox.Box
+        else:
+            boundBox = self.externalBox.Box
+        box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
+        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+            return None
+        else:
+            return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
 
-    def buildShape(self, boundBox, force=False, surfTR=None, simplify=False, fuse=False):
+    def build_BoundBox(self, externalBox=None, enlarge=0):
+
+        if externalBox:
+            outBox = externalBox
+            self.externalBox = externalBox
+        elif self.externalBox:
+            outBox = self.externalBox
+        else:
+            r = self.settings.universe_radius
+            outBox = myBox(FreeCAD.BoundBox(-r, -r, -r, r, r, r), "Forward")
+            self.externalBox = outBox
+
+        if outBox.Box is None:
+            self.boundBox = outBox
+        else:
+            if self.solid_plane is None:
+                self.solid_plane = solid_plane_box(self, outbox=outBox)
+            elif not self.solid_plane.outBox.sameBox(outBox):
+                self.solid_plane = solid_plane_box(self, outbox=outBox)
+            self.boundBox = self.solid_plane.get_boundBox(enlarge=enlarge)
+
+    def buildShape(self, force=False, surfTR=None, simplify=False, fuse=False):
 
         if self.shape is not None and not force:
             return
         if surfTR:
             self.transformSurfaces(surfTR)
 
-        self.BoundBox = boundBox
-        if self.definition.level > 0 and self.definition.operator == "OR":
-            cutShape = []
-            for seq in self.definition.elements:
-                subcell = self.getSubCell(seq)
-                subcell.build_BoundBox(self.BoundBox, False)
-                subShape = BuildSolid(subcell, self.BoundBox, simplify=simplify)
-                cutShape.extend(subShape)
-        else:
-            cutShape = BuildSolid(self, self.BoundBox, simplify=simplify)
-
-        # TODO consider making this step conditional on fuse
-        # if fuse or True:
-        #     self.shape = FuseSolid(cutShape)
-        # else:
-        #     self.shape = Part.makeCompound(cutShape)
+        cutShape = BuildSolid(self)
         self.shape = FuseSolid(cutShape)
 
     def buildSurfaceShape(self, boundBox):
@@ -309,6 +245,7 @@ class Plane:
                     pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
 
         if len(pointEdge) == 0:
+            self.shape = None
             return
         s = FreeCAD.Vector((0, 0, 0))
         for v in pointEdge:
@@ -413,8 +350,8 @@ class Cone:
         self.shape = None
         self.params = params
         self.truncated = truncated
-        if params[2] <= 0:
-            print(f"{self.type} surface {label} has a zero semi-angle value.")
+        # if params[2] <= 0:
+        #    print(f"{self.type} surface {label} has a zero semi-angle value.")
         if tr:
             self.transform(tr)
 
@@ -691,29 +628,27 @@ class Paraboloid:
 
     def buildShape(self, boundBox):
         center, axis, focal = self.params
-
-        dmin = axis.dot(boundBox.getPoint(0) - center)
-        dmax = dmin
-        for i in range(1, 8):
-            d = axis.dot(boundBox.getPoint(i) - center)
-            dmin = min(d, dmin)
-            dmax = max(d, dmax)
-
-        length = max(abs(dmin), abs(dmax))
         axis.normalize()
 
         dist = []
-        for i in range(6):
+        for i in range(8):
             d = axis.dot(boundBox.getPoint(i) - center)
-            dist.append(abs(d))
+            dist.append(d)
         dist.sort()
-        rmin = math.sqrt(4 * focal * dist[0])
-        rmax = math.sqrt(4 * focal * dist[-1])
-        if (rmax - rmin) / rmin < 0.01:
+        dmin, dmax = dist[0], dist[-1]
+        if dmax <= 0:
+            return
+        if dmin < 0:
+            dmin = 0
+
+        rmin = math.sqrt(4 * focal * dmin)
+        rmax = math.sqrt(4 * focal * dmax)
+
+        if (rmax - rmin) / rmax < 0.01:
             r = 0.5 * (rmin + rmax)
-            self.shape = Part.makeCylinder(r, length, center, axis, 360)
+            self.shape = Part.makeCylinder(r, dmax, center, axis, 360)
         else:
-            self.shape = makeParaboloid(center, axis, focal, length)
+            self.shape = makeParaboloid(center, axis, focal, dmax)
 
 
 class Torus:
