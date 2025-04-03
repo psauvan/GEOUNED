@@ -73,6 +73,9 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         if buildShape:
             if type(NTcell.definition) is not BoolSequence:
                 NTcell.definition = BoolSequence(NTcell.definition.str)
+            if NTcell.hash_def:
+                for c, cdef in NTcell.hash_def.items():
+                    NTcell.hash_def[c] = BoolSequence(cdef.str)
 
             if ContainerCell.shape is not None:
                 external_box = myBox(ContainerCell.shape.BoundBox, "Forward")

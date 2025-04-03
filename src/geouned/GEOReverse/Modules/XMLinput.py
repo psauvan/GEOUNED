@@ -103,8 +103,8 @@ class XmlInput:
         currentLevel = [root_universe]
         nextLevel = []
         univLevel = {0: {root_universe}}
-        level = 0
 
+        level = 0
         while True:
             level += 1
             univLevel[level] = set()

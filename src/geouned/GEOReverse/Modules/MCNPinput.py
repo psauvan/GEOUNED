@@ -393,6 +393,7 @@ def selectCells(cellList, config):
                         selected[name] = c  # Fill cell are not tested against material number
 
     for cname, c in selected.items():
+        hashcellDef, cellSeq = hash_sequence(cellList, cname)
         c.geom = remove_hash(cellList, cname)
 
     #    if not selected:
@@ -441,6 +442,28 @@ def processSurfaces(UCells, Surfaces):
                 print(m)
                 print(c.geom.str)
             pos = c.geom.replace(surf, Surfaces[surf].id, pos)
+
+        if c.hashDef is not None:
+            for hdef in c.hashDef.values():
+                if hdef.newLabel:
+                    continue
+                else:
+                    hdef.newLabel = True
+                hdef.remove_comments(full=True)
+                pos = 0
+                while True:
+                    m = number.search(hdef.str, pos)
+                    if not m:
+                        break
+                    if "#" in m.group():
+                        pos = m.end()
+                        continue
+                    surf = int(m.group())
+                    if surf == 0:
+                        print(c.name)
+                        print(m)
+                        print(hdef.str)
+                    pos = hdef.replace(surf, Surfaces[surf].id, pos)
 
 
 def TransformationMatrix(TRSF, Transformations):
