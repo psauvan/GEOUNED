@@ -12,6 +12,7 @@ import Part
 from tqdm import tqdm
 
 from .code_version import *
+from .utils.log_utils import setup_logger
 from .conversion import cell_definition as Conv
 
 from .decompose.decom_one_generators import main_split
@@ -69,6 +70,14 @@ class CadToCsg:
         self.meta_list = []
         self.filename = None
         self.skip_solids = []
+
+        log_path = Path(self.settings.outPath) / "log_files"
+        log_path.mkdir(parents=True, exist_ok=True)
+        setup_logger("general_logger", log_path / "geouned_general.log")
+        setup_logger("fuzzy_logger", log_path / "geouned_fuzzy.log")
+        setup_logger("solids_logger", log_path / "geouned_solids.log")
+        logger.info(f"GEOUNED version {version('geouned')}")
+        logger.info(f"FreeCAD version {'.'.join(FreeCAD.Version()[:3])}")
 
     @property
     def options(self):
@@ -543,7 +552,7 @@ class CadToCsg:
             description = "Decomposing enclosure solids"
 
         if self.settings.debug:
-            self.debug_output_folder = Path("debug")
+            self.debug_output_folder = Path(self.settings.outPath) / "debug"
             self.debug_output_folder.mkdir(parents=True, exist_ok=True)
 
         if self.options.n_thread > 1:
@@ -577,7 +586,7 @@ class CadToCsg:
         )
 
         if False:  # todo decomposition error information
-            sus_output_folder = Path("suspicious_solids")
+            sus_output_folder = Path(self.settings.outPath) / "suspicious_solids"
             sus_output_folder.mkdir(parents=True, exist_ok=True)
             if m.IsEnclosure:
                 Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Enclosure_original_{i}.stp"))

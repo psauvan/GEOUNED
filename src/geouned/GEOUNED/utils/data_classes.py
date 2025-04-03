@@ -629,7 +629,11 @@ class Settings:
     """Settings for changing the way the CAD to CSG conversion is done
 
     Args:
-        matFile (str, optional): _description_. Defaults to "".
+        outPath (str, optional): Path to folder where output file will be
+            written. If folder doesn't exist it will be created. Defaults
+            to ".".
+        matFile (str, optional): Name of the file in which the material
+            information is provided. Defaults to "".
         voidGen (bool, optional): Generate voids of the geometry. Defaults
             to True.
         debug (bool, optional): Write step files of original and decomposed
@@ -673,6 +677,7 @@ class Settings:
 
     def __init__(
         self,
+        outPath: str = ".",
         matFile: str = "",
         voidGen: bool = True,
         debug: bool = False,
@@ -689,6 +694,7 @@ class Settings:
         sort_enclosure: bool = False,
     ):
 
+        self.outPath = outPath
         self.matFile = matFile
         self.voidGen = voidGen
         self.debug = debug
@@ -703,6 +709,16 @@ class Settings:
         self.startCell = startCell
         self.startSurf = startSurf
         self.sort_enclosure = sort_enclosure
+
+    @property
+    def outPath(self):
+        return self._outPath
+
+    @outPath.setter
+    def outPath(self, outPath: str):
+        if not isinstance(outPath, str):
+            raise TypeError(f"geouned.Settings.outPath should be a str, not a {type(outPath)}")
+        self._outPath = outPath
 
     @property
     def matFile(self):
