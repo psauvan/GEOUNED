@@ -59,7 +59,7 @@ def load_cad(filename, spline_surf, settings, options):
         if LF.spline(s):
             spline_solids.append(str(i))
             if loop:
-                meta_list.append(UF.GeounedSolid(i + 1))
+                meta_list.append(LF.GeounedSolid(i + 1))
                 continue
         meta_list.append(GeounedSolid(i + 1, s))
 
