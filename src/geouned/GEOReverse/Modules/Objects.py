@@ -7,8 +7,7 @@ import Part
 from .buildSolidCell import BuildSolid
 from .remh import Cline
 from .Utils.booleanFunction import BoolSequence, outer_terms
-from .Utils.boundBox import solid_plane_box, myBox
-from .data_class import BoxSettings
+from .Utils.boundBox import solid_plane_box, myBox, BoxSettings
 
 
 class CadCell:
