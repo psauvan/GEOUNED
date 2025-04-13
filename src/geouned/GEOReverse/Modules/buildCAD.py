@@ -81,7 +81,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
             else:
                 external_box = ContainerCell.externalBox
 
-            debug = False
+            debug = True
             if debug:
                 NTcell.build_BoundBox(external_box, enlarge=0.2)
                 if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:

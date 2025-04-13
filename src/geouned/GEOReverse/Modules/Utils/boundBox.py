@@ -392,7 +392,7 @@ class solid_plane_box:
 
     def get_box_orientation(self):
         ninside = 0
-        universeBox = self.universe_box
+        universeBox = self.universe_box.Box
         for i in range(8):
             p = universeBox.getPoint(i)
             if self.isInside(p, True):
