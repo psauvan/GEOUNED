@@ -173,7 +173,6 @@ class CsgToCad:
         if UnivCell.externalBox is None:
             UnivCell.externalBox = self.universe_box
 
-
         # read Cells and group into universes
         matcel_list = {
             "mat": (self.mat_range_type, self.mat_range),

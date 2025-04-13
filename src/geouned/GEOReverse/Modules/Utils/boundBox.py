@@ -7,6 +7,7 @@ from .booleanFunction import BoolSequence
 
 twoPi = math.pi * 2
 
+
 class BoxSettings:
     """Parameters used in the solids boundbox generation. Optimized dimensions can reduce
     the translation time.
