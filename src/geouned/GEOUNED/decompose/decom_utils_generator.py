@@ -109,7 +109,7 @@ def torus_bound_planes(solidFaces, face, tolerances):
             planes.append(plane)
 
         elif curve == "<BSplineCurve object>":
-            planeParams = spline_wires(e, face)
+            planeParams = spline_wires((e,), face)
             if planeParams is not None:
                 plane = GeounedSurface(("Plane", planeParams))
                 planes.append(plane)

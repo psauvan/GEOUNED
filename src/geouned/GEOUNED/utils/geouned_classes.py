@@ -562,7 +562,7 @@ class MetaSurfacesDict(dict):
         if torus.Surf.VSurface:
             if torus.Surf.VSurface.Type == "Plane":
                 sid, exist_s = self.primitive_surfaces.add_plane(torus.Surf.VSurface, True)
-            elif torus.Surf.VSurface.Type == "Cylinder":
+            elif torus.Surf.VSurface.Type == "CylinderOnly":
                 sid, exist_s = self.primitive_surfaces.add_cylinder(torus.Surf.VSurface, True)
                 if torus.Surf.SOrientation == "Forward":
                     sid = -sid

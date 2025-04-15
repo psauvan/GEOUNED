@@ -3,7 +3,7 @@ import math
 
 from .data_classes import Options, Tolerances, NumericFormat
 from .basic_functions_part2 import is_parallel
-from .geometry_gu import CylinderGu, other_face_edge
+from .geometry_gu import CylinderGu, TorusGu, other_face_edge
 from .meta_surfaces_utils import (
     region_sign,
     get_adjacent_cylplane,
@@ -104,6 +104,8 @@ def get_can_surfaces(cylinder, solidFaces):
                     if planar_edges(edges):
                         surfaces.append((s, None))
                         continue
+        elif type(s.Surface) is TorusGu:
+            return None,None           
 
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))
