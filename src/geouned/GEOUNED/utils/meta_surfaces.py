@@ -105,7 +105,7 @@ def get_can_surfaces(cylinder, solidFaces):
                         surfaces.append((s, None))
                         continue
         elif type(s.Surface) is TorusGu:
-            return None,None           
+            return None, None
 
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))

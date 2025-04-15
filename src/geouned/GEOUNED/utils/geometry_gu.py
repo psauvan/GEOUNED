@@ -15,7 +15,8 @@ from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
 
 logger = logging.getLogger("general_logger")
-twoPi = 2*math.pi
+twoPi = 2 * math.pi
+
 
 class face_index:
     def __init__(self, face, index, orientation):
@@ -515,61 +516,61 @@ def innerWires(wire, face):
             dx = x0.Point - x1.Point
             if dx.Length < 1e-5:
                 return False
- 
+
     positions = []
     vect = []
 
     length = 0
     u_sum = 0
     v_sum = 0
-    umin,umax,vmin,vmax = face.__face__.ParameterRange
+    umin, umax, vmin, vmax = face.__face__.ParameterRange
     for edge in wire.Edges:
-        pmin,pmax = edge.ParameterRange
-        pe = 0.5*(pmin+pmax)
+        pmin, pmax = edge.ParameterRange
+        pe = 0.5 * (pmin + pmax)
         pos = edge.valueAt(pe)
         u, v = face.__face__.Surface.parameter(pos)
-        if u < umin :
+        if u < umin:
             u += twoPi
-        elif u > umax :
+        elif u > umax:
             u -= twoPi
-        if v < vmin :
+        if v < vmin:
             v += twoPi
-        elif v > vmax :
+        elif v > vmax:
             v -= twoPi
 
         normal = face.__face__.Surface.normal(u, v)
-        u_sum += u*edge.Length
-        v_sum += v*edge.Length
-        length += edge.Length      
+        u_sum += u * edge.Length
+        v_sum += v * edge.Length
+        length += edge.Length
 
         if type(edge.Curve) is Part.Line:
             direction = edge.Curve.Direction
         else:
             direction = edge.Curve.tangent(pe)[0]
- 
+
         direction.normalize()
         if edge.Orientation == "Forward":
             direction = -direction
-            
+
         vect.append(direction.cross(normal))
         positions.append(pos)
-    
+
     if len(wire.Edges) == 1:
         center = wire.CenterOfMass
-    else:    
-        umean = u_sum/length
-        vmean = v_sum/length
+    else:
+        umean = u_sum / length
+        vmean = v_sum / length
         center = face.__face__.Surface.value(umean, vmean)
-    
+
     ssum = 0
     i = 0
-    for v,p in zip(vect,positions):
-        dir = p-center
+    for v, p in zip(vect, positions):
+        dir = p - center
         dir.normalize()
-        i+= 1
+        i += 1
         ssum += v.dot(dir)
     return ssum < 0
-    
+
 
 def innerWires_org(wire, face, Faces):
     for i, x0 in enumerate(wire.OrderedVertexes):
