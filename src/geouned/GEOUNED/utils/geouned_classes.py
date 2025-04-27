@@ -21,17 +21,17 @@ from .basic_functions_part1 import (
     TorusParams,
     MultiPlanesParams,
     RoundCornerParams,
+    MultiRoundCornerParams,
     ReversedConeCylParams,
     CanParams,
 )
+from .basic_functions_part1 import round_corner_region
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
 from .boolean_function import BoolRegion, BoolVariable
 from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeCan, makeRoundCorner
 from .basic_functions_part1 import is_parallel, is_opposite
-
-from .data_classes import NumericFormat, Options, Tolerances
 
 
 class GeounedSolid:
@@ -252,6 +252,9 @@ class GeounedSurface:
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
             self.Orientation = params[2]
+        elif params[0] == "MultiRoundCorner":
+            self.Type = params[0]
+            self.Surf = MultiRoundCornerParams(params[1])
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
             self.Surf = ReversedConeCylParams(params[1])
@@ -317,9 +320,9 @@ class GeounedSurface:
         #    Box.enlarge(10)
         #    self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
 
-        elif self.Type == "RoundCorner":
+        elif self.Type in ("RoundCorner", "multiRoundCorner"):
             Box.enlarge(10)
-            self.shape = makeRoundCorner(self.Surf, self.Orientation, Box)
+            self.shape = makeRoundCorner(self, Box)
 
         elif self.Type == "ReversedConeCylinder":
             # No need to build shape since this shape not used in decomposition
@@ -840,7 +843,66 @@ class MetaSurfacesDict(dict):
             newregion = cs_region if boundary > 0 else -cs_region
         return newregion
 
+    def add_multiRoundCorner(self, mRoundC):
+        # will not return correct results for any multi corner configuration
+        # must be adjusted one basics feature works correclty
+        multi_rc_region = None
+        for rc in mRoundC.Surf.Corners:
+            rc_region = self.add_roundCorner(rc)
+            if rc.Orientation == "Forward":
+                multi_rc_region = BoolRegion.mult(multi_rc_region, rc_region)
+            else:
+                multi_rc_region = BoolRegion.add(multi_rc_region, rc_region)
+        return multi_rc_region
+
     def add_roundCorner(self, roundC):
+        config = roundC.Surf.Configuration
+        cylinder = roundC.Surf.Cylinder
+        planes = roundC.Surf.Planes
+
+        cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder, True)
+        if cylinder.Surf.Plane is not None:
+            pcid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
+            if exist_p:
+                p = self.get_primitive_surface(pcid)
+                if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pcid = -pcid
+        else:
+            pcid = None
+
+        p1, p2 = planes
+        p1id, exist = self.primitive_surfaces.add_plane(p1, True)
+        if exist:
+            p = self.get_primitive_surface(p1id)
+            if is_opposite(p1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                p1id = -p1id
+
+        if p1 != p2:
+            p2id, exist = self.primitive_surfaces.add_plane(p2, True)
+            if exist:
+                p = self.get_primitive_surface(p2id)
+                if is_opposite(p2.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    p2id = -p2id
+            roundC_region = round_corner_region(p1id, p2id, cid, pcid, config)
+        else:
+            roundC_region = round_corner_region(p1id, p1id, cid, pcid, config)
+
+        add_corner = True
+        for rc_region in self["RoundC"]:
+            boundary = roundC_region.isSameInterface(rc_region)
+            if abs(boundary) == 1:
+                add_corner = False
+                break
+
+        if add_corner:
+            self.surfaceNumber += 1
+            newregion = roundC_region.copy(self.surfaceNumber)
+            self["RoundC"].append(newregion)
+        else:
+            newregion = rc_region if boundary > 0 else -rc_region
+        return newregion
+
+    def add_roundCorner_org(self, roundC):
         roundC_region = None
         orientation = roundC.Orientation
         for cyl in roundC.Surf.Cylinders:

@@ -9,6 +9,7 @@ import numpy
 import FreeCAD
 import Part
 
+from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import PlaneGu, TorusGu, SphereGu, other_face_edge
 from ..utils.basic_functions_part1 import (
@@ -18,7 +19,6 @@ from ..utils.basic_functions_part1 import (
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
 
 logger = logging.getLogger("general_logger")
-twoPi = math.pi * 2
 
 
 def gen_plane(pos, normal, diag):

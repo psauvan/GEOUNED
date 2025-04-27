@@ -13,9 +13,9 @@ import Part
 
 from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
+from ..utils.data_constants import twoPi
 
 logger = logging.getLogger("general_logger")
-twoPi = 2 * math.pi
 
 
 class face_index:
