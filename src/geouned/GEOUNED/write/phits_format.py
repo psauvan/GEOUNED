@@ -72,7 +72,7 @@ class PhitsInput:
         self.get_surface_table()
         self.simplify_planes(Surfaces)
 
-        self.Surfaces = self.sorted_surfaces(Surfaces)
+        self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
 
         return
@@ -528,27 +528,21 @@ $ **************************************************************
 
     def simplify_planes(self, Surfaces):
 
-        for p in Surfaces["PX"]:
+        for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
                 p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
-        for p in Surfaces["PY"]:
+        for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
-        for p in Surfaces["PZ"]:
+        for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
                 p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
-                self.change_surf_sign(p)
+                p.bVar.change_ref()
 
-        if self.options.prnt3PPlane:
-            for p in Surfaces["P"]:
-                if p.Surf.pointDef:
-                    axis, d = points_to_coeffs(p.Surf.Points)
-                    if is_opposite(axis, p.Surf.Axis):
-                        self.change_surf_sign(p)
         return
 
     def sorted_surfaces(self, Surfaces):
