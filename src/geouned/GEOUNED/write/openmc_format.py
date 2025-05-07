@@ -9,6 +9,7 @@ import FreeCAD
 
 from ..code_version import *
 from ..utils.geouned_classes import SurfacesDict
+from ..utils.boolean_function import BoolVariable
 from .functions import open_mc_surface, write_openmc_region
 
 logger = logging.getLogger("general_logger")
@@ -22,8 +23,8 @@ class OpenmcInput:
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        self.get_surface_table()
         self.simplify_planes(Surfaces)
+        self.get_cell_surf_summary()
 
         self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
@@ -82,11 +83,12 @@ class OpenmcInput:
         """Write the surfaces in xml OpenMC format"""
 
         surfType, coeffs = open_mc_surface(surface.Type, surface.Surf, self.tolerances, self.numeric_format)
+        index = surface.bVar.__int__()
 
         if not boundary:
-            OMCsurf = '  <surface id="{}" type="{}" coeffs="{}" />\n'.format(surface.Index, surfType, coeffs)
+            OMCsurf = '  <surface id="{}" type="{}" coeffs="{}" />\n'.format(index, surfType, coeffs)
         else:
-            OMCsurf = '  <surface id="{}" type="{}" coeffs="{}" boundary="vacuum" />\n'.format(surface.Index, surfType, coeffs)
+            OMCsurf = '  <surface id="{}" type="{}" coeffs="{}" boundary="vacuum" />\n'.format(index, surfType, coeffs)
 
         self.inpfile.write(OMCsurf)
         return
@@ -160,10 +162,11 @@ import openmc
             quadricForm=self.options.quadricPY,
         )
 
+        index = surface.bVar.__int__()
         if not boundary:
-            OMCsurf = f"S{surface.Index} = openmc.{surfType}({coeffs})\n"
+            OMCsurf = f"S{index} = openmc.{surfType}({coeffs})\n"
         else:
-            OMCsurf = 'S{} = openmc.{}({}, boundary_type="vacuum")\n'.format(surface.Index, surfType, coeffs)
+            OMCsurf = 'S{} = openmc.{}({}, boundary_type="vacuum")\n'.format(index, surfType, coeffs)
 
         self.inpfile.write(OMCsurf)
         return
@@ -208,8 +211,7 @@ import openmc
         self.inpfile.write(OMCcell)
         return
 
-    def get_surface_table(self):
-        self.surfaceTable = {}
+    def get_cell_surf_summary(self):
         self.__solidCells__ = 0
         self.__cells__ = 0
         self.__materials__ = set()
@@ -221,14 +223,10 @@ import openmc
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
-            surf = CellObj.Definition.get_surfaces_numbers()
             if not CellObj.Void:
                 self.__solidCells__ += 1
-            for index in surf:
-                if index in self.surfaceTable.keys():
-                    self.surfaceTable[index].add(i)
-                else:
-                    self.surfaceTable[index] = {i}
+            CellObj.Definition.expand_regions_to_integer()
+
         return
 
     def simplify_planes(self, Surfaces):
@@ -253,8 +251,9 @@ import openmc
         temp = SurfacesDict(Surfaces)
         surfList = []
         for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            s = temp.get_surface(ind + 1)
+            bvar = BoolVariable(ind + 1)
+            s = temp.get_surface(bvar)
             if s is not None:
                 surfList.append(s)
-                temp.del_surface(ind + 1)
+                temp.del_surface(bvar)
         return surfList

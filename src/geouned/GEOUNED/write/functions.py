@@ -113,21 +113,21 @@ def write_openmc_region(definition, options, w_type="XML"):
         return write_sequence_omc_py(definition, options)
 
 
-def write_sequence_mcnp(Seq):
-    if Seq.level == 0:
-        if Seq.operator == "AND":
-            line = f"({' '.join(map(str, Seq.elements))})"
+def write_sequence_mcnp(seq):
+    if seq.level == 0:
+        if seq.operator == "AND":
+            line = f"({' '.join(map(str, seq.elements))})"
         else:
-            line = f"({':'.join(map(str, Seq.elements))})"
+            line = f"({':'.join(map(str, seq.elements))})"
     else:
         terms = []
-        for e in Seq.elements:
+        for e in seq.elements:
             if type(e) is int:
                 terms.append(str(e))
             else:
                 terms.append(write_sequence_mcnp(e))
 
-        if Seq.operator == "AND":
+        if seq.operator == "AND":
             line = f"({' '.join(terms)})"
         else:
             line = f"({':'.join(terms)})"

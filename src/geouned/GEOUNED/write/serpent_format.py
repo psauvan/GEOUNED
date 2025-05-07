@@ -10,6 +10,7 @@ import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
 from ..utils.geouned_classes import SurfacesDict
+from ..utils.boolean_function import BoolVariable
 from .functions import serpent_surface, write_serpent_cell_def
 
 logger = logging.getLogger("general_logger")
@@ -50,8 +51,8 @@ class SerpentInput:
         if isinstance(self.step_filename, (tuple, list)):
             self.step_filename = "; ".join(self.step_filename)
 
-        self.get_surface_table()
         self.simplify_planes(Surfaces)
+        self.get_cell_surf_summary()
 
         self.Surfaces = self.sorted_surfaces(Surfaces.primitive_surfaces)
         self.Materials = set()
@@ -186,7 +187,7 @@ class SerpentInput:
         """Write the surfaces in Serpent format"""
 
         Serpent_def = serpent_surface(
-            surface.Index,
+            surface.bVar.__int__(),
             surface.Type,
             surface.Surf,
             self.options,
@@ -297,8 +298,7 @@ class SerpentInput:
             comment += "% \n"
         return comment
 
-    def get_surface_table(self):
-        self.surfaceTable = {}
+    def get_cell_surf_summary(self):
         self.__solidCells__ = 0
         self.__cells__ = 0
         self.__materials__ = set()
@@ -310,14 +310,10 @@ class SerpentInput:
             if CellObj.Material != 0:
                 self.__materials__.add(CellObj.Material)
 
-            surf = CellObj.Definition.get_surfaces_numbers()
             if not CellObj.Void:
                 self.__solidCells__ += 1
-            for index in surf:
-                if index in self.surfaceTable.keys():
-                    self.surfaceTable[index].add(i)
-                else:
-                    self.surfaceTable[index] = {i}
+            CellObj.Definition.expand_regions_to_integer()
+
         return
 
     def simplify_planes(self, Surfaces):
@@ -343,10 +339,11 @@ class SerpentInput:
         temp = SurfacesDict(Surfaces)
         surfList = []
         for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            s = temp.get_surface(ind + 1)
+            bvar = BoolVariable(ind + 1)
+            s = temp.get_surface(bvar)
             if s is not None:
                 surfList.append(s)
-                temp.del_surface(ind + 1)
+                temp.del_surface(bvar)
         return surfList
 
     def get_solid_cell_volume(self):
