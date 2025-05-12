@@ -927,8 +927,8 @@ def plane_region(ep1, ep2, cross_in):
 
 
 def cross_in_cylinder(p1, p2, cyl):
-    fp1 = Part.Plane(p1.Surface.Axis, p1.Surface.Position)
-    fp2 = Part.Plane(p2.Surface.Axis, p2.Surface.Position)
+    fp1 = Part.Plane(p1.Surface.Position, p1.Surface.Axis)
+    fp2 = Part.Plane(p2.Surface.Position, p2.Surface.Axis)
     inter = fp1.intersect(fp2)
     if len(inter) > 0:
         line = inter[0]
