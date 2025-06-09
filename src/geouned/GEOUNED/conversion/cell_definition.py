@@ -886,12 +886,16 @@ def no_overlapping_cell(metaList, surfaces, options):
                 new_def.simplify(CT)
                 new_def.clean()
             else:
-                for i, s in enumerate(simplify):
+                lendef = len(simplify)
+                for i, s in enumerate(reversed(simplify)):
                     if not s:
                         continue
-                    comp = new_def.elements[i]
+                    comp = new_def.elements[lendef-i]
                     comp.simplify(CT)
                     comp.clean()
+                    if type(comp.elements) is bool:
+                        assert comp.elements == False, "Solid value is True (i.e. all universe)"
+                        del new_def[lendef-i]
 
             m.set_definition(new_def)
             m.Definition.join_operators()
