@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Python Package Usage &#8212; GEOUNED 0.1.dev1+ga749a6b documentation</title>
+    <title>Python Package Usage &#8212; GEOUNED 0.1.dev1+ga4b8774 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../_static/documentation_options.js?v=39619aa0"></script>
+    <script src="../../../_static/documentation_options.js?v=108c97a8"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'users_guide/execution_settings/cad2csg/python_cadtocsg_api_usage';</script>
@@ -55,7 +55,7 @@
     <link rel="prev" title="CAD to CSG Translation" href="index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="0.1.dev1+ga749a6b" />
+  <meta name="docsearch:version" content="0.1.dev1+ga4b8774" />
   </head>
   
   
@@ -153,6 +153,13 @@
 <li class="nav-item ">
   <a class="nav-link nav-internal" href="../../../quick_install_guide.html">
     Quick Install Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../example_of_use.html">
+    Example of use
   </a>
 </li>
 
@@ -269,6 +276,13 @@
 <li class="nav-item ">
   <a class="nav-link nav-internal" href="../../../quick_install_guide.html">
     Quick Install Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../example_of_use.html">
+    Example of use
   </a>
 </li>
 
@@ -457,6 +471,7 @@ The following example shows a usage with every attributes specified.</p>
 <span class="p">)</span>
 
 <span class="n">my_settings</span> <span class="o">=</span> <span class="n">geouned</span><span class="o">.</span><span class="n">Settings</span><span class="p">(</span>
+    <span class="n">outPath</span><span class="o">=</span><span class="s2">&quot;.&quot;</span><span class="p">,</span>
     <span class="n">matFile</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span>
     <span class="n">voidGen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
@@ -517,6 +532,7 @@ The following example shows a usage with every attributes specified.</p>
 <span class="n">geo</span><span class="o">.</span><span class="n">load_step_file</span><span class="p">(</span>
     <span class="n">filename</span><span class="o">=</span><span class="s2">&quot;cuboid.stp&quot;</span><span class="p">,</span>
     <span class="n">skip_solids</span><span class="o">=</span><span class="p">[],</span>
+    <span class="n">spline_surfaces</span><span class="o">=</span><span class="s1">&#39;stop&#39;</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">geo</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
@@ -634,7 +650,7 @@ For this example we assume you have a JSON file called ‘config.json’ in the 
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.1.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

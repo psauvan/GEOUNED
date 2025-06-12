@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Python API reference &#8212; GEOUNED 0.1.dev1+ga749a6b documentation</title>
+    <title>Python API reference &#8212; GEOUNED 0.1.dev1+ga4b8774 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="_static/documentation_options.js?v=39619aa0"></script>
+    <script src="_static/documentation_options.js?v=108c97a8"></script>
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'python_api';</script>
@@ -55,7 +55,7 @@
     <link rel="prev" title="Void Generation" href="users_guide/void_generation.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="0.1.dev1+ga749a6b" />
+  <meta name="docsearch:version" content="0.1.dev1+ga4b8774" />
   </head>
   
   
@@ -153,6 +153,13 @@
 <li class="nav-item ">
   <a class="nav-link nav-internal" href="quick_install_guide.html">
     Quick Install Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="example_of_use.html">
+    Example of use
   </a>
 </li>
 
@@ -269,6 +276,13 @@
 <li class="nav-item ">
   <a class="nav-link nav-internal" href="quick_install_guide.html">
     Quick Install Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="example_of_use.html">
+    Example of use
   </a>
 </li>
 
@@ -396,44 +410,98 @@
 <h1>Python API reference<a class="headerlink" href="#python-api-reference" title="Link to this heading">#</a></h1>
 <dl class="py class">
 <dt class="sig sig-object py" id="geouned.CsgToCad">
-<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">CsgToCad</span></span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">CsgToCad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">settings=&lt;geouned.GEOReverse.Modules.data_class.BoxSettings</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad" title="Link to this definition">#</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
 <p>Base class for the conversion of CSG to CAD models</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>BoxSettings</strong> (<a class="reference internal" href="#geouned.BoxSettings" title="geouned.BoxSettings"><em>geouned.BoxSettings</em></a><em>, </em><em>optional</em>) – Adjust the default parameters</p></li>
+<li><p><strong>default</strong> (<em>for the solid boundbox creation. Defaults to a geouned.BoxSettings with</em>)</p></li>
+<li><p><strong>values.</strong> (<em>attributes</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="geouned.CsgToCad.build_container">
+<span class="sig-name descname"><span class="pre">build_container</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell_label</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.build_container"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.build_container" title="Link to this definition">#</a></dt>
+<dd><p>Build the universe contained in the cell “cell_label”. The level of nested universes to consider is
+controlled by the parameter “depth”. The universe is located inside the container cell according to the transformation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell_label</strong> (<em>int</em>) – Label of the cell containing the universe to convert.</p></li>
+<li><p><strong>depth</strong> (<em>int</em><em>, </em><em>optional</em>) – Depth level of the nested to considered. Default to -1 (all nested universes).</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="geouned.CsgToCad.build_universe">
+<span class="sig-name descname"><span class="pre">build_universe</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">U</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depth</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.build_universe"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.build_universe" title="Link to this definition">#</a></dt>
+<dd><p>Build the universe U. The level of nested universes is to consider is controlled by the parameter “depth”.
+The universe is build in its own coordinate system.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>U</strong> (<em>int</em><em>, </em><em>optional</em>) – Value of the universe to convert. Default to None (root universe).</p></li>
+<li><p><strong>depth</strong> (<em>int</em><em>, </em><em>optional</em>) – Depth level of the nested to considered. Default to -1 (all nested universes).</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="geouned.CsgToCad.cell_filter">
+<span class="sig-name descname"><span class="pre">cell_filter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'all'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.cell_filter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.cell_filter" title="Link to this definition">#</a></dt>
+<dd><p>Selects the cells to build from the CSG geometry in MCNP or OpenMC format and export to the CAD model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>type</strong> (<em>str</em><em>, </em><em>optional</em>) – Filtering type. Allowed values “all”, “include”, “exclude”. Default to all.</p></li>
+<li><p><strong>cells</strong> (<em>None</em><em>, </em><em>list</em><em>, </em><em>tuple</em><em>, </em><em>optional</em>) – List of cells to include or exclude. If type is “all” has no effect. Default to None</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
 <dl class="py method">
 <dt class="sig sig-object py" id="geouned.CsgToCad.export_cad">
-<span class="sig-name descname"><span class="pre">export_cad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_filename</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">csg_format</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_filename</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cad_from_csg'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">bounding_box</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">(-1000,</span> <span class="pre">-1000,</span> <span class="pre">-1000,</span> <span class="pre">1000,</span> <span class="pre">1000,</span> <span class="pre">1000)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">universe_start</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">level_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'all'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_range_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'all'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_range</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mat_range_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'all'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mat_range</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.export_cad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.export_cad" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">export_cad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_filename</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.export_cad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.export_cad" title="Link to this definition">#</a></dt>
 <dd><p>export the CSG geometry in OpenMC or MCNP format to a CAD model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>output_filename</strong> (<em>str</em><em>, </em><em>optional</em>) – The filename stem and path of the output file created.
+Two files will be created with the ‘.step’ suffix and one with the ‘FCStd’ suffix.
+Defaults to name of the csg file + stp.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="geouned.CsgToCad.material_filter">
+<span class="sig-name descname"><span class="pre">material_filter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'all'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">materials</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.material_filter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.material_filter" title="Link to this definition">#</a></dt>
+<dd><p>Selects the materials of the cells to build from the CSG geometry in MCNP or OpenMC format and export to the CAD model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>type</strong> (<em>str</em><em>, </em><em>optional</em>) – Filtering type. Allowed values “all”, “include”, “exclude”. Default to all.</p></li>
+<li><p><strong>materials</strong> (<em>None</em><em>, </em><em>list</em><em>, </em><em>tuple</em><em>, </em><em>optional</em>) – List of cells to include or exclude. If type is “all” has no effect. Default to None</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="geouned.CsgToCad.read_csg_file">
+<span class="sig-name descname"><span class="pre">read_csg_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_filename</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">csg_format</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/core.html#CsgToCad.read_csg_file"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CsgToCad.read_csg_file" title="Link to this definition">#</a></dt>
+<dd><p>Reads the geometry definition from MCNP or OpenMC XML input.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>input_filename</strong> (<em>str</em>) – The filename and path of the input CSG text file.</p></li>
-<li><p><strong>csg_format</strong> (<em>str</em>) – The format of the CSG input file, options are ‘openmc_xml’ or ‘mcnp’</p></li>
-<li><p><strong>output_filename</strong> (<em>str</em><em>, </em><em>optional</em>) – The filename stem and path of the output file created.
-Two files will be created with the ‘.step’ suffix and one with the ‘FCStd’ suffix.
-Defaults to ‘cad_from_csg’.</p></li>
-<li><p><strong>bounding_box</strong> (<em>Tuple</em><em>[</em><em>int</em><em>, </em><em>int</em><em>, </em><em>int</em><em>, </em><em>int</em><em>, </em><em>int</em><em>, </em><em>int</em><em>]</em><em>, </em><em>optional</em>) – The bounding box
-coordinates of the CSG geometry. This should encompass the entire CSG geometry.
-Format is (xmin, ymin, zmin, xmax, ymax, zmax) Defaults to (-1000, -1000, -1000,
-1000, 1000, 1000).</p></li>
-<li><p><strong>universe_start</strong> (<em>int</em><em>, </em><em>optional</em>) – The Universe ID to be converted to CAD. If universe_start
-is left as 0 then all the universes and any nested universes are converted. If set
-then the universe and all its nested universes are converted. Defaults to 0.</p></li>
-<li><p><strong>level_max</strong> (<em>str</em><em>, </em><em>optional</em>) – Level maximum of nested universe to be translated. If
-level_max &lt; highest nested universe level, cells inside the container cell whose
-level is level_max will not be translated. This container cell will be the CAD
-solid written in the CAD file. Defaults to “all”.</p></li>
-<li><p><strong>cell_range_type</strong> (<em>str</em><em>, </em><em>optional</em>) – Define how to consider the range values.
-setting to ‘all’ results in all the cells with any cell ID being converted (range a no effect).
-setting to ‘include’ results in only cells defined in ‘range’ being converted.
-setting to ‘exclude’ results in exclude all cells defined in range. Defaults to “all”.</p></li>
-<li><p><strong>cell_range</strong> (<em>Tuple</em><em>[</em><em>int</em><em>]</em><em>, </em><em>optional</em>) – list of cells to be included/excluded for the conversion.
-Defaults to ().</p></li>
-<li><p><strong>mat_range_type</strong> (<em>str</em><em>, </em><em>optional</em>) – Define how to consider the range values.
-setting to ‘all’ results in all the materials with any cell ID being converted (range a no effect).
-setting to ‘include’ results in only materials defined in ‘range’ being converted.
-setting to ‘exclude’ results in exclude all materials defined in range. Defaults to “all”.</p></li>
-<li><p><strong>mat_range</strong> (<em>Tuple</em><em>[</em><em>int</em><em>]</em><em>, </em><em>optional</em>) – list of materials to be included/excluded for the conversion.
-Defaults to ().</p></li>
+<li><p><strong>csg_format</strong> (<em>str</em>) – The format of the CSG input file, options are ‘mcnp’ or ‘openmc_xml’</p></li>
 </ul>
 </dd>
 <dt class="field-even">Raises<span class="colon">:</span></dt>
@@ -442,6 +510,170 @@ Defaults to ().</p></li>
 </dl>
 </dd></dl>
 
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="geouned.NumericFormat">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">NumericFormat</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">P_abc</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">P_d</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">P_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">S_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">S_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">C_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'12f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">C_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'12f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">K_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'13.6e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">K_tan2</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'13.6e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">T_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">T_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_1to6</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_7to9</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_10</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#NumericFormat"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.NumericFormat" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Numerical format options for each of the surface types.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>P_abc</strong> (<em>str</em><em>, </em><em>optional</em>) – Plane general a,b,c params. Defaults to “14.7e”.</p></li>
+<li><p><strong>P_d</strong> (<em>str</em><em>, </em><em>optional</em>) – Plane general d params. Defaults to “14.7e”.</p></li>
+<li><p><strong>P_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – PX/PY/PZ params. Defaults to “14.7e”.</p></li>
+<li><p><strong>S_r</strong> (<em>str</em><em>, </em><em>optional</em>) – SO/SX/SY/SZ/S radius. Defaults to “14.7e”.</p></li>
+<li><p><strong>S_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – SO/SX/SY/SZ/S center. Defaults to “14.7e”.</p></li>
+<li><p><strong>C_r</strong> (<em>str</em><em>, </em><em>optional</em>) – Cylinder radius. Defaults to “12f”.</p></li>
+<li><p><strong>C_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Cylinder center. Defaults to “12f”.</p></li>
+<li><p><strong>K_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Cone apex. Defaults to “13.6e”.</p></li>
+<li><p><strong>K_tan2</strong> (<em>str</em><em>, </em><em>optional</em>) – Cone tan^2 value. Defaults to “13.6e”.</p></li>
+<li><p><strong>T_r</strong> (<em>str</em><em>, </em><em>optional</em>) – Torus radii. Defaults to “14.7e”.</p></li>
+<li><p><strong>T_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Torus center. Defaults to “14.7e”.</p></li>
+<li><p><strong>GQ_1to6</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 1 to 6 coefficients (order 2 x2,y2,z2,xy,…). Defaults to “18.15f”.</p></li>
+<li><p><strong>GQ_7to9</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 7 to 9 coefficients (order 1 x,y,z). Defaults to “18.15f”.</p></li>
+<li><p><strong>GQ_10</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 10 coefficient. Defaults to “18.15f”.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="geouned.Options">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Options</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">forceCylinder</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">newSplitPlane</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delLastNumber</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enlargeBox</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nPlaneReverse</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">splitTolerance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">scaleUp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadricPY</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Facets</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prnt3PPlane</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forceNoOverlap</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Options"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Options" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>A class for containing conversion options</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>forceCylinder</strong> (<em>bool</em><em>, </em><em>optional</em>) – Use cylinder (instead of cones) as
+ancillary surface where unclosed torus surfaces are involved in
+the solid definition. Defaults to False.</p></li>
+<li><p><strong>newSplitPlane</strong> (<em>bool</em><em>, </em><em>optional</em>) – New method to consider plane as
+cutting surface during the decomposition process. Former method
+split first planes perpendicular to X,Y,Z axis and then the
+other planes involved in the solid definition. New method group
+all parallel planes independently whether their normal are
+along X,Y,Z axes, and start the decomposition process cutting
+first with the group having the highest number of parallel
+planes. Defaults to True.</p></li>
+<li><p><strong>delLastNumber</strong> (<em>bool</em><em>, </em><em>optional</em>) – Deleting the last word in the
+comment if it is a number. Defaults to False.</p></li>
+<li><p><strong>enlargeBox</strong> (<em>Real</em><em>, </em><em>optional</em>) – Enlarge box boundary when evaluating
+the constraint table during the simplification of the void cell
+definition. (unit is millimeter). Defaults to 2.</p></li>
+<li><p><strong>nPlaneReverse</strong> (<em>int</em><em>, </em><em>optional</em>) – Threshold value to determine whether
+cut with parallel planes should be carried out first. Defaults
+to 0.</p></li>
+<li><p><strong>splitTolerance</strong> (<em>Real</em><em>, </em><em>optional</em>) – Fuzzy tolerance value used in the
+FreeCAD function “BOPTools.SplitAPI.slice”. This function is
+used during the solid decomposition process. Defaults to 0.</p></li>
+<li><p><strong>scaleUp</strong> (<em>bool</em><em>, </em><em>optional</em>) – Scale up Fuzzy tolerance once get below
+1e-12. Defaults to True.</p></li>
+<li><p><strong>quadricPY</strong> (<em>bool</em><em>, </em><em>optional</em>) – In openMC python script format, the
+cones or cylinders no aligned with the X,Y, or Z axis can be
+defined using the openmc.Cone or open.Cylinder methods but can
+also be defined with their quadric parameter. If “quadricPY” is
+11 True then all cones and cylinders will be defined in the
+openMC python script format under their quadric form. Defaults
+to False.</p></li>
+<li><p><strong>Facets</strong> (<em>bool</em><em>, </em><em>optional</em>) – use alternative conversion module when
+geometry is defined by cells compound by only triangular plane
+faces. Defaults to False.</p></li>
+<li><p><strong>prnt3PPlane</strong> (<em>bool</em><em>, </em><em>optional</em>) – print 3 point plane definition in
+output as 3 points coordinates. Defaults to False.</p></li>
+<li><p><strong>forceNoOverlap</strong> (<em>bool</em><em>, </em><em>optional</em>) – force no overlaping cell
+definition. Adjacent cell definition are rested from current
+cell definition. Defaults to False.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="geouned.Settings">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Settings</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">outPath</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'.'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">matFile</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidGen</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">debug</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compSolids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">simplify</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'no'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exportSolids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">minVoidSize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">200.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxSurf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">50</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxBracket</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidMat</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidExclude</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">startCell</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">startSurf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sort_enclosure</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Settings"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Settings" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Settings for changing the way the CAD to CSG conversion is done</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>outPath</strong> (<em>str</em><em>, </em><em>optional</em>) – Path to folder where output file will be
+written. If folder doesn’t exist it will be created. Defaults
+to “.”.</p></li>
+<li><p><strong>matFile</strong> (<em>str</em><em>, </em><em>optional</em>) – Name of the file in which the material
+information is provided. Defaults to “”.</p></li>
+<li><p><strong>voidGen</strong> (<em>bool</em><em>, </em><em>optional</em>) – Generate voids of the geometry. Defaults
+to True.</p></li>
+<li><p><strong>debug</strong> (<em>bool</em><em>, </em><em>optional</em>) – Write step files of original and decomposed
+solids, for each solid in the STEP file. Defaults to False.</p></li>
+<li><p><strong>compSolids</strong> (<em>bool</em><em>, </em><em>optional</em>) – Join subsolids of STEP file as a single
+compound solid. Step files generated with SpaceClaim have not
+exactly the same level of solids as FreeCAD. It may a happened
+that solids defined has separated solids are read by FreeCAD
+as a single compound solid (and will produce only one MCNP
+cell). In this case compSolids should be set to False. Defaults
+to False.</p></li>
+<li><p><strong>simplify</strong> (<em>str</em><em>, </em><em>optional</em>) – Simplify the cell definition considering
+relative surfaces position and using Boolean logics. Available
+options are: “no” no optimization, “void” only void cells are
+simplified. Algorithm is faster but the simplification is not
+optimal. “voidfull” : only void cells are simplified with the
+most optimal algorithm. The time of the conversion can be
+multiplied by 5 or more. “full” : all the cells (solids and
+voids) are simplified. Defaults to “No”.</p></li>
+<li><p><strong>exportSolids</strong> (<em>str</em><em>, </em><em>optional</em>) – Export CAD solid after reading.
+The execution is stopped after export, the translation is not
+carried out. Defaults to “”.</p></li>
+<li><p><strong>minVoidSize</strong> (<em>float</em><em>, </em><em>optional</em>) – Minimum size of the edges of the
+void cell. Units are in mm. Defaults to 200.0.</p></li>
+<li><p><strong>maxSurf</strong> (<em>int</em><em>, </em><em>optional</em>) – #TODO</p></li>
+<li><p><strong>maxBracket</strong> (<em>int</em><em>, </em><em>optional</em>) – Maximum number of brackets (solid
+complementary) allowed in void cell definition. Defaults to 30.</p></li>
+<li><p><strong>voidMat</strong> (<em>list</em><em>, </em><em>optional</em>) – Assign a material defined by the user
+instead of void for cells without material definition and the
+cells generated in the automatic void generation. The format
+is a 3 valued tuple (mat_label, mat_density, mat_description).
+Example (100,1e-3,’Air assigned to Void’). Defaults to [].</p></li>
+<li><p><strong>voidExclude</strong> (<em>list</em><em>, </em><em>optional</em>) – #TODO see issue 87. Defaults to [].</p></li>
+<li><p><strong>startCell</strong> (<em>int</em><em>, </em><em>optional</em>) – Starting cell numbering label. Defaults to 1.</p></li>
+<li><p><strong>startSurf</strong> (<em>int</em><em>, </em><em>optional</em>) – Starting surface numbering label. Defaults to 1.</p></li>
+<li><p><strong>sort_enclosure</strong> (<em>bool</em><em>, </em><em>optional</em>) – If enclosures are defined in the
+CAD models, the voids cells of the enclosure will be located in
+the output file in the same location where the enclosure solid
+is located in the CAD solid tree.. Defaults to False.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="geouned.Tolerances">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Tolerances</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">relativeTol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">relativePrecision</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pln_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pln_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cyl_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cyl_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sph_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kne_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kne_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tor_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tor_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_area</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.01</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Tolerances"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Tolerances" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>A class for containing tolerances values</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>relativeTol</strong> (<em>bool</em><em>, </em><em>optional</em>) – _description_. Defaults to False.</p></li>
+<li><p><strong>relativePrecision</strong> (<em>float</em><em>, </em><em>optional</em>) – relative precision. Defaults to 1.0e-6.</p></li>
+<li><p><strong>value</strong> (<em>float</em><em>, </em><em>optional</em>) – Tolerance in single value comparison. Defaults to 1.0e-6.</p></li>
+<li><p><strong>distance</strong> (<em>float</em><em>, </em><em>optional</em>) – General Distance Tolerance. Defaults to 1.0e-4.</p></li>
+<li><p><strong>angle</strong> (<em>float</em><em>, </em><em>optional</em>) – General Angle Tolerance. Defaults to 1.0e-4.</p></li>
+<li><p><strong>pln_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between planes equal planes if distance between parallel planes &lt; 1e-4 cm. Defaults to 1.0e-4.</p></li>
+<li><p><strong>pln_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. 1e-4 : planes separate each other 0.1mm each 1m. Defaults to 1.0e-4.</p></li>
+<li><p><strong>cyl_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between radius/center. Defaults to 1.0e-4.</p></li>
+<li><p><strong>cyl_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. Defaults to 1.0e-4.</p></li>
+<li><p><strong>sph_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between radius/center. Defaults to 1.0e-4.</p></li>
+<li><p><strong>kne_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between apex. Defaults to 1.0e-4.</p></li>
+<li><p><strong>kne_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between semiangles/axis. Defaults to 1.0e-4.</p></li>
+<li><p><strong>tor_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between Major/Minor radii/center. Defaults to 1.0e-4.</p></li>
+<li><p><strong>tor_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. Defaults to 1.0e-4.</p></li>
+<li><p><strong>min_area</strong> (<em>float</em><em>, </em><em>optional</em>) – minimum face area to consider in cell definition. Defaults to 1.0e-2.</p></li>
+</ul>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py class">
@@ -536,13 +768,15 @@ then this method also runs CadToCsg.export_to_csg() on the instance.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="geouned.CadToCsg.load_step_file">
-<span class="sig-name descname"><span class="pre">load_step_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filename</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">skip_solids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/core.html#CadToCsg.load_step_file"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CadToCsg.load_step_file" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">load_step_file</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filename</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">skip_solids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spline_surfaces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'stop'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/core.html#CadToCsg.load_step_file"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.CadToCsg.load_step_file" title="Link to this definition">#</a></dt>
 <dd><p>Load STEP file(s) and extract solid volumes and enclosure volumes.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>filename</strong> (<em>str</em>) – The path to the STEP file or a list of paths to multiple STEP files.</p></li>
 <li><p><strong>skip_solids</strong> (<em>Sequence</em><em>[</em><em>int</em><em>]</em><em>, </em><em>optional</em>) – A sequence (list or tuple) of indexes of solids to not load for conversion.</p></li>
+<li><p><strong>spline_surfaces</strong> (<em>str</em>) – Behavior of the code if solids with spline surface are considered: ‘stop’ execution, ‘remove’ solid,
+‘ignore’ solid is included for translation (may lead to translation errors)</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -557,160 +791,22 @@ then this method also runs CadToCsg.export_to_csg() on the instance.</p>
 </dd></dl>
 
 <dl class="py class">
-<dt class="sig sig-object py" id="geouned.NumericFormat">
-<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">NumericFormat</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">P_abc</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">P_d</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">P_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">S_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">S_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">C_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'12f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">C_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'12f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">K_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'13.6e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">K_tan2</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'13.6e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">T_r</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">T_xyz</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'14.7e'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_1to6</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_7to9</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">GQ_10</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'18.15f'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#NumericFormat"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.NumericFormat" title="Link to this definition">#</a></dt>
+<dt class="sig sig-object py" id="geouned.BoxSettings">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">BoxSettings</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">universe_radius</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">100000000.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">insolid_tolerance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOReverse/Modules/data_class.html#BoxSettings"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.BoxSettings" title="Link to this definition">#</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
-<p>Numerical format options for each of the surface types.</p>
+<p>Parameters used in the solids boundbox generation. Optimized dimensions can reduce
+the translation time.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>P_abc</strong> (<em>str</em><em>, </em><em>optional</em>) – Plane general a,b,c params. Defaults to “14.7e”.</p></li>
-<li><p><strong>P_d</strong> (<em>str</em><em>, </em><em>optional</em>) – Plane general d params. Defaults to “14.7e”.</p></li>
-<li><p><strong>P_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – PX/PY/PZ params. Defaults to “14.7e”.</p></li>
-<li><p><strong>S_r</strong> (<em>str</em><em>, </em><em>optional</em>) – SO/SX/SY/SZ/S radius. Defaults to “14.7e”.</p></li>
-<li><p><strong>S_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – SO/SX/SY/SZ/S center. Defaults to “14.7e”.</p></li>
-<li><p><strong>C_r</strong> (<em>str</em><em>, </em><em>optional</em>) – Cylinder radius. Defaults to “12f”.</p></li>
-<li><p><strong>C_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Cylinder center. Defaults to “12f”.</p></li>
-<li><p><strong>K_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Cone apex. Defaults to “13.6e”.</p></li>
-<li><p><strong>K_tan2</strong> (<em>str</em><em>, </em><em>optional</em>) – Cone tan^2 value. Defaults to “13.6e”.</p></li>
-<li><p><strong>T_r</strong> (<em>str</em><em>, </em><em>optional</em>) – Torus radii. Defaults to “14.7e”.</p></li>
-<li><p><strong>T_xyz</strong> (<em>str</em><em>, </em><em>optional</em>) – Torus center. Defaults to “14.7e”.</p></li>
-<li><p><strong>GQ_1to6</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 1 to 6 coefficients (order 2 x2,y2,z2,xy,…). Defaults to “18.15f”.</p></li>
-<li><p><strong>GQ_7to9</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 7 to 9 coefficients (order 1 x,y,z). Defaults to “18.15f”.</p></li>
-<li><p><strong>GQ_10</strong> (<em>str</em><em>, </em><em>optional</em>) – GQ 10 coefficient. Defaults to “18.15f”.</p></li>
-</ul>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py class">
-<dt class="sig sig-object py" id="geouned.Options">
-<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Options</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">forceCylinder</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">newSplitPlane</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delLastNumber</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enlargeBox</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nPlaneReverse</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">splitTolerance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">scaleUp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadricPY</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">Facets</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prnt3PPlane</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forceNoOverlap</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Options"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Options" title="Link to this definition">#</a></dt>
-<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
-<p>A class for containing conversion options</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>forceCylinder</strong> (<em>bool</em><em>, </em><em>optional</em>) – Use cylinder (instead of cones) as
-ancillary surface where unclosed torus surfaces are involved in
-the solid definition. Defaults to False.</p></li>
-<li><p><strong>newSplitPlane</strong> (<em>bool</em><em>, </em><em>optional</em>) – New method to consider plane as
-cutting surface during the decomposition process. Former method
-split first planes perpendicular to X,Y,Z axis and then the
-other planes involved in the solid definition. New method group
-all parallel planes independently whether their normal are
-along X,Y,Z axes, and start the decomposition process cutting
-first with the group having the highest number of parallel
-planes. Defaults to True.</p></li>
-<li><p><strong>delLastNumber</strong> (<em>bool</em><em>, </em><em>optional</em>) – Deleting the last word in the
-comment if it is a number. Defaults to False.</p></li>
-<li><p><strong>enlargeBox</strong> (<em>Real</em><em>, </em><em>optional</em>) – Enlarge box boundary when evaluating
-the constraint table during the simplification of the void cell
-definition. (unit is millimeter). Defaults to 2.</p></li>
-<li><p><strong>nPlaneReverse</strong> (<em>int</em><em>, </em><em>optional</em>) – Threshold value to determine whether
-cut with parallel planes should be carried out first. Defaults
-to 0.</p></li>
-<li><p><strong>splitTolerance</strong> (<em>Real</em><em>, </em><em>optional</em>) – Fuzzy tolerance value used in the
-FreeCAD function “BOPTools.SplitAPI.slice”. This function is
-used during the solid decomposition process. Defaults to 0.</p></li>
-<li><p><strong>scaleUp</strong> (<em>bool</em><em>, </em><em>optional</em>) – Scale up Fuzzy tolerance once get below
-1e-12. Defaults to True.</p></li>
-<li><p><strong>quadricPY</strong> (<em>bool</em><em>, </em><em>optional</em>) – In openMC python script format, the
-cones or cylinders no aligned with the X,Y, or Z axis can be
-defined using the openmc.Cone or open.Cylinder methods but can
-also be defined with their quadric parameter. If “quadricPY” is
-11 True then all cones and cylinders will be defined in the
-openMC python script format under their quadric form. Defaults
-to False.</p></li>
-<li><p><strong>Facets</strong> (<em>bool</em><em>, </em><em>optional</em>) – use alternative conversion module when
-geometry is defined by cells compound by only triangular plane
-faces. Defaults to False.</p></li>
-<li><p><strong>prnt3PPlane</strong> (<em>bool</em><em>, </em><em>optional</em>) – print 3 point plane definition in
-output as 3 points coordinates. Defaults to False.</p></li>
-<li><p><strong>forceNoOverlap</strong> (<em>bool</em><em>, </em><em>optional</em>) – force no overlaping cell
-definition. Adjacent cell definition are rested from current
-cell definition. Defaults to False.</p></li>
-</ul>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py class">
-<dt class="sig sig-object py" id="geouned.Settings">
-<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Settings</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">matFile</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidGen</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">debug</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compSolids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">simplify</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'no'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exportSolids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">minVoidSize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">200.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxSurf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">50</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxBracket</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidMat</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">voidExclude</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">startCell</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">startSurf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sort_enclosure</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Settings"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Settings" title="Link to this definition">#</a></dt>
-<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
-<p>Settings for changing the way the CAD to CSG conversion is done</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>matFile</strong> (<em>str</em><em>, </em><em>optional</em>) – _description_. Defaults to “”.</p></li>
-<li><p><strong>voidGen</strong> (<em>bool</em><em>, </em><em>optional</em>) – Generate voids of the geometry. Defaults
-to True.</p></li>
-<li><p><strong>debug</strong> (<em>bool</em><em>, </em><em>optional</em>) – Write step files of original and decomposed
-solids, for each solid in the STEP file. Defaults to False.</p></li>
-<li><p><strong>compSolids</strong> (<em>bool</em><em>, </em><em>optional</em>) – Join subsolids of STEP file as a single
-compound solid. Step files generated with SpaceClaim have not
-exactly the same level of solids as FreeCAD. It may a happened
-that solids defined has separated solids are read by FreeCAD
-as a single compound solid (and will produce only one MCNP
-cell). In this case compSolids should be set to False. Defaults
-to False.</p></li>
-<li><p><strong>simplify</strong> (<em>str</em><em>, </em><em>optional</em>) – Simplify the cell definition considering
-relative surfaces position and using Boolean logics. Available
-options are: “no” no optimization, “void” only void cells are
-simplified. Algorithm is faster but the simplification is not
-optimal. “voidfull” : only void cells are simplified with the
-most optimal algorithm. The time of the conversion can be
-multiplied by 5 or more. “full” : all the cells (solids and
-voids) are simplified. Defaults to “No”.</p></li>
-<li><p><strong>exportSolids</strong> (<em>str</em><em>, </em><em>optional</em>) – Export CAD solid after reading.
-The execution is stopped after export, the translation is not
-carried out. Defaults to “”.</p></li>
-<li><p><strong>minVoidSize</strong> (<em>float</em><em>, </em><em>optional</em>) – Minimum size of the edges of the
-void cell. Units are in mm. Defaults to 200.0.</p></li>
-<li><p><strong>maxSurf</strong> (<em>int</em><em>, </em><em>optional</em>) – #TODO</p></li>
-<li><p><strong>maxBracket</strong> (<em>int</em><em>, </em><em>optional</em>) – Maximum number of brackets (solid
-complementary) allowed in void cell definition. Defaults to 30.</p></li>
-<li><p><strong>voidMat</strong> (<em>list</em><em>, </em><em>optional</em>) – Assign a material defined by the user
-instead of void for cells without material definition and the
-cells generated in the automatic void generation. The format
-is a 3 valued tuple (mat_label, mat_density, mat_description).
-Example (100,1e-3,’Air assigned to Void’). Defaults to [].</p></li>
-<li><p><strong>voidExclude</strong> (<em>list</em><em>, </em><em>optional</em>) – #TODO see issue 87. Defaults to [].</p></li>
-<li><p><strong>startCell</strong> (<em>int</em><em>, </em><em>optional</em>) – Starting cell numbering label. Defaults to 1.</p></li>
-<li><p><strong>startSurf</strong> (<em>int</em><em>, </em><em>optional</em>) – Starting surface numbering label. Defaults to 1.</p></li>
-<li><p><strong>sort_enclosure</strong> (<em>bool</em><em>, </em><em>optional</em>) – If enclosures are defined in the
-CAD models, the voids cells of the enclosure will be located in
-the output file in the same location where the enclosure solid
-is located in the CAD solid tree.. Defaults to False.</p></li>
-</ul>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py class">
-<dt class="sig sig-object py" id="geouned.Tolerances">
-<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">geouned.</span></span><span class="sig-name descname"><span class="pre">Tolerances</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">relativeTol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">relativePrecision</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pln_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pln_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cyl_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cyl_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sph_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kne_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kne_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tor_distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tor_angle</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_area</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.01</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/geouned/GEOUNED/utils/data_classes.html#Tolerances"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#geouned.Tolerances" title="Link to this definition">#</a></dt>
-<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
-<p>A class for containing tolerances values</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>relativeTol</strong> (<em>bool</em><em>, </em><em>optional</em>) – _description_. Defaults to False.</p></li>
-<li><p><strong>relativePrecision</strong> (<em>float</em><em>, </em><em>optional</em>) – relative precision. Defaults to 1.0e-6.</p></li>
-<li><p><strong>value</strong> (<em>float</em><em>, </em><em>optional</em>) – Tolerance in single value comparison. Defaults to 1.0e-6.</p></li>
-<li><p><strong>distance</strong> (<em>float</em><em>, </em><em>optional</em>) – General Distance Tolerance. Defaults to 1.0e-4.</p></li>
-<li><p><strong>angle</strong> (<em>float</em><em>, </em><em>optional</em>) – General Angle Tolerance. Defaults to 1.0e-4.</p></li>
-<li><p><strong>pln_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between planes equal planes if distance between parallel planes &lt; 1e-4 cm. Defaults to 1.0e-4.</p></li>
-<li><p><strong>pln_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. 1e-4 : planes separate each other 0.1mm each 1m. Defaults to 1.0e-4.</p></li>
-<li><p><strong>cyl_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between radius/center. Defaults to 1.0e-4.</p></li>
-<li><p><strong>cyl_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. Defaults to 1.0e-4.</p></li>
-<li><p><strong>sph_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between radius/center. Defaults to 1.0e-4.</p></li>
-<li><p><strong>kne_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between apex. Defaults to 1.0e-4.</p></li>
-<li><p><strong>kne_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between semiangles/axis. Defaults to 1.0e-4.</p></li>
-<li><p><strong>tor_distance</strong> (<em>float</em><em>, </em><em>optional</em>) – distance between Major/Minor radii/center. Defaults to 1.0e-4.</p></li>
-<li><p><strong>tor_angle</strong> (<em>float</em><em>, </em><em>optional</em>) – angle between axis. Defaults to 1.0e-4.</p></li>
-<li><p><strong>min_area</strong> (<em>float</em><em>, </em><em>optional</em>) – minimum face area to consider in cell definition. Defaults to 1.0e-2.</p></li>
+<li><p><strong>universe_radius</strong> (<em>float</em><em>, </em><em>optional</em>) – Maxium radius of the CAD universe.</p></li>
+<li><p><strong>represented.</strong> (<em>Solids with coordinates x^2+y^2+z*2 &gt; universe_radius^2 will be cut</em><em> or </em><em>not</em>)</p></li>
+<li><p><strong>1.0e8.</strong> (<em>Units mm. Defaults to</em>)</p></li>
+<li><p><strong>insolid_tolerance</strong> (<em>float</em><em>, </em><em>optional</em>) – Maximum distance from the nearest</p></li>
+<li><p><strong>solid</strong> (<em>surface</em><em> of </em><em>the</em>)</p></li>
+<li><p><strong>assumed</strong> (<em>for which a point outside the solid is</em>)</p></li>
+<li><p><strong>mm.</strong> (<em>inside the solid. Used only for boundbox generation. Units</em>)</p></li>
+<li><p><strong>.</strong> (<em>Defaults to 1</em>)</p></li>
 </ul>
 </dd>
 </dl>
@@ -766,19 +862,25 @@ is located in the CAD solid tree.. Defaults to False.</p></li>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad"><code class="docutils literal notranslate"><span class="pre">CsgToCad</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.build_container"><code class="docutils literal notranslate"><span class="pre">CsgToCad.build_container()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.build_universe"><code class="docutils literal notranslate"><span class="pre">CsgToCad.build_universe()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.cell_filter"><code class="docutils literal notranslate"><span class="pre">CsgToCad.cell_filter()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.export_cad"><code class="docutils literal notranslate"><span class="pre">CsgToCad.export_cad()</span></code></a></li>
-</ul>
-</li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg"><code class="docutils literal notranslate"><span class="pre">CadToCsg</span></code></a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.export_csg"><code class="docutils literal notranslate"><span class="pre">CadToCsg.export_csg()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.from_json"><code class="docutils literal notranslate"><span class="pre">CadToCsg.from_json()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.load_step_file"><code class="docutils literal notranslate"><span class="pre">CadToCsg.load_step_file()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.material_filter"><code class="docutils literal notranslate"><span class="pre">CsgToCad.material_filter()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CsgToCad.read_csg_file"><code class="docutils literal notranslate"><span class="pre">CsgToCad.read_csg_file()</span></code></a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.NumericFormat"><code class="docutils literal notranslate"><span class="pre">NumericFormat</span></code></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.Options"><code class="docutils literal notranslate"><span class="pre">Options</span></code></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.Settings"><code class="docutils literal notranslate"><span class="pre">Settings</span></code></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.Tolerances"><code class="docutils literal notranslate"><span class="pre">Tolerances</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg"><code class="docutils literal notranslate"><span class="pre">CadToCsg</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.export_csg"><code class="docutils literal notranslate"><span class="pre">CadToCsg.export_csg()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.from_json"><code class="docutils literal notranslate"><span class="pre">CadToCsg.from_json()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.CadToCsg.load_step_file"><code class="docutils literal notranslate"><span class="pre">CadToCsg.load_step_file()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geouned.BoxSettings"><code class="docutils literal notranslate"><span class="pre">BoxSettings</span></code></a></li>
 </ul>
   </nav></div>
 
@@ -825,7 +927,7 @@ is located in the CAD solid tree.. Defaults to False.</p></li>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.1.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>
