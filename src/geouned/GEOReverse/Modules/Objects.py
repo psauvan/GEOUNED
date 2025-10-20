@@ -490,7 +490,6 @@ class Ellipsoid:
 
     def transform(self, matrix):
         p, v, radii, raxes = self.params
-        v = matrix.submatrix(3).multVec(v)
         raxes[0] = matrix.submatrix(3).multVec(raxes[0])
         raxes[1] = matrix.submatrix(3).multVec(raxes[1])
         p = matrix.multVec(p)

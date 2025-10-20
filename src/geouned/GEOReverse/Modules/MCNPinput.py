@@ -129,7 +129,7 @@ class McnpInput:
         # check all Universe have container cell
         for k in Universe_dict.keys():
             if k not in containers_label and k != root_universe:
-                raise RuntimeError(f"Universe {k} has not container cell.")
+                print(f"Universe {k} has not container cell.")
 
         currentLevel = [root_universe]
         nextLevel = []
@@ -254,7 +254,7 @@ def getTransMatrix(trsf, unit="", scale=10.0):
             coeff = trsf[3:9]
 
         axis = FreeCAD.Vector(coeff[0:3]).cross(FreeCAD.Vector(coeff[3:6]))
-        coeff = coeff + (axis.x, axis.y, axis.z)
+        coeff = coeff + [axis.x, axis.y, axis.z]
 
         trsfMat = FreeCAD.Matrix(
             coeff[0], coeff[3], coeff[6], trsf[0] * scale,
