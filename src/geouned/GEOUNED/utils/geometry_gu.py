@@ -384,7 +384,7 @@ class FaceGu(object):
 
 class ShellGu:
     def __init__(self, faces):
-        self.__shell__ = Part.makeShell(faces)
+        self.__shell__ = Part.makeShell(tuple(f.__face__ for f in faces))
         self.Faces = faces
         self.Edges = []
         self.Indexes = []

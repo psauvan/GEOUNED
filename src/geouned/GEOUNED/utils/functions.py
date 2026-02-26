@@ -351,8 +351,11 @@ def build_can_params(cs):
                 # move sligtly the plane position toward boundary surface center
                 d = sphOnly.Surf.Center - pa.Surf.Position
                 pa.Surf.Position = pa.Surf.Position + 0.01 * d
-
             gs = GeounedSurface(("Sphere", (sphOnly, pa), s.Orientation))
+        else:
+            print("bad surfacetype")
+
+            
 
         bsurf.append((gs, r))
 

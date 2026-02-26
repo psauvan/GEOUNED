@@ -174,7 +174,7 @@ def spline_wires(edges, face):
     W = Part.Wire(edges)
     majoraxis = get_axis_inertia(W.MatrixOfInertia)
 
-    edge = edges[0]
+    edge = edges.Edges[0]
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p0 + p1)
     pos = edge.Curve.value(pe)
@@ -185,7 +185,7 @@ def spline_wires(edges, face):
     rmin = (1e15, None)
     rmax = (-1e15, None)
 
-    for edge in edges:
+    for edge in edges.Edges:
 
         if type(edge.Curve) is Part.BSplineCurve:
             for p in edge.Curve.getPoles():
@@ -327,6 +327,9 @@ def cutting_face_number(f, Faces, omitfaces):
             continue
         if isinstance(adjacent_face.Surface, PlaneGu):
             ncut += 1
+        elif  adjacent_face.Surface is None:  
+            adjacent_face.__face__.exportStep('Spline_surface.stp')
+            raise('Spline surface detectected')
         elif region_sign(f, adjacent_face) == "OR":
             ncut += 1
     return ncut
