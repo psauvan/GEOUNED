@@ -355,8 +355,6 @@ def build_can_params(cs):
         else:
             print("bad surfacetype")
 
-            
-
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))

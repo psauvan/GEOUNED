@@ -327,9 +327,9 @@ def cutting_face_number(f, Faces, omitfaces):
             continue
         if isinstance(adjacent_face.Surface, PlaneGu):
             ncut += 1
-        elif  adjacent_face.Surface is None:  
-            adjacent_face.__face__.exportStep('Spline_surface.stp')
-            raise('Spline surface detectected')
+        elif adjacent_face.Surface is None:
+            adjacent_face.__face__.exportStep("Spline_surface.stp")
+            raise ("Spline surface detectected")
         elif region_sign(f, adjacent_face) == "OR":
             ncut += 1
     return ncut
