@@ -152,7 +152,7 @@ def cyl_edge_plane(face, edges):
             break
 
     if spline:
-        planeParams = spline_wires(edges, face)
+        planeParams = spline_wires(edge, face)
     else:
         edge = edges[0]
         if isinstance(edge.Curve, (Part.Circle, Part.Ellipse)):
