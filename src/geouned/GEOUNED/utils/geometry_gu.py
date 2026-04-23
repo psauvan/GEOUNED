@@ -375,7 +375,10 @@ class FaceGu(object):
         if shape1 is shape2:
             return (0,)
         else:
-            if shape1.BoundBox.intersect(shape2.BoundBox):
+            box1MinDim = min(shape1.BoundBox.XLength, shape1.BoundBox.YLength, shape1.BoundBox.ZLength)
+            box2MinDim = min(shape2.BoundBox.XLength, shape2.BoundBox.YLength, shape2.BoundBox.ZLength)
+            planeBox = box1MinDim < 1e-8 or box2MinDim < 1.0e-8
+            if shape1.BoundBox.intersect(shape2.BoundBox) or planeBox:
                 try:
                     dist2Shape = shape1.distToShape(shape2)
                 except:
@@ -383,8 +386,8 @@ class FaceGu(object):
             else:
                 c1 = shape1.BoundBox.Center
                 c2 = shape2.BoundBox.Center
-                d = c2-c1
-                dist2Shape = (d.Length,0)                        
+                d = c2 - c1
+                dist2Shape = (d.Length, 0)
             return dist2Shape
 
 
