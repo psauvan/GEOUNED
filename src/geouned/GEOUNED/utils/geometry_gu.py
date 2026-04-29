@@ -375,19 +375,38 @@ class FaceGu(object):
         if shape1 is shape2:
             return (0,)
         else:
-            box1MinDim = min(shape1.BoundBox.XLength, shape1.BoundBox.YLength, shape1.BoundBox.ZLength)
-            box2MinDim = min(shape2.BoundBox.XLength, shape2.BoundBox.YLength, shape2.BoundBox.ZLength)
-            planeBox = box1MinDim < 1e-8 or box2MinDim < 1.0e-8
-            if shape1.BoundBox.intersect(shape2.BoundBox) or planeBox:
+            Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
+            intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
+            if intersect:
                 try:
-                    dist2Shape = shape1.distToShape(shape2)
+                    # dist2Shape = shape1.distToShape(shape2)
+                    inter = shape1.common(shape2)
                 except:
-                    dist2Shape = shape2.distToShape(shape1)
+                    # dist2Shape = shape2.distToShape(shape1)
+                    inter = shape2.common(shape1)
+
+                if abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0:
+                    dist2Shape = (0.0,)
+                else:
+                    same = False
+                    for e1 in shape1.Edges:
+                        if same:
+                            break
+                        for e2 in shape2.Edges:
+                            if e1.isSame(e2):
+                                dist2Shape = (0,)
+                                same = True
+                                break
+                    if not same:
+                        dist2Shape = (1.0,)
             else:
                 c1 = shape1.BoundBox.Center
                 c2 = shape2.BoundBox.Center
                 d = c2 - c1
-                dist2Shape = (d.Length, 0)
+                dist2Shape = (d.Length,)
+            #            dts = shape1.distToShape(shape2)[0]
+            #            if (dist2Shape[0] == 0 and dts > 1e-8) or (dts < 1e-8 and dist2Shape[0] > 0 ):
+            #                print ('vamos a ver')
             return dist2Shape
 
 
@@ -709,3 +728,24 @@ def same_wire(w1, w2):
         pos2 = e2.valueAt(p2)
         v2 = Part.Vertex(pos2)
         return e1.distToShape(v2)[0] < 1e-5
+
+
+def line_projection(p1, v1, p2, v2):
+    """return the point of the projection of the line with point p2 and axis v2
+    on line (p1,v1)"""
+
+    x = FreeCAD.Vector(v1)
+    y = FreeCAD.Vector(v2)
+    x.normalize()
+    y.normalize()
+
+    alpha = p1.dot(x)
+    beta = p2.dot(x)
+    gamma = p1.dot(y)
+    delta = p2.dot(y)
+    c = x.dot(y)
+    if abs(c) > 1 - 1e-6:
+        return None  # v1 and v2 parallel
+    else:
+        xm = (-alpha + beta + c * (gamma - delta)) / (1 - c * c)
+        return p1 + xm * x

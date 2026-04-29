@@ -59,9 +59,6 @@ def void_generation(
         EnclosureBox,
         setting,
         options,
-        tolerances,
-        numeric_format,
-        Lev0=True,
     )
     voidList.append(voids)
 
@@ -83,8 +80,6 @@ def void_generation(
                 encl,
                 setting,
                 options,
-                tolerances,
-                numeric_format,
             )
             voidList.append(voids)
 
@@ -99,9 +94,6 @@ def get_void_def(
     Enclosure,
     setting,
     options,
-    tolerances,
-    numeric_format,
-    Lev0=False,
 ):
 
     maxsurf = setting.maxSurf
@@ -115,10 +107,10 @@ def get_void_def(
     else:
         simplifyVoid = "no"
 
-    if Lev0:
-        Universe = VoidBox(MetaList, Enclosure.BoundBox)
+    if Enclosure.IsEnclosure:
+        Universe = VoidBox(MetaList, Enclosure.CADSolid.optimalBoundingBox(), Enclosure.CADSolid, Enclosure.Definition)
     else:
-        Universe = VoidBox(MetaList, Enclosure.CADSolid)
+        Universe = VoidBox(MetaList, Enclosure.BoundBox)
 
     Initial = [Universe]
     VoidDef = []
@@ -153,7 +145,7 @@ def get_void_def(
 
                 logger.info(f"build complementary {iloop} {iz}")
 
-                cell, CellIn = z.get_void_complementary(Surfaces, options, tolerances, numeric_format, simplify=simplifyVoid)
+                cell, CellIn = z.get_void_complementary(Surfaces, options, simplify=simplifyVoid)
                 if cell is not None:
                     VoidCell = (cell, (boxDim, CellIn))
                     VoidDef.append(VoidCell)

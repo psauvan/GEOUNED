@@ -142,7 +142,7 @@ def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
     return planes
 
 
-def cyl_edge_plane(face, edges):
+def cyl_edge_plane(face, edges, pc=None):
 
     planeParams = None
     spline = False
@@ -152,7 +152,7 @@ def cyl_edge_plane(face, edges):
             break
 
     if spline:
-        planeParams = spline_wires(edge, face)
+        planeParams = spline_wires(edges, face, pc)
     else:
         edge = edges[0]
         if isinstance(edge.Curve, (Part.Circle, Part.Ellipse)):
@@ -168,13 +168,13 @@ def cyl_edge_plane(face, edges):
         return GeounedSurface(("Plane", planeParams))
 
 
-def spline_wires(edges, face):
+def spline_wires(edges, face, pc=None):
 
     zaxis = face.Surface.Axis
     W = Part.Wire(edges)
     majoraxis = get_axis_inertia(W.MatrixOfInertia)
 
-    edge = edges.Edges[0]
+    edge = edges[0]
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p0 + p1)
     pos = edge.Curve.value(pe)
@@ -185,7 +185,7 @@ def spline_wires(edges, face):
     rmin = (1e15, None)
     rmax = (-1e15, None)
 
-    for edge in edges.Edges:
+    for edge in edges:
 
         if type(edge.Curve) is Part.BSplineCurve:
             for p in edge.Curve.getPoles():
@@ -213,22 +213,31 @@ def spline_wires(edges, face):
 
         rmin = rmin[1]
         rmax = rmax[1]
-        d = 0.01 * abs(majoraxis.dot(rmax - rmin))
+        if pc is not None:
+            centerDir = pc - W.CenterOfMass
+            centerDir.normalize()
+            if centerDir.dot(majoraxis) > 0:
+                point = rmax
+            else:
+                point = rmin
+            d = 0.01 * abs(majoraxis.dot(rmax - rmin))
+        else:
+            point = 0.5 * (rmin + rmax)
+            d = 0.51 * abs(majoraxis.dot(rmax - rmin))
+
         vec = majoraxis
         if majoraxis.dot(zaxis) > 0:
-            if lowSide:
-                point = rmin - d * vec
-            else:
-                point = rmax + d * vec
+            if not lowSide:
                 vec = -vec
         else:
             if lowSide:
-                point = rmax + d * vec
                 vec = -vec
-            else:
-                point = rmin - d * vec
+        if pc is not None:
+            point += d * centerDir
+        else:
+            point -= d * vec
 
-        return [point, vec, 1, 1, False]  # toward the center of the cylinder
+        return [point, vec, 1, 1, False]  # positive plane directiontoward the center of the cylinder
 
 
 def get_axis_inertia(mat):

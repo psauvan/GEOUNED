@@ -10,6 +10,7 @@ import math
 logger = logging.getLogger("general_logger")
 
 from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu
+from .geometry_gu import line_projection
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
@@ -309,7 +310,10 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            pa = cyl_edge_plane(cyl, edges)
+            c1 = s.Surface.Center
+            v1 = s.Surface.Axis
+            pc = line_projection(c1, v1, cyl.Surface.Center, cyl.Surface.Axis)
+            pa = cyl_edge_plane(cyl, edges, pc)
             if r is None:
                 r = "AND" if s.Orientation == "Forward" else "OR"
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
@@ -329,7 +333,10 @@ def build_can_params(cs):
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
             coneOnly = GeounedSurface(("ConeOnly", (s.Surface.Apex, s.Surface.Axis, s.Surface.SemiAngle, 1.0, 1.0)))
-            pa = cyl_edge_plane(cyl, edges)
+            c1 = s.Surface.Apex
+            v1 = s.Surface.Axis
+            pc = line_projection(c1, v1, cyl.Surface.Center, cyl.Surface.Axis)
+            pa = cyl_edge_plane(cyl, edges, pc)
             if not planar_edges(edges):
                 # move sligtly the plane position toward boundary surface center
                 cr = coneOnly.Surf.Apex - pa.Surf.Position
@@ -346,7 +353,7 @@ def build_can_params(cs):
 
             edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             sphOnly = GeounedSurface(("SphereOnly", (s.Surface.Center, s.Surface.Radius)))
-            pa = cyl_edge_plane(cyl, edges)
+            pa = cyl_edge_plane(cyl, edges, s.Surface.Center)
             if not planar_edges(edges):
                 # move sligtly the plane position toward boundary surface center
                 d = sphOnly.Surf.Center - pa.Surf.Position
