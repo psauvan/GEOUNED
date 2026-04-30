@@ -85,7 +85,7 @@ class XmlInput:
 
             if c.FILL:
                 containers.append(c)
-                containers_label.append(c.FILL)
+                containers_label.add(c.FILL)
 
         if 0 in Universe_dict.keys():
             root_universe = 0
@@ -103,8 +103,8 @@ class XmlInput:
         currentLevel = [root_universe]
         nextLevel = []
         univLevel = {0: {root_universe}}
-
         level = 0
+
         while True:
             level += 1
             univLevel[level] = set()
@@ -164,7 +164,7 @@ class XmlInput:
     def GetSurfaces(self):
         surf_cards = {}
         number = 1
-        scale = 1.0  # don't change CAD units
+        scale = 10  # change cm units to mm
         for c in self.__inputcards__:
             if c.type != "surface":
                 continue

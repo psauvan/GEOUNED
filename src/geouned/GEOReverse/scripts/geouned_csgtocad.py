@@ -37,7 +37,7 @@ def main():
         geo.cell_filter(**config["cell_filter"])
 
     if "mat_filter" in config.keys():
-        geo.materials_filter(**config["mat_filter"])
+        geo.material_filter(**config["mat_filter"])
 
     geo.build_universe()
 

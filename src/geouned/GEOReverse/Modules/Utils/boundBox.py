@@ -2,33 +2,133 @@ import FreeCAD
 import Part
 import math
 import numpy
+import typing
 from .booleanFunction import BoolSequence
-from ..data_class import BoxSettings
 
 twoPi = math.pi * 2
+
+
+class BoxSettings:
+    """Parameters used in the solids boundbox generation. Optimized dimensions can reduce
+    the translation time.
+
+    Args:
+        universe_radius (float, optional): Maximum radius of the CAD universe.
+            Solids with coordinates x^2+y^2+z*2 > universe_radius^2 will be cut or not represented.
+            Units mm. Defaults to 1.0e6.
+        insolid_tolerance (float, optional): Maximum distance from the nearest
+            surface of the solid, for which a point outside the solid is assumed
+            inside the solid. Used only for boundbox generation. Units mm.
+            Defaults to 1.
+        box_dimensions (None,tuple,list, optional): dimensions of the universe box in which solids
+            will be converted to CAD. Dimensions are (Xmin, Ymin, Zmin, Xmax, Ymax, Zmax) of the box.
+            If no box dimensions is provided, the universe dimension is given by the universe_radius parameter.
+            Defaul to None.
+    """
+
+    def __init__(
+        self,
+        universe_radius: float = 1.0e6,  # units mm
+        insolid_tolerance: float = 1,  # units mm
+        box_dimensions: typing.Union[None, list, tuple] = None,
+    ):
+
+        self.universe_radius = universe_radius
+        self.insolid_tolerance = insolid_tolerance
+        self.box_dimensions = box_dimensions
+        self.set_universe_box()
+
+    @property
+    def universe_radius(self):
+        return self._universe_radius
+
+    @universe_radius.setter
+    def universe_radius(self, universe_radius: float):
+        if not isinstance(universe_radius, (float, int)):
+            raise TypeError(f"geoReverse.Settings.universe_radius should be a float, not a {type(universe_radius)}")
+        self._universe_radius = universe_radius
+
+    @property
+    def insolid_tolerance(self):
+        return self._insolid_tolerance
+
+    @insolid_tolerance.setter
+    def insolid_tolerance(self, insolid_tolerance: float):
+        if not isinstance(insolid_tolerance, (float, int)):
+            raise TypeError(f"geoReverse.Settings.insolid_tolerance should be a float, not a {type(insolid_tolerance)}")
+        self._insolid_tolerance = insolid_tolerance
+
+    @property
+    def box_dimensions(self):
+        return self._box_dimensions
+
+    @box_dimensions.setter
+    def box_dimensions(self, box_dimensions: typing.Union[None, list, tuple]):
+        if box_dimensions is None:
+            self._box_dimensions = None
+        else:
+            if not isinstance(box_dimensions, (list, tuple)):
+                raise TypeError(f"geoReverse.Settings.box_dimensions should be a list or tuple, not a {type(box_dimensions)}")
+            for x in box_dimensions:
+                if not isinstance(x, (float, int)):
+                    raise TypeError(f"geoReverse.Settings.box_dimensions elements should be floats, not a {type(x)}")
+
+            for i in range(3):
+                vmin, vmax = box_dimensions[i], box_dimensions[i + 3]
+                if vmin >= vmax:
+                    raise TypeError(
+                        f"geoReverse.Settings.box_dimensions bad box limits. Limits should be (Xmin, Ymin, Zmin, Xmax, Ymax, Zmax)."
+                    )
+
+            self._box_dimensions = box_dimensions
+
+    @property
+    def universe_box(self):
+        return self._universe_box
+
+    def set_universe_box(self):
+        if self.box_dimensions is None:
+            self._universe_box = myBox(
+                FreeCAD.BoundBox(
+                    -self.universe_radius,
+                    -self.universe_radius,
+                    -self.universe_radius,
+                    self.universe_radius,
+                    self.universe_radius,
+                    self.universe_radius,
+                ),
+                "Forward",
+            )
+        else:
+            self._universe_box = myBox(FreeCAD.BoundBox(*self.box_dimensions), "Forward")
+            radius = max(map(abs, self.box_dimensions))
+            self.universe_radius = radius
 
 
 class myBox:
     def __init__(self, boundBox=None, orientation=None):
 
-        if boundBox is not None:
-            if boundBox.XLength <= 1e-12:
-                self.Box = None
-            elif boundBox.YLength <= 1e-12:
-                self.Box = None
-            elif boundBox.ZLength <= 1e-12:
-                self.Box = None
-            else:
-                self.Box = boundBox
+        if type(boundBox) is myBox:
+            self.Box = boundBox.Box
+            self.Orientation = boundBox.Orientation
         else:
-            self.Box = None
-        self.Orientation = orientation
+            if boundBox is not None:
+                if boundBox.XLength <= 1e-12:
+                    self.Box = None
+                elif boundBox.YLength <= 1e-12:
+                    self.Box = None
+                elif boundBox.ZLength <= 1e-12:
+                    self.Box = None
+                else:
+                    self.Box = boundBox
+            else:
+                self.Box = None
+            self.Orientation = orientation
+        if self.Orientation is None:
+            raise TypeError("myBox orientation cannot by None type")
 
     def add(self, box):
-        if self.Orientation is None:
-            self.Box = box.Box
-            self.Orientation = box.Orientation
-        elif self.Box is None:
+        if self.Box is None:
             if self.Orientation == "Forward":
                 self.Box = box.Box
                 self.Orientation = box.Orientation
@@ -36,16 +136,10 @@ class myBox:
             if box.Orientation == "Reversed":
                 self.Box = None
                 self.Orientation = "Reversed"
-        elif self.Orientation == box.Orientation:
-            self.Box.add(box.Box)
         else:
-            # -A OR B == -(A AND -B)
-            if self.Orientation == "Forward":
-                Rbox, Fbox = self, box
-            else:
-                Rbox, Fbox = box, self
-            self.Box = box_intersect(Fbox, Rbox)
-            self.Orientation = "Reversed"
+            self.Box.add(box.Box)
+            if self.Orientation != box.Orientation:
+                self.Orientation = "Reversed"
 
     def mult(self, box):
         if self.Orientation is None:
@@ -59,19 +153,17 @@ class myBox:
             if box.Orientation == "Forward":
                 self.Box = None
                 self.Orientation = "Forward"
-        elif self.Orientation == box.Orientation:
-            inter = self.Box.intersected(box.Box)
-            if inter.isValid():
-                self.Box = inter
-            else:
-                self.Box = None
         else:
-            if self.Orientation == "Forward":
-                Fbox, Rbox = self, box
+            if self.Orientation == "Reversed" or box.Orientation == "Reversed":
+                self.Box.add(box.Box)
             else:
-                Fbox, Rbox = box, self
-            self.Box = box_intersect(Fbox, Rbox)
-            self.Orientation = "Forward"
+                inter = self.Box.intersected(box.Box)
+                if inter.isValid():
+                    self.Box = inter
+                else:
+                    self.Box = None
+            if self.Orientation != box.Orientation:
+                self.Orientation = "Forward"
 
     def sameBox(self, box):
         if self.Box is None or box.Box is None:
@@ -89,43 +181,37 @@ class myBox:
 
 
 class solid_plane_box:
-    def __init__(self, NTCell=None, outbox=None, orientation="Undefined"):
+    def __init__(self, NTCell=None, outbox=None):
         if NTCell is None:
+            settings = BoxSettings()
             self.planes = None
             self.definition = None
             self.surfaces = None
             self.surf_to_plane = None
-            self.insolid_tolerance = BoxSettings().insolid_tolerance
-            self.universe_radius = BoxSettings().universe_radius
-            self.universe_center = FreeCAD.Vector(0, 0, 0)
+            self.insolid_tolerance = settings.insolid_tolerance
+            self.universe_box = settings.universe_radius
             self.orientation = None
         else:
+            test_orientation = "Forward"
             self.insolid_tolerance = NTCell.settings.insolid_tolerance
-            self.universe_radius = NTCell.settings.universe_radius
+            self.universe_box = NTCell.settings.universe_box
             self.surfaces = NTCell.surfaces
-            plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition, NTCell.surfaces, orientation)
+            plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition, NTCell.surfaces, test_orientation)
             self.planes = plane_dict
             self.surf_to_plane = surf_to_plane_dict
-            self.definition = plane_definition(NTCell.definition.copy(), surf_to_plane_dict, orientation)
+            self.definition = plane_definition(NTCell.definition.copy(), surf_to_plane_dict, test_orientation)
             self.orientation = self.get_box_orientation()
 
-            if orientation != self.orientation:
+            if test_orientation != self.orientation:
                 plane_dict, surf_to_plane_dict = quadric_to_plane(NTCell.definition, NTCell.surfaces, self.orientation)
                 self.planes = plane_dict
                 self.surf_to_plane = surf_to_plane_dict
-
-            if orientation == "Undefined" and self.orientation != "Undefined":
                 self.definition = plane_definition(NTCell.definition.copy(), surf_to_plane_dict, self.orientation)
 
-            self.universe_center = FreeCAD.Vector(0, 0, 0)
-
-        self.outBox = outbox
         if outbox:
-            self.universe_radius = outbox.Box.DiagonalLength * 0.5
-            self.universe_center = outbox.Box.Center
+            self.outBox = outbox
         else:
-            r = self.universe_radius
-            self.outBox = myBox(FreeCAD.BoundBox(-r, -r, -r, r, r, r), "Forward")
+            self.outBox = self.universe_box
 
     def export_surf_planes(self, box):
 
@@ -172,8 +258,7 @@ class solid_plane_box:
     def copy(self, newdefinition=None, rebuild=False):
         cpsol = solid_plane_box()
         cpsol.insolid_tolerance = self.insolid_tolerance
-        cpsol.universe_radius = self.universe_radius
-        cpsol.universe_center = self.universe_center
+        cpsol.universe_box = self.universe_box
         cpsol.outBox = self.outBox
         cpsol.orientation = self.orientation
 
@@ -222,14 +307,15 @@ class solid_plane_box:
                 box = cbox.build_box_depth()
                 box_list.append(box)
 
-            fullBox = myBox()
+            fullBox = myBox(box_list[0])
+
             if self.definition.operator == "AND":
-                for box in box_list:
+                for box in box_list[1:]:
                     fullBox.mult(box)
                     if fullBox.Box is None and fullBox.Orientation == "Forward":
                         break
             else:
-                for box in box_list:
+                for box in box_list[1:]:
                     fullBox.add(box)
                     if fullBox.Box is None and fullBox.Orientation == "Reversed":
                         break
@@ -300,14 +386,7 @@ class solid_plane_box:
 
     def get_box_orientation(self):
         ninside = 0
-        universeBox = FreeCAD.BoundBox(
-            -self.universe_radius,
-            -self.universe_radius,
-            -self.universe_radius,
-            self.universe_radius,
-            self.universe_radius,
-            self.universe_radius,
-        )
+        universeBox = self.universe_box.Box
         for i in range(8):
             p = universeBox.getPoint(i)
             if self.isInside(p, True):
@@ -332,24 +411,24 @@ def quadric_to_plane(cellDef, surfaces, orientation):
     apex = []
 
     if orientation == "Reversed":
-        chg = True
+        fwd = False
     elif orientation == "Forward":
-        chg = False
+        fwd = True
     else:
-        chg = None
+        fwd = None
 
     for s_index in surf_index:
-        s_index = abs(s_index)
-        s = surfaces[s_index]
+        s_label = abs(s_index)
+        s = surfaces[s_label]
         if s.type == "plane":
             normal, d = s.params
             position = normal * d
-            planes[s_index] = Part.Plane(position, normal)
+            planes[s_label] = Part.Plane(position, normal)
         else:
-            if chg is None:
+            if fwd is None:
                 pos = None
             else:
-                pos = (s_index > 0) == chg
+                pos = (s_index > 0) == fwd
             surf_planes = convert_to_planes(s, pos)
             if s.type == "cone":
                 apex.append(s.params[0])
@@ -361,9 +440,9 @@ def quadric_to_plane(cellDef, surfaces, orientation):
                     next_index += 1
 
                 if dbl:
-                    surf_planes_dict[s_index] = ("dblcone", p_index)
+                    surf_planes_dict[s_label] = ("dblcone", p_index)
                 else:
-                    surf_planes_dict[s_index] = ("cone", p_index)
+                    surf_planes_dict[s_label] = ("cone", p_index)
 
             elif s.type == "torus":
                 extplanes, inplanes = surf_planes
@@ -377,14 +456,14 @@ def quadric_to_plane(cellDef, surfaces, orientation):
                     planes[next_index] = p
                     p_in.append(next_index)
                     next_index += 1
-                surf_planes_dict[s_index] = ("torus", p_ext, p_in)
+                surf_planes_dict[s_label] = ("torus", p_ext, p_in)
             else:
                 p_index = []
                 for p in surf_planes:
                     planes[next_index] = p
                     p_index.append(next_index)
                     next_index += 1
-                surf_planes_dict[s_index] = p_index
+                surf_planes_dict[s_label] = p_index
     return planes, surf_planes_dict
 
 
@@ -399,6 +478,8 @@ def convert_to_planes(s, pos):
         return torus_to_planes(s, pos)
     elif s.type == "paraboloid":
         return parabola_to_planes(s, pos)
+    elif s.type == "box":
+        return box_to_planes(s)
     else:
         print(f"{s.type} not implemented for boundbox")
         return []
@@ -574,6 +655,19 @@ def torus_to_planes(torus, pos):
     return (external_planes, central_planes)
 
 
+def box_to_planes(box):
+
+    org, vec1, vec2, vec3 = box.params[:]
+    p1 = Part.Plane(org, vec1)
+    p2 = Part.Plane(org, vec2)
+    p3 = Part.Plane(org, vec3)
+    p4 = Part.Plane(org + vec1, -vec1)
+    p5 = Part.Plane(org + vec2, -vec2)
+    p6 = Part.Plane(org + vec3, -vec3)
+
+    return (p1, p2, p3, p4, p5, p6)
+
+
 def parabola_to_planes(parabola, pos):
     # parabola approximated by plane tanget to the curve
     # plane separation such that distance from plane to curve < a*x0 (a parameter < 1, x0 absica of tangent point )
@@ -718,12 +812,12 @@ def plane_intersect(plane_list, externalBox, cutBoundary):
             FreeCAD.Vector(0, 1, 0),
             FreeCAD.Vector(0, 0, 1),
         )
-        pxm = Part.Plane(XYZ[0], FreeCAD.Vector(externalBox.XMin, 0, 0))
-        pxp = Part.Plane(XYZ[0], FreeCAD.Vector(externalBox.XMax, 0, 0))
-        pym = Part.Plane(XYZ[1], FreeCAD.Vector(0, externalBox.YMin, 0))
-        pyp = Part.Plane(XYZ[1], FreeCAD.Vector(0, externalBox.YMax, 0))
-        pzm = Part.Plane(XYZ[2], FreeCAD.Vector(0, 0, externalBox.ZMin))
-        pzp = Part.Plane(XYZ[2], FreeCAD.Vector(0, 0, externalBox.ZMax))
+        pxm = Part.Plane(FreeCAD.Vector(externalBox.XMin, 0, 0), XYZ[0])
+        pxp = Part.Plane(FreeCAD.Vector(externalBox.XMax, 0, 0), XYZ[0])
+        pym = Part.Plane(FreeCAD.Vector(0, externalBox.YMin, 0), XYZ[1])
+        pyp = Part.Plane(FreeCAD.Vector(0, externalBox.YMax, 0), XYZ[1])
+        pzm = Part.Plane(FreeCAD.Vector(0, 0, externalBox.ZMin), XYZ[2])
+        pzp = Part.Plane(FreeCAD.Vector(0, 0, externalBox.ZMax), XYZ[2])
         PXYZ = (pxm, pxp, pym, pyp, pzm, pzp)
 
         for i, p1 in enumerate(plane_list[0:]):
@@ -945,7 +1039,7 @@ def inertia_matrix(points):
     return
 
 
-def box_intersect(Fbox, Rbox):
+def box_intersect_not_used(Fbox, Rbox):
     PX1 = (Fbox.Box.XMin, Fbox.Box.XMax)
     PX2 = (Rbox.Box.XMin, Rbox.Box.XMax)
     PY1 = (Fbox.Box.YMin, Fbox.Box.YMax)
@@ -983,30 +1077,30 @@ def box_intersect(Fbox, Rbox):
         return None
 
 
-def plane_region(P1, P2, orient1):
-    p11, p12 = P1
-    p21, p22 = P2
+def plane_region_not_used(PF, PR, orient1):
+    pfmin, pfmax = PF
+    prmin, prmax = PR
 
-    if p11 >= p22:
-        return (p11, p12) if orient1 == "Forward" else (p21, p22)
-    elif p12 <= p21:
-        return (p11, p12) if orient1 == "Forward" else (p21, p22)
+    if pfmin >= prmax:
+        return (pfmin, pfmax) if orient1 == "Forward" else (prmin, prmax)
+    elif pfmax <= prmin:
+        return (pfmin, pfmax) if orient1 == "Forward" else (prmin, prmax)
     else:
-        if p11 < p21:
-            if p12 < p22:
-                return (p11, p21) if orient1 == "Forward" else (p12, p22)
+        if pfmin < prmin:
+            if pfmax < prmax:
+                return (pfmin, prmin) if orient1 == "Forward" else (pfmax, prmax)
             else:
-                return (p11, p12) if orient1 == "Forward" else (None, None)
-        elif p11 > p21:
-            if p12 <= p22:
-                return (None, None) if orient1 == "Forward" else (p21, p22)  # OK
+                return (pfmin, pfmax) if orient1 == "Forward" else (None, None)
+        elif pfmin > prmin:
+            if pfmax <= prmax:
+                return (None, None) if orient1 == "Forward" else (prmin, prmax)  # OK
             else:
-                return (p22, p12) if orient1 == "Forward" else (p21, p11)
+                return (prmax, pfmax) if orient1 == "Forward" else (prmin, pfmin)
         else:
-            if p12 < p22:
-                return (None, None) if orient1 == "Forward" else (p12, p22)
-            elif p12 > p22:
-                return (p22, p12) if orient1 == "Forward" else (None, None)
+            if pfmax < prmax:
+                return (None, None) if orient1 == "Forward" else (pfmax, prmax)
+            elif pfmax > prmax:
+                return (prmax, pfmax) if orient1 == "Forward" else (None, None)
             else:
                 return (None, None)
 
