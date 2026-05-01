@@ -1277,8 +1277,12 @@ def gq2params(x):
 
     nonzero = np.where(abs(eVal) > 1e-8)
     Dinv = eVal[:]
+<<<<<<< boolean_region
     Dinv[nonzero] = 1 / eVal[nonzero]  # get inverse eigen value where eigen > 1e-8
 
+=======
+    Dinv[nonzero] = 1 / eVal[nonzero]  # get inverse eigen value where eigen< 1e-8
+>>>>>>> dev_2.1_alpha
     zero = (abs(eVal) < 1e-8).nonzero()  # index in eigen value vector where eigen < 1e-8
     zero = zero[0]  # nonzero return a tuple with array containing the nonzero indexes
     TD = -XD * Dinv  # Translation vector in diagonalized base

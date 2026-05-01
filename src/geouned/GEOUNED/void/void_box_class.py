@@ -7,7 +7,7 @@ import Part
 
 from ..conversion import cell_definition as Conv
 from ..decompose.decom_one_generators import main_split
-from ..utils.boolean_function import BoolSequence
+from ..utils.boolean_function import BoolSequence, BoolVariable, BoolRegion
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 
@@ -15,17 +15,21 @@ logger = logging.getLogger("general_logger")
 
 
 class VoidBox:
-    def __init__(self, MetaSolids, Enclosure):
+    def __init__(self, MetaSolids, Box, EnclosureCAD=None, Definition=None):
 
         self.Objects = []
-        if "BoundBox" in str(Enclosure):
-            self.BoundBox = Enclosure
+        if EnclosureCAD is None:
+            self.BoundBox = Box
             self.PieceEnclosure = None
+            self.isEnclosure = False
+            self.Definition = None
         else:
-            self.BoundBox = Enclosure.optimalBoundingBox()
-            self.PieceEnclosure = Enclosure
+            self.BoundBox = Box
+            self.PieceEnclosure = EnclosureCAD
+            self.isEnclosure = True
+            self.Definition = Definition
 
-        for i, m in enumerate(MetaSolids):
+        for m in MetaSolids:
             if not m.BoundBox:
                 continue
             if m.BoundBox.isValid():
@@ -124,29 +128,29 @@ class VoidBox:
         If the limited region does not intersect with the piece, no void cell is created.
         """
 
-        Cube = Part.makeBox(
+        cube = Part.makeBox(
             Box.XLength,
             Box.YLength,
             Box.ZLength,
             FreeCAD.Vector(Box.XMin, Box.YMin, Box.ZMin),
             FreeCAD.Vector(0, 0, 1),
         )
-        dist = Cube.distToShape(self.PieceEnclosure)[0]
+        dist = cube.distToShape(self.PieceEnclosure)[0]
         try:
             if abs(dist / Box.DiagonalLength) > Tolerance:
                 return None
         except ZeroDivisionError:
             return None
-        ShapeObject = Cube.common(self.PieceEnclosure)
+        ShapeObject = cube.common(self.PieceEnclosure)
         try:
-            reldif = (Cube.Volume - ShapeObject.Volume) / Cube.Volume
+            reldif = (cube.Volume - ShapeObject.Volume) / cube.Volume
         except ZeroDivisionError:
             return None
         if abs(reldif) <= Tolerance:
-            return VoidBox(self.Objects, Box)
+            return VoidBox(self.Objects, Box, cube, self.Definition)
         elif ShapeObject.Solids:
-            Solid = ShapeObject.Solids[0]
-            return VoidBox(self.Objects, Solid)
+            solid = ShapeObject.Solids[0]
+            return VoidBox(self.Objects, Box, solid, self.Definition)
         else:
             return None
 
@@ -163,53 +167,29 @@ class VoidBox:
             self.remove_extra_comp(m, Cube, mode="dist")
         return
 
-    def get_void_complementary(self, Surfaces, options, tolerances, numeric_format, simplify="no"):
+    def get_void_complementary(self, Surfaces, options, simplify="no"):
+
+        bBox = self.BoundBox
         if self.PieceEnclosure is None:
             boxDef = BoolSequence(operator="AND")
-            center = self.BoundBox.Center
-            bBox = self.BoundBox
-            for p in self.get_bound_planes():
-                plane_region = Surfaces.add_plane(p, False)
-                boxDef.elements.append(plane_region)
-                enclosure = False
+            enclosure = False
             d = options.enlargeBox
 
         else:
-            UniverseBox = self.PieceEnclosure.BoundBox
-            TempPieceEnclosure = GeounedSolid(None, self.PieceEnclosure)
-            comsolid = main_split(
-                Part.makeCompound(TempPieceEnclosure.Solids),
-                options,
-                tolerances,
-            )
-            Surfaces.extend(
-                Decom.extract_surfaces(
-                    comsolid,
-                    "All",
-                    UniverseBox,
-                    options,
-                    tolerances,
-                    numeric_format,
-                    MakeObj=True,
-                ),
-                options,
-                tolerances,
-                numeric_format,
-            )
-            TempPieceEnclosure.update_solids(comsolid.Solids)
-            Conv.cellDef(
-                TempPieceEnclosure,
-                Surfaces,
-                UniverseBox,
-                options,
-                tolerances,
-                numeric_format,
-            )
-
-            boxDef = TempPieceEnclosure.Definition
-            bBox = self.PieceEnclosure.BoundBox
+            boxDef = self.Definition.copy()
+            if boxDef.operator == "OR":
+                ANDDef = BoolSequence(operator="AND")
+                ANDDef.append(boxDef)
+                boxDef = ANDDef
             enclosure = True
             d = max(options.enlargeBox, 2)
+
+        for p in self.get_bound_planes():
+            plane_region = Surfaces.add_plane(p, False)
+            if boxDef.base_type is BoolVariable:
+                boxDef.append(plane_region.region)
+            else:
+                boxDef.append(plane_region)
 
         Box = Part.makeBox(
             bBox.XLength + 2 * d,
@@ -328,20 +308,20 @@ class VoidBox:
                 pmoc = comp.get_complementary()
                 compSeq.append(pmoc)
 
+        if compSeq.base_type is BoolVariable and complementary.base_type is BoolRegion:
+            complementary.expand_regions_to_boolVar()
+
         if simplify == "full":
             if enclosure:
-                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
-                complementary.simplify(CTable)
+                complementary.simplify(CTable, outOp="AND")
             else:
                 compSeq.simplify(CTable)
-                complementary.expand_regions_to_boolVar()
                 complementary.append(compSeq)
         else:
             compSeq.simplify(None)
-            complementary.simplify(None)
+            complementary.simplify(None, outOp="AND")
             complementary.append(compSeq)
-            complementary.expand_regions_to_boolVar()
 
         complementary.clean()
         complementary.level_update()

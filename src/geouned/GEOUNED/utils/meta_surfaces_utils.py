@@ -1104,8 +1104,8 @@ def planar_edges(edges):
             dir = ei.Curve.Axis
             center = ei.Curve.Center
         else:  # should be a line
-            dir = ei.Curve.direction
-            center = ei.Curve.location
+            dir = ei.Curve.Direction
+            center = ei.Curve.Location
 
         if not is_parallel(dir0, dir, Tolerances().angle):
             return False

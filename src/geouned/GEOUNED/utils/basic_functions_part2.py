@@ -96,6 +96,12 @@ def is_same_cylinder(
     if is_same_rad:
         if is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
             c12 = cyl1.Center - cyl2.Center
+            if c12.Length < tolerances.cyl_distance:
+                return True
+            else:
+                return is_parallel(cyl1.Axis, c12, tolerances.cyl_angle)
+
+            # old fashion no longer used
             d = cyl1.Axis.cross(c12).Length
 
             if tolerances.relativeTol:

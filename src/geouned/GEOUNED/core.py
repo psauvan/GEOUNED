@@ -619,7 +619,7 @@ class CadToCsg:
 
         if self.settings.debug:
             if m.IsEnclosure:
-                comsolid.exportStep(str(self.debug_output_folder / f"/compEnclosure_{i}.stp"))
+                comsolid.exportStep(str(self.debug_output_folder / f"compEnclosure_{i}.stp"))
             else:
                 comsolid.exportStep(str(self.debug_output_folder / f"compSolid_{i}.stp"))
 

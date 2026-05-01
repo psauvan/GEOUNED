@@ -564,11 +564,11 @@ class BoolSequence:
         self.base_type = BoolVariable
         self.join_operators()
 
-    def simplify(self, CT=None, depth=0):
+    def simplify(self, CT=None, depth=0, outOp=None):
         """Simplification by recursive calls to the inner BoolSequence objects."""
         if self.level > 0:
             for seq in self.elements:
-                if type(seq) is BoolRegion:
+                if type(seq) is BoolRegion or type(seq) is BoolVariable:
                     continue
                 seq.simplify(CT, depth + 1)
             self.clean()
@@ -581,6 +581,13 @@ class BoolSequence:
 
             if self.level > levIn and depth < 10:
                 self.simplify(CT, depth + 1)
+
+        if outOp is not None:
+            if outOp != self.operator:
+                definition = BoolSequence(operator=outOp)
+                definition.append(self.copy())
+                definition.level_update()
+                self.assign(definition)
 
     def simplify_sequence(self, CT=None):
         """Carry out the simplification process of the BoolSequence."""

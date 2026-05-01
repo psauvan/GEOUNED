@@ -1,8 +1,13 @@
 import Part
 
+<<<<<<< boolean_region
 from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
+=======
+from .data_classes import Options, Tolerances, NumericFormat
+from .basic_functions_part2 import is_parallel
+>>>>>>> dev_2.1_alpha
 from .geometry_gu import CylinderGu, TorusGu, other_face_edge
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
@@ -94,7 +99,9 @@ def get_can_surfaces(cylinder, solidFaces):
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
     for s in ext_faces:
-        if type(s.Surface) is CylinderGu:
+        if type(s.Surface) is TorusGu:
+            raise ("can with torus not implemented")
+        elif type(s.Surface) is CylinderGu:
             if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
                 edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=True)
                 if edges is not None:

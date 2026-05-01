@@ -4,7 +4,11 @@ Python API reference
 
 .. currentmodule:: geouned
 
+<<<<<<< boolean_region
 .. autoclass:: CadToCsg
+=======
+.. autoclass:: CsgToCad
+>>>>>>> dev_2.1_alpha
     :members:
     :show-inheritance:
 
@@ -24,7 +28,11 @@ Python API reference
     :members:
     :show-inheritance:
 
+<<<<<<< boolean_region
 .. autoclass:: CsgToCad
+=======
+.. autoclass:: CadToCsg
+>>>>>>> dev_2.1_alpha
     :members:
     :show-inheritance:
 

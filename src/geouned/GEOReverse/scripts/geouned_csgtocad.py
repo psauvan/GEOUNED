@@ -37,7 +37,11 @@ def main():
         geo.cell_filter(**config["cell_filter"])
 
     if "mat_filter" in config.keys():
+<<<<<<< boolean_region
         geo.materials_filter(**config["mat_filter"])
+=======
+        geo.material_filter(**config["mat_filter"])
+>>>>>>> dev_2.1_alpha
 
     geo.build_universe()
 
