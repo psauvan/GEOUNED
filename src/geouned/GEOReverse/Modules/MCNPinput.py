@@ -1275,7 +1275,6 @@ def gq2params(x):
     eVal, vect = LA.eigh(mat3)
     XD = np.matmul(X, vect)  # X in diagonalised base
 
-    
     nonzero = np.where(abs(eVal) > 1e-8)
     Dinv = eVal[:]
     Dinv[nonzero] = 1 / eVal[nonzero]  # get inverse eigen value where eigen< 1e-8
