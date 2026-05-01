@@ -5,7 +5,7 @@ import logging
 
 from ..utils import geometry_gu as GU
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.functions import get_multiplanes, get_reverseCan, get_roundCorner, get_reversed_cone_cylinder, get_Can
+from ..utils.functions import get_multiplanes, get_roundCorner, get_reversed_cone_cylinder, get_Can
 from ..utils.boolean_function import BoolSequence
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
@@ -46,7 +46,10 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     if meta_surfaces:
         roundCorner, omitFaces = get_roundCorner(solid_gu.Faces)
         for rc in roundCorner:
-            rc_region = Surfaces.add_roundCorner(rc)
+            if rc.Type == "MultiRoundCorner":
+                rc_region = Surfaces.add_multiRoundCorner(rc)
+            else:
+                rc_region = Surfaces.add_roundCorner(rc)
             component_definition.append(rc_region)
 
         # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
@@ -105,7 +108,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane, []), face.Orientation))
+            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane), face.Orientation))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
@@ -119,7 +122,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 plane = None
 
-            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane, []), face.Orientation))
+            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane), face.Orientation))
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 

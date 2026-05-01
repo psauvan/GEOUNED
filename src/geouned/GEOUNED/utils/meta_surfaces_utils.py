@@ -1,17 +1,14 @@
-import FreeCAD
 import Part
 import math
-import numpy
 
 from collections import OrderedDict
 
 from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu, TorusGu, FaceGu, other_face_edge
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
+from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_in_line, is_parallel
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
-
-twoPi = 2 * math.pi
 
 
 class reversedCCP:
@@ -103,7 +100,8 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
                 continue
             if isinstance(otherface.Surface, PlaneGu):
                 if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
-                    planes.append(otherface)
+                    planes.append((e, otherface))
+        return planes
     else:
         for e in cyl.OuterWire.Edges:
             if isinstance(e.Curve, Part.Line):
@@ -811,6 +809,137 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     return edges
 
 
+def cyl_plane_region_conf(cylinder, ep1, ep2):
+
+    p1, p2 = ep1[1], ep2[1]
+    p1c = region_sign(p1, cylinder)
+    p2c = region_sign(p2, cylinder)
+    cross_in = cross_in_cylinder(p1, p2, cylinder)
+    same_pc_side, p12, v1_inter_dir, sameplane = plane_region(ep1, ep2, cross_in)
+
+    fwd_cyl = cylinder.Orientation == "Forward"
+
+    if p12 is None:
+        p12 = "AND" if fwd_cyl else "OR"
+    elif sameplane:
+        cross_in = True
+        p12 = "OR" if fwd_cyl else "AND"
+    elif v1_inter_dir is None:
+        cross_in = True
+        v1_inter_dir = False
+
+    AND_P12 = p12 == "AND"
+    fwd_corner = AND_P12 if same_pc_side else fwd_cyl
+
+    configuration = fwd_cyl * mask.fwd_cyl
+    configuration += (p1c == "AND") * mask.p1_cyl
+    configuration += (p2c == "AND") * mask.p2_cyl
+    configuration += AND_P12 * mask.p1_p2
+    configuration += same_pc_side * mask.pc_side
+    configuration += cross_in * mask.cross_in
+    # configuration += (p1pc == "AND") * mask.p1_pc
+    # configuration += (p2pc == "AND") * mask.p2_pc
+    configuration += v1_inter_dir * mask.inter_v1
+    configuration += fwd_corner * mask.fwd_corner
+
+    return configuration
+
+
+def plane_region(ep1, ep2, cross_in):
+
+    e1, p1 = ep1
+    e2, p2 = ep2
+    same_plane = False
+
+    n1 = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
+    n2 = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
+
+    v1, _ = material_direction(e1.Vertexes[0].Point, p1, e1)
+    v2, _ = material_direction(e2.Vertexes[0].Point, p2, e2)
+
+    z = e1.Curve.Direction
+    z.normalize()
+    x1 = e1.Vertexes[0].Point
+    x2 = e2.Vertexes[0].Point
+    r2 = 0.5 * (x2 - x1)
+    rz = r2.dot(z)
+    r2 = r2 - z * rz
+    r2.normalize()
+
+    dot1 = -r2.dot(n1)
+    dot2 = r2.dot(n2)
+
+    if abs(dot1) < 1e-6:
+        dot1 = 0
+        p12 = "AND" if dot2 < 0 else "OR"
+    elif abs(dot2) < 1e-6:
+        dot2 = 0
+        p12 = "AND" if dot1 < 0 else "OR"
+    elif dot1 * dot2 > 0:
+        dot12 = dot1 if abs(dot1) > abs(dot2) else dot2
+        p12 = "AND" if dot12 < 0 else "OR"
+    else:
+        p12 = None
+
+    if v1.dot(v2) > 0.99999:
+        # parallel p1 p2 to same direction
+        same_pc_side = True
+        v1_inter_dir = False
+    elif v1.dot(v2) < -0.99999:
+        # parallel p1 p2 to opposite direction
+        dist = p1.Surface.Axis.dot(p1.Surface.Position) - p1.Surface.Axis.dot(p2.Surface.Position)
+        if abs(dist) < 1e-5:
+            v1_inter_dir = False
+            same_pc_side = True
+            same_plane = True
+            p12 = "AND"
+        else:
+            same_pc_side = False
+            v1_inter_dir = False
+            # if same_pc_side false, p12 meaning is which p1 or p2 has AND/OR operator
+            # p12 "AND" means cell def is something like (X AND p1) (X OR p2)
+            # p12 "OR" means cell def is something like  (X OR p1) (X AND p2)
+            p12 = "AND" if dot1 < 0 else "OR"
+    else:
+        v1c = v1.cross(r2)
+        v2c = v2.cross(r2)
+        dotv12 = v1c.dot(v2c)
+        if abs(dotv12) < 1e-8:
+            # p1 or p2 parallel to pc
+            same_pc_side = True
+            v1_inter_dir = None
+        elif dotv12 > 0:
+            same_pc_side = True
+            v1_inter_dir = False
+        else:
+            same_pc_side = False
+            if cross_in:
+                p12 = None
+                v1_inter_dir = False
+            else:
+                # p12 "AND" means cell def is something like (X AND p1) (X OR p2)
+                # p12 "OR" means cell def is something like  (X OR p1) (X AND p2)
+                p12 = "AND" if dot1 < 0 else "OR"
+                v12 = v1.cross(v2)
+                v1_inter_dir = v12.dot(v1c) > 0
+
+    return same_pc_side, p12, v1_inter_dir, same_plane
+
+
+def cross_in_cylinder(p1, p2, cyl):
+    fp1 = Part.Plane(p1.Surface.Position, p1.Surface.Axis)
+    fp2 = Part.Plane(p2.Surface.Position, p2.Surface.Axis)
+    inter = fp1.intersect(fp2)
+    if len(inter) > 0:
+        line = inter[0]
+        rp = line.Location - cyl.Surface.Center
+        d = rp - rp.dot(cyl.Surface.Center) * cyl.Surface.Center
+        inside = d.Length < cyl.Surface.Radius
+    else:
+        inside = False
+    return inside
+
+
 def material_direction(pos, face_in, edge):
     if isinstance(face_in, FaceGu):
         face = face_in.__face__
@@ -861,7 +990,18 @@ def region_sign(s1_in, s2, outAngle=False):
         elif type(s1.Surface) is SphereGu:
             operator = "AND" if s1.Orientation == "Forward" else "OR"
         else:
-            operator = "AND" if abs(dprod) < arc else "OR"
+            if type(s2.Surface) is CylinderGu:
+                fwd = s2.Orientation == "Forward"
+            elif type(s1.Surface) is CylinderGu:
+                fwd = s1.Orientation == "Forward"
+            else:
+                fwd = True
+            dotpos = normal2.dot(normal1) > 0
+
+            if abs(dprod) < arc:
+                operator = "AND" if fwd == dotpos else "OR"
+            else:
+                operator = "OR" if fwd == dotpos else "AND"
         if outAngle:
             vect2, _ = material_direction(pos, s2, e1)
             return operator, angle(vect, -vect2, operator)
@@ -964,8 +1104,8 @@ def planar_edges(edges):
             dir = ei.Curve.Axis
             center = ei.Curve.Center
         else:  # should be a line
-            dir = ei.Curve.Direction
-            center = ei.Curve.Location
+            dir = ei.Curve.direction
+            center = ei.Curve.location
 
         if not is_parallel(dir0, dir, Tolerances().angle):
             return False

@@ -36,7 +36,8 @@ Here is a complete JSON file specification
     {
         "load_step_file": {
             "filename": "cuboid.stp",
-            "skip_solids": []
+            "skip_solids": [],
+            "spline_surfaces": 'stop'
         },
         "Options": {
             "forceCylinder": false,

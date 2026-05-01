@@ -5,12 +5,10 @@ import logging
 
 import FreeCAD
 import Part
-import math
 
 logger = logging.getLogger("general_logger")
 
 from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu
-from .geometry_gu import line_projection
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
@@ -18,6 +16,7 @@ from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edg
 from ..decompose.decom_utils_generator import cyl_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
+from .data_constants import mask
 
 
 def get_box(comp, enlargeBox):
@@ -147,8 +146,12 @@ def get_roundCorner(solidFaces, cornerface_index=None):
                 continue
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
             if rc is not None:
-                gc = GeounedSurface(("RoundCorner", build_roundC_params(rc), f.Orientation))
                 cornerface_index.update(surfindex)
+                mrcparams = build_roundC_params(rc)
+                if len(mrcparams[0]) == 1:
+                    gc = mrcparams[0][0]
+                else:
+                    gc = GeounedSurface(("MultiRoundCorner", mrcparams))
                 corner_list.append(gc)
 
     if one_value_return:
@@ -158,7 +161,6 @@ def get_roundCorner(solidFaces, cornerface_index=None):
 
 
 def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
-    """identify and return all roundcorner type in the solid."""
     if conecylface_index is None:
         conecylface_index = set()
         one_value_return = False
@@ -184,18 +186,27 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
 
 def build_roundC_params(rc_list):
 
-    cylinder_list = []
+    roundcorner_list = []
     plane_list = []
-    for cyl, p1, p2 in rc_list:
+    for cyl, p1, p2, config_orientation in rc_list:
+        config, fwd_corner = config_orientation
+        cross_in = config & mask.cross_in == mask.cross_in
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-        gpa = get_additional_corner_plane(cyl, p1, p2)
-        gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa, None), cyl.Orientation))
-        cylinder_list.append(gcyl)
+        if cross_in:
+            gpa = None
+        else:
+            gpa = get_additional_corner_plane(cyl, p1, p2)
+        gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
         p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
         p2Axis = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
-        gp1 = GeounedSurface(("Plane", (p1.Surface.Position, p1Axis, 1.0, 1.0)))
-        gp2 = GeounedSurface(("Plane", (p2.Surface.Position, p2Axis, 1.0, 1.0)))
+        gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
+        gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
+        params = (gcyl, (gp1, gp2), config)
+
+        orientation = "Forward" if fwd_corner else "Reversed"
+        rc = GeounedSurface(("RoundCorner", params, orientation))
+        roundcorner_list.append(rc)
         plane_list.extend((gp1, gp2))
 
     if len(plane_list) > 2:
@@ -208,7 +219,7 @@ def build_roundC_params(rc_list):
                     del plane_list[n - j]
             i += 1
 
-    params = (cylinder_list, plane_list)
+    params = (roundcorner_list, plane_list)
     return params
 
 
@@ -222,7 +233,7 @@ def build_RCC_params(rc):
             gcylcone, plane, addP = cc.Params
         else:
             cone, apexPlane, plane, addP = cc.Params
-            gcylcone = GeounedSurface(("Cone", (cone, apexPlane, None, []), "Reversed"))
+            gcylcone = GeounedSurface(("Cone", (cone, apexPlane, None), "Reversed"))
 
         add_planes.extend(addP)
         if len(cc.Connections) == 1:
@@ -310,10 +321,7 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            c1 = s.Surface.Center
-            v1 = s.Surface.Axis
-            pc = line_projection(c1, v1, cyl.Surface.Center, cyl.Surface.Axis)
-            pa = cyl_edge_plane(cyl, edges, pc)
+            pa = cyl_edge_plane(cyl, edges)
             if r is None:
                 r = "AND" if s.Orientation == "Forward" else "OR"
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
@@ -324,7 +332,7 @@ def build_can_params(cs):
                     cr = cylOnly.Surf.Center - pa.Surf.Position
                     d = cr - cr.dot(cylOnly.Surf.Axis) * cylOnly.Surf.Axis
                     pa.Surf.Position = pa.Surf.Position + 0.01 * d
-                gs = GeounedSurface(("Cylinder", (cylOnly, pa, None), s.Orientation))
+                gs = GeounedSurface(("Cylinder", (cylOnly, pa), s.Orientation))
 
         elif type(s.Surface) is ConeGu:
             if shell:
@@ -333,17 +341,14 @@ def build_can_params(cs):
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
             coneOnly = GeounedSurface(("ConeOnly", (s.Surface.Apex, s.Surface.Axis, s.Surface.SemiAngle, 1.0, 1.0)))
-            c1 = s.Surface.Apex
-            v1 = s.Surface.Axis
-            pc = line_projection(c1, v1, cyl.Surface.Center, cyl.Surface.Axis)
-            pa = cyl_edge_plane(cyl, edges, pc)
+            pa = cyl_edge_plane(cyl, edges)
             if not planar_edges(edges):
                 # move sligtly the plane position toward boundary surface center
                 cr = coneOnly.Surf.Apex - pa.Surf.Position
                 d = cr - cr.dot(coneOnly.Surf.Axis) * coneOnly.Surf.Axis
                 pa.Surf.Position = pa.Surf.Position + 0.01 * d
             apexPlane = cone_apex_plane(s, Tolerances())
-            gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa, None), s.Orientation))
+            gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa), s.Orientation))
 
         elif type(s.Surface) is SphereGu:
             if shell:
@@ -353,19 +358,18 @@ def build_can_params(cs):
 
             edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             sphOnly = GeounedSurface(("SphereOnly", (s.Surface.Center, s.Surface.Radius)))
-            pa = cyl_edge_plane(cyl, edges, s.Surface.Center)
+            pa = cyl_edge_plane(cyl, edges)
             if not planar_edges(edges):
                 # move sligtly the plane position toward boundary surface center
                 d = sphOnly.Surf.Center - pa.Surf.Position
                 pa.Surf.Position = pa.Surf.Position + 0.01 * d
+
             gs = GeounedSurface(("Sphere", (sphOnly, pa), s.Orientation))
-        else:
-            print("bad surfacetype")
 
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-    gcyl = GeounedSurface(("Cylinder", (cylOnly, None, None), cyl.Orientation))
+    gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
     return (gcyl, bsurf[0], bsurf[1])
 
@@ -419,17 +423,48 @@ def build_multip_params(plane_list):
     return (planeparams, edges, vertexes)
 
 
+def material_direction(pos, face_in, edge):
+
+    pe = edge.Curve.parameter(pos)
+    dir = edge.derivative1At(pe)
+    dir.normalize()
+    if edge.Orientation == "Reversed":
+        dir = -dir
+    u, v = face_in.Surface.parameter(pos)
+    normalf = face_in.normalAt(u, v)
+    normalf.normalize()
+    matvec = normalf.cross(dir)
+
+    return matvec, normalf
+
+
 def get_additional_corner_plane(cyl, p1, p2):
     Edges1 = commonEdge(cyl, p1)
     Edges2 = commonEdge(cyl, p2)
     e1 = Edges1[0]
     e2 = Edges2[0]
-    point1 = e1.Vertexes[0].Point
+    p1 = e1.Vertexes[0].Point
+    p2 = e2.Vertexes[0].Point
+    v1, n1 = material_direction(e1.Vertexes[0].Point, cyl.Surface.face, e1)
+    v2, n2 = material_direction(e2.Vertexes[0].Point, cyl.Surface.face, e2)
+    point = 0.5 * (p1 + p2)
+    paxis = v1 + v2
+    paxis.normalize()
+    return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))
+
+
+def get_additional_corner_plane_old(cyl, p1, p2):
+    Edges1 = commonEdge(cyl, p1)
+    Edges2 = commonEdge(cyl, p2)
+    e1 = Edges1[0]
+    e2 = Edges2[0]
+    point11 = e1.Vertexes[0].Point
+    point12 = e1.Vertexes[1].Point
     p1, p2 = e2.ParameterRange
     point21 = e2.valueAt(p1)
     point22 = e2.valueAt(p2)
-    v21 = point21 - point1
-    v22 = point22 - point1
+    v21 = point21 - point11
+    v22 = point22 - point11
     dt1 = abs(cyl.Surface.Axis.dot(v21))
     dt2 = abs(cyl.Surface.Axis.dot(v22))
     vect = v21 if dt1 < dt2 else v22
@@ -440,9 +475,9 @@ def get_additional_corner_plane(cyl, p1, p2):
     dir = surfpoint - cyl.Surface.Center
     dir.normalize()
 
-    if dir.dot(paxis) > 0:
-        paxis = -paxis  # normal plane toward negative cylinder surface
+    if dir.dot(paxis) < 0:
+        paxis = -paxis  # normal plane toward existing cylinder surface
     eps = 1e-7 * cyl.Surface.Radius  # used to avoid lost particles with possible complementary region
-    point = point1 + eps * paxis
+    point = 0.25 * (point11 + point12 + point21 + point22) + eps * paxis
 
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))

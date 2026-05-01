@@ -1,5 +1,5 @@
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.meta_surfaces import multiplane_loop, get_can_surfaces, get_fwdcan_surfaces, get_roundcorner_surfaces
+from ..utils.meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces
 from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel
 
 from ..utils.functions import (
@@ -7,7 +7,7 @@ from ..utils.functions import (
     build_can_params,
     build_roundC_params,
 )
-from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
+from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
 from .decom_utils_generator import (
     cyl_bound_planes,
     torus_bound_planes,
@@ -28,12 +28,6 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
         for rdc in next_roundCorner(solid_GU, omitfaces):
             yield rdc
-
-        # for can in next_forwardCan(solid_GU, omitfaces):
-        #    yield can
-
-        # for can in next_reverseCan(solid_GU, omitfaces):
-        #    yield can
 
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
         omitfaces.update(extPlanes)
@@ -221,8 +215,12 @@ def next_roundCorner(solid, cornerface_index):
                 continue
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
             if rc is not None:
-                gc = GeounedSurface(("RoundCorner", build_roundC_params(rc), f.Orientation))
                 cornerface_index.update(surfindex)
+                mrcparams = build_roundC_params(rc)
+                if len(mrcparams[0]) == 1:
+                    gc = mrcparams[0][0]
+                else:
+                    gc = GeounedSurface(("MultiRoundCorner", mrcparams))
                 yield gc
 
     return None

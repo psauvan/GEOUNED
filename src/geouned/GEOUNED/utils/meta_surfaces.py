@@ -1,10 +1,11 @@
 import Part
-import math
 
-from .data_classes import Options, Tolerances, NumericFormat
-from .basic_functions_part2 import is_parallel
+from .data_classes import Tolerances
+from .data_constants import twoPi, mask
+from .basic_functions_part2 import is_parallel, is_same_cylinder
 from .geometry_gu import CylinderGu, TorusGu, other_face_edge
 from .meta_surfaces_utils import (
+    cyl_plane_region_conf,
     region_sign,
     get_adjacent_cylplane,
     get_adjacent_cylsurf,
@@ -14,10 +15,6 @@ from .meta_surfaces_utils import (
     commonEdge,
     planar_edges,
 )
-
-twoPi = 2 * math.pi
-halfPi = 0.5 * math.pi
-threehalfPi = 1.5 * math.pi
 
 
 def multiplane_loop(adjacents, multi_list, planes):
@@ -97,15 +94,15 @@ def get_can_surfaces(cylinder, solidFaces):
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
     for s in ext_faces:
-        if type(s.Surface) is TorusGu:
-            raise ("can with torus not implemented")
-        elif type(s.Surface) is CylinderGu:
+        if type(s.Surface) is CylinderGu:
             if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
                 edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=True)
                 if edges is not None:
                     if planar_edges(edges):
                         surfaces.append((s, None))
                         continue
+        elif type(s.Surface) is TorusGu:
+            return None, None
 
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))
@@ -127,22 +124,18 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
     rc_list = []
     face_index = set()
 
-    adjacent_planes = get_adjacent_cylplane(cylinder, Faces)
+    adjacent_planes = get_adjacent_cylplane(cylinder, Faces, cornerPlanes=True)
     if len(adjacent_planes) != 2:
         return None, None
 
-    p1, p2 = adjacent_planes
-    r1, a1 = region_sign(p1, cylinder, outAngle=True)
-    r2, a2 = region_sign(p2, cylinder, outAngle=True)
+    ep1, ep2 = adjacent_planes
+    p1, p2 = ep1[1], ep2[1]
 
-    if r1 != r2 or r1 == "OR":
-        return None, None
-    if a1 < halfPi + 0.05 or a1 > threehalfPi - 0.05 or a2 < halfPi + 0.05 or a2 > threehalfPi - 0.05:
-        return None, None
+    configuration = cyl_plane_region_conf(cylinder, ep1, ep2)
+    fwd_corner = configuration & mask.fwd_corner == mask.fwd_corner
 
     face_index.update({cylinder.Index, p1.Index, p2.Index})
-
-    rc_list.append((cylinder, p1, p2))
+    rc_list.append((cylinder, p1, p2, (configuration, fwd_corner)))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
@@ -151,14 +144,23 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
                 continue
             if f.Index in cylinders_set:
                 continue
-            if f.Orientation != cylinder.Orientation:
-                continue
             if not is_parallel(f.Surface.Axis, cylinder.Surface.Axis):
                 continue
+
             cylinders_set.add(f.Index)
+            if is_same_cylinder(f.Surface, cylinder.Surface):
+                continue
+
             rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set)
             if rc is None:
+                cylinders_set.remove(f.Index)
                 continue
+
+            # rc[0][3][1] fwd_corner value of new round corner
+            if fwd_corner != rc[0][3][1]:
+                cylinders_set.remove(f.Index)
+                continue
+
             rc_list.extend(rc)
             face_index.update(newindex)
             break

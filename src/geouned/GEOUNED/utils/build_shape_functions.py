@@ -5,7 +5,8 @@ import math
 
 from .split_function import split_bop, single_tool_split
 from .data_classes import Options
-from .geometry_gu import PlaneGu
+from .build_region.build_region import BuildDepth, get_cell_object, getPart, FuseSolid
+from .build_region.Objects import myBox
 
 
 def makePlane(normal, position, Box):
@@ -122,7 +123,24 @@ def makeRoundCorner_old(cylinder, addPlane, planes, config, Box):
     return solid.removeSplitter()
 
 
-def makeRoundCorner(roundCorner, Orientation, Box):
+def makeRoundCorner(roundCorner, Box):
+
+    rc = get_cell_object(roundCorner)
+    rc.boundBox = myBox(Box, "Forward")
+    for s in rc.surfaces.values():
+        s.buildShape(Box)
+    celparts = BuildDepth(rc, None)
+    celparts = getPart(celparts)
+
+    shapeParts = []
+    for i, s in enumerate(celparts):
+        shapeParts.append(s.base)
+
+    shape = FuseSolid(shapeParts)
+    return shape
+
+
+def makeRoundCorner_old(roundCorner, Orientation, Box):
     cut_shapes = []
     surfcheck = []
     one = 1 if Orientation == "Forward" else -1

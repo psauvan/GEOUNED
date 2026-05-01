@@ -4,6 +4,8 @@
 import math
 
 import FreeCAD
+from .data_constants import mask
+from .boolean_function import BoolRegion
 
 
 def is_same_value(v1, v2, tolerance=1e-6):
@@ -96,6 +98,136 @@ def points_to_coeffs(points):
     axis.normalize()
 
     return axis, distance
+
+
+def round_corner_region(p1id, p2id, cid, pid, configuration):
+    # p1,p2,c,pc are boolVariable objects
+    # p1,p2,c,pc are planes and cylinder indexes
+    # p1,p2,pc index correspond to normal vector pointing toward material
+    # pc index pointing toward cylinder arc
+
+    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
+
+    if p1id == p2id:
+        ANDop = configuration & mask.p1_cyl == mask.p1_cyl
+        if fwd_cyl:
+            if ANDop:
+                rc_region = BoolRegion(0, p1id) * BoolRegion(0, -cid)
+            else:
+                rc_region = BoolRegion(0, p1id) + BoolRegion(0, -cid)
+        else:
+            if ANDop:
+                rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
+            else:
+                rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid)
+        return rc_region
+
+    AND_p1cyl = configuration & mask.p1_cyl == mask.p1_cyl
+    AND_p2cyl = configuration & mask.p2_cyl == mask.p2_cyl
+    pcside = configuration & mask.pc_side == mask.pc_side
+    cross_in = configuration & mask.cross_in == mask.cross_in
+
+    p1_region = BoolRegion(0, p1id)
+    p2_region = BoolRegion(0, p2id)
+    c_region = BoolRegion(0, -cid) if fwd_cyl else BoolRegion(0, cid)
+
+    if cross_in:
+        AND_p12 = configuration & mask.p1_p2 == mask.p1_p2
+        if AND_p12:
+            if AND_p1cyl and AND_p2cyl:
+                rc_region = p1_region * p2_region * c_region
+            elif not AND_p1cyl and AND_p2cyl:
+                rc_region = (p1_region + c_region) * p2_region
+            elif AND_p1cyl and not AND_p2cyl:
+                rc_region = (p2_region + c_region) * p1_region
+            else:
+                rc_region = p1_region * p2_region + c_region
+        else:
+            if AND_p1cyl and AND_p2cyl:
+                rc_region = (p1_region + p2_region) * c_region
+            elif not AND_p1cyl and AND_p2cyl:
+                rc_region = p2_region * c_region + p1_region
+            elif AND_p1cyl and not AND_p2cyl:
+                rc_region = p1_region * c_region + p2_region
+            else:
+                rc_region = p1_region + p2_region + c_region
+    else:
+        pc_region = BoolRegion(0, -pid) if fwd_cyl else BoolRegion(0, pid)
+        AND_p12 = configuration & mask.p1_p2 == mask.p1_p2
+        if pcside:
+            nr = 1 if AND_p12 else 2
+            if fwd_cyl:
+                if nr == 1:
+                    if AND_p1cyl and AND_p2cyl:
+                        rc_region = p1_region * p2_region * (c_region + pc_region)
+                    elif not AND_p1cyl and AND_p2cyl:
+                        rc_region = (p1_region * pc_region + c_region) * p2_region
+                    elif AND_p1cyl and not AND_p2cyl:
+                        rc_region = (p2_region * pc_region + c_region) * p1_region
+                    else:
+                        rc_region = p1_region * p2_region * pc_region + c_region
+                elif not AND_p1cyl and not AND_p2cyl:
+                    rc_region = p1_region + p2_region + pc_region + c_region
+            else:
+                if nr == 2:
+                    if AND_p1cyl and AND_p2cyl:
+                        rc_region = (p1_region + p2_region + pc_region) * c_region
+                    elif not AND_p1cyl and AND_p2cyl:
+                        rc_region = (p2_region + pc_region) * c_region + p1_region
+                    elif AND_p1cyl and not AND_p2cyl:
+                        rc_region = (p1_region + pc_region) * c_region + p2_region
+                    else:
+                        rc_region = p1_region + p2_region + pc_region * c_region
+                elif AND_p1cyl and AND_p2cyl:
+                    rc_region = p1_region * p2_region * pc_region * c_region
+        else:
+            interv1 = configuration & mask.inter_v1 == mask.inter_v1
+            if AND_p1cyl and AND_p2cyl and not fwd_cyl:
+                if AND_p12:
+                    if interv1:
+                        rc_region = (p2_region + pc_region) * p1_region * c_region
+                    else:
+                        rc_region = (p1_region * pc_region + p2_region) * c_region
+                else:
+                    if interv1:
+                        rc_region = (p1_region + pc_region) * p2_region * c_region
+                    else:
+                        rc_region = (p2_region * pc_region + p1_region) * c_region
+            elif not AND_p1cyl and not AND_p2cyl and fwd_cyl:
+                if AND_p12:
+                    if interv1:
+                        rc_region = (p2_region + pc_region) * p1_region + c_region
+                    else:
+                        rc_region = (p1_region * pc_region + p2_region) + c_region
+                else:
+                    if interv1:
+                        rc_region = (p1_region + pc_region) * p2_region + c_region
+                    else:
+                        rc_region = (p2_region * pc_region + p1_region) + c_region
+            elif fwd_cyl:
+                if AND_p1cyl and not AND_p2cyl:
+                    if interv1:
+                        rc_region = (p2_region + pc_region + c_region) * p1_region
+                    else:
+                        rc_region = p1_region * (pc_region + c_region) + p2_region
+                elif not AND_p1cyl and AND_p2cyl:
+                    if interv1:
+                        rc_region = p2_region * (pc_region + c_region) + p1_region
+                    else:
+                        rc_region = (p1_region + pc_region + c_region) * p2_region
+            else:
+                if AND_p1cyl and not AND_p2cyl:
+                    if interv1:
+                        rc_region = (p2_region + pc_region * c_region) * p1_region
+                    else:
+                        rc_region = p1_region * pc_region * c_region + p2_region
+                elif not AND_p1cyl and AND_p2cyl:
+                    if interv1:
+                        rc_region = p2_region * pc_region * c_region + p1_region
+                    else:
+                        rc_region = (p1_region + pc_region * c_region) * p2_region
+
+    return rc_region
 
 
 class Plane3PtsParams:
@@ -306,8 +438,15 @@ class CanParams:
 
 class RoundCornerParams:
     def __init__(self, params):
+        self.Configuration = params[2]
         self.Planes = params[1]
-        self.Cylinders = params[0]
+        self.Cylinder = params[0]
+
+
+class MultiRoundCornerParams:
+    def __init__(self, params):
+        self.Planes = params[1]
+        self.Corners = params[0]
 
 
 class ReversedConeCylParams:
@@ -334,7 +473,6 @@ class CylinderParams:
     def __init__(self, params):
         self.Cylinder = params[0]
         self.Plane = params[1]
-        self.addPlanes = params[2]
 
     def __str__(self):
         outstr = f"""Cylinder :\n"""
@@ -349,7 +487,6 @@ class ConeParams:
         self.Cone = params[0]
         self.ApexPlane = params[1]
         self.Plane = params[2]
-        self.addPlanes = params[3]
 
     def __str__(self):
         outstr = f"""Cone :\n"""

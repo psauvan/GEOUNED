@@ -22,7 +22,7 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def generic_split(solid, options, tolerances):
+def generic_split(solid, options, tolerances, loop=0):
     bbox = solid.BoundBox
     bbox.enlarge(10)
     cleaned = [solid]
@@ -48,13 +48,13 @@ def generic_split(solid, options, tolerances):
             new_split = True
             break
     else:
-        # loop exit normally (without break)
+        # loop exit normally (without break
         new_split = False
 
     if new_split:
         components = []
         for part in cleaned:
-            subcomp = generic_split(part, options, tolerances)
+            subcomp = generic_split(part, options, tolerances, loop + 1)
             components.extend(subcomp)
     else:
         components = cleaned

@@ -4,6 +4,8 @@
 import logging
 import math
 
+
+from .data_classes import Options, NumericFormat, Tolerances
 from .basic_functions_part1 import (
     is_in_tolerance,
     is_opposite,
@@ -40,7 +42,9 @@ def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_for
         fuzzy_logger.info(f"{cyl1str} {cyl2str}")
 
 
-def is_same_plane(p1, p2, options, tolerances, numeric_format, fuzzy=(False, 0), stdtol=True):
+def is_same_plane(
+    p1, p2, options=Options(), tolerances=Tolerances(), numeric_format=NumericFormat(), fuzzy=(False, 0), stdtol=True
+):
     pln_angle = tolerances.pln_angle if stdtol else tolerances.add_pln_angle
     pln_distance = tolerances.pln_distance if stdtol else tolerances.add_pln_distance
 
@@ -65,9 +69,9 @@ def is_same_plane(p1, p2, options, tolerances, numeric_format, fuzzy=(False, 0),
 def is_same_cylinder(
     cyl1,
     cyl2,
-    options,
-    tolerances,
-    numeric_format,
+    options=Options(),
+    tolerances=Tolerances(),
+    numeric_format=NumericFormat(),
     fuzzy=(False, 0),
 ):
     if tolerances.relativeTol:
@@ -92,12 +96,6 @@ def is_same_cylinder(
     if is_same_rad:
         if is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
             c12 = cyl1.Center - cyl2.Center
-            if c12.Length < tolerances.cyl_distance:
-                return True
-            else:
-                return is_parallel(cyl1.Axis, c12, tolerances.cyl_angle)
-
-            # old fashion no longer used
             d = cyl1.Axis.cross(c12).Length
 
             if tolerances.relativeTol:
