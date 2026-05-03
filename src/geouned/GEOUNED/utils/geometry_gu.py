@@ -413,8 +413,8 @@ class FaceGu(object):
 
 class ShellGu:
     def __init__(self, faces):
-        self.__shell__ = Part.makeShell(faces)
         self.Faces = faces
+        self.__shell__ = self.makeShell()
         self.Edges = []
         self.Indexes = []
         self.Area = 0
@@ -426,6 +426,13 @@ class ShellGu:
             self.CenterOfMass += f.Area * f.CenterOfMass
         self.Orientation = faces[0].Orientation
         # self.set_outerWire() #produce error and no used anymore
+
+    def makeShell(self):
+        if type(self.Faces[0]) is FaceGu :
+            ff = [f.__face__ for f in self.Faces]
+        else:
+            ff = self.Faces
+        return Part.makeShell(ff)        
 
     def distToShape(self, shape):
         distmin = 1
