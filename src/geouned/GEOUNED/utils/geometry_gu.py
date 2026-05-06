@@ -428,11 +428,11 @@ class ShellGu:
         # self.set_outerWire() #produce error and no used anymore
 
     def makeShell(self):
-        if type(self.Faces[0]) is FaceGu :
+        if type(self.Faces[0]) is FaceGu:
             ff = [f.__face__ for f in self.Faces]
         else:
             ff = self.Faces
-        return Part.makeShell(ff)        
+        return Part.makeShell(ff)
 
     def distToShape(self, shape):
         distmin = 1

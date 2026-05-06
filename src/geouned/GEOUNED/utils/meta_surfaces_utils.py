@@ -810,6 +810,88 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def cyl_plane_region_conf(cylinder, ep1, ep2):
+    e1, p1 = ep1
+    e2, p2 = ep2
+    u1, u2, v1, v2 = cylinder.ParameterRange
+    r1 = cylinder.Surface.face.valueAt(u1, 0.5 * (v1 + v2))
+    r2 = cylinder.Surface.face.valueAt(u2, 0.5 * (v1 + v2))
+    nt1 = cylinder.Surface.face.tangentAt(u1, v1)[0]
+    nc1 = -cylinder.Surface.face.normalAt(u1, v1)
+    nc2 = -cylinder.Surface.face.normalAt(u2, v2)
+
+    if nc1.dot(r1 - cylinder.Surface.Center) < 0:
+        nc1 = -nc1
+    if nc2.dot(r2 - cylinder.Surface.Center) < 0:
+        nc2 = -nc2
+
+    ac1 = nt1.cross(nc1)
+    nd = ac1.cross(r2 - r1)
+    nd.normalize()
+
+    u1 = r1 - e1.Vertexes[0].Point
+    u2 = r2 - e1.Vertexes[0].Point
+    u1.normalize()
+    u2.normalize()
+    d1 = abs(u1.dot(e1.Curve.Direction))
+    d2 = abs(u2.dot(e1.Curve.Direction))
+    if d2 > d1:  # change semicircle orientation
+        ac1 = -ac1
+        r1, r2 = r2, r1
+        nc1, nc2 = nc2, nc1
+
+    pr1 = ac1.cross(p1.Surface.Axis)
+    if pr1.dot(p1.CenterOfMass - r1) < 0:
+        n1 = -p1.Surface.Axis
+        notp1 = True
+    else:
+        n1 = p1.Surface.Axis
+        notp1 = False
+
+    pr2 = -ac1.cross(p2.Surface.Axis)
+    if pr2.dot(p2.CenterOfMass - r2) < 0:
+        n2 = -p2.Surface.Axis
+        notp2 = True
+    else:
+        n2 = p2.Surface.Axis
+        notp2 = False
+
+    fwd_cyl = cylinder.Orientation == "Forward"
+    n1xnd = n1.cross(nd)
+    same_p1_pd = n1xnd.Length < 1e-5
+    AND_p1_pd = ac1.dot(n1xnd) > 0
+
+    n2xnd = n2.cross(nd)
+    same_p2_pd = n2xnd.Length < 1e-5
+    AND_p2_pd = -ac1.dot(n2xnd) > 0
+
+    OR_p12_bracket = ac1.dot(n1.cross(n2)) > 0
+    cross1 = n1.cross(nc1)
+    if cross1.Length < 1e-8:
+        AND_p1_cyl = True
+    else:
+        AND_p1_cyl = ac1.dot(cross1) > 0
+
+    cross2 = n2.cross(nc2)
+    if cross2.Length < 1e-8:
+        AND_p2_cyl = True
+    else:
+        AND_p2_cyl = -ac1.dot(cross2) > 0
+
+    configuration = fwd_cyl * mask.fwd_cyl
+    configuration += AND_p1_cyl * mask.p1_cyl
+    configuration += AND_p2_cyl * mask.p2_cyl
+    configuration += AND_p1_pd * mask.p1_pd
+    configuration += AND_p2_pd * mask.p2_pd
+    configuration += OR_p12_bracket * mask.p1_p2
+    configuration += notp1 * mask.notp1
+    configuration += notp2 * mask.notp2
+    configuration += same_p1_pd * mask.same_p1_pd
+    configuration += same_p2_pd * mask.same_p2_pd
+
+    return configuration
+
+
+def cyl_plane_region_conf_old(cylinder, ep1, ep2):
 
     p1, p2 = ep1[1], ep2[1]
     p1c = region_sign(p1, cylinder)

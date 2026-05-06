@@ -190,7 +190,8 @@ def build_roundC_params(rc_list):
     plane_list = []
     for cyl, p1, p2, config_orientation in rc_list:
         config, fwd_corner = config_orientation
-        cross_in = config & mask.cross_in == mask.cross_in
+        # cross_in = config & mask.cross_in == mask.cross_in
+        cross_in = False
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         if cross_in:
             gpa = None
@@ -198,8 +199,11 @@ def build_roundC_params(rc_list):
             gpa = get_additional_corner_plane(cyl, p1, p2)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
-        p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
-        p2Axis = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
+        not_p1 = config & mask.notp1 == mask.notp1
+        not_p2 = config & mask.notp2 == mask.notp2
+        p1Axis = -p1.Surface.Axis if not_p1 else p1.Surface.Axis
+        p2Axis = -p2.Surface.Axis if not_p2 else p2.Surface.Axis
+
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
         params = (gcyl, (gp1, gp2), config)

@@ -107,6 +107,91 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     # pc index pointing toward cylinder arc
 
     fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
+    AND_p1_cyl = configuration & mask.p1_cyl == mask.p1_cyl
+    AND_p2_cyl = configuration & mask.p2_cyl == mask.p2_cyl
+    AND_p1_pd = configuration & mask.p1_pd == mask.p1_pd
+    AND_p2_pd = configuration & mask.p2_pd == mask.p2_pd
+    OR_bracket = configuration & mask.p1_p2 == mask.p1_p2
+    same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
+    same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
+
+    if AND_p1_cyl and AND_p2_cyl:
+        if same_p1_pd and same_p2_pd:
+            rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
+        elif same_p1_pd or same_p2_pd:
+            if OR_bracket:
+                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, p2id)) * BoolRegion(0, cid)
+            else:
+                rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid) * BoolRegion(0, p2id)
+        elif AND_p1_pd and AND_p2_pd:
+            rc_region = BoolRegion(0, p1id) * BoolRegion(0, p2id) * BoolRegion(0, pid) * BoolRegion(0, cid)
+        elif not AND_p1_pd and not AND_p2_pd:
+            rc_region = BoolRegion(0, cid) * (BoolRegion(0, p1id) + BoolRegion(0, p2id) + BoolRegion(0, pid))
+        elif not AND_p1_pd and AND_p2_pd:
+            if OR_bracket:
+                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, pid)) * BoolRegion(0, p2id) * BoolRegion(0, cid)
+            else:
+                rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, p2id) * BoolRegion(0, cid)
+        else:
+            if OR_bracket:
+                rc_region = (BoolRegion(0, p2id) + BoolRegion(0, pid)) * BoolRegion(0, p1id) * BoolRegion(0, cid)
+            else:
+                rc_region = BoolRegion(0, p2id) + BoolRegion(0, pid) * BoolRegion(0, p1id) * BoolRegion(0, cid)
+
+    elif not AND_p1_cyl and not AND_p2_cyl:
+        if same_p1_pd and same_p2_pd:
+            rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid)
+        elif not AND_p1_pd and not AND_p2_pd:
+            rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p1_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+
+    elif AND_p1_cyl and not AND_p2_cyl:
+        if not AND_p1_pd and not AND_p2_pd:
+            rc_region = (BoolRegion(0, p1id) + BoolRegion(0, pid)) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+        elif AND_p1_pd and not AND_p2_pd:
+            if OR_bracket:
+                rc_region = BoolRegion(0, p1id) * (BoolRegion(0, p2id) + BoolRegion(0, pid) * BoolRegion(0, cid))
+            else:
+                rc_region = BoolRegion(0, p1id) * BoolRegion(0, pid) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p1_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+    else:
+        if not AND_p1_pd and not AND_p2_pd:
+            rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid) * (BoolRegion(0, pid) + BoolRegion(0, p2id))
+        elif not AND_p1_pd and AND_p2_pd:
+            if OR_bracket:
+                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, cid) * BoolRegion(0, pid)) * BoolRegion(0, p2id)
+            else:
+                rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, cid) * BoolRegion(0, p2id)
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p1_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+
+    return -rc_region if fwd_cyl else rc_region
+
+
+def round_corner_region_old(p1id, p2id, cid, pid, configuration):
+    # p1,p2,c,pc are boolVariable objects
+    # p1,p2,c,pc are planes and cylinder indexes
+    # p1,p2,pc index correspond to normal vector pointing toward material
+    # pc index pointing toward cylinder arc
+
+    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
 
     if p1id == p2id:
         ANDop = configuration & mask.p1_cyl == mask.p1_cyl

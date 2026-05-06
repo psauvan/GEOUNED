@@ -119,7 +119,7 @@ def get_can_surfaces(cylinder, solidFaces):
     return surfaces, faceindex
 
 
-def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
+def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
 
     rc_list = []
     face_index = set()
@@ -137,7 +137,8 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
     face_index.update({cylinder.Index, p1.Index, p2.Index})
     rc_list.append((cylinder, p1, p2, (configuration, fwd_corner)))
 
-    for newplane in (p1, p2):
+    for newplane in []:
+        # for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
             f = other_face_edge(edge, newplane, Faces)
             if type(f.Surface) != CylinderGu:
@@ -151,7 +152,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set):
             if is_same_cylinder(f.Surface, cylinder.Surface):
                 continue
 
-            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set)
+            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set, level + 1)
             if rc is None:
                 cylinders_set.remove(f.Index)
                 continue

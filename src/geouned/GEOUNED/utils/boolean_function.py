@@ -525,6 +525,9 @@ class BoolSequence:
         c.base_type = self.base_type
 
         if self.level == 0:
+            if type(self.elements) is bool:
+                c.elements = not self.elements
+                return c
             for e in self.elements:
                 c.elements.append(-e)
             return c
