@@ -17,7 +17,7 @@ from .conversion import cell_definition as Conv
 
 from .decompose.decom_one_generators import main_split
 from .loadfile import load_step as Load
-from .utils.geouned_classes import GeounedSolid, SurfacesDict, MetaSurfacesDict
+from .utils.geouned_classes import GeounedSolid, MetaSurfacesDict
 from .utils.functions import get_box
 from .utils.boolean_solids import build_c_table_from_solids
 from .utils.data_classes import NumericFormat, Options, Settings, Tolerances
@@ -365,6 +365,10 @@ class CadToCsg:
         t2 = time.time()
         self.build_void()
         t3 = time.time()
+        # cell no overlapping process should be done after void generation
+        if self.options.forceNoOverlap:
+            self.no_overlap_cell()
+
         print(f"decomposition : {t1-t0}s\nbuild : {t2-t1}s\nvoid : {t3-t2}s")
 
     def decompose_solids(self):
@@ -413,6 +417,17 @@ class CadToCsg:
             if self.settings.voidGen and self.enclosure_list:
                 for m in tqdm(self.enclosure_list, desc="Translating Enclosures"):
                     Conv.build_definition(m, self.Surfaces)
+
+    def no_overlap_cell(self):
+        surfaces = {}
+        for ps in self.Surfaces.primitive_surfaces.values():
+            for ss in ps:
+                surfaces[ss.bVar.value()] = ss
+
+        for i, m in enumerate(tqdm(self.meta_list, desc="No overlapping Cell")):
+            if m.CellType == "solid" and not m.NullCell:
+                Conv.noOverlapCell(m, i, self.meta_list, surfaces, self.options)
+        return
 
     def build_void(self):
         # sets self.geometry_bounding_box with default padding

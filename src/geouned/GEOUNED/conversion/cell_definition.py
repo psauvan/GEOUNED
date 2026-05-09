@@ -5,7 +5,8 @@ import logging
 
 from ..utils import geometry_gu as GU
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.functions import get_multiplanes, get_roundCorner, get_reversed_cone_cylinder, get_Can
+from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
+from ..utils.functions import get_multiplanes, get_roundCorner, get_reversed_cone_cylinder, get_Can, my_dist_to_shape, get_box
 from ..utils.boolean_function import BoolSequence
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
@@ -172,3 +173,72 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     #        m.build_surface(solid.BoundBox)
     #        m.shape.exportStep(f'{k}_{i}.stp')
     return component_definition
+
+
+def noOverlapCell(m, i, meta_list, surfaces, options):
+    complementary_cells = []
+    for other_cell in meta_list[0:i]:
+        if other_cell.CellType != "solid" or other_cell.NullCell:
+            continue
+        if my_dist_to_shape(m.CADSolid, other_cell.CADSolid) < 1e-6:
+            complementary_cells.append(other_cell)
+
+    if complementary_cells:
+        process_overlap(m, complementary_cells, surfaces, options)
+
+
+def process_overlap(m, complementary_cells, surfaces, options):
+
+    new_def = BoolSequence(operator="AND")
+    new_def.append(m.Definition.copy())
+
+    cell_def = new_def.copy()
+    newcomp = False
+    for comp in complementary_cells:
+        Seq = cell_def.copy()
+        compDef = comp.Definition.get_complementary()
+        Seq.append(compDef)
+        Seq.simplify()
+        if type(Seq.elements) is list:
+            new_def.append(compDef)
+            newcomp = True
+
+    if not newcomp:
+        return
+
+    new_def.simplify()
+    if new_def.level == 0:
+        return
+
+    cell_def.simplify()
+    if new_def == cell_def:
+        return
+
+    box = get_box(m, options.enlargeBox)
+
+    # evaluate only diagonal elements of the Constraint Table (fastest) and remove surface not
+    # crossing in the solid boundBox
+    CT = build_c_table_from_solids(
+        box,
+        (tuple(new_def.get_surfaces_numbers()), surfaces),
+        "diag",
+        options=options,
+    )
+
+    new_def = remove_extra_surfaces(new_def, CT)
+
+    # evaluate full constraint Table with less surfaces involved
+    CT = build_c_table_from_solids(
+        box,
+        (tuple(new_def.get_surfaces_numbers()), surfaces),
+        "full",
+        options=options,
+    )
+
+    new_def.simplify(CT)
+    # new_def.simplify_sequence(CT, surfaces=cell_def.get_surfaces_numbers())
+    new_def.clean()
+    new_def.join_operators()
+    new_def.same_level()
+
+    m.set_definition(new_def)

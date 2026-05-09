@@ -336,14 +336,12 @@ class SerpentInput:
         return
 
     def sorted_surfaces(self, Surfaces):
-        temp = SurfacesDict(Surfaces)
+        surfindex = Surfaces.get_sorted_surfaces()
         surfList = []
-        for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            bvar = BoolVariable(ind + 1)
-            s = temp.get_surface(bvar)
+        for bsurf in surfindex:
+            s = Surfaces.get_surface(bsurf)
             if s is not None:
                 surfList.append(s)
-                temp.del_surface(bvar)
         return surfList
 
     def get_solid_cell_volume(self):

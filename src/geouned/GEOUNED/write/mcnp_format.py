@@ -10,8 +10,6 @@ from importlib.metadata import version
 import FreeCAD
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ..utils.geouned_classes import SurfacesDict
-from ..utils.boolean_function import BoolVariable
 from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
@@ -335,14 +333,14 @@ C **************************************************************
         return
 
     def sorted_surfaces(self, Surfaces):
-        temp = SurfacesDict(Surfaces)
+        surfindex = Surfaces.get_sorted_surfaces()
         surfList = []
-        for ind in range(Surfaces.IndexOffset, Surfaces.surfaceNumber + Surfaces.IndexOffset):
-            bvar = BoolVariable(ind + 1)
-            s = temp.get_surface(bvar)
+        for bsurf in surfindex:
+            label = Surfaces.IndexOffset + abs(bsurf.value())
+            s = Surfaces.get_surface(bsurf)
             if s is not None:
+                s.bvar = bsurf.copy(label)
                 surfList.append(s)
-                temp.del_surface(bvar)
         return surfList
 
     def get_solid_cell_volume(self):

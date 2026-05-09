@@ -98,9 +98,12 @@ class BoolVariable(int):
         return hash(self.__int__())
 
     def __eq__(self, BV):
-        if type(self) != type(BV):
+        if not isinstance(BV, int):
             return False
-        return self.__int__() == BV.__int__()
+        if type(BV) is int:
+            return self.value() == BV
+        else:
+            return self.value() == BV.value()
 
     def __abs__(self):
         if self.__int__() >= 0:
@@ -114,8 +117,11 @@ class BoolVariable(int):
     def __str__(self):
         return str(self.value())
 
-    def copy(self):
-        return BoolVariable(self.__int__(), self.__reference__)
+    def copy(self, new_label=None):
+        if new_label is not None:
+            return BoolVariable(new_label, self.__reference__)
+        else:
+            return BoolVariable(self.__int__(), self.__reference__)
 
     def change_ref(self):
         self.__reference__.switch()
@@ -592,20 +598,22 @@ class BoolSequence:
                 definition.level_update()
                 self.assign(definition)
 
-    def simplify_sequence(self, CT=None):
+    def simplify_sequence(self, CT=None, surfaces=None):
         """Carry out the simplification process of the BoolSequence."""
         if self.level < 1 and CT is None:
             self.clean()
             return
 
-        surf_names = self.get_surfaces_numbers()
+        if surfaces is None:
+            surf_names = self.get_surfaces_numbers()
+        else:
+            surf_names = surfaces
         if not surf_names:
             return
 
         newNames = surf_names
         for val_name in surf_names:
             if val_name in newNames:
-
                 if CT is None:
                     true_set = {val_name: True}
                     false_set = {val_name: False}
@@ -863,6 +871,27 @@ class BoolSequence:
             for e in self.elements:
                 e.join_operators()
 
+    def same_level(self):
+        if self.level < 2:
+            return
+        operator = self.operator
+        deleted = []
+        for seq in self.elements:
+            if seq.operator == operator:
+                if seq.level > 0:
+                    for subseq in seq.elements:
+                        if subseq.operator == operator and subseq.level > 0:
+                            subseq.same_level()
+                        self.elements.append(subseq)
+                    deleted.append(seq)
+            else:
+                seq.same_level()
+
+        for e in deleted:
+            self.elements.remove(e)
+
+        self.level_update()
+
     def get_sub_sequence(self, setIn):
         if type(setIn) is set:
             val_set = setIn
@@ -1063,7 +1092,7 @@ class BoolSequence:
 
         surfSet = set()
         for e in self.elements:
-            if isinstance(e, int):  # include int and BoolVariable
+            if isinstance(e, int):
                 surfSet.add(abs(e))
             else:
                 surfSet.update(e.get_surfaces_numbers())

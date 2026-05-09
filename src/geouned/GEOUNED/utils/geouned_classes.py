@@ -993,6 +993,15 @@ class SurfacesDict(dict):
             logger.info(f"{key}, {self[key]}")
         return ""
 
+    def get_sorted_surfaces(self):
+        bsurf_list = []
+        for surftype in self.__surfIndex__.values():
+            for bsurf in surftype:
+                bsurf_list.append((abs(bsurf.value()), bsurf))
+        bsurf_list.sort()
+        index, surfIndex = zip(*bsurf_list)
+        return surfIndex
+
     def get_surface(self, index):
 
         lastKey = self.__last_obj__[0]
