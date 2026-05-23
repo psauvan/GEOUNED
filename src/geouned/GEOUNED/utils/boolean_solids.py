@@ -7,11 +7,12 @@ import math
 
 import FreeCAD
 
-from .boolean_function import BoolSequence
+from .boolean_function import BoolSequence, BoolRegion
 from .geouned_classes import GeounedSurface
 from .split_function import split_bop
 
 BoolVals = (None, True, False)
+primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
 
 logger = logging.getLogger("general_logger")
 
@@ -219,7 +220,6 @@ class ConstraintTable(dict):
 
 
 def combine_diag_elements(d1, d2):
-
     if d1.val == 0 and d2.val == 0:
         return CTelement((1, 1, 1, 1))
     elif d1.val == 1 and d2.val == 0:
@@ -240,7 +240,7 @@ def combine_diag_elements(d1, d2):
         return CTelement((0, 0, 1, 0))
 
 
-def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options):
+def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_surfaces=set()):
 
     if type(SurfInfo) is dict:
         surfaces = SurfInfo
@@ -266,7 +266,10 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options):
         CTable.diagonal = False
 
     for i, s1 in enumerate(surfaceList):
-        res, splitRegions = split_solid_fast(Box, surfaces[s1], True, options)
+        if s1 not in omit_surfaces:
+            res, splitRegions = split_solid_fast(Box, surfaces[s1], True, options)
+        else:
+            res = 0
         # res,splitRegions = split_solid_fast(Box,Surfaces.get_surface(s1),True)
 
         CTable.add_element(s1, s1, CTelement(res, s1, s1))
@@ -274,12 +277,22 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options):
             continue
         if splitRegions is None:
             continue  # loop, no region to be split by s2
-        for j, s2 in enumerate(surfaceList[i + 1 :]):
+
+        if s1 in omit_surfaces:
+            val = (1, 1, 1, 1)
+            for s2 in surfaceList[i + 1 :]:
+                CTable.add_element(s1, s2, CTelement(val, s1, s2))
+            continue
+
+        for s2 in surfaceList[i + 1 :]:
+            if s2 in omit_surfaces:
+                CTable.add_element(s1, s2, CTelement((1, 1, 1, 1), s1, s2))
+                continue
+
             posS1, negS1 = splitRegions
 
             pos0 = None
             for solid in posS1:
-
                 pos = split_solid_fast(solid, surfaces[s2], False, options)
 
                 # pos = split_solid_fast(solid,Surfaces.get_surface(s2),False)
@@ -414,11 +427,16 @@ def split_solid_fast(solid, surf, box, options):
 
     else:
         # "not box" => return the position of the +/- region of s1 (the solid) with respect s2
-        if surf.shape:
-            dist = solid.distToShape(surf.shape)[0]
+        if surf.shell:
+            dist = solid.distToShape(surf.shell)[0]
+            # cc = solid.common(surf.shell)
+            # volume = cc.Volume
         else:
             dist = 1.0
+            # volume = 0
         if dist > 1e-6:  # face doesn't intersect solid
+            # if volume < 1e-6:  # face doesn't intersect solid
+
             sgn = check_sign(solid, surf)
             if sgn == 1:
                 return (
@@ -547,9 +565,117 @@ def divide_box(Box):
     return (b1, b2, b3, b4, b5, b6, b7, b8), (p1, p2, p3, p4, p5, p6, p7, p8)
 
 
-def check_sign(solid, surf):
+def check_sign(solid_or_point, surf):
 
-    point = point_inside(solid)
+    if type(solid_or_point) is FreeCAD.Vector:
+        point = solid_or_point
+    else:
+        point = point_inside(solid_or_point)
+
+    if surf.Type in primitives_surfaces:
+        return check_sign_primitive(point, surf)
+
+    elif surf.Type == "Cylinder":
+        return check_sign(point, surf.Surf.Cylinder)
+
+    elif surf.Type == "Cone":
+        return check_sign(point, surf.Surf.Cone)
+
+    elif surf.Type == "Sphere":
+        return check_sign(point, surf.Surf.Sphere)
+
+    elif surf.Type == "Torus":
+        return check_sign(point, tor=surf.Surf.Torus)
+
+    elif surf.Type == "Can" or surf.Type == "TCone":
+        if surf.Type == "Can":
+            ck = surf.Surf.Cylinder
+            s1 = surf.Surf.s1
+            s2 = surf.Surf.s2
+        else:
+            ck = surf.Surf.Cone
+            s1 = surf.Surf.p1
+            s2 = surf.Surf.p2
+
+        AND_region = surf.region.region.operator == "AND"
+        ck_sign = check_sign(point, ck)
+        s1_sign = check_sign(point, s1)
+        s2_sign = check_sign(point, s2)
+        if AND_region:
+            if (ck_sign < 0) and (s1_sign > 0) and (s2_sign > 0):
+                can_sign = 1
+            else:
+                can_sign = -1
+            return can_sign if surf.Orientation == "Forward" else -can_sign
+        else:
+            if (ck_sign > 0) or (s1_sign < 0) or (s2_sign < 0):
+                can_sign = 1
+            else:
+                can_sign = -1
+            return can_sign if surf.Orientation == "Reversed" else -can_sign
+
+    elif surf.Type == "MultiPlane":
+        for plane in surf.Surf.Planes:
+            p_sign = check_sign(point, plane)
+            if p_sign == 1:
+                return 1
+        return -1
+
+    elif surf.Type == "RoundCorner":
+
+        multiDef = surf.region.region.copy()
+        p1, p2 = surf.Surf.Planes
+        if p1 == p2:
+            planes = (p1,)
+        else:
+            planes = (p1, p2)
+        for plane in planes:
+            value = check_sign(point, plane) > 0
+            if not plane.bVar.ref():
+                value = not value
+            multiDef = multiDef.evaluate({plane.bVar: value})
+            if type(multiDef) is bool:
+                return 1 if multiDef else -1
+
+        cyl = surf.Surf.Cylinder.Surf.Cylinder
+        value = check_sign(point, cyl) > 0
+        multiDef = multiDef.evaluate({cyl.bVar: value})
+        if type(multiDef) is bool:
+            return 1 if multiDef else -1
+
+        cplane = surf.Surf.Cylinder.Surf.Plane
+        if cplane is not None:
+            value = check_sign(point, cplane) > 0
+            if not cplane.bVar.ref():
+                value = not value
+            multiDef = multiDef.evaluate({cplane.bVar: value})
+            if type(multiDef) is bool:
+                return 1 if multiDef else -1
+
+    elif surf.Type == "MultiRoundCorner":
+
+        multiDef = surf.region.region.copy()
+        for plane in surf.Surf.Planes:
+            value = check_sign(point, plane) > 0
+            multiDef = multiDef.evaluate({plane.bVar: value})
+            if type(multiDef) is bool:
+                return 1 if multiDef else -1
+
+        for rc in surf.Surf.Corners:
+            plane = rc.Surf.Plane
+            value = check_sign(point, plane) > 0
+            multiDef = multiDef.evaluate({plane.bVar: value})
+            if type(multiDef) is bool:
+                return 1 if multiDef else -1
+
+            cyl = rc.Surf.Cylinder
+            value = check_sign(point, cyl) > 0
+            multiDef = multiDef.evaluate({cyl.bVar: value})
+            if type(multiDef) is bool:
+                return 1 if multiDef else -1
+
+
+def check_sign_primitive(point, surf):
 
     if surf.Type == "Plane":
         r = point - surf.Surf.Position
@@ -597,3 +723,13 @@ def check_sign(solid, surf):
             return 1
         else:
             return -1
+
+
+def get_kne_planes(Surfaces):
+
+    kne_planes = set()
+    for kne in Surfaces["Cone"]:
+        for index in kne.region.get_surfaces_numbers():
+            if Surfaces.primitive_surfaces.get_surface(index).Type == "Plane":
+                kne_planes.add(index)
+    return kne_planes

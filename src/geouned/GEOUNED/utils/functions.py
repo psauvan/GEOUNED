@@ -11,8 +11,8 @@ logger = logging.getLogger("general_logger")
 from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
-from .meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
-from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges
+from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
+from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, elegible_plane
 from ..decompose.decom_utils_generator import cyl_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
@@ -34,7 +34,48 @@ def get_box(comp, enlargeBox):
     )
 
 
-def get_multiplanes(solidFaces, plane_index_set=None):
+def get_multiplanes(solidFaces, omit_faces_set=None):
+    """identify and return all multiplanes in the solid."""
+
+    if omit_faces_set is None:
+        omit_faces_set = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
+    planes = []
+    for f in solidFaces:
+        if isinstance(f.Surface, PlaneGu):
+            planes.append(f)
+
+    multiplane_list = []
+    multiplane_objects = []
+
+    for p in planes:
+        if p.Index in omit_faces_set:
+            continue
+        if not elegible_plane(p):
+            continue
+        mp_plane_index = set()
+        mplanes = multiplane(p, planes, mp_plane_index)
+        if len(mplanes) != 1:
+            if no_convex(mplanes):
+                mp_params = build_multip_params(mplanes)
+                mp = GeounedSurface(("MultiPlane", mp_params))
+                if mp.Surf.PlaneNumber < 2:
+                    continue
+                for pp in mplanes:
+                    omit_faces_set.add(pp.Index)
+                multiplane_list.append(mplanes)
+                multiplane_objects.append(mp)
+
+    if one_value_return:
+        return multiplane_objects
+    else:
+        return multiplane_objects, omit_faces_set
+
+
+def get_multiplanes_old(solidFaces, plane_index_set=None):
     """identify and return all multiplanes in the solid."""
 
     if plane_index_set is None:
@@ -78,33 +119,6 @@ def get_multiplanes(solidFaces, plane_index_set=None):
         return multiplane_objects, plane_index_set
 
 
-def get_reverseCan(solidFaces, canface_index=None):
-    """identify and return all can type in the solid."""
-
-    if canface_index is None:
-        canface_index = set()
-        one_value_return = False
-    else:
-        one_value_return = True
-
-    can_list = []
-    for f in solidFaces:
-        if isinstance(f.Surface, CylinderGu):
-            if f.Index in canface_index:
-                continue
-            if f.Orientation == "Reversed":
-                cs, surfindex = get_can_surfaces(f, solidFaces)
-                if cs is not None:
-                    gc = GeounedSurface(("Can", build_can_params(cs), f.Orientation))
-                    can_list.append(gc)
-                    canface_index.update(surfindex)
-
-    if one_value_return:
-        return can_list
-    else:
-        return can_list, canface_index
-
-
 def get_Can(solidFaces, canface_index=None):
     """identify and return all can type in the solid."""
 
@@ -131,6 +145,32 @@ def get_Can(solidFaces, canface_index=None):
         return can_list, canface_index
 
 
+def get_TCone(solidFaces, Tconeface_index=None):
+    """identify and return all can type in the solid."""
+
+    if Tconeface_index is None:
+        Tconeface_index = set()
+        one_value_return = False
+    else:
+        one_value_return = True
+
+    tcone_list = []
+    for f in solidFaces:
+        if isinstance(f.Surface, ConeGu):
+            if f.Index in Tconeface_index:
+                continue
+            cs, surfindex = get_tcone_surfaces(f, solidFaces)
+            if cs is not None:
+                gc = GeounedSurface(("TCone", build_tcone_params(cs), f.Orientation))
+                tcone_list.append(gc)
+                Tconeface_index.update(surfindex)
+
+    if one_value_return:
+        return tcone_list
+    else:
+        return tcone_list, Tconeface_index
+
+
 def get_roundCorner(solidFaces, cornerface_index=None):
     """identify and return all roundcorner type in the solid."""
     if cornerface_index is None:
@@ -147,12 +187,12 @@ def get_roundCorner(solidFaces, cornerface_index=None):
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
             if rc is not None:
                 cornerface_index.update(surfindex)
-                mrcparams = build_roundC_params(rc)
-                if len(mrcparams[0]) == 1:
-                    gc = mrcparams[0][0]
+                rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)
+                if not multi_round:
+                    corner_list.extend(rc_list)
                 else:
-                    gc = GeounedSurface(("MultiRoundCorner", mrcparams))
-                corner_list.append(gc)
+                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation)))
+                    corner_list.append(gc)
 
     if one_value_return:
         return corner_list
@@ -199,13 +239,16 @@ def build_roundC_params(rc_list):
             gpa = get_additional_corner_plane(cyl, p1, p2)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
-        not_p1 = config & mask.notp1 == mask.notp1
-        not_p2 = config & mask.notp2 == mask.notp2
-        p1Axis = -p1.Surface.Axis if not_p1 else p1.Surface.Axis
-        p2Axis = -p2.Surface.Axis if not_p2 else p2.Surface.Axis
+        # not_p1 = config & mask.notp1 == mask.notp1
+        # not_p2 = config & mask.notp2 == mask.notp2
+        # p1Axis = -p1.Surface.Axis if not_p1 else p1.Surface.Axis
+        # p2Axis = -p2.Surface.Axis if not_p2 else p2.Surface.Axis
+        p1Axis = -p1.Surface.Axis if p1.Orientation == "Reversed" else p1.Surface.Axis
+        p2Axis = -p2.Surface.Axis if p2.Orientation == "Reversed" else p2.Surface.Axis
 
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
+
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"
@@ -213,8 +256,11 @@ def build_roundC_params(rc_list):
         roundcorner_list.append(rc)
         plane_list.extend((gp1, gp2))
 
+    multi_round = False
+    orientation = None
     if len(plane_list) > 2:
         i = 0
+        multi_round = True
         while i < len(plane_list) - 1:
             pi = plane_list[i]
             n = len(plane_list) - 1
@@ -223,7 +269,27 @@ def build_roundC_params(rc_list):
                     del plane_list[n - j]
             i += 1
 
-    params = (roundcorner_list, plane_list)
+        center = FreeCAD.Vector(0, 0, 0)
+        for p in plane_list:
+            center = center + p.Surf.Position
+        center = center / len(plane_list)
+
+        ref = plane_list[0].Surf.Axis.dot(plane_list[0].Surf.Position - center)
+        orientation = "Forward" if ref > 0 else "Reversed"
+
+        for p in plane_list[1:]:
+            dot = p.Surf.Axis.dot(p.Surf.Position - center)
+            if dot * ref < 0:
+                multi_round = False
+                break
+
+        if multi_round:
+            cylinder_list = []
+            for rc in roundcorner_list:
+                cylinder_list.append(rc.Surf.Cylinder)
+            roundcorner_list = cylinder_list
+
+    params = (roundcorner_list, plane_list, multi_round, orientation)
     return params
 
 
@@ -376,6 +442,27 @@ def build_can_params(cs):
     gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
     return (gcyl, bsurf[0], bsurf[1])
+
+
+def build_tcone_params(ks):
+    kne_in, p1, p2 = ks
+    shell = type(kne_in) is ShellGu
+    if not shell:
+        kne = kne_in
+    else:
+        kne = kne_in.Faces[0]
+
+    bsurf = []
+    for s, r in (p1, p2):
+        normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
+        if r == "OR":
+            normal = -normal  # plane axis toward cone center
+        gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
+        bsurf.append((gs, r))
+
+    coneOnly = GeounedSurface(("ConeOnly", (kne.Surface.Apex, kne.Surface.Axis, kne.Surface.SemiAngle, 1.0, 1.0)))
+    gcone = GeounedSurface(("Cone", (coneOnly, None, None), kne.Orientation))
+    return (gcone, bsurf[0], bsurf[1])
 
 
 def build_multip_params(plane_list):

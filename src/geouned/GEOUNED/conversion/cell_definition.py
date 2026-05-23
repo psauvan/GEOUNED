@@ -6,7 +6,15 @@ import logging
 from ..utils import geometry_gu as GU
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
-from ..utils.functions import get_multiplanes, get_roundCorner, get_reversed_cone_cylinder, get_Can, my_dist_to_shape, get_box
+from ..utils.functions import (
+    get_multiplanes,
+    get_roundCorner,
+    get_reversed_cone_cylinder,
+    get_Can,
+    get_TCone,
+    my_dist_to_shape,
+    get_box,
+)
 from ..utils.boolean_function import BoolSequence
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
@@ -32,9 +40,9 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
     solid_definition = BoolSequence(operator="OR")
     for basic_solid in meta_obj.Solids:
         comp = simple_solid_definition(basic_solid, Surfaces)
-        if simplifyComp:
-            comp.expand_regions_to_boolVar()
-            comp.simplify()
+        # if simplifyComp:
+        # comp.expand_regions_to_boolVar()
+        # comp.simplify()
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
 
@@ -72,10 +80,19 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)
 
-        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
-        for cs in reversedCC:
-            cc_region = Surfaces.add_reversedCC(cs)
-            component_definition.append(cc_region)
+        RFTCone = get_TCone(solid_gu.Faces, omitFaces)
+        for cs in RFTCone:
+            if cs.Orientation == "Reversed":
+                cs_region = Surfaces.add_reverseTCone(cs)
+            else:
+                cs_region = Surfaces.add_forwardTCone(cs)
+            component_definition.append(cs_region)
+        omit_isolated_planes(solid_gu.Faces, omitFaces)
+
+        # reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
+        # for cs in reversedCC:
+        #    cc_region = Surfaces.add_reversedCC(cs)
+        #    component_definition.append(cc_region)
 
     else:
         omitFaces = set()

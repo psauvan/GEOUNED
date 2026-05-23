@@ -24,29 +24,53 @@ def get_cell_object(geoObj):
             if geoObj.Surf.Cylinder.Surf.Plane is not None:
                 cell.surfaces[4] = get_surface(4, geoObj.Surf.Cylinder.Surf.Plane)
 
-    elif geoObj.Type == "multiRoundCorner":
+    elif geoObj.Type == "MultiRoundCorner":
         region = None
-        for i, rc in geoObj.Surf.ConerList:
-            plane1, plane2 = rc.Surf.Planes
-            if plane1.isSame(plane2):
-                rc_region = round_corner_region(1 + i, 1 + i, 3 + i, 4 + i, rc.Surf.Configuration)
+        Fcyl = []
+        Rcyl = []
+        if geoObj.Orientation == "Forward":
+            for i, plane in enumerate(geoObj.Surf.Planes):
+                region = BoolRegion.mult(region, -BoolRegion(0, i + 1))
+                cell.surfaces[i + 1] = get_surface(i + 1, plane)
+
+            offset = len(geoObj.Surf.Planes) + 1
+            for i, rc in enumerate(geoObj.Surf.Corners):
+                cylinder = rc.Surf.Cylinder
+                plane = rc.Surf.Plane
                 if rc.Orientation == "Forward":
-                    region = BoolRegion.mult(region, rc_region)
+                    region = region * (-BoolRegion(0, 2 * i + 1 + offset))
+                    Fcyl.append(-BoolRegion(0, 2 * i + offset))
                 else:
-                    region = BoolRegion.add(region, rc_region)
-                cell.surfaces[1 + i] = get_surface(1 + i, plane1)
-                cell.surfaces[3 + i] = get_surface(3 + i, rc.Surf.Cylinder.Surf.Cylinder)
-            else:
-                rc_region = round_corner_region(1 + i, 2 + i, 3 + i, 4 + i, rc.Surf.Configuration)
+                    region = region * BoolRegion(0, 2 * i + 1 + offset)
+                    Rcyl.append(BoolRegion(0, 2 * i + offset))
+                cell.surfaces[2 * i + offset] = get_surface(2 * i + offset, cylinder)
+                cell.surfaces[2 * i + 1 + offset] = get_surface(2 * i + 1 + offset, plane)
+            for cyl in Rcyl:
+                region = region * cyl
+            for cyl in Fcyl:
+                region = region + cyl
+        else:
+            for i, plane in enumerate(geoObj.Surf.Planes):
+                region = BoolRegion.add(region, -BoolRegion(0, i + 1))
+                cell.surfaces[i + 1] = get_surface(i + 1, plane)
+
+            offset = len(geoObj.Surf.Planes) + 1
+            for i, rc in enumerate(geoObj.Surf.Corners):
+                cylinder = rc.Surf.Cylinder
+                plane = rc.Surf.Plane
                 if rc.Orientation == "Forward":
-                    region = BoolRegion.mult(region, rc_region)
+                    region = region - BoolRegion(0, 2 * i + 1 + offset)
+                    Fcyl.append(-BoolRegion(0, 2 * i + offset))
                 else:
-                    region = BoolRegion.add(region, rc_region)
-                cell.surfaces[1 + i] = get_surface(1 + i, rc.Surf.Planes[0])
-                cell.surfaces[2 + i] = get_surface(2 + i, rc.Surf.Planes[1])
-                cell.surfaces[3 + i] = get_surface(3 + i, rc.Surf.Cylinder.Surf.Cylinder)
-                if rc.Surf.Cylinder.Surf.Plane is not None:
-                    cell.surfaces[4 + i] = get_surface(4 + i, rc.Surf.Cylinder.Surf.Plane)
+                    region = region + BoolRegion(0, 2 * i + 1 + offset)
+                    Rcyl.append(BoolRegion(0, 2 * i + offset))
+                cell.surfaces[2 * i + offset] = get_surface(2 * i + offset, cylinder)
+                cell.surfaces[2 * i + 1 + offset] = get_surface(2 * i + 1 + offset, plane)
+
+            for cyl in Fcyl:
+                region = region + cyl
+            for cyl in Rcyl:
+                region = region * cyl
 
     cell.definition = region.to_integer()
 

@@ -3,17 +3,18 @@ import Part
 from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
-from .geometry_gu import CylinderGu, TorusGu, other_face_edge
+from .geometry_gu import CylinderGu, PlaneGu, TorusGu, other_face_edge
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
     region_sign,
     get_adjacent_cylplane,
-    get_adjacent_cylsurf,
+    get_adjacent_cylknesurf,
     get_join_cone_cyl,
-    closed_cylinder,
+    closed_cylinder_cone,
     most_outer_faces,
     commonEdge,
     planar_edges,
+    elegible_plane,
 )
 
 
@@ -27,7 +28,44 @@ def multiplane_loop(adjacents, multi_list, planes):
         multiplane_loop(new_adjacents, multi_list, planes)
 
 
-def multiplane(p, planes):
+def multiplane(master_plane, planes, plane_index):
+    """Found planes adjacent to "p". Region delimited by plane is concanve."""
+    Edges = master_plane.OuterWire.Edges
+
+    if master_plane.Index not in plane_index:
+        multiplane_list = [master_plane]
+        plane_index.add(master_plane.Index)
+    else:
+        multiplane_list = []
+
+    addplane = []
+    for e in Edges:
+        try:
+            type_curve = type(e.Curve)
+        except:
+            type_curve = None
+        if type_curve is not Part.Line:
+            continue
+
+        adjacent_plane = other_face_edge(e, master_plane, planes, outer_only=True)
+        if adjacent_plane is not None:
+            if adjacent_plane.Index in plane_index:
+                continue
+            sign = region_sign(master_plane, adjacent_plane)
+            if sign == "OR":
+                addplane.append(adjacent_plane)
+                plane_index.add(adjacent_plane.Index)
+
+    multiplane_list.extend(addplane)
+    for p in addplane:
+        if not elegible_plane(p):
+            continue
+        multiplane_list.extend(multiplane(p, planes, plane_index))
+
+    return multiplane_list
+
+
+def multiplane_old(p, planes):
     """Found planes adjacent to "p". Region delimited by plane is concanve."""
     Edges = p.OuterWire.Edges
     addplane = [p]
@@ -85,11 +123,11 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
 
 
 def get_can_surfaces(cylinder, solidFaces):
-    cylinder_shell, faceindex, closed = closed_cylinder(cylinder, solidFaces)
+    cylinder_shell, faceindex, closed = closed_cylinder_cone(cylinder, solidFaces)
     if not closed:
         return None, None
 
-    ext_faces = get_adjacent_cylsurf(cylinder_shell, solidFaces)
+    ext_faces = get_adjacent_cylknesurf(cylinder_shell, solidFaces)
     surfaces = [cylinder_shell]
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
@@ -119,6 +157,34 @@ def get_can_surfaces(cylinder, solidFaces):
     return surfaces, faceindex
 
 
+def get_tcone_surfaces(cone, solidFaces):
+    cone_shell, faceindex, closed = closed_cylinder_cone(cone, solidFaces)
+    if not closed:
+        return None, None
+
+    ext_faces = get_adjacent_cylknesurf(cone_shell, solidFaces)
+    surfaces = [cone_shell]
+    kne_value = 1 if cone_shell.Orientation == "Reversed" else -1
+
+    for s in ext_faces:
+        if type(s.Surface) is not PlaneGu:
+            return None, None
+
+        r = region_sign(cone_shell, s)
+        surfaces.append((s, r))
+        s_value = 1 if r == "AND" else -1
+        if s_value != kne_value:
+            faceindex.add(s.Index)  # will not split with adjacent surface
+
+    if len(ext_faces) > 2:
+        ext_faces = most_outer_faces(cone, ext_faces)
+        for s in reversed(surfaces[1:]):
+            if s[0] not in ext_faces:
+                surfaces.remove(s)
+
+    return surfaces, faceindex
+
+
 def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
 
     rc_list = []
@@ -137,8 +203,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     face_index.update({cylinder.Index, p1.Index, p2.Index})
     rc_list.append((cylinder, p1, p2, (configuration, fwd_corner)))
 
-    for newplane in []:
-        # for newplane in (p1, p2):
+    for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
             f = other_face_edge(edge, newplane, Faces)
             if type(f.Surface) != CylinderGu:
@@ -158,9 +223,9 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
                 continue
 
             # rc[0][3][1] fwd_corner value of new round corner
-            if fwd_corner != rc[0][3][1]:
-                cylinders_set.remove(f.Index)
-                continue
+            # if fwd_corner != rc[0][3][1]:
+            #    cylinders_set.remove(f.Index)
+            #    continue
 
             rc_list.extend(rc)
             face_index.update(newindex)

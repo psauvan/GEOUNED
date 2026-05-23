@@ -8,7 +8,7 @@ import Part
 from ..conversion import cell_definition as Conv
 from ..decompose.decom_one_generators import main_split
 from ..utils.boolean_function import BoolSequence, BoolVariable, BoolRegion
-from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces
+from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 
 logger = logging.getLogger("general_logger")
@@ -223,10 +223,10 @@ class VoidBox:
         complementary = BoolSequence(operator="AND")
         complementary.append(boxDef)
         if simplify != "no":
-            surfList = voidSolidDef.get_surfaces_numbers(expand=True)
+            surfList = voidSolidDef.get_surfaces_numbers()
 
             if enclosure:
-                surfList.update(boxDef.get_surfaces_numbers(expand=True))
+                surfList.update(boxDef.get_surfaces_numbers())
             else:
                 for s in boxDef.elements:
                     val = s > 0
@@ -240,7 +240,8 @@ class VoidBox:
             if enclosure or res is None:
                 surfaceDict = {}
                 for i in surfList:
-                    surfaceDict[i] = Surfaces.get_primitive_surface(i)
+                    # surfaceDict[i] = Surfaces.get_primitive_surface(i)
+                    surfaceDict[i] = Surfaces.get_surface(i)
                 CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options)
             else:
                 if res is True:
@@ -258,7 +259,6 @@ class VoidBox:
                 voidSolidDef = cellVoid
 
             for solDef in voidSolidDef.elements:
-                solDef.expand_regions_to_boolVar()
                 newSolid = remove_extra_surfaces(solDef, CTable)
                 if type(newSolid.elements) is not bool:
                     newTemp.append(newSolid)
@@ -266,7 +266,6 @@ class VoidBox:
                     return None, None
 
             voidSolidDef = newTemp
-
         else:
             if voidSolidDef.level == 0:
                 if len(voidSolidDef.elements) == 1:
@@ -308,17 +307,39 @@ class VoidBox:
                 pmoc = comp.get_complementary()
                 compSeq.append(pmoc)
 
-        if compSeq.base_type is BoolVariable and complementary.base_type is BoolRegion:
-            complementary.expand_regions_to_boolVar()
+        # if compSeq.base_type is BoolVariable and complementary.base_type is BoolRegion:
+        #    complementary.expand_regions_to_boolVar()
+        complementary.expand_regions_to_boolVar()
 
         if simplify == "full":
+            compSeq.simplify(CTable)
+            compSeq.expand_regions_to_boolVar()
+            surfaceDict = {}
+
             if enclosure:
                 complementary.append(compSeq)
-                complementary.simplify(CTable, outOp="AND")
+                primitive_surfs = complementary.get_surfaces_numbers()
+                for i in primitive_surfs:
+                    surfaceDict[i] = Surfaces.get_primitive_surface(i)
+
+                kne_planes = get_kne_planes(Surfaces)
+                kne_planes = kne_planes.intersection(primitive_surfs)
+
+                CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options, omit_surfaces=kne_planes)
+                complementary.simplify(CTable)
             else:
+                primitive_surfs = compSeq.get_surfaces_numbers()
+                for i in primitive_surfs:
+                    surfaceDict[i] = Surfaces.get_primitive_surface(i)
+
+                kne_planes = get_kne_planes(Surfaces)
+                kne_planes = kne_planes.intersection(primitive_surfs)
+
+                CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options, omit_surfaces=kne_planes)
                 compSeq.simplify(CTable)
                 complementary.append(compSeq)
         else:
+            compSeq.expand_regions_to_boolVar()
             compSeq.simplify(None)
             complementary.simplify(None, outOp="AND")
             complementary.append(compSeq)

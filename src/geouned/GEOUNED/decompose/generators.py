@@ -1,13 +1,14 @@
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.meta_surfaces import multiplane_loop, get_can_surfaces, get_roundcorner_surfaces
-from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel
+from ..utils.meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces
+from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel, elegible_plane
 
 from ..utils.functions import (
     build_multip_params,
     build_can_params,
+    build_tcone_params,
     build_roundC_params,
 )
-from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu
+from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
     cyl_bound_planes,
     torus_bound_planes,
@@ -25,6 +26,9 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
         for can in next_Can(solid_GU, omitfaces):
             yield can
+
+        for tcone in next_truncCone(solid_GU, omitfaces):
+            yield tcone
 
         for rdc in next_roundCorner(solid_GU, omitfaces):
             yield rdc
@@ -163,6 +167,35 @@ def next_multiplanes(solidFaces, plane_index_set):
         if isinstance(f.Surface, PlaneGu):
             planes.append(f)
 
+    for p in planes:
+        if p.Index in plane_index_set:
+            continue
+        if not elegible_plane(p):
+            continue
+        mp_plane_index = set()
+        mplanes = multiplane(p, planes, mp_plane_index)
+        plane_index_set.update(mp_plane_index)
+        if len(mplanes) != 1:
+            if no_convex(mplanes):
+                remove_twice_parallel(mplanes)
+                mp_params = build_multip_params(mplanes)
+                mp = GeounedSurface(("MultiPlane", mp_params))
+                if mp.Surf.PlaneNumber < 2:
+                    continue
+                for pp in mplanes:
+                    plane_index_set.add(pp.Index)
+                yield mp
+
+
+def next_multiplanes_old(solidFaces, plane_index_set):
+    """identify and return all multiplanes in the solid."""
+    planes = []
+    for f in solidFaces:
+        if f.Index in plane_index_set:
+            continue
+        if isinstance(f.Surface, PlaneGu):
+            planes.append(f)
+
     multiplane_list = []
     for p in planes:
         loop = False
@@ -206,6 +239,25 @@ def next_Can(solid, canface_index):
     return None
 
 
+def next_truncCone(solid, tconeface_index):
+    """identify and return all truncated cone type in the solid."""
+
+    solidFaces = solid.Faces
+
+    for f in solidFaces:
+        if isinstance(f.Surface, ConeGu):
+            if f.Index in tconeface_index:
+                continue
+
+            cs, surfindex = get_tcone_surfaces(f, solidFaces)
+            if cs is not None:
+                gc = GeounedSurface(("TCone", build_tcone_params(cs)))
+                tconeface_index.update(surfindex)
+                yield gc
+
+    return None
+
+
 def next_roundCorner(solid, cornerface_index):
     """identify and return all roundcorner type in the solid."""
     solidFaces = solid.Faces
@@ -216,11 +268,12 @@ def next_roundCorner(solid, cornerface_index):
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
             if rc is not None:
                 cornerface_index.update(surfindex)
-                mrcparams = build_roundC_params(rc)
-                if len(mrcparams[0]) == 1:
-                    gc = mrcparams[0][0]
+                rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)
+                if not multi_round:
+                    for gc in rc_list:
+                        yield gc
                 else:
-                    gc = GeounedSurface(("MultiRoundCorner", mrcparams))
-                yield gc
+                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation)))
+                    yield gc
 
     return None
