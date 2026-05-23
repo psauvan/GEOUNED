@@ -64,7 +64,11 @@ def makeCylinder(cyl, Box):
 
     center = center + (dmin - 5) * axis
     length = dmax - dmin + 10
-    return Part.makeCylinder(radius, length, center, axis, 360.0)
+    Cylinder = Part.makeCylinder(radius, length, center, axis, 360.0)
+    for f in Cylinder.Faces:
+        if type(f.Surface) is Part.Cylinder:
+            shell = f
+    return (Cylinder, shell)
 
 
 def makeCone(axis, apex, tan, Box):
@@ -76,7 +80,11 @@ def makeCone(axis, apex, tan, Box):
     if dmax > 0:
         length = dmax + 10
         rad = tan * length
-        return Part.makeCone(0.0, rad, length, apex, axis, 360.0)
+        cone = Part.makeCone(0.0, rad, length, apex, axis, 360.0)
+        for f in cone.Faces:
+            if type(f.Surface) is Part.Cone:
+                shell = f
+        return (cone, shell)
     else:
         return None
 
@@ -133,14 +141,35 @@ def makeRoundCorner(roundCorner, Box):
     celparts = getPart(celparts)
 
     shapeParts = []
+    for s in celparts:
+        shapeParts.append(s.base)
+    solid = FuseSolid(shapeParts)
+
+    return (solid, solid.Shells[0])
+
+
+def makeMultiRoundCorner(roundCorner, Box):
+
+    rc = get_cell_object(roundCorner)
+    rc.boundBox = myBox(Box, "Forward")
+    for s in rc.surfaces.values():
+        s.buildShape(Box)
+    celparts = BuildDepth(rc, None)
+    celparts = getPart(celparts)
+
+    shapeParts = []
     for i, s in enumerate(celparts):
         shapeParts.append(s.base)
 
-    shape = FuseSolid(shapeParts)
-    return shape
+    solid = FuseSolid(shapeParts)
+    if len(solid.Shells) == 0:
+        shell = solid.Shells[0]
+    else:
+        shell = solid.Shells[0]  # not sure if for Reversed MultiRoundConer inner shells is the index 0 shell
+    return (solid, shell)
 
 
-def makeRoundCorner_old(roundCorner, Orientation, Box):
+def makeRoundCorner_old2(roundCorner, Orientation, Box):
     cut_shapes = []
     surfcheck = []
     one = 1 if Orientation == "Forward" else -1
@@ -278,8 +307,16 @@ def makeCan(can, box):
     return rawCan
 
 
+def makeTCone(tcone, box):
+    tcone.Cone.build_surface(box)
+    tcone.p1.build_surface(box)
+    tcone.p2.build_surface(box)
+    return makeConeCan(tcone)
+
+
 def makeCylinderCan(can):
     cyl = can.Cylinder
+
     s12_list = []
     s12_shapes = []
     if can.s1 is not None:
@@ -332,9 +369,50 @@ def makeCylinderCan(can):
 
     if solids:
         if len(solids) == 1:
-            return solids[0]
+            solid_part = solids[0]
         else:
-            return solids[0].fuse(solids[1:])
+            solid_part = solids[0].fuse(solids[1:])
+        return (solid_part, solid_part.Shells[0])
+
+
+def makeConeCan(tcone):
+    kne = tcone.Cone
+
+    s12_list = ((tcone.p1, tcone.p1_configuration), (tcone.p2, tcone.p2_configuration))
+    s12_shapes = (tcone.p1.shape, tcone.p2.shape)
+
+    options = Options()
+    comsolid = split_bop(kne.shape, s12_shapes, options.splitTolerance, options)
+
+    surfcheck = []
+
+    for s12 in s12_list:
+        si = s12[0]
+        surfcheck.append((si, 1))
+
+    solids = []
+    for solid in comsolid.Solids:
+        point = point_inside(solid)
+        for sp in surfcheck:
+            if type(sp[0]) is tuple:
+                for si, ss in sp:  # "OR" sequence
+                    if ss == check_sign(point, si):
+                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
+                else:
+                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
+            else:
+                si, ss = sp
+                if ss != check_sign(point, si):  # "AND" sequence
+                    break
+        else:
+            solids.append(solid)
+
+    if solids:
+        if len(solids) == 1:
+            solid_part = solids[0]
+        else:
+            solid_part = solids[0].fuse(solids[1:])
+        return (solid_part, solid_part.Shells[0])
 
 
 def makeBoxFaces(box: list):

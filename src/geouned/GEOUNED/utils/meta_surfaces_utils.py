@@ -127,13 +127,13 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
     return planes
 
 
-def get_adjacent_cylsurf(cyl, Faces):
-    if type(cyl) is ShellGu:
+def get_adjacent_cylknesurf(cylkne, Faces):
+    if type(cylkne) is ShellGu:
         adjacent = []
         adjIndexes = set()
-        surface = cyl.Faces[0].Surface
-        for f in cyl.Faces:
-            adj = get_adjacent_cylsurfFace(f, Faces)
+        surface = cylkne.Faces[0].Surface
+        for f in cylkne.Faces:
+            adj = get_adjacent_cylknesurfFace(f, Faces)
             for af in adj:
                 if af.Surface.isSameSurface(surface):
                     continue
@@ -142,22 +142,22 @@ def get_adjacent_cylsurf(cyl, Faces):
                     adjacent.append(af)
 
         if len(adjacent) > 2:
-            adjacent = most_outer_faces(cyl, adjacent)
+            adjacent = most_outer_faces(cylkne, adjacent)
         return adjacent
 
     else:
-        return get_adjacent_cylsurfFace(cyl, Faces)
+        return get_adjacent_cylknesurfFace(cylkne, Faces)
 
 
-def get_adjacent_cylsurfFace(cyl, Faces):
+def get_adjacent_cylknesurfFace(cylkne, Faces):
     adjfaces = []
 
     other_index = set()
-    for e in cyl.OuterWire.Edges:
+    for e in cylkne.OuterWire.Edges:
 
         if isinstance(e.Curve, Part.Line):
             continue
-        otherface = other_face_edge(e, cyl, Faces, outer_only=False)
+        otherface = other_face_edge(e, cylkne, Faces, outer_only=False)
         if otherface is None:
             continue
         if otherface.Index in other_index:
@@ -181,54 +181,7 @@ def get_adjacent_cylsurfFace(cyl, Faces):
     return adjfaces
 
 
-def get_adjacent_cylinder_faces(cylinder, Faces):
-    sameCyl = [cylinder]
-    for face in Faces:
-        if isinstance(face, CylinderGu):
-            if cylinder.Surf.issameCylinder(face.Surf):
-                sameCyl.append(face)
-
-    joinCyl = [cylinder]
-    cylindex = {
-        cylinder.Index,
-    }
-    get_adjacent_cylface_loop(joinCyl, cylindex, sameCyl)
-
-    faces = []
-    for c in sameCyl:
-        if c.Index in cylindex:
-            faces.append(c)
-    return faces, cylindex
-
-
-def get_adjacent_cylface_loop(joinfaces, cylindex, sameCyl):
-    for cyl in joinfaces:
-        adjacent = get_ajacent_cylface(cyl, cylindex, sameCyl)
-        if adjacent:
-            cylindex.update({a.Index for a in adjacent})
-            newFacesindex = get_adjacent_cylface_loop(adjacent, cylindex, sameCyl)
-            cylindex.update(newFacesindex)
-
-
-def get_ajacent_cylface(cyl, cylindex, sameCyl):
-    adjacent = []
-    for c in sameCyl:
-        if c.Index in cylindex:
-            continue
-        if is_adjacent_cylinder(cyl, c):
-            adjacent.append(c)
-    return adjacent
-
-
-def is_adjacent_cylinder(c1, c2):
-    for e1 in c1.Edges:
-        for e2 in c2.Edges:
-            if e1.issame(e2):
-                return True
-    return False
-
-
-def is_closed_cylinder(shape):
+def is_closed_cylinder_cone(shape):
     if type(shape) is not ShellGu:
         umin, umax, vmin, vmax = shape.ParameterRange
         return umax - umin > twoPi - 1e-5
@@ -744,6 +697,57 @@ def most_outer_faces(cyl, faces):
     return (faces[surfPos[0][1]], faces[surfPos[-1][1]])
 
 
+def elegible_plane(plane):
+    """An eligible master plane is a plane where the adjacent concave planes make a convex shape"""
+    Edges = plane.OuterWire.Edges
+
+    Vertexes = []
+    for e in Edges:
+        if type(e.Curve) is not Part.Line:
+            # continue
+            return False  # for now only plane with line for all outer edges are eligible
+        Vertexes.append((e.Vertexes[0].Point, e.Vertexes[1].Point))
+
+    if len(Vertexes) == 0:
+        return False
+
+    ei = Vertexes[0][1]
+    Ordered = [Vertexes[0]]
+    del Vertexes[0]
+
+    while len(Vertexes) > 0:
+        for i, e12 in enumerate(Vertexes):
+            e1, e2 = e12
+            found = False
+            if (e1 - ei).Length < 1e-6:
+                ei = e2
+                Ordered.append((e1, e2))
+                del Vertexes[i]
+                found = True
+                break
+            elif (e2 - ei).Length < 1e-6:
+                ei = e1
+                Ordered.append((e2, e1))
+                del Vertexes[i]
+                found = True
+                break
+        if not found:
+            break
+
+    v0 = -(Ordered[-1][1] - Ordered[-1][0])
+    v1 = Ordered[0][1] - Ordered[0][0]
+
+    convex = True
+    axis = v0.cross(v1)
+    for e1, e2 in Ordered[1:]:
+        v0 = -v1
+        v1 = e2 - e1
+        if axis.dot(v0.cross(v1)) < 0:
+            convex = False
+            break
+    return convex
+
+
 def no_convex(mplane_list):
     """keep part of no complex plane set"""
     planes = mplane_list[:]
@@ -1109,31 +1113,31 @@ def angle(v1, v2, operator):
         return twoPi - a
 
 
-def closed_cylinder(cylinder, solidFaces):
-    Cylinders = [cylinder]
-    for cyl in solidFaces:
-        if cyl.Index == cylinder.Index:
+def closed_cylinder_cone(cylkne, solidFaces):
+    CylKne_faces = [cylkne]
+    for ckface in solidFaces:
+        if ckface.Index == cylkne.Index:
             continue
-        if cylinder.Surface.isSameSurface(cyl.Surface):
-            Cylinders.append(cyl)
+        if cylkne.Surface.isSameSurface(ckface.Surface):
+            CylKne_faces.append(ckface)
 
-    if len(Cylinders) > 1:
+    if len(CylKne_faces) > 1:
         sameIndex = same_faces(
-            Cylinders, Tolerances()
+            CylKne_faces, Tolerances()
         )  # return all face connected (direct or indirectly ) to first face (cylinder)
         sameIndex.insert(0, 0)
-        sameCyl = [Cylinders[i] for i in sameIndex]
-        if len(sameCyl) > 1:
-            cyl_shell = ShellGu(sameCyl)
-            cyl_index = set(cyl_shell.Indexes)
+        sameSurf = [CylKne_faces[i] for i in sameIndex]
+        if len(sameSurf) > 1:
+            ck_shell = ShellGu(sameSurf)
+            ck_index = set(ck_shell.Indexes)
         else:
-            cyl_shell = cylinder
-            cyl_index = {cylinder.Index}
+            ck_shell = cylkne
+            ck_index = {cylkne.Index}
     else:
-        cyl_shell = cylinder
-        cyl_index = {cylinder.Index}
+        ck_shell = cylkne
+        ck_index = {cylkne.Index}
 
-    return cyl_shell, cyl_index, is_closed_cylinder(cyl_shell)
+    return ck_shell, ck_index, is_closed_cylinder_cone(ck_shell)
 
 
 def planar_edges(edges):

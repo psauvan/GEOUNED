@@ -273,6 +273,7 @@ class Plane:
         orden.sort()
 
         self.shape = Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
+        self.shell = self.shape
 
 
 class Sphere:
@@ -300,6 +301,7 @@ class Sphere:
     def buildShape(self, boundBox):
         origin, R = self.params
         self.shape = Part.makeSphere(R, origin)
+        self.shell = self.shape.Faces[0]
 
 
 class Cylinder:
@@ -350,6 +352,9 @@ class Cylinder:
             self.shape = Part.makeCylinder(r, vec.Length, p, vec, 360)
             # self.shape = Part.makeCylinder2( r,vec.Length,p,vec)
 
+        for f in self.shape.Faces:
+            if type(f.Surface) is Part.Cylinder:
+                self.shell = f
         return
 
 
@@ -397,16 +402,27 @@ class Cone:
             length = max(abs(dmin), abs(dmax))
             R = length * t
             OneSheetCone = Part.makeCone(0, R, length, apex, axis, 360)
+            for f in OneSheetCone.Faces:
+                if type(f.Surface) is Part.Cone:
+                    oneface = f
             if not dblsht:
                 self.shape = OneSheetCone
+                self.shell = oneface
             else:
                 OtherSheet = Part.makeCone(0, R, length, apex, -axis, 360)
                 DoubleSheetCone = OneSheetCone.fuse([OtherSheet])
                 DoubleSheetCone.removeSplitter()
                 self.shape = DoubleSheetCone
+                for f in OtherSheet.Faces:
+                    if type(f.Surface) is Part.Cone:
+                        otherface = f
+                self.shell = Part.makeShell((oneface, otherface))
         else:
             center, axis, r1, r2 = self.params
             self.shape = Part.makeCone(r1, r2, axis.Length, center, axis, 360)
+            for f in self.shape.Faces:
+                if type(f.Surface) is Part.Cone:
+                    self.shell = f
 
 
 class Torus:
@@ -441,8 +457,9 @@ class Torus:
         center, axis, Ra, Rb, Rc = self.params  # Ra distance from torus axis; R radius of toroidal-cylinder
         if (abs(Rb - Rc) < 1e-5) and Ra > 0:
             self.shape = Part.makeTorus(Ra, Rb, center, axis)  # FreeCAD circular Torus
+            self.shell = self.shape.Shells[0]
         else:
-            self.shape = makeEllipticTorus(Ra, Rb, Rc, center, axis)  # Home made elliptic Torus
+            self.shape, self.shell = makeEllipticTorus(Ra, Rb, Rc, center, axis)  # Home made elliptic Torus
 
 
 class Box:
@@ -504,6 +521,8 @@ class Box:
         )
         box = Part.makeBox(v1.Length, v2.Length, v3.Length)
         self.shape = box.transformGeometry(m)
+        trsfBox = box.transformGeometry(m)
+        self.shell = trsfBox.Shells[0]
 
 
 class Undefined:
@@ -588,7 +607,7 @@ def makeEllipticTorus(R, RZ, RX, center, ZAxis):
         shape = ellipse.toBSpline().toShape()  # revolution around Minor axis
         rev = shape.revolve(center, ZAxis, 360)
     shell = Part.makeShell((rev,))
-    return Part.makeSolid(shell)
+    return (Part.makeSolid(shell), shell)
 
 
 def ortoVect(v):

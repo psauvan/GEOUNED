@@ -339,7 +339,7 @@ C **************************************************************
             label = Surfaces.IndexOffset + abs(bsurf.value())
             s = Surfaces.get_surface(bsurf)
             if s is not None:
-                s.bvar = bsurf.copy(label)
+                s.bVar = bsurf.copy(label)
                 surfList.append(s)
         return surfList
 

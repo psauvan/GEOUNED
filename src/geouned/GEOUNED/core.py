@@ -19,7 +19,7 @@ from .decompose.decom_one_generators import main_split
 from .loadfile import load_step as Load
 from .utils.geouned_classes import GeounedSolid, MetaSurfacesDict
 from .utils.functions import get_box
-from .utils.boolean_solids import build_c_table_from_solids
+from .utils.boolean_solids import build_c_table_from_solids, get_kne_planes
 from .utils.data_classes import NumericFormat, Options, Settings, Tolerances
 from .threading.geouned_threads import ThreadPoolExecutor
 from .void import void as void
@@ -465,7 +465,12 @@ class CadToCsg:
             Surfs = {}
             for lst in self.Surfaces.values():
                 for s in lst:
-                    Surfs[s.Index] = s
+                    Surfs[s.region.__int__()] = s
+
+            Primitive_Surfs = {}
+            for lst in self.Surfaces.primitive_surfaces.values():
+                for s in lst:
+                    Primitive_Surfs[abs(s.bVar.value())] = s
 
             for c in tqdm(self.meta_list, desc="Simplifying"):
                 if c.Definition.level == 0 or c.IsEnclosure:
@@ -477,6 +482,30 @@ class CadToCsg:
                 c.Definition.clean()
                 if type(c.Definition.elements) is bool:
                     logger.info(f"unexpected constant cell {c.__id__} :{c.Definition.elements}")
+
+                c.Definition.expand_regions_to_boolVar()
+                c_primitives = tuple(x for x in c.Definition.get_surfaces_numbers())
+                kne_planes = get_kne_planes(self.Surfaces)
+                kne_planes = kne_planes.intersection(c_primitives)
+
+                CT = build_c_table_from_solids(
+                    Box, (c_primitives, Primitive_Surfs), "full", options=self.options, omit_surfaces=kne_planes
+                )
+                c.Definition.simplify(CT)
+                c.Definition.clean()
+                if type(c.Definition.elements) is bool:
+                    logger.info(f"unexpected constant cell {c.__id__} :{c.Definition.elements}")
+
+                c.Definition.simplify(None)
+                c.Definition.clean()
+        else:
+            for c in tqdm(self.meta_list, desc="Cleaning definition"):
+                if c.Definition.level == 0 or c.IsEnclosure:
+                    continue
+                logger.info(f"simplify cell {c.__id__}")
+                c.Definition.expand_regions_to_boolVar()
+                # c.Definition.simplify()
+                c.Definition.clean()
 
         cellOffSet = self.settings.startCell - 1
         if self.enclosure_list and self.settings.sort_enclosure:

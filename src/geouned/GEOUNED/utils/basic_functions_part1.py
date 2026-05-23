@@ -12,11 +12,11 @@ def is_same_value(v1, v2, tolerance=1e-6):
     return abs(v1 - v2) < tolerance
 
 
-def is_opposite(vector_1, vector_2, tolerance=1e-6):
+def is_opposite(vector_1, vector_2, tolerance=1e-3):
     return abs(vector_1.getAngle(-vector_2)) < tolerance
 
 
-def is_parallel(vector_1, vector_2, tolerance=1e-6):
+def is_parallel(vector_1, vector_2, tolerance=1e-3):
     angle = abs(vector_1.getAngle(vector_2))
     return angle < tolerance or is_same_value(angle, math.pi, tolerance)
 
@@ -115,7 +115,11 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
     same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
 
-    if AND_p1_cyl and AND_p2_cyl:
+    p1id = -p1id  # plane direction FreeCAD fowrward direction
+    p2id = -p2id
+    if p1id == p2id:
+        rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
+    elif AND_p1_cyl and AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
             rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
         elif same_p1_pd or same_p2_pd:
@@ -183,6 +187,54 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
             raise RuntimeError(errorlog)
 
     return -rc_region if fwd_cyl else rc_region
+
+
+def multi_round_corner_region(mRoundC):
+
+    multi_rc_region = None
+    if mRoundC.Orientation == "Forward":
+        for plane in mRoundC.Surf.Planes:
+            pid = BoolRegion(0, plane.bVar)
+            multi_rc_region = BoolRegion.mult(multi_rc_region, -pid)
+
+        or_comp = []
+        for rc in mRoundC.Surf.Corners:
+            cid = BoolRegion(0, rc.Surf.Cylinder.bVar)
+            if rc.Surf.Plane is not None:
+                pcid = BoolRegion(0, rc.Surf.Plane.bVar)
+            else:
+                pcid = None
+
+            if rc.Orientation == "Forward":
+                multi_rc_region = BoolRegion.mult(multi_rc_region, -pcid)
+                or_comp.append(-cid)
+            else:
+                multi_rc_region = BoolRegion.mult(multi_rc_region, pcid) * cid
+
+        for c in or_comp:
+            multi_rc_region = multi_rc_region + c
+    else:
+        for plane in mRoundC.Surf.Planes:
+            pid = BoolRegion(0, plane.bVar)
+            multi_rc_region = BoolRegion.add(multi_rc_region, -pid)
+
+        and_comp = []
+        for rc in mRoundC.Surf.Corners:
+            cid = BoolRegion(0, rc.Surf.Cylinder.bVar)
+            if rc.Surf.Plane is not None:
+                pcid = BoolRegion(0, rc.Surf.Plane.bVar)
+            else:
+                pcid = None
+
+            if rc.Orientation == "Forward":
+                multi_rc_region = BoolRegion.add(multi_rc_region, -pcid) - cid
+            else:
+                multi_rc_region = BoolRegion.add(multi_rc_region, pcid)
+                and_comp.append(cid)
+        for c in and_comp:
+            multi_rc_region = multi_rc_region * c
+
+    return multi_rc_region
 
 
 def round_corner_region_old(p1id, p2id, cid, pid, configuration):
@@ -353,14 +405,11 @@ class PlaneParams:
         if type(p2) is not PlaneParams:
             return False
         r = self.Position - p2.Position
-        if r.Length > 1e-8:
+        if abs(r.dot(self.Axis)) > 1e-6:
             return False
 
         d = self.Axis.dot(p2.Axis)
-        if abs(d - 1) > 1e-8:
-            return False
-        else:
-            return True
+        return abs(d - 1) < 1e-6
 
     def __str__(self):
         pos = self.Axis.dot(self.Position)
@@ -505,6 +554,17 @@ class MultiPlanesParams:
         self.Vertexes = params[2]
         self.Planes = params[0][:]
 
+    def __eq__(self, mp):
+        if self.PlaneNumber != mp.PlaneNumber:
+            return False
+        eq_count = 0
+        for p1 in self.Planes:
+            for p2 in mp.Planes:
+                if p1 == p2:
+                    eq_count += 1
+                    break
+        return eq_count == self.PlaneNumber
+
     def __str__(self):
         outstr = f"""Multiplane :\n"""
         for p in self.Planes:
@@ -521,6 +581,15 @@ class CanParams:
         self.s2_configuration = params[2][1]
 
 
+class TConeParams:
+    def __init__(self, params):
+        self.Cone = params[0]
+        self.p1 = params[1][0]
+        self.p1_configuration = params[1][1]
+        self.p2 = params[2][0]
+        self.p2_configuration = params[2][1]
+
+
 class RoundCornerParams:
     def __init__(self, params):
         self.Configuration = params[2]
@@ -530,6 +599,7 @@ class RoundCornerParams:
 
 class MultiRoundCornerParams:
     def __init__(self, params):
+        self.Orientation = params[2]
         self.Planes = params[1]
         self.Corners = params[0]
 

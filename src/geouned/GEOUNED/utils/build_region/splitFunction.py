@@ -329,7 +329,9 @@ def FuseSolid(parts):
             return None
     else:
         try:
-            fused = parts[0].fuse(parts[1:])
+            fused = parts[0]
+            for part in parts[1:]:
+                fused = fused.fuse(part)
         except:
             fused = None
 

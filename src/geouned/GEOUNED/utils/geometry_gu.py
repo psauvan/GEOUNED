@@ -195,7 +195,7 @@ class SolidGu:
             face.set_index(i)
 
         for i, face in enumerate(self.Faces):
-            face.set_outerWire(self.Faces)
+            face.set_outerWire()
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
@@ -340,8 +340,8 @@ class FaceGu(object):
     def set_index(self, index):
         self.Index = index
 
-    def set_outerWire(self, Faces):
-        self.OuterWire = set_outerWire(self.__face__.Wires, self, Faces)
+    def set_outerWire(self):
+        self.OuterWire = set_outerWire(self.__face__.Wires, self)
         # self.OuterWire = self.__face__.OuterWire
 
     def tessellate(self, val, reset=False):
@@ -535,14 +535,26 @@ def BSplineGu(face):
         return PlaneGu(face, BSpline_Plane=plane)
 
 
-def set_outerWire(wires, face, Faces):
+def set_outerWire(wires, face):
     if len(wires) == 1:
         return wires[0]
 
+    dist = 0
+    outWire = None
     for w in wires:
-        if not innerWires(w, face):
-            return w
-    print("outer wire not found")
+        ext = wire_extension(w)
+        if ext > dist:
+            outWire = w
+            dist = ext
+    return outWire
+
+
+def wire_extension(wire):
+    center = wire.CenterOfMass
+    dist = 0
+    for x in wire.OrderedVertexes:
+        dist += (x.Point - center).Length
+    return dist / len(wire.OrderedVertexes)
 
 
 def innerWires(wire, face):

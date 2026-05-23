@@ -24,13 +24,23 @@ from .basic_functions_part1 import (
     MultiRoundCornerParams,
     ReversedConeCylParams,
     CanParams,
+    TConeParams,
 )
-from .basic_functions_part1 import round_corner_region
+from .basic_functions_part1 import round_corner_region, multi_round_corner_region
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
 from .boolean_function import BoolRegion, BoolVariable
-from .build_shape_functions import makePlane, makeCylinder, makeCone, makeMultiPlanes, makeCan, makeRoundCorner
+from .build_shape_functions import (
+    makePlane,
+    makeCylinder,
+    makeCone,
+    makeMultiPlanes,
+    makeCan,
+    makeTCone,
+    makeRoundCorner,
+    makeMultiRoundCorner,
+)
 from .basic_functions_part1 import is_parallel, is_opposite
 
 
@@ -248,6 +258,13 @@ class GeounedSurface:
                 self.Orientation = params[2]
             else:
                 self.Orientation = None
+        elif params[0] == "TCone":
+            self.Type = params[0]
+            self.Surf = TConeParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:
+                self.Orientation = None
         elif params[0] == "RoundCorner":
             self.Type = params[0]
             self.Surf = RoundCornerParams(params[1])
@@ -255,6 +272,7 @@ class GeounedSurface:
         elif params[0] == "MultiRoundCorner":
             self.Type = params[0]
             self.Surf = MultiRoundCornerParams(params[1])
+            self.Orientation = params[1][2]
         elif params[0] == "ReversedConeCylinder":
             self.Type = params[0]
             self.Surf = ReversedConeCylParams(params[1])
@@ -266,7 +284,10 @@ class GeounedSurface:
         return
 
     def __eq__(self, s2):
-        return self.Surf == s2.Surf
+        if type(self.Surf) != type(s2.Surf):
+            return False
+        else:
+            return self.Surf == s2.Surf
 
     def build_surface(self, boundBox):
 
@@ -274,21 +295,23 @@ class GeounedSurface:
         if self.Type == "Plane":
             Box.enlarge(10)
             self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
+            self.shell = self.shape
 
         elif self.Type == "Cylinder" or self.Type == "CylinderOnly":
             cyl = self.Surf.Cylinder if self.Type == "Cylinder" else self
-            self.shape = makeCylinder(cyl.Surf, Box)
+            self.shape, self.shell = makeCylinder(cyl.Surf, Box)
 
         elif self.Type == "Cone" or self.Type == "ConeOnly":
             kne = self.Surf.Cone if self.Type == "Cone" else self
             tan = math.tan(kne.Surf.SemiAngle)
-            self.shape = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
+            self.shape, self.shell = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
 
         elif self.Type == "Sphere" or self.Type == "SphereOnly":
             sph = self.Surf.Sphere if self.Type == "Sphere" else self
             rad = sph.Surf.Radius
             pnt = sph.Surf.Center
             self.shape = Part.makeSphere(rad, pnt)
+            self.shell = self.shape.Shells[0]
             return
 
         elif self.Type == "Torus" or self.Type == "TorusOnly":
@@ -300,6 +323,7 @@ class GeounedSurface:
 
             torus = Part.makeTorus(majorR, minorR, center, axis)
             self.shape = torus.Faces[0]
+            self.shell = torus.Shells[0]
             return
 
         elif self.Type == "MultiPlane":
@@ -308,21 +332,21 @@ class GeounedSurface:
             vertexes = self.Surf.Vertexes
             multiplane = makeMultiPlanes(planes, vertexes, Box)
             self.shape = multiplane
+            self.shell = multiplane
 
         elif self.Type == "Can":
-            self.shape = makeCan(self.Surf, Box)
+            self.shape, self.shell = makeCan(self.Surf, Box)
 
-        # elif self.Type == "ReverseCan":
-        #    Box.enlarge(10)
-        #    self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
+        elif self.Type == "TCone":
+            self.shape, self.shell = makeTCone(self.Surf, Box)
 
-        # elif self.Type == "ForwardCan":
-        #    Box.enlarge(10)
-        #    self.shape = makeCylinderCan(self.Surf.Cylinder, self.Surf.Planes, Box)
-
-        elif self.Type in ("RoundCorner", "multiRoundCorner"):
+        elif self.Type == "RoundCorner":
             Box.enlarge(10)
-            self.shape = makeRoundCorner(self, Box)
+            self.shape, self.shell = makeRoundCorner(self, Box)
+
+        elif self.Type == "MultiRoundCorner":
+            Box.enlarge(10)
+            self.shape, self.shell = makeMultiRoundCorner(self, Box)
 
         elif self.Type == "ReversedConeCylinder":
             # No need to build shape since this shape not used in decomposition
@@ -356,7 +380,21 @@ class MetaSurfacesDict(dict):
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        surfname = ["Planes", "Cyl", "Cone", "Sph", "Tor", "MultiP", "FwdCan", "RevCan", "RoundC", "RevCC"]
+        surfname = [
+            "Planes",
+            "Cyl",
+            "Cone",
+            "Sph",
+            "Tor",
+            "MultiP",
+            "FwdCan",
+            "RevCan",
+            "FwdTCone",
+            "RevTCone",
+            "RoundC",
+            "MultiRoundC",
+            "RevCC",
+        ]
         for name in surfname:
             self[name] = []
 
@@ -423,8 +461,9 @@ class MetaSurfacesDict(dict):
             if not same_dir:
                 pid = -pid
 
-            for p_region in self["Planes"]:
-                boundary = p_region.isSameInterface(pid)
+            planeregion = BoolRegion(self.surfaceNumber, pid)
+            for p_surf in self["Planes"]:
+                boundary = planeregion.isSameInterface(p_surf.region)
                 if abs(boundary) == 1:
                     add_plane = False
                     break
@@ -432,9 +471,11 @@ class MetaSurfacesDict(dict):
         if add_plane:
             self.surfaceNumber += 1
             newregion = BoolRegion(self.surfaceNumber, pid)
-            self["Planes"].append(newregion)
+            plane.region = newregion
+            self["Planes"].append(plane)
+            self.__surfIndex__["Planes"].append(plane.region.__index__())
         else:
-            newregion = p_region if boundary > 0 else -p_region
+            newregion = p_surf.region if boundary > 0 else -p_surf.region
 
         return newregion
 
@@ -453,8 +494,8 @@ class MetaSurfacesDict(dict):
             cylinder_region = cylinder_region * BoolRegion(0, pid)
 
         add_cyl = True
-        for cyl_region in self["Cyl"]:
-            boundary = cylinder_region.isSameInterface(cyl_region)
+        for cyl_surf in self["Cyl"]:
+            boundary = cylinder_region.isSameInterface(cyl_surf.region)
             if abs(boundary) == 1:
                 add_cyl = False
                 break
@@ -462,9 +503,11 @@ class MetaSurfacesDict(dict):
         if add_cyl:
             self.surfaceNumber += 1
             newregion = cylinder_region.copy(self.surfaceNumber)
-            self["Cyl"].append(newregion)
+            cylinder.region = newregion
+            self["Cyl"].append(cylinder)
+            self.__surfIndex__["Cyl"].append(cylinder.region.__index__())
         else:
-            newregion = cyl_region if boundary > 0 else -cyl_region
+            newregion = cyl_surf.region if boundary > 0 else -cyl_surf.region
 
         return newregion
 
@@ -496,8 +539,8 @@ class MetaSurfacesDict(dict):
             cone_region = cone_region * BoolRegion(0, pid)
 
         add_cone = True
-        for kne_region in self["Cone"]:
-            boundary = cone_region.isSameInterface(kne_region)
+        for kne_surf in self["Cone"]:
+            boundary = cone_region.isSameInterface(kne_surf.region)
             if abs(boundary) == 1:
                 add_cone = False
                 break
@@ -505,9 +548,11 @@ class MetaSurfacesDict(dict):
         if add_cone:
             self.surfaceNumber += 1
             newregion = cone_region.copy(self.surfaceNumber)
-            self["Cone"].append(newregion)
+            cone.region = newregion
+            self["Cone"].append(cone)
+            self.__surfIndex__["Cone"].append(cone.region.__index__())
         else:
-            newregion = kne_region if boundary > 0 else -kne_region
+            newregion = kne_surf.region if boundary > 0 else -kne_surf.region
         return newregion
 
     def add_sphere(self, sphere):
@@ -526,8 +571,8 @@ class MetaSurfacesDict(dict):
             sphere_region = sphere_region * BoolRegion(0, pid)
 
         add_sph = True
-        for sph_region in self["Sph"]:
-            boundary = sphere_region.isSameInterface(sph_region)
+        for sph_surf in self["Sph"]:
+            boundary = sphere_region.isSameInterface(sph_surf.region)
             if abs(boundary) == 1:
                 add_sph = False
                 break
@@ -535,9 +580,11 @@ class MetaSurfacesDict(dict):
         if add_sph:
             self.surfaceNumber += 1
             newregion = sphere_region.copy(self.surfaceNumber)
-            self["Sph"].append(newregion)
+            sphere.region = newregion
+            self["Sph"].append(sphere)
+            self.__surfIndex__["Sph"].append(sphere.region.__index__())
         else:
-            newregion = sph_region if boundary > 0 else -sph_region
+            newregion = sph_surf.region if boundary > 0 else -sph_surf.region
         return newregion
 
     def add_torus(self, torus):
@@ -583,8 +630,8 @@ class MetaSurfacesDict(dict):
             torus_region = torus_region * BoolRegion(0, sid)
 
         add_torus = True
-        for tor_region in self["Tor"]:
-            boundary = torus_region.isSameInterface(tor_region)
+        for tor_surf in self["Tor"]:
+            boundary = torus_region.isSameInterface(tor_surf.region)
             if abs(boundary) == 1:
                 add_torus = False
                 break
@@ -592,9 +639,11 @@ class MetaSurfacesDict(dict):
         if add_torus:
             self.surfaceNumber += 1
             newregion = torus_region.copy(self.surfaceNumber)
-            self["Tor"].append(newregion)
+            torus.region = newregion
+            self["Tor"].append(torus)
+            self.__surfIndex__["Tor"].append(torus.region.__index__())
         else:
-            newregion = tor_region if boundary > 0 else -tor_region
+            newregion = tor_surf.region if boundary > 0 else -tor_surf.region
         return newregion
 
     def add_multiPlane(self, multiP):
@@ -610,8 +659,8 @@ class MetaSurfacesDict(dict):
             multiP_region = BoolRegion.add(multiP_region, BoolRegion(0, pid))
 
         add_multiP = True
-        for mp_region in self["MultiP"]:
-            boundary = multiP_region.isSameInterface(mp_region)
+        for mp_surf in self["MultiP"]:
+            boundary = multiP_region.isSameInterface(mp_surf.region)
             if abs(boundary) == 1:
                 add_multiP = False
                 break
@@ -619,9 +668,11 @@ class MetaSurfacesDict(dict):
         if add_multiP:
             self.surfaceNumber += 1
             newregion = multiP_region.copy(self.surfaceNumber)
-            self["MultiP"].append(newregion)
+            multiP.region = newregion
+            self["MultiP"].append(multiP)
+            self.__surfIndex__["MultiP"].append(multiP.region.__index__())
         else:
-            newregion = mp_region if boundary > 0 else -mp_region
+            newregion = mp_surf.region if boundary > 0 else -mp_surf.region
         return newregion
 
     # Reversed and Forward Can region are defined as follow:
@@ -744,39 +795,125 @@ class MetaSurfacesDict(dict):
         return reversedCan_region
 
     def add_forwardCan(self, forwardCan):
-
         fwd_region = self.forwardCan_region(forwardCan)
 
         add_can = True
-        for cs_region in self["FwdCan"]:
-            boundary = fwd_region.isSameInterface(cs_region)
-            if abs(boundary) == 1:
-                add_can = False
+        for kind in ("FwdCan", "RevCan"):
+            if not add_can:
                 break
+            for cs_surf in self[kind]:
+                boundary = fwd_region.isSameInterface(cs_surf.region)
+                if abs(boundary) == 1:
+                    add_can = False
+                    break
+
         if add_can:
             self.surfaceNumber += 1
             newregion = fwd_region.copy(self.surfaceNumber)
-            self["FwdCan"].append(newregion)
+            forwardCan.region = newregion
+            self["FwdCan"].append(forwardCan)
+            self.__surfIndex__["FwdCan"].append(forwardCan.region.__index__())
         else:
-            newregion = cs_region if boundary > 0 else -cs_region
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
         return newregion
 
     def add_reverseCan(self, reverseCan):
         rev_region = self.reversedCan_region(reverseCan)
 
         add_can = True
-        for cs_region in self["RevCan"]:
-            boundary = rev_region.isSameInterface(cs_region)
-            if abs(boundary) == 1:
-                add_can = False
+        for kind in ("RevCan", "FwdCan"):
+            if not add_can:
                 break
+            for cs_surf in self[kind]:
+                boundary = rev_region.isSameInterface(cs_surf.region)
+                if abs(boundary) == 1:
+                    add_can = False
+                    break
 
         if add_can:
             self.surfaceNumber += 1
             newregion = rev_region.copy(self.surfaceNumber)
-            self["RevCan"].append(newregion)
+            reverseCan.region = newregion
+            self["RevCan"].append(reverseCan)
+            self.__surfIndex__["RevCan"].append(reverseCan.region.__index__())
         else:
-            newregion = cs_region if boundary > 0 else -cs_region
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
+        return newregion
+
+    def forwardTCone_region(self, forwardTCone):
+        kneCan = forwardTCone.Surf.Cone
+        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
+        forwardTCone_region = BoolRegion(0, -cid)
+
+        surf_list = (forwardTCone.Surf.p1, forwardTCone.Surf.p2)
+        for pi in surf_list:
+            pid, exist = self.primitive_surfaces.add_surface(pi, True)
+            if exist:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(pi.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            forwardTCone_region = forwardTCone_region * BoolRegion(0, pid)
+        return forwardTCone_region
+
+    def reversedTCone_region(self, reversedTCone):
+        kneCan = reversedTCone.Surf.Cone
+        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
+        reversedTCone_region = BoolRegion(0, cid)
+
+        surf_list = (reversedTCone.Surf.p1, reversedTCone.Surf.p2)
+        for pi in surf_list:
+            pid, exist = self.primitive_surfaces.add_surface(pi, True)
+            if exist:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(pi.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            reversedTCone_region = reversedTCone_region + BoolRegion(0, -pid)
+        return reversedTCone_region
+
+    def add_forwardTCone(self, forwardTCone):
+        fwd_region = self.forwardTCone_region(forwardTCone)
+
+        add_kne = True
+        for kind in ("FwdTCone", "RevTCone"):
+            if not add_kne:
+                break
+            for cs_surf in self[kind]:
+                boundary = fwd_region.isSameInterface(cs_surf.region)
+                if abs(boundary) == 1:
+                    add_kne = False
+                    break
+
+        if add_kne:
+            self.surfaceNumber += 1
+            newregion = fwd_region.copy(self.surfaceNumber)
+            forwardTCone.region = newregion
+            self["FwdTCone"].append(forwardTCone)
+            self.__surfIndex__["FwdTCone"].append(forwardTCone.region.__index__())
+        else:
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
+        return newregion
+
+    def add_reverseTCone(self, reverseTCone):
+        rev_region = self.reversedTCone_region(reverseTCone)
+
+        add_kne = True
+        for kind in ("RevTCone", "FwdTCone"):
+            if not add_kne:
+                break
+            for cs_surf in self[kind]:
+                boundary = rev_region.isSameInterface(cs_surf.region)
+                if abs(boundary) == 1:
+                    add_kne = False
+                    break
+
+        if add_kne:
+            self.surfaceNumber += 1
+            newregion = rev_region.copy(self.surfaceNumber)
+            reverseTCone.region = newregion
+            self["RevTCone"].append(reverseTCone)
+            self.__surfIndex__["RevTCone"].append(reverseTCone.region.__index__())
+        else:
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
         return newregion
 
     def add_reversedCC(self, reversedCC):
@@ -829,8 +966,8 @@ class MetaSurfacesDict(dict):
         reversedCC_region = reversedCC_region * plane_region
 
         add_cc = True
-        for cs_region in self["RevCC"]:
-            boundary = reversedCC_region.isSameInterface(cs_region)
+        for cs_surf in self["RevCC"]:
+            boundary = reversedCC_region.isSameInterface(cs_surf.region)
             if abs(boundary) == 1:
                 add_cc = False
                 break
@@ -838,22 +975,73 @@ class MetaSurfacesDict(dict):
         if add_cc:
             self.surfaceNumber += 1
             newregion = reversedCC_region.copy(self.surfaceNumber)
-            self["RevCC"].append(newregion)
+            reversedCC.region = newregion
+            self["RevCC"].append(reversedCC)
+            self.__surfIndex__["RevCC"].append(reversedCC.region.__index__())
         else:
-            newregion = cs_region if boundary > 0 else -cs_region
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
         return newregion
 
     def add_multiRoundCorner(self, mRoundC):
         # will not return correct results for any multi corner configuration
         # must be adjusted one basics feature works correclty
-        multi_rc_region = None
-        for rc in mRoundC.Surf.Corners:
-            rc_region = self.add_roundCorner(rc)
-            if rc.Orientation == "Forward":
-                multi_rc_region = BoolRegion.mult(multi_rc_region, rc_region)
-            else:
-                multi_rc_region = BoolRegion.add(multi_rc_region, rc_region)
-        return multi_rc_region
+        # multi_rc_region = None
+        if mRoundC.Orientation == "Forward":
+            for plane in mRoundC.Surf.Planes:
+                pid, exist = self.primitive_surfaces.add_plane(plane, True)
+                if exist:
+                    p = self.get_primitive_surface(pid)
+                    if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
+                    plane.bVar = pid
+
+            for rc in mRoundC.Surf.Corners:
+                cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder, True)
+                if exist_c:
+                    rc.Surf.Cylinder.bVar = cid
+                if rc.Surf.Plane is not None:
+                    pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Plane, True)
+                    if exist_p:
+                        p = self.get_primitive_surface(pcid)
+                        if is_opposite(rc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pcid = -pcid
+                    rc.Surf.Plane.bVar = pcid
+        else:
+            for plane in mRoundC.Surf.Planes:
+                pid, exist = self.primitive_surfaces.add_plane(plane, True)
+                if exist:
+                    p = self.get_primitive_surface(pid)
+                    if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
+                    plane.bVar = pid
+
+            for rc in mRoundC.Surf.Corners:
+                cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder, True)
+                if rc.Surf.Plane is not None:
+                    pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Plane, True)
+                    if exist_p:
+                        p = self.get_primitive_surface(pcid)
+                        if is_opposite(rc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pcid = -pcid
+                        rc.Surf.Plane.bVar = pcid
+
+        multi_rc_region = multi_round_corner_region(mRoundC)
+        add_mcorner = True
+        for rc_surf in self["MultiRoundC"]:
+            boundary = multi_rc_region.isSameInterface(rc_surf.region)
+            if abs(boundary) == 1:
+                add_mcorner = False
+                break
+
+        if add_mcorner:
+            self.surfaceNumber += 1
+            newregion = multi_rc_region.copy(self.surfaceNumber)
+            mRoundC.region = newregion
+            self["MultiRoundC"].append(mRoundC)
+            self.__surfIndex__["MultiRoundC"].append(mRoundC.region.__index__())
+        else:
+            newregion = rc_surf.region
+        return newregion
 
     def add_roundCorner(self, roundC):
         config = roundC.Surf.Configuration
@@ -861,12 +1049,16 @@ class MetaSurfacesDict(dict):
         planes = roundC.Surf.Planes
 
         cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder, True)
+        if exist_c:
+            cylinder.Surf.Cylinder.bVar = cid
         if cylinder.Surf.Plane is not None:
             pcid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pcid)
+                cylinder.Surf.Plane.bVar = pcid
                 if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pcid = -pcid
+                    cylinder.Surf.Plane.bVar.change_ref()
         else:
             pcid = None
 
@@ -874,22 +1066,28 @@ class MetaSurfacesDict(dict):
         p1id, exist = self.primitive_surfaces.add_plane(p1, True)
         if exist:
             p = self.get_primitive_surface(p1id)
+            p1.bVar = p1id
             if is_opposite(p1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                 p1id = -p1id
+                p1.bVar.change_ref()
 
         if p1 != p2:
             p2id, exist = self.primitive_surfaces.add_plane(p2, True)
             if exist:
                 p = self.get_primitive_surface(p2id)
+                p2.bVar = p2id
                 if is_opposite(p2.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     p2id = -p2id
-            roundC_region = round_corner_region(p1id, p2id, cid, pcid, config)
+                    p2.bVar.change_ref()
+
         else:
-            roundC_region = round_corner_region(p1id, p1id, cid, pcid, config)
+            p2id = p1id
+
+        roundC_region = round_corner_region(p1id, p2id, cid, pcid, config)
 
         add_corner = True
-        for rc_region in self["RoundC"]:
-            boundary = roundC_region.isSameInterface(rc_region)
+        for rc_surf in self["RoundC"]:
+            boundary = roundC_region.isSameInterface(rc_surf.region)
             if abs(boundary) == 1:
                 add_corner = False
                 break
@@ -897,55 +1095,11 @@ class MetaSurfacesDict(dict):
         if add_corner:
             self.surfaceNumber += 1
             newregion = roundC_region.copy(self.surfaceNumber)
-            self["RoundC"].append(newregion)
+            roundC.region = newregion
+            self["RoundC"].append(roundC)
+            self.__surfIndex__["RoundC"].append(roundC.region.__index__())
         else:
-            newregion = rc_region if boundary > 0 else -rc_region
-        return newregion
-
-    def add_roundCorner_org(self, roundC):
-        roundC_region = None
-        orientation = roundC.Orientation
-        for cyl in roundC.Surf.Cylinders:
-            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl.Surf.Cylinder, True)
-            pid, exist_p = self.primitive_surfaces.add_plane(cyl.Surf.Plane, True)
-            if exist_p:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(cyl.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
-
-            if orientation == "Forward":
-                cyl_region = BoolRegion(0, -cid) + BoolRegion(0, pid)
-                roundC_region = BoolRegion.mult(roundC_region, cyl_region)
-            else:
-                cyl_region = BoolRegion(0, cid) * BoolRegion(0, -pid)
-                roundC_region = BoolRegion.add(roundC_region, cyl_region)
-
-        for cp in roundC.Surf.Planes:
-            pid, exist = self.primitive_surfaces.add_plane(cp, True)
-            if exist:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
-
-            if orientation == "Forward":
-                roundC_region = roundC_region * BoolRegion(0, pid)
-            else:
-                # here plane doesn't change sign because always oriented toward material
-                roundC_region = roundC_region + BoolRegion(0, pid)
-
-        add_corner = True
-        for rc_region in self["RoundC"]:
-            boundary = roundC_region.isSameInterface(rc_region)
-            if abs(boundary) == 1:
-                add_corner = False
-                break
-
-        if add_corner:
-            self.surfaceNumber += 1
-            newregion = roundC_region.copy(self.surfaceNumber)
-            self["RoundC"].append(newregion)
-        else:
-            newregion = rc_region if boundary > 0 else -rc_region
+            newregion = rc_surf.region if boundary > 0 else -rc_surf.region
         return newregion
 
 
