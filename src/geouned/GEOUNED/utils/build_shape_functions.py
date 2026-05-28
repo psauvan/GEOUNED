@@ -110,27 +110,6 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
     return Part.makeShell(makeBoxFaces(plane_points))
 
 
-def makeRoundCorner_old(cylinder, addPlane, planes, config, Box):
-    cylinder.build_surface(Box)
-    plane_part = Part.makeSolid(makeMultiPlanes(planes, [], Box, False))
-    cut = plane_part.cut(cylinder.shape)
-
-    cylr = None
-    for s in cut.Solids:
-        if addPlane.Surf.Axis.dot(s.CenterOfMass - addPlane.Surf.Position) > 0:
-            cylr = s
-            break
-
-    #    if cylr is None:
-    #        return None
-    p1box = cylinder_cut_box(cylinder.shape, planes[0])
-    p2box = cylinder_cut_box(cylinder.shape, planes[1])
-    cylcut = cylinder.shape.cut([p1box, p2box])
-
-    solid = cylr.fuse(cylcut)
-    return solid.removeSplitter()
-
-
 def makeRoundCorner(roundCorner, Box):
 
     rc = get_cell_object(roundCorner)
@@ -167,50 +146,6 @@ def makeMultiRoundCorner(roundCorner, Box):
     else:
         shell = solid.Shells[0]  # not sure if for Reversed MultiRoundConer inner shells is the index 0 shell
     return (solid, shell)
-
-
-def makeRoundCorner_old2(roundCorner, Orientation, Box):
-    cut_shapes = []
-    surfcheck = []
-    one = 1 if Orientation == "Forward" else -1
-
-    for p in roundCorner.Planes:
-        p.build_surface(Box)
-        cut_shapes.append(p.shape)
-        surfcheck.append((p, one))
-
-    for c in roundCorner.Cylinders:
-        c.Surf.Cylinder.build_surface(Box)
-        cut_shapes.append(c.Surf.Cylinder.shape)
-        surfcheck.append(((c, -1), (c.Surf.Plane, 1)))
-
-    options = Options()
-    box_shape = Part.makeBox(Box.XLength, Box.YLength, Box.ZLength, FreeCAD.Vector(Box.XMin, Box.YMin, Box.ZMin))
-    comsolid = single_tool_split(box_shape, cut_shapes, options.splitTolerance, options)
-
-    solids = []
-    for solid in comsolid.Solids:
-        point = point_inside(solid)
-        for sp in surfcheck:
-            if type(sp[0]) is tuple:
-                for si, ss in sp:  # "OR" sequence
-                    if ss == check_sign(point, si):
-                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
-                else:
-                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
-            else:
-                si, ss = sp
-                if ss != check_sign(point, si):  # "AND" sequence
-                    break
-        else:
-            solids.append(solid)
-
-    if solids:
-        if len(solids) == 1:
-            solid = solids[0]
-        else:
-            solid = solids[0].fuse(solids[1:])
-        return solid
 
 
 def cylinder_cut_box(cylinder, plane):

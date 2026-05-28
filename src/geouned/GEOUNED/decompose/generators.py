@@ -1,6 +1,6 @@
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces
-from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel, elegible_plane
+from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel, eligible_plane
 
 from ..utils.functions import (
     build_multip_params,
@@ -170,7 +170,7 @@ def next_multiplanes(solidFaces, plane_index_set):
     for p in planes:
         if p.Index in plane_index_set:
             continue
-        if not elegible_plane(p):
+        if not eligible_plane(p):
             continue
         mp_plane_index = set()
         mplanes = multiplane(p, planes, mp_plane_index)

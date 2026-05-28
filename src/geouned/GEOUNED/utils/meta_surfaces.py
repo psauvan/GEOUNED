@@ -14,7 +14,7 @@ from .meta_surfaces_utils import (
     most_outer_faces,
     commonEdge,
     planar_edges,
-    elegible_plane,
+    eligible_plane,
 )
 
 
@@ -58,7 +58,7 @@ def multiplane(master_plane, planes, plane_index):
 
     multiplane_list.extend(addplane)
     for p in addplane:
-        if not elegible_plane(p):
+        if not eligible_plane(p):
             continue
         multiplane_list.extend(multiplane(p, planes, plane_index))
 

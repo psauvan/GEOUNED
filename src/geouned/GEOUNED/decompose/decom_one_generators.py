@@ -25,6 +25,12 @@ def split_surfaces(solid, options, tolerances):
 def generic_split(solid, options, tolerances, loop=0):
     bbox = solid.BoundBox
     bbox.enlarge(10)
+  
+    stpWR = True
+    if stpWR:
+        solid.exportStep('tempSol.stp')
+        solid = Part.read('tempSol.stp')
+
     cleaned = [solid]
     omitfaces = set()
 
@@ -41,7 +47,7 @@ def generic_split(solid, options, tolerances, loop=0):
         elif comsolid.Volume == 0:
             cleaned = solid.Solids
         elif len(comsolid.Solids) == 1:
-            cleaned = [solid]
+            cleaned = solid.Solids
         else:
             cleaned = remove_solids(comsolid.Solids, solid.Volume)
         if len(cleaned) > 1:

@@ -8,9 +8,6 @@ from importlib.metadata import version
 
 import FreeCAD
 
-from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ..utils.geouned_classes import SurfacesDict
-from ..utils.boolean_function import BoolVariable
 from .functions import serpent_surface, write_serpent_cell_def
 
 logger = logging.getLogger("general_logger")
