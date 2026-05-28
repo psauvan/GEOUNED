@@ -697,7 +697,7 @@ def most_outer_faces(cyl, faces):
     return (faces[surfPos[0][1]], faces[surfPos[-1][1]])
 
 
-def elegible_plane(plane):
+def eligible_plane(plane):
     """An eligible master plane is a plane where the adjacent concave planes make a convex shape"""
     Edges = plane.OuterWire.Edges
 
@@ -1190,8 +1190,8 @@ def planar_edges(edges):
             dir = ei.Curve.Axis
             center = ei.Curve.Center
         else:  # should be a line
-            dir = ei.Curve.direction
-            center = ei.Curve.location
+            dir = ei.Curve.Direction
+            center = ei.Curve.Location
 
         if not is_parallel(dir0, dir, Tolerances().angle):
             return False

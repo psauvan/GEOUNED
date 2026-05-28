@@ -7,7 +7,7 @@ import Part
 
 from ..conversion import cell_definition as Conv
 from ..decompose.decom_one_generators import main_split
-from ..utils.boolean_function import BoolSequence, BoolVariable, BoolRegion
+from ..utils.boolean_function import BoolSequence, BoolVariable, BoolSurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 
@@ -223,10 +223,10 @@ class VoidBox:
         complementary = BoolSequence(operator="AND")
         complementary.append(boxDef)
         if simplify != "no":
-            surfList = voidSolidDef.get_surfaces_numbers()
+            surfList = voidSolidDef.get_regions()
 
             if enclosure:
-                surfList.update(boxDef.get_surfaces_numbers())
+                surfList.update(boxDef.get_regions())
             else:
                 for s in boxDef.elements:
                     val = s > 0
@@ -240,7 +240,6 @@ class VoidBox:
             if enclosure or res is None:
                 surfaceDict = {}
                 for i in surfList:
-                    # surfaceDict[i] = Surfaces.get_primitive_surface(i)
                     surfaceDict[i] = Surfaces.get_surface(i)
                 CTable = build_c_table_from_solids(Box, surfaceDict, simplify, options=options)
             else:

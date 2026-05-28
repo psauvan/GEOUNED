@@ -8,7 +8,6 @@ from pathlib import Path
 import FreeCAD
 
 from ..code_version import *
-from ..utils.geouned_classes import SurfacesDict
 from ..utils.boolean_function import BoolVariable
 from .functions import open_mc_surface, write_openmc_region
 

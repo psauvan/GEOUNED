@@ -53,7 +53,8 @@ def write_geometry(
         )
         if settings.voidGen:
             geoSphere = Surfaces["Sph"][-1]
-            sph_primitive_index = abs(geoSphere.region.region.value())
+            surf_num = geoSphere.region.get_surfaces_numbers().pop()
+            sph_primitive_index = surf_num
             outSphere = (sph_primitive_index, geoSphere.Surf.Sphere.Surf.Radius)
         else:
             outSphere = None

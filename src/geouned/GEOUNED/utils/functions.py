@@ -8,15 +8,15 @@ import Part
 
 logger = logging.getLogger("general_logger")
 
+from .boolean_function import BoolVariable
 from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
-from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, elegible_plane
+from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane
 from ..decompose.decom_utils_generator import cyl_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from .data_constants import mask
 
 
 def get_box(comp, enlargeBox):
@@ -54,7 +54,7 @@ def get_multiplanes(solidFaces, omit_faces_set=None):
     for p in planes:
         if p.Index in omit_faces_set:
             continue
-        if not elegible_plane(p):
+        if not eligible_plane(p):
             continue
         mp_plane_index = set()
         mplanes = multiplane(p, planes, mp_plane_index)
@@ -228,27 +228,33 @@ def build_roundC_params(rc_list):
 
     roundcorner_list = []
     plane_list = []
+    var_id = 0
     for cyl, p1, p2, config_orientation in rc_list:
+
         config, fwd_corner = config_orientation
         # cross_in = config & mask.cross_in == mask.cross_in
         cross_in = False
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
-        if cross_in:
+        var_id += 1
+        cylOnly.bVar = BoolVariable(var_id)
+        if p1.Surface.isSameSurface(p2.Surface) :
             gpa = None
         else:
             gpa = get_additional_corner_plane(cyl, p1, p2)
+            var_id += 1
+            gpa.bVar = BoolVariable(var_id)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
-        # not_p1 = config & mask.notp1 == mask.notp1
-        # not_p2 = config & mask.notp2 == mask.notp2
-        # p1Axis = -p1.Surface.Axis if not_p1 else p1.Surface.Axis
-        # p2Axis = -p2.Surface.Axis if not_p2 else p2.Surface.Axis
-        p1Axis = -p1.Surface.Axis if p1.Orientation == "Reversed" else p1.Surface.Axis
-        p2Axis = -p2.Surface.Axis if p2.Orientation == "Reversed" else p2.Surface.Axis
+        p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
+        p2Axis = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
 
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
-
+        var_id += 1
+        gp1.bVar = BoolVariable(var_id)
+        if gp1 != gp2:
+            var_id += 1
+        gp2.bVar = BoolVariable(var_id)
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"

@@ -5,7 +5,7 @@ import math
 
 import FreeCAD
 from .data_constants import mask
-from .boolean_function import BoolRegion
+from .boolean_function import BoolSurface
 
 
 def is_same_value(v1, v2, tolerance=1e-6):
@@ -115,38 +115,47 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
     same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
 
-    p1id = -p1id  # plane direction FreeCAD fowrward direction
-    p2id = -p2id
+    if fwd_cyl:
+        AND_p1_cyl = not AND_p1_cyl
+        AND_p2_cyl = not AND_p2_cyl
+        AND_p1_pd = not AND_p1_pd
+        AND_p2_pd = not AND_p2_pd
+        p1id = -p1id
+        p2id = -p2id
+    
     if p1id == p2id:
-        rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
+        if AND_p1_cyl:
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
+        else:    
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
     elif AND_p1_cyl and AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
-            rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
         elif same_p1_pd or same_p2_pd:
             if OR_bracket:
-                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, p2id)) * BoolRegion(0, cid)
+                rc_region = (BoolSurface(0, p1id) + BoolSurface(0, p2id)) * BoolSurface(0, cid)
             else:
-                rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid) * BoolRegion(0, p2id)
+                rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid) * BoolSurface(0, p2id)
         elif AND_p1_pd and AND_p2_pd:
-            rc_region = BoolRegion(0, p1id) * BoolRegion(0, p2id) * BoolRegion(0, pid) * BoolRegion(0, cid)
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, p2id) * BoolSurface(0, pid) * BoolSurface(0, cid)
         elif not AND_p1_pd and not AND_p2_pd:
-            rc_region = BoolRegion(0, cid) * (BoolRegion(0, p1id) + BoolRegion(0, p2id) + BoolRegion(0, pid))
+            rc_region = BoolSurface(0, cid) * (BoolSurface(0, p1id) + BoolSurface(0, p2id) + BoolSurface(0, pid))
         elif not AND_p1_pd and AND_p2_pd:
             if OR_bracket:
-                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, pid)) * BoolRegion(0, p2id) * BoolRegion(0, cid)
+                rc_region = (BoolSurface(0, p1id) + BoolSurface(0, pid)) * BoolSurface(0, p2id) * BoolSurface(0, cid)
             else:
-                rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, p2id) * BoolRegion(0, cid)
+                rc_region = BoolSurface(0, p1id) + (BoolSurface(0, pid) * BoolSurface(0, p2id) * BoolSurface(0, cid))
         else:
             if OR_bracket:
-                rc_region = (BoolRegion(0, p2id) + BoolRegion(0, pid)) * BoolRegion(0, p1id) * BoolRegion(0, cid)
+                rc_region = (BoolSurface(0, p2id) + BoolSurface(0, pid)) * BoolSurface(0, p1id) * BoolSurface(0, cid)
             else:
-                rc_region = BoolRegion(0, p2id) + BoolRegion(0, pid) * BoolRegion(0, p1id) * BoolRegion(0, cid)
+                rc_region = BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, p1id) * BoolSurface(0, cid))
 
     elif not AND_p1_cyl and not AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
-            rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid)
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
         elif not AND_p1_pd and not AND_p2_pd:
-            rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, cid)) 
         else:
             errorlog = f"""error this configuration should not exist for roundCorner.
  AND_p1_cyl : {AND_p1_cyl}
@@ -157,12 +166,12 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
 
     elif AND_p1_cyl and not AND_p2_cyl:
         if not AND_p1_pd and not AND_p2_pd:
-            rc_region = (BoolRegion(0, p1id) + BoolRegion(0, pid)) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+            rc_region = ((BoolSurface(0, p1id) + BoolSurface(0, pid)) * BoolSurface(0, cid)) + BoolSurface(0, p2id)
         elif AND_p1_pd and not AND_p2_pd:
             if OR_bracket:
-                rc_region = BoolRegion(0, p1id) * (BoolRegion(0, p2id) + BoolRegion(0, pid) * BoolRegion(0, cid))
+                rc_region = BoolSurface(0, p1id) * (BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, cid)))
             else:
-                rc_region = BoolRegion(0, p1id) * BoolRegion(0, pid) * BoolRegion(0, cid) + BoolRegion(0, p2id)
+                rc_region = (BoolSurface(0, p1id) * BoolSurface(0, pid) * BoolSurface(0, cid)) + BoolSurface(0, p2id)
         else:
             errorlog = f"""error this configuration should not exist for roundCorner.
  AND_p1_cyl : {AND_p1_cyl}
@@ -172,12 +181,12 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
             raise RuntimeError(errorlog)
     else:
         if not AND_p1_pd and not AND_p2_pd:
-            rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid) * (BoolRegion(0, pid) + BoolRegion(0, p2id))
+            rc_region = BoolSurface(0, p1id) + (BoolSurface(0, cid) * (BoolSurface(0, pid) + BoolSurface(0, p2id)))
         elif not AND_p1_pd and AND_p2_pd:
             if OR_bracket:
-                rc_region = (BoolRegion(0, p1id) + BoolRegion(0, cid) * BoolRegion(0, pid)) * BoolRegion(0, p2id)
+                rc_region = (BoolSurface(0, p1id) + (BoolSurface(0, cid) * BoolSurface(0, pid))) * BoolSurface(0, p2id)
             else:
-                rc_region = BoolRegion(0, p1id) + BoolRegion(0, pid) * BoolRegion(0, cid) * BoolRegion(0, p2id)
+                rc_region = BoolSurface(0, p1id) + (BoolSurface(0, pid) * BoolSurface(0, cid) * BoolSurface(0, p2id))
         else:
             errorlog = f"""error this configuration should not exist for roundCorner.
  AND_p1_cyl : {AND_p1_cyl}
@@ -194,177 +203,47 @@ def multi_round_corner_region(mRoundC):
     multi_rc_region = None
     if mRoundC.Orientation == "Forward":
         for plane in mRoundC.Surf.Planes:
-            pid = BoolRegion(0, plane.bVar)
-            multi_rc_region = BoolRegion.mult(multi_rc_region, -pid)
+            pid = BoolSurface(0, plane.bVar)
+            multi_rc_region = BoolSurface.mult(multi_rc_region, pid)
 
         or_comp = []
         for rc in mRoundC.Surf.Corners:
-            cid = BoolRegion(0, rc.Surf.Cylinder.bVar)
+            cid = BoolSurface(0, rc.Surf.Cylinder.bVar)
             if rc.Surf.Plane is not None:
-                pcid = BoolRegion(0, rc.Surf.Plane.bVar)
+                pcid = BoolSurface(0, rc.Surf.Plane.bVar)
             else:
                 pcid = None
 
             if rc.Orientation == "Forward":
-                multi_rc_region = BoolRegion.mult(multi_rc_region, -pcid)
+                multi_rc_region = BoolSurface.mult(multi_rc_region, -pcid)
                 or_comp.append(-cid)
             else:
-                multi_rc_region = BoolRegion.mult(multi_rc_region, pcid) * cid
+                multi_rc_region = BoolSurface.mult(multi_rc_region, pcid) * cid
 
         for c in or_comp:
             multi_rc_region = multi_rc_region + c
     else:
         for plane in mRoundC.Surf.Planes:
-            pid = BoolRegion(0, plane.bVar)
-            multi_rc_region = BoolRegion.add(multi_rc_region, -pid)
+            pid = BoolSurface(0, plane.bVar)
+            multi_rc_region = BoolSurface.add(multi_rc_region, pid)
 
         and_comp = []
         for rc in mRoundC.Surf.Corners:
-            cid = BoolRegion(0, rc.Surf.Cylinder.bVar)
+            cid = BoolSurface(0, rc.Surf.Cylinder.bVar)
             if rc.Surf.Plane is not None:
-                pcid = BoolRegion(0, rc.Surf.Plane.bVar)
+                pcid = BoolSurface(0, rc.Surf.Plane.bVar)
             else:
                 pcid = None
 
             if rc.Orientation == "Forward":
-                multi_rc_region = BoolRegion.add(multi_rc_region, -pcid) - cid
+                multi_rc_region = BoolSurface.add(multi_rc_region, -pcid) - cid
             else:
-                multi_rc_region = BoolRegion.add(multi_rc_region, pcid)
+                multi_rc_region = BoolSurface.add(multi_rc_region, pcid)
                 and_comp.append(cid)
         for c in and_comp:
             multi_rc_region = multi_rc_region * c
 
     return multi_rc_region
-
-
-def round_corner_region_old(p1id, p2id, cid, pid, configuration):
-    # p1,p2,c,pc are boolVariable objects
-    # p1,p2,c,pc are planes and cylinder indexes
-    # p1,p2,pc index correspond to normal vector pointing toward material
-    # pc index pointing toward cylinder arc
-
-    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
-
-    if p1id == p2id:
-        ANDop = configuration & mask.p1_cyl == mask.p1_cyl
-        if fwd_cyl:
-            if ANDop:
-                rc_region = BoolRegion(0, p1id) * BoolRegion(0, -cid)
-            else:
-                rc_region = BoolRegion(0, p1id) + BoolRegion(0, -cid)
-        else:
-            if ANDop:
-                rc_region = BoolRegion(0, p1id) * BoolRegion(0, cid)
-            else:
-                rc_region = BoolRegion(0, p1id) + BoolRegion(0, cid)
-        return rc_region
-
-    AND_p1cyl = configuration & mask.p1_cyl == mask.p1_cyl
-    AND_p2cyl = configuration & mask.p2_cyl == mask.p2_cyl
-    pcside = configuration & mask.pc_side == mask.pc_side
-    cross_in = configuration & mask.cross_in == mask.cross_in
-
-    p1_region = BoolRegion(0, p1id)
-    p2_region = BoolRegion(0, p2id)
-    c_region = BoolRegion(0, -cid) if fwd_cyl else BoolRegion(0, cid)
-
-    if cross_in:
-        AND_p12 = configuration & mask.p1_p2 == mask.p1_p2
-        if AND_p12:
-            if AND_p1cyl and AND_p2cyl:
-                rc_region = p1_region * p2_region * c_region
-            elif not AND_p1cyl and AND_p2cyl:
-                rc_region = (p1_region + c_region) * p2_region
-            elif AND_p1cyl and not AND_p2cyl:
-                rc_region = (p2_region + c_region) * p1_region
-            else:
-                rc_region = p1_region * p2_region + c_region
-        else:
-            if AND_p1cyl and AND_p2cyl:
-                rc_region = (p1_region + p2_region) * c_region
-            elif not AND_p1cyl and AND_p2cyl:
-                rc_region = p2_region * c_region + p1_region
-            elif AND_p1cyl and not AND_p2cyl:
-                rc_region = p1_region * c_region + p2_region
-            else:
-                rc_region = p1_region + p2_region + c_region
-    else:
-        pc_region = BoolRegion(0, -pid) if fwd_cyl else BoolRegion(0, pid)
-        AND_p12 = configuration & mask.p1_p2 == mask.p1_p2
-        if pcside:
-            nr = 1 if AND_p12 else 2
-            if fwd_cyl:
-                if nr == 1:
-                    if AND_p1cyl and AND_p2cyl:
-                        rc_region = p1_region * p2_region * (c_region + pc_region)
-                    elif not AND_p1cyl and AND_p2cyl:
-                        rc_region = (p1_region * pc_region + c_region) * p2_region
-                    elif AND_p1cyl and not AND_p2cyl:
-                        rc_region = (p2_region * pc_region + c_region) * p1_region
-                    else:
-                        rc_region = p1_region * p2_region * pc_region + c_region
-                elif not AND_p1cyl and not AND_p2cyl:
-                    rc_region = p1_region + p2_region + pc_region + c_region
-            else:
-                if nr == 2:
-                    if AND_p1cyl and AND_p2cyl:
-                        rc_region = (p1_region + p2_region + pc_region) * c_region
-                    elif not AND_p1cyl and AND_p2cyl:
-                        rc_region = (p2_region + pc_region) * c_region + p1_region
-                    elif AND_p1cyl and not AND_p2cyl:
-                        rc_region = (p1_region + pc_region) * c_region + p2_region
-                    else:
-                        rc_region = p1_region + p2_region + pc_region * c_region
-                elif AND_p1cyl and AND_p2cyl:
-                    rc_region = p1_region * p2_region * pc_region * c_region
-        else:
-            interv1 = configuration & mask.inter_v1 == mask.inter_v1
-            if AND_p1cyl and AND_p2cyl and not fwd_cyl:
-                if AND_p12:
-                    if interv1:
-                        rc_region = (p2_region + pc_region) * p1_region * c_region
-                    else:
-                        rc_region = (p1_region * pc_region + p2_region) * c_region
-                else:
-                    if interv1:
-                        rc_region = (p1_region + pc_region) * p2_region * c_region
-                    else:
-                        rc_region = (p2_region * pc_region + p1_region) * c_region
-            elif not AND_p1cyl and not AND_p2cyl and fwd_cyl:
-                if AND_p12:
-                    if interv1:
-                        rc_region = (p2_region + pc_region) * p1_region + c_region
-                    else:
-                        rc_region = (p1_region * pc_region + p2_region) + c_region
-                else:
-                    if interv1:
-                        rc_region = (p1_region + pc_region) * p2_region + c_region
-                    else:
-                        rc_region = (p2_region * pc_region + p1_region) + c_region
-            elif fwd_cyl:
-                if AND_p1cyl and not AND_p2cyl:
-                    if interv1:
-                        rc_region = (p2_region + pc_region + c_region) * p1_region
-                    else:
-                        rc_region = p1_region * (pc_region + c_region) + p2_region
-                elif not AND_p1cyl and AND_p2cyl:
-                    if interv1:
-                        rc_region = p2_region * (pc_region + c_region) + p1_region
-                    else:
-                        rc_region = (p1_region + pc_region + c_region) * p2_region
-            else:
-                if AND_p1cyl and not AND_p2cyl:
-                    if interv1:
-                        rc_region = (p2_region + pc_region * c_region) * p1_region
-                    else:
-                        rc_region = p1_region * pc_region * c_region + p2_region
-                elif not AND_p1cyl and AND_p2cyl:
-                    if interv1:
-                        rc_region = p2_region * pc_region * c_region + p1_region
-                    else:
-                        rc_region = (p1_region + pc_region * c_region) * p2_region
-
-    return rc_region
 
 
 class Plane3PtsParams:

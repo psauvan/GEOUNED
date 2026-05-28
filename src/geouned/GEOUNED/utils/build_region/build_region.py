@@ -2,70 +2,89 @@ import Part
 
 from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, Plane, Cylinder, myBox
-from ..boolean_function import BoolRegion, BoolSequence
+from ..boolean_function import BoolSurface, BoolSequence
 from ..basic_functions_part1 import round_corner_region
-
 
 def get_cell_object(geoObj):
 
     cell = CellObj()
 
     if geoObj.Type == "RoundCorner":
+        cid = geoObj.Surf.Cylinder.Surf.Cylinder.bVar
         plane1, plane2 = geoObj.Surf.Planes
         if plane1 == plane2:
-            region = round_corner_region(1, 1, 3, 0, geoObj.Surf.Configuration)
-            cell.surfaces[1] = get_surface(1, plane1)
-            cell.surfaces[3] = get_surface(3, geoObj.Surf.Cylinder.Surf.Cylinder)
+            p1id = plane1.bVar
+            cell.surfaces[abs(p1id)] = get_surface(abs(p1id), plane1)
+            cell.surfaces[abs(cid)] = get_surface(abs(cid), geoObj.Surf.Cylinder.Surf.Cylinder)
+            region = round_corner_region(p1id, p1id, cid, 0, geoObj.Surf.Configuration)
         else:
-            region = round_corner_region(1, 2, 3, 4, geoObj.Surf.Configuration)
-            cell.surfaces[1] = get_surface(1, plane1)
-            cell.surfaces[2] = get_surface(2, plane2)
-            cell.surfaces[3] = get_surface(3, geoObj.Surf.Cylinder.Surf.Cylinder)
+            p1id = plane1.bVar
+            p2id = plane2.bVar
+            cell.surfaces[abs(p1id)] = get_surface(abs(p1id), plane1)
+            cell.surfaces[abs(p2id)] = get_surface(abs(p2id), plane2)
+            cell.surfaces[abs(cid)] = get_surface(abs(cid), geoObj.Surf.Cylinder.Surf.Cylinder)
             if geoObj.Surf.Cylinder.Surf.Plane is not None:
-                cell.surfaces[4] = get_surface(4, geoObj.Surf.Cylinder.Surf.Plane)
+                pcid = geoObj.Surf.Cylinder.Surf.Plane.bVar
+                cell.surfaces[abs(pcid)] = get_surface(abs(pcid), geoObj.Surf.Cylinder.Surf.Plane)
+            else:
+                pcid = 0    
+            
+            region = round_corner_region(p1id, p2id, cid, pcid, geoObj.Surf.Configuration)   
 
     elif geoObj.Type == "MultiRoundCorner":
         region = None
         Fcyl = []
         Rcyl = []
         if geoObj.Orientation == "Forward":
-            for i, plane in enumerate(geoObj.Surf.Planes):
-                region = BoolRegion.mult(region, -BoolRegion(0, i + 1))
-                cell.surfaces[i + 1] = get_surface(i + 1, plane)
+            for plane in geoObj.Surf.Planes:
+                pid = plane.bVar
+                region = BoolSurface.mult(region, BoolSurface(0, pid))
+                cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
 
-            offset = len(geoObj.Surf.Planes) + 1
-            for i, rc in enumerate(geoObj.Surf.Corners):
+            for rc in geoObj.Surf.Corners:
                 cylinder = rc.Surf.Cylinder
                 plane = rc.Surf.Plane
+                if plane is not None:
+                    pid = plane.bVar
+                    cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+                    if rc.Orientation == "Forward":
+                        region = region * (-BoolSurface(0, pid))
+                    else:
+                        region = region * BoolSurface(0, pid)
+ 
+                cid = cylinder.bVar
+                cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
                 if rc.Orientation == "Forward":
-                    region = region * (-BoolRegion(0, 2 * i + 1 + offset))
-                    Fcyl.append(-BoolRegion(0, 2 * i + offset))
+                    Fcyl.append(-BoolSurface(0, cid))
                 else:
-                    region = region * BoolRegion(0, 2 * i + 1 + offset)
-                    Rcyl.append(BoolRegion(0, 2 * i + offset))
-                cell.surfaces[2 * i + offset] = get_surface(2 * i + offset, cylinder)
-                cell.surfaces[2 * i + 1 + offset] = get_surface(2 * i + 1 + offset, plane)
+                    Rcyl.append(BoolSurface(0, cid))
             for cyl in Rcyl:
                 region = region * cyl
             for cyl in Fcyl:
                 region = region + cyl
         else:
-            for i, plane in enumerate(geoObj.Surf.Planes):
-                region = BoolRegion.add(region, -BoolRegion(0, i + 1))
-                cell.surfaces[i + 1] = get_surface(i + 1, plane)
+            for plane in geoObj.Surf.Planes:
+                pid = plane.bVar
+                region = BoolSurface.add(region, BoolSurface(0, pid))
+                cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
 
-            offset = len(geoObj.Surf.Planes) + 1
-            for i, rc in enumerate(geoObj.Surf.Corners):
+            for rc in geoObj.Surf.Corners:
                 cylinder = rc.Surf.Cylinder
                 plane = rc.Surf.Plane
+                if plane is not None:
+                    pid = plane.bVar
+                    cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+                    if rc.Orientation == "Forward":
+                        region = region - BoolSurface(0, pid)
+                    else:
+                        region = region + BoolSurface(0, pid)
+
+                cid = cylinder.bVar
+                cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
                 if rc.Orientation == "Forward":
-                    region = region - BoolRegion(0, 2 * i + 1 + offset)
-                    Fcyl.append(-BoolRegion(0, 2 * i + offset))
+                    Fcyl.append(-BoolSurface(0, cid))
                 else:
-                    region = region + BoolRegion(0, 2 * i + 1 + offset)
-                    Rcyl.append(BoolRegion(0, 2 * i + offset))
-                cell.surfaces[2 * i + offset] = get_surface(2 * i + offset, cylinder)
-                cell.surfaces[2 * i + 1 + offset] = get_surface(2 * i + 1 + offset, plane)
+                    Rcyl.append(BoolSurface(0, cid))
 
             for cyl in Fcyl:
                 region = region + cyl
