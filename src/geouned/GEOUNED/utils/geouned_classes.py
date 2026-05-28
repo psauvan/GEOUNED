@@ -437,7 +437,7 @@ class MetaSurfacesDict(dict):
     def extend(self, surface):
         self.primitive_surfaces.extend(surface)
 
-    #def add_surface(self, surf, fuzzy=False):
+    # def add_surface(self, surf, fuzzy=False):
     #    if surf.Type == "Plane":
     #       return self.add_plane(surf, fuzzy)
     #    elif surf.Type == "Cylinder":
@@ -1076,9 +1076,9 @@ class MetaSurfacesDict(dict):
             if is_opposite(p1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                 p1id = -p1id
                 # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
-                p1.Surf.Axis = -p1.Surf.Axis    
+                p1.Surf.Axis = -p1.Surf.Axis
         p1.bVar = p1id
-            
+
         if p1 != p2:
             p2id, exist = self.primitive_surfaces.add_plane(p2, True)
             if exist:
@@ -1086,8 +1086,8 @@ class MetaSurfacesDict(dict):
                 if is_opposite(p2.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     p2id = -p2id
                     # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
-                    p2.Surf.Axis = -p2.Surf.Axis    
-            p2.bVar = p2id   
+                    p2.Surf.Axis = -p2.Surf.Axis
+            p2.bVar = p2id
         else:
             p2id = p1id
 

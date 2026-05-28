@@ -122,11 +122,11 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
         AND_p2_pd = not AND_p2_pd
         p1id = -p1id
         p2id = -p2id
-    
+
     if p1id == p2id:
         if AND_p1_cyl:
             rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
-        else:    
+        else:
             rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
     elif AND_p1_cyl and AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
@@ -155,7 +155,7 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
         if same_p1_pd and same_p2_pd:
             rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
         elif not AND_p1_pd and not AND_p2_pd:
-            rc_region = BoolSurface(0, p1id) + BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, cid)) 
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, cid))
         else:
             errorlog = f"""error this configuration should not exist for roundCorner.
  AND_p1_cyl : {AND_p1_cyl}

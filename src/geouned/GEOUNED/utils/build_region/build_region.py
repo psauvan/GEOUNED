@@ -5,6 +5,7 @@ from .Objects import CellObj, Plane, Cylinder, myBox
 from ..boolean_function import BoolSurface, BoolSequence
 from ..basic_functions_part1 import round_corner_region
 
+
 def get_cell_object(geoObj):
 
     cell = CellObj()
@@ -27,9 +28,9 @@ def get_cell_object(geoObj):
                 pcid = geoObj.Surf.Cylinder.Surf.Plane.bVar
                 cell.surfaces[abs(pcid)] = get_surface(abs(pcid), geoObj.Surf.Cylinder.Surf.Plane)
             else:
-                pcid = 0    
-            
-            region = round_corner_region(p1id, p2id, cid, pcid, geoObj.Surf.Configuration)   
+                pcid = 0
+
+            region = round_corner_region(p1id, p2id, cid, pcid, geoObj.Surf.Configuration)
 
     elif geoObj.Type == "MultiRoundCorner":
         region = None
@@ -51,7 +52,7 @@ def get_cell_object(geoObj):
                         region = region * (-BoolSurface(0, pid))
                     else:
                         region = region * BoolSurface(0, pid)
- 
+
                 cid = cylinder.bVar
                 cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
                 if rc.Orientation == "Forward":

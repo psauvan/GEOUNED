@@ -237,7 +237,7 @@ def build_roundC_params(rc_list):
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
         cylOnly.bVar = BoolVariable(var_id)
-        if p1.Surface.isSameSurface(p2.Surface) :
+        if p1.Surface.isSameSurface(p2.Surface):
             gpa = None
         else:
             gpa = get_additional_corner_plane(cyl, p1, p2)
