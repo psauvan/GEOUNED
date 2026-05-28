@@ -130,17 +130,16 @@ class BoolSurface(int):
         return super(BoolSurface, cls).__new__(cls, abs(label))
 
     def __init__(self, label, definition=None, reverse=False):
-        
-        self.reverse = reverse  #reverse false means label is name of of the variable (x), reverse true means label is rhe name of the complemantary variable (x_bar)
+
+        self.reverse = reverse  # reverse false means label is name of of the variable (x), reverse true means label is rhe name of the complemantary variable (x_bar)
         if definition is None:
             self.region = BoolSeq_int_to_BoolVar(BoolSequence(str(label)))
         else:
             self.set_definition(definition)
 
-       
-        if label < 0 :
-             self.reverse = not self.reverse
-             self.region = self.region.get_complementary()
+        if label < 0:
+            self.reverse = not self.reverse
+            self.region = self.region.get_complementary()
         self.surfaces = self.get_surfaces_numbers()
 
     def __str__(self):
@@ -192,7 +191,7 @@ class BoolSurface(int):
     def __mul__(self, def2):
         if def2 is None:
             return self
-        
+
         if self.region.operator == "AND":
             newdef = self.region.copy()
             newdef.append(def2.region)
@@ -219,7 +218,7 @@ class BoolSurface(int):
 
     def set_definition(self, definition):
         if isinstance(definition, BoolVariable):
-            seq = BoolSequence(operator='AND')
+            seq = BoolSequence(operator="AND")
             seq.append(definition)
             self.region = seq
         elif isinstance(definition, int):
@@ -245,7 +244,7 @@ class BoolSurface(int):
             return self
         else:
             return -self
-          
+
     def true_copy(self):
         if self.reverse:
             return -self
@@ -267,12 +266,12 @@ class BoolSurface(int):
 
         if self.region == region2.region:
             if self.reverse != region2.reverse:
-                raise RuntimeError (f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}") 
-            return 1 
+                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}")
+            return 1
         elif self.region == region2.region.get_complementary():
             if self.reverse == region2.reverse:
-                raise RuntimeError (f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}") 
-            return -1 
+                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}")
+            return -1
         else:
             return 0
 
@@ -301,7 +300,7 @@ class BoolSurface(int):
         newdef.join_operators()
         newdef.same_level()
         newdef.level_update()
-        
+
         return BoolSurface(label, newdef)
 
 
@@ -579,7 +578,7 @@ class BoolSequence:
                 for seq in self.elements:
                     if type(seq) is BoolSurface or type(seq) is BoolVariable:
                         continue
-                    seq.simplify(CT, depth + 1, surfaces=surfaces)        
+                    seq.simplify(CT, depth + 1, surfaces=surfaces)
                 self.clean()
                 self.join_operators()
                 self.level_update()
@@ -607,7 +606,7 @@ class BoolSequence:
         if surfaces is None:
             if self.base_type is BoolSurface:
                 surf_names = self.get_regions()
-            else: 
+            else:
                 surf_names = self.get_surfaces_numbers()
             newNames = surf_names
         else:
@@ -635,7 +634,7 @@ class BoolSequence:
                     return
                 if self.base_type is BoolSurface:
                     newNames = self.get_regions()
-                else:    
+                else:
                     newNames = self.get_surfaces_numbers()
 
     def do_factorize(self, val_name, true_set, false_set):
@@ -758,7 +757,7 @@ class BoolSequence:
                 if abs(e) == name:
                     if type(val) is not bool:
                         if type(e) is BoolSurface:
-                            if e.reverse :
+                            if e.reverse:
                                 val = -val
                         if name == e:
                             self.elements[ic] = val
@@ -767,7 +766,7 @@ class BoolSequence:
 
                     else:
                         if type(e) is BoolSurface:
-                            if e.reverse :
+                            if e.reverse:
                                 val = not val
                         if name == e:
                             bool_value = val
@@ -964,7 +963,7 @@ class BoolSequence:
             newSeq = BoolSequence(operator="AND")
             if type(valname) is BoolSurface:
                 valname = valname.false_copy()
-            else:    
+            else:
                 valname = -valname
             if falseFunc == True:
                 newSeq.append(valname)
@@ -1022,7 +1021,7 @@ class BoolSequence:
             newSeq = BoolSequence(operator="OR")
             if type(valname) is BoolSurface:
                 valname = valname.false_copy()
-            else:    
+            else:
                 valname = -valname
             if trueFunc == True:
                 newSeq.elements = True
@@ -1121,12 +1120,13 @@ class BoolSequence:
 
         if self.base_type is BoolSurface:
             regions = self.get_regions()
-            
+
             if negatives:
                 numbers = set()
                 for r in regions:
                     num = r.__int__()
-                    if r.reverse: num = -num
+                    if r.reverse:
+                        num = -num
                     numbers.add(num)
             else:
                 numbers = tuple(x.__int__() for x in regions)
@@ -1154,7 +1154,7 @@ class BoolSequence:
         regions = set()
         for e in self.elements:
             if type(e) is BoolSurface:
-                regions.add(e) 
+                regions.add(e)
             elif type(e) is BoolSequence:
                 regions.update(e.get_regions())
         return regions

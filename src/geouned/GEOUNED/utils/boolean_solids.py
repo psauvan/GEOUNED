@@ -565,7 +565,7 @@ def check_sign(solid_or_point, surf):
     if type(surf.region) is BoolSurface:
         one = -1 if surf.region.reverse else 1
     else:
-        one = 1 
+        one = 1
 
     if type(solid_or_point) is FreeCAD.Vector:
         point = solid_or_point
@@ -662,7 +662,7 @@ def check_sign(solid_or_point, surf):
                 value = check_sign(point, plane) > 0
                 multiDef = multiDef.evaluate({plane.bVar: value})
                 if type(multiDef) is bool:
-                    return one if multiDef else -one 
+                    return one if multiDef else -one
 
             cyl = rc.Surf.Cylinder
             value = check_sign(point, cyl) > 0
@@ -675,7 +675,7 @@ def check_sign_primitive(point, surf):
     if type(surf.region) is BoolSurface:
         one = -1 if surf.region.reverse else 1
     else:
-        one = 1 
+        one = 1
 
     if surf.Type == "Plane":
         r = point - surf.Surf.Position
