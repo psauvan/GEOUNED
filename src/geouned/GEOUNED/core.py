@@ -477,9 +477,9 @@ class CadToCsg:
                     continue
                 logger.info(f"simplify cell {c.__id__}")
                 Box = get_box(c, self.options.enlargeBox)
-                CT = build_c_table_from_solids(Box, (c.Surfaces, Surfs), "full", options=self.options)
-                c.Definition.simplify(CT)
-                c.Definition.clean()
+                # CT = build_c_table_from_solids(Box, (c.Surfaces, Surfs), "full", options=self.options)
+                # c.Definition.simplify(CT)
+                # c.Definition.clean()
                 if type(c.Definition.elements) is bool:
                     logger.info(f"unexpected constant cell {c.__id__} :{c.Definition.elements}")
 

@@ -2,6 +2,7 @@
 # Set of useful functions used in different parts of the code
 #
 import logging
+import math
 
 import FreeCAD
 import Part
@@ -73,50 +74,6 @@ def get_multiplanes(solidFaces, omit_faces_set=None):
         return multiplane_objects
     else:
         return multiplane_objects, omit_faces_set
-
-
-def get_multiplanes_old(solidFaces, plane_index_set=None):
-    """identify and return all multiplanes in the solid."""
-
-    if plane_index_set is None:
-        plane_index_set = set()
-        one_value_return = False
-    else:
-        one_value_return = True
-
-    planes = []
-    for f in solidFaces:
-        if isinstance(f.Surface, PlaneGu):
-            planes.append(f)
-
-    multiplane_list = []
-    multiplane_objects = []
-
-    for p in planes:
-        loop = False
-        for mp in multiplane_list:
-            if p in mp:
-                loop = True
-                break
-        if loop:
-            continue
-        mplanes = [p]
-        multiplane_loop([p], mplanes, planes)
-        if len(mplanes) != 1:
-            if no_convex(mplanes):
-                mp_params = build_multip_params(mplanes)
-                mp = GeounedSurface(("MultiPlane", mp_params))
-                if mp.Surf.PlaneNumber < 2:
-                    continue
-                for pp in mplanes:
-                    plane_index_set.add(pp.Index)
-                multiplane_list.append(mplanes)
-                multiplane_objects.append(mp)
-
-    if one_value_return:
-        return multiplane_objects
-    else:
-        return multiplane_objects, plane_index_set
 
 
 def get_Can(solidFaces, canface_index=None):
@@ -294,7 +251,15 @@ def build_roundC_params(rc_list):
             for rc in roundcorner_list:
                 cylinder_list.append(rc.Surf.Cylinder)
             roundcorner_list = cylinder_list
-
+            center = FreeCAD.Vector(0, 0, 0)
+            for p in plane_list:
+                center = center + p.Surf.Position
+            center = center / len(plane_list)
+            dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
+            if abs(dotvalue) < 1e-5:  # aligned planes
+                orientation = rc.Surf.Cylinder.Orientation
+            else:
+                orientation = "Reversed" if dotvalue > 0 else "Forward"
     params = (roundcorner_list, plane_list, multi_round, orientation)
     return params
 
@@ -383,6 +348,7 @@ def build_can_params(cs):
         cyl = cyl_in.Faces[0]
 
     bsurf = []
+    sid = 0
     for s, r in (sr1, sr2):
 
         if type(s.Surface) is PlaneGu:
@@ -390,6 +356,8 @@ def build_can_params(cs):
             if r == "OR":
                 normal = -normal  # plane axis toward cylinder center
             gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
+            sid += 1
+            gs.bVar = BoolVariable(sid)
 
         elif type(s.Surface) is CylinderGu:
             if shell:
@@ -398,11 +366,18 @@ def build_can_params(cs):
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
             pa = cyl_edge_plane(cyl, edges)
+            if pa is not None:
+                sid += 1
+                pa.bVar = BoolVariable(sid)
+
             if r is None:
                 r = "AND" if s.Orientation == "Forward" else "OR"
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
+                gs.bVar = pa.bVar
             else:
                 cylOnly = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
+                sid += 1
+                cylOnly.bVar = BoolVariable(sid)
                 if not planar_edges(edges):
                     # move sligtly the plane position toward boundary surface center
                     cr = cylOnly.Surf.Center - pa.Surf.Position
@@ -417,13 +392,37 @@ def build_can_params(cs):
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
             coneOnly = GeounedSurface(("ConeOnly", (s.Surface.Apex, s.Surface.Axis, s.Surface.SemiAngle, 1.0, 1.0)))
-            pa = cyl_edge_plane(cyl, edges)
-            if not planar_edges(edges):
-                # move sligtly the plane position toward boundary surface center
-                cr = coneOnly.Surf.Apex - pa.Surf.Position
-                d = cr - cr.dot(coneOnly.Surf.Axis) * coneOnly.Surf.Axis
-                pa.Surf.Position = pa.Surf.Position + 0.01 * d
-            apexPlane = cone_apex_plane(s, Tolerances())
+            sid += 1
+            coneOnly.bVar = BoolVariable(sid)
+
+            # apex distance from cylinder axis
+            cp = s.Surface.Apex - cyl.Surface.Center
+            a = cyl.Surface.Axis
+            alpha = cp.dot(a)
+            sqr = cp.dot(cp) - alpha * alpha
+            if abs(sqr) < 1e-8:
+                adist = 0
+            else:
+                adist = math.sqrt(sqr)
+
+            if adist < cyl.Surface.Radius:
+                apexPlane = cone_apex_plane(s, Tolerances())
+                if apexPlane is not None:
+                    sid += 1
+                    apexPlane.bVar = BoolVariable(sid)
+                pa = None
+            else:
+                pa = cyl_edge_plane(cyl, edges)
+                apexPlane = None
+                if pa is not None:
+                    sid += 1
+                    pa.bVar = BoolVariable(sid)
+                if not planar_edges(edges):
+                    # move sligtly the plane position toward boundary surface center
+                    cr = coneOnly.Surf.Apex - pa.Surf.Position
+                    d = cr - cr.dot(coneOnly.Surf.Axis) * coneOnly.Surf.Axis
+                    pa.Surf.Position = pa.Surf.Position + 0.01 * d
+
             gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa), s.Orientation))
 
         elif type(s.Surface) is SphereGu:
@@ -434,7 +433,14 @@ def build_can_params(cs):
 
             edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             sphOnly = GeounedSurface(("SphereOnly", (s.Surface.Center, s.Surface.Radius)))
+            sid += 1
+            sphOnly.bVar = BoolVariable(sid)
+
             pa = cyl_edge_plane(cyl, edges)
+            if pa is not None:
+                sid += 1
+                pa.bVar = BoolVariable(sid)
+
             if not planar_edges(edges):
                 # move sligtly the plane position toward boundary surface center
                 d = sphOnly.Surf.Center - pa.Surf.Position
@@ -445,6 +451,8 @@ def build_can_params(cs):
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
+    sid += 1
+    cylOnly.bVar = BoolVariable(sid)
     gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
     return (gcyl, bsurf[0], bsurf[1])
@@ -459,14 +467,19 @@ def build_tcone_params(ks):
         kne = kne_in.Faces[0]
 
     bsurf = []
+    sid = 0
     for s, r in (p1, p2):
         normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
         if r == "OR":
             normal = -normal  # plane axis toward cone center
         gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
+        sid += 1
+        gs.bVar = BoolVariable(sid)
         bsurf.append((gs, r))
 
     coneOnly = GeounedSurface(("ConeOnly", (kne.Surface.Apex, kne.Surface.Axis, kne.Surface.SemiAngle, 1.0, 1.0)))
+    sid += 1
+    coneOnly.bVar = BoolVariable(sid)
     gcone = GeounedSurface(("Cone", (coneOnly, None, None), kne.Orientation))
     return (gcone, bsurf[0], bsurf[1])
 

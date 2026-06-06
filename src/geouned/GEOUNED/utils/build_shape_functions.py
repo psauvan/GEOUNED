@@ -107,34 +107,37 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
     else:
         plane_points = newbox_points
 
-    return Part.makeShell(makeBoxFaces(plane_points))
+    if len(plane_points) == 0:
+        return None  # multiplane doesn't cross box
+    else:
+        return Part.makeShell(makeBoxFaces(plane_points))
 
 
 def makeRoundCorner(roundCorner, Box):
+    return build_complex_shape(roundCorner, Box)
 
-    rc = get_cell_object(roundCorner)
+
+def makeMultiRoundCorner(multiRoundCorner, Box):
+    return build_complex_shape(multiRoundCorner, Box)
+
+
+def makeCan(can, Box):
+    return build_complex_shape(can, Box)
+
+
+def makeTCone(tcone, Box):
+    return build_complex_shape(tcone, Box)
+
+
+def build_complex_shape(surface, Box):
+    rc = get_cell_object(surface)
     rc.boundBox = myBox(Box, "Forward")
     for s in rc.surfaces.values():
         s.buildShape(Box)
     celparts = BuildDepth(rc, None)
     celparts = getPart(celparts)
-
-    shapeParts = []
-    for s in celparts:
-        shapeParts.append(s.base)
-    solid = FuseSolid(shapeParts)
-
-    return (solid, solid.Shells[0])
-
-
-def makeMultiRoundCorner(roundCorner, Box):
-
-    rc = get_cell_object(roundCorner)
-    rc.boundBox = myBox(Box, "Forward")
-    for s in rc.surfaces.values():
-        s.buildShape(Box)
-    celparts = BuildDepth(rc, None)
-    celparts = getPart(celparts)
+    if len(celparts) == 0:
+        return (None, None)
 
     shapeParts = []
     for i, s in enumerate(celparts):
@@ -188,166 +191,6 @@ def intersection(sol1, sol2):
     d2 = sol2.cut(sol1)
     d12 = d1.fuse(d2)
     return sol1.cut(d12)
-
-
-def makeCan(can, box):
-
-    can.Cylinder.build_surface(box)
-    can.s1.build_surface(box)
-    can.s2.build_surface(box)
-    return makeCylinderCan(can)
-
-    if can.s1.Type == "Plane":
-        scnd1 = False
-        p1 = can.s1
-    else:
-        scnd1 = True
-        p1 = can.s1_plane
-        p1.build_surface(box)
-
-    if can.s2.Type == "Plane":
-        scnd2 = False
-        p2 = can.s2
-    else:
-        scnd2 = True
-        p2 = can.s2_plane
-        p2.build_surface(box)
-
-    rawCan = makeCylinderCan(can.Cylinder.shape, p1.shape, p2.shape)
-
-    if scnd1:
-        if can.s1.Type == "SphereOnly":
-            if can.Orientation == can.s1_orientation:
-                rawCan = rawCan.fuse(can.s1.shape)
-            else:
-                rawCan = rawCan.cut(can.s1.shape)
-        else:
-            if can.s1_orientation == "Forward":
-                rawCan = rawCan.cut(can.s1.shape.reversed())
-            else:
-                rawCan = rawCan.cut(can.s1.shape)
-
-    if scnd2:
-        if can.s2.Type == "SphereOnly":
-            if can.Orientation == can.s2_orientation:
-                rawCan = rawCan.fuse(can.s2.shape)
-            else:
-                rawCan = rawCan.cut(can.s2.shape)
-        else:
-            if can.s2_orientation == "Forward":
-                rawCan = rawCan.cut(can.s2.shape.reversed())
-            else:
-                rawCan = rawCan.cut(can.s2.shape)
-
-    return rawCan
-
-
-def makeTCone(tcone, box):
-    tcone.Cone.build_surface(box)
-    tcone.p1.build_surface(box)
-    tcone.p2.build_surface(box)
-    return makeConeCan(tcone)
-
-
-def makeCylinderCan(can):
-    cyl = can.Cylinder
-
-    s12_list = []
-    s12_shapes = []
-    if can.s1 is not None:
-        s12_list.append((can.s1, can.s1_configuration))
-        s12_shapes.append(can.s1.shape)
-    if can.s2 is not None:
-        s12_list.append((can.s2, can.s2_configuration))
-        s12_shapes.append(can.s2.shape)
-
-    if s12_shapes:
-        options = Options()
-        comsolid = split_bop(cyl.shape, s12_shapes, options.splitTolerance, options)
-
-    surfcheck = []
-
-    for s12 in s12_list:
-        si = s12[0]
-        configuration = s12[1]
-        if si.Type == "Plane":
-            surfcheck.append((si, 1))
-        else:
-            sO = 1 if si.Orientation == "Reversed" else -1
-            sC = 1 if configuration == "AND" else -1
-            ss = 1 if sO == sC else -1
-            if si.Surf.Plane is None:
-                surfcheck.append((si, ss))
-            else:
-                if ss == 1:
-                    surfcheck.append((si, ss))
-                    surfcheck.append((si.Surf.Plane, 1))
-                else:
-                    surfcheck.append(((si, ss), (si.Surf.Plane, 1)))
-
-    solids = []
-    for solid in comsolid.Solids:
-        point = point_inside(solid)
-        for sp in surfcheck:
-            if type(sp[0]) is tuple:
-                for si, ss in sp:  # "OR" sequence
-                    if ss == check_sign(point, si):
-                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
-                else:
-                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
-            else:
-                si, ss = sp
-                if ss != check_sign(point, si):  # "AND" sequence
-                    break
-        else:
-            solids.append(solid)
-
-    if solids:
-        if len(solids) == 1:
-            solid_part = solids[0]
-        else:
-            solid_part = solids[0].fuse(solids[1:])
-        return (solid_part, solid_part.Shells[0])
-
-
-def makeConeCan(tcone):
-    kne = tcone.Cone
-
-    s12_list = ((tcone.p1, tcone.p1_configuration), (tcone.p2, tcone.p2_configuration))
-    s12_shapes = (tcone.p1.shape, tcone.p2.shape)
-
-    options = Options()
-    comsolid = split_bop(kne.shape, s12_shapes, options.splitTolerance, options)
-
-    surfcheck = []
-
-    for s12 in s12_list:
-        si = s12[0]
-        surfcheck.append((si, 1))
-
-    solids = []
-    for solid in comsolid.Solids:
-        point = point_inside(solid)
-        for sp in surfcheck:
-            if type(sp[0]) is tuple:
-                for si, ss in sp:  # "OR" sequence
-                    if ss == check_sign(point, si):
-                        break  # break inner loop, means solid inside plane or surface. outer loop doesn't break continue with next surface
-                else:
-                    break  # break outer loop, means solid not inside plane not surface. outer loop stop not valid solid
-            else:
-                si, ss = sp
-                if ss != check_sign(point, si):  # "AND" sequence
-                    break
-        else:
-            solids.append(solid)
-
-    if solids:
-        if len(solids) == 1:
-            solid_part = solids[0]
-        else:
-            solid_part = solids[0].fuse(solids[1:])
-        return (solid_part, solid_part.Shells[0])
 
 
 def makeBoxFaces(box: list):

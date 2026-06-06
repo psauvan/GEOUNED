@@ -171,8 +171,14 @@ def cyl_edge_plane(face, edges, pc=None):
 def spline_wires(edges, face, pc=None):
 
     zaxis = face.Surface.Axis
-    W = Part.Wire(edges)
-    majoraxis = get_axis_inertia(W.MatrixOfInertia)
+    try:
+        W = Part.Wire(edges)
+        majoraxis = get_axis_inertia(W.MatrixOfInertia)
+    except:
+        majoraxis = FreeCAD.Vector(0, 0, 0)
+        for e in edges:
+            majoraxis = majoraxis + get_axis_inertia(e.MatrixOfInertia)
+        majoraxis.normalize()
 
     edge = edges[0]
     p0, p1 = edge.ParameterRange

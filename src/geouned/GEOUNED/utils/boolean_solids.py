@@ -562,10 +562,6 @@ def divide_box(Box):
 
 
 def check_sign(solid_or_point, surf):
-    if type(surf.region) is BoolSurface:
-        one = -1 if surf.region.reverse else 1
-    else:
-        one = 1
 
     if type(solid_or_point) is FreeCAD.Vector:
         point = solid_or_point
@@ -589,37 +585,47 @@ def check_sign(solid_or_point, surf):
 
     elif surf.Type == "Can" or surf.Type == "TCone":
         if surf.Type == "Can":
-            ck = surf.Surf.Cylinder
-            s1 = surf.Surf.s1
-            s2 = surf.Surf.s2
-        else:
-            ck = surf.Surf.Cone
-            s1 = surf.Surf.p1
-            s2 = surf.Surf.p2
+            can_surfaces = [surf.Surf.Cylinder.Surf.Cylinder]
+            s12 = (surf.Surf.s1, surf.Surf.s2)
+            for si in s12:
+                if si.Type == "Plane":
+                    can_surfaces.append(si)
+                elif si.Type == "cylinder":
+                    can_surfaces.append(si.Surf.Plane)
+                    can_surfaces.append(si.Surf.Cylinder)
+                elif si.Type == "Cone":
+                    can_surfaces.append(si.Surf.Cone)
+                    if si.Surf.ApexPlane is not None:
+                        can_surfaces.append(si.Surf.ApexPlane)
+                    if si.Surf.Plane is not None:
+                        can_surfaces.append(si.Surf.Plane)
 
-        AND_region = surf.region.region.operator == "AND"
-        ck_sign = check_sign(point, ck)
-        s1_sign = check_sign(point, s1)
-        s2_sign = check_sign(point, s2)
-        if AND_region:
-            if (ck_sign < 0) and (s1_sign > 0) and (s2_sign > 0):
-                can_sign = one
-            else:
-                can_sign = -one
-            return can_sign if surf.Orientation == "Forward" else -can_sign
+                elif si.Type == "Sphere":
+                    can_surfaces.append(si.Surf.Plane)
+                    can_surfaces.append(si.Surf.Sphere)
+
+            surfSet = dict()
+            for s in can_surfaces:
+                surfSet[s.bVar] = check_sign(point, s) > 0
+
+            inside = surf.region.region.evaluate(surfSet)
+            return 1 if inside else -1
+
         else:
-            if (ck_sign > 0) or (s1_sign < 0) or (s2_sign < 0):
-                can_sign = one
-            else:
-                can_sign = -one
-            return can_sign if surf.Orientation == "Reversed" else -can_sign
+            tcone_surfaces = (surf.Surf.Cone.Surf.Cone, surf.Surf.p1, surf.Surf.p2)
+            surfSet = dict()
+            for s in tcone_surfaces:
+                surfSet[s.bVar] = check_sign(point, s) > 0
+
+            inside = surf.region.region.evaluate(surfSet)
+            return 1 if inside else -1
 
     elif surf.Type == "MultiPlane":
         for plane in surf.Surf.Planes:
             p_sign = check_sign(point, plane)
             if p_sign == 1:
-                return one
-        return -one
+                return 1
+        return -1
 
     elif surf.Type == "RoundCorner":
         multiDef = surf.region.region.copy()
@@ -632,20 +638,20 @@ def check_sign(solid_or_point, surf):
             value = check_sign(point, plane) > 0
             multiDef = multiDef.evaluate({plane.bVar: value})
             if type(multiDef) is bool:
-                return one if multiDef else -one
+                return 1 if multiDef else -1
 
         cyl = surf.Surf.Cylinder.Surf.Cylinder
         value = check_sign(point, cyl) > 0
         multiDef = multiDef.evaluate({cyl.bVar: value})
         if type(multiDef) is bool:
-            return one if multiDef else -one
+            return 1 if multiDef else -1
 
         cplane = surf.Surf.Cylinder.Surf.Plane
         if cplane is not None:
             value = check_sign(point, cplane) > 0
             multiDef = multiDef.evaluate({cplane.bVar: value})
             if type(multiDef) is bool:
-                return one if multiDef else -one
+                return 1 if multiDef else -1
 
     elif surf.Type == "MultiRoundCorner":
 
@@ -654,7 +660,7 @@ def check_sign(solid_or_point, surf):
             value = check_sign(point, plane) > 0
             multiDef = multiDef.evaluate({plane.bVar: value})
             if type(multiDef) is bool:
-                return one if multiDef else -one
+                return 1 if multiDef else -1
 
         for rc in surf.Surf.Corners:
             plane = rc.Surf.Plane
@@ -662,27 +668,23 @@ def check_sign(solid_or_point, surf):
                 value = check_sign(point, plane) > 0
                 multiDef = multiDef.evaluate({plane.bVar: value})
                 if type(multiDef) is bool:
-                    return one if multiDef else -one
+                    return 1 if multiDef else -1
 
             cyl = rc.Surf.Cylinder
             value = check_sign(point, cyl) > 0
             multiDef = multiDef.evaluate({cyl.bVar: value})
             if type(multiDef) is bool:
-                return one if multiDef else -one
+                return 1 if multiDef else -1
 
 
 def check_sign_primitive(point, surf):
-    if type(surf.region) is BoolSurface:
-        one = -1 if surf.region.reverse else 1
-    else:
-        one = 1
 
     if surf.Type == "Plane":
         r = point - surf.Surf.Position
         if surf.Surf.Axis.dot(r) > 0:
-            return one
+            return 1
         else:
-            return -one
+            return -1
 
     elif surf.Type == "CylinderOnly":
         r = point - surf.Surf.Center
@@ -691,16 +693,16 @@ def check_sign_primitive(point, surf):
         z2 = z * z
         R2 = surf.Surf.Radius * surf.Surf.Radius
         if L2 - z2 > R2:
-            return one
+            return 1
         else:
-            return -one
+            return -1
 
     elif surf.Type == "SphereOnly":
         r = point - surf.Surf.Center
         if r.Length > surf.Surf.Radius:
-            return one
+            return 1
         else:
-            return -one
+            return -1
 
     elif surf.Type == "ConeOnly":
         r = point - surf.Surf.Apex
@@ -709,9 +711,9 @@ def check_sign_primitive(point, surf):
         alpha = math.acos(z)
 
         if alpha > surf.Surf.SemiAngle:
-            return one
+            return 1
         else:
-            return -one
+            return -1
 
     elif surf.Type == "TorusOnly":
         r = point - surf.Surf.Center
@@ -720,9 +722,9 @@ def check_sign_primitive(point, surf):
 
         rp = math.sqrt((rho.Length - surf.Surf.MajorRadius) ** 2 + h**2)
         if rp > surf.Surf.MinorRadius:
-            return one
+            return 1
         else:
-            return -one
+            return -1
 
 
 def get_kne_planes(Surfaces):

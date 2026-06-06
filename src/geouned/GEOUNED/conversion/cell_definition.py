@@ -9,7 +9,6 @@ from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfa
 from ..utils.functions import (
     get_multiplanes,
     get_roundCorner,
-    get_reversed_cone_cylinder,
     get_Can,
     get_TCone,
     my_dist_to_shape,
@@ -53,25 +52,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
     multiplane_surface = False
     if meta_surfaces:
-        roundCorner, omitFaces = get_roundCorner(solid_gu.Faces)
-        for rc in roundCorner:
-            if rc.Type == "MultiRoundCorner":
-                rc_region = Surfaces.add_multiRoundCorner(rc)
-            else:
-                rc_region = Surfaces.add_roundCorner(rc)
-            component_definition.append(rc_region)
-
-        # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
-        # pindex are all faces index used to produced multiplanes, do not count as standard planes
-        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces)
-        for mp in multiplanes:
-            mp_region = Surfaces.add_multiPlane(mp)
-            component_definition.append(mp_region)
-            planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
-            omitFaces.update(planeset)
-            multiplane_surface = True
-
-        RFCan = get_Can(solid_gu.Faces, omitFaces)
+        RFCan, omitFaces = get_Can(solid_gu.Faces)
         for cs in RFCan:
             if cs.Orientation == "Reversed":
                 cs_region = Surfaces.add_reverseCan(cs)
@@ -88,6 +69,24 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 cs_region = Surfaces.add_forwardTCone(cs)
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)
+
+        roundCorner = get_roundCorner(solid_gu.Faces, omitFaces)
+        for rc in roundCorner:
+            if rc.Type == "MultiRoundCorner":
+                rc_region = Surfaces.add_multiRoundCorner(rc)
+            else:
+                rc_region = Surfaces.add_roundCorner(rc)
+            component_definition.append(rc_region)
+
+        # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
+        # pindex are all faces index used to produced multiplanes, do not count as standard planes
+        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces)
+        for mp in multiplanes:
+            mp_region = Surfaces.add_multiPlane(mp)
+            component_definition.append(mp_region)
+            planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
+            omitFaces.update(planeset)
+            multiplane_surface = True
 
         # reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
         # for cs in reversedCC:

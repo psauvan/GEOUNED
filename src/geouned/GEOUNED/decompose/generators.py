@@ -187,39 +187,6 @@ def next_multiplanes(solidFaces, plane_index_set):
                 yield mp
 
 
-def next_multiplanes_old(solidFaces, plane_index_set):
-    """identify and return all multiplanes in the solid."""
-    planes = []
-    for f in solidFaces:
-        if f.Index in plane_index_set:
-            continue
-        if isinstance(f.Surface, PlaneGu):
-            planes.append(f)
-
-    multiplane_list = []
-    for p in planes:
-        loop = False
-        for mp in multiplane_list:
-            if p in mp:
-                loop = True
-                break
-        if loop:
-            continue
-        mplanes = [p]
-        multiplane_loop([p], mplanes, planes)
-        if len(mplanes) != 1:
-            if no_convex(mplanes):
-                remove_twice_parallel(mplanes)
-                mp_params = build_multip_params(mplanes)
-                mp = GeounedSurface(("MultiPlane", mp_params))
-                if mp.Surf.PlaneNumber < 2:
-                    continue
-                for pp in mplanes:
-                    plane_index_set.add(pp.Index)
-                multiplane_list.append(mplanes)
-                yield mp
-
-
 def next_Can(solid, canface_index):
     """identify and return all can type in the solid."""
 
@@ -249,6 +216,7 @@ def next_truncCone(solid, tconeface_index):
             if f.Index in tconeface_index:
                 continue
 
+            solid.solid.exportStep("sol.stp")
             cs, surfindex = get_tcone_surfaces(f, solidFaces)
             if cs is not None:
                 gc = GeounedSurface(("TCone", build_tcone_params(cs)))
