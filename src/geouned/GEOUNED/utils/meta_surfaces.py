@@ -144,15 +144,20 @@ def get_can_surfaces(cylinder, solidFaces):
 
         r = region_sign(cylinder_shell, s)
         surfaces.append((s, r))
-        s_value = 1 if r == "AND" else -1
-        if s_value != cyl_value:
-            faceindex.add(s.Index)  # will not split with adjacent surface
+
+        # s_value = 1 if r == "AND" else -1
+        # if s_value != cyl_value:
+        #    faceindex.add(s.Index)  # will not split with adjacent surface
+        # check if it works like that
+        faceindex.add(s.Index)
 
     if len(ext_faces) > 2:
-        ext_faces = most_outer_faces(cylinder, ext_faces)
+        ext_faces, remove_index = most_outer_faces(cylinder, ext_faces)
         for s in reversed(surfaces[1:]):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
+                if s[0].Index in remove_index:
+                    faceindex.remove(s[0].Index)
 
     return surfaces, faceindex
 
@@ -163,6 +168,8 @@ def get_tcone_surfaces(cone, solidFaces):
         return None, None
 
     ext_faces = get_adjacent_cylknesurf(cone_shell, solidFaces)
+    if len(ext_faces) == 1:
+        return None, None
     surfaces = [cone_shell]
     kne_value = 1 if cone_shell.Orientation == "Reversed" else -1
 
@@ -172,17 +179,23 @@ def get_tcone_surfaces(cone, solidFaces):
 
         r = region_sign(cone_shell, s)
         surfaces.append((s, r))
-        s_value = 1 if r == "AND" else -1
-        if s_value != kne_value:
-            faceindex.add(s.Index)  # will not split with adjacent surface
+        # s_value = 1 if r == "AND" else -1
+        # if s_value != kne_value:
+        #    faceindex.add(s.Index)  # will not split with adjacent surface
+        faceindex.add(s.Index)  # same check as get_can_surfces
 
     if len(ext_faces) > 2:
-        ext_faces = most_outer_faces(cone, ext_faces)
+        ext_faces, remove_index = most_outer_faces(cone, ext_faces)
         for s in reversed(surfaces[1:]):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
+                if s[0].Index in remove_index:
+                    faceindex.remove(s[0].Index)
 
-    return surfaces, faceindex
+    if len(ext_faces) != 2:
+        return None, None
+    else:
+        return surfaces, faceindex
 
 
 def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):

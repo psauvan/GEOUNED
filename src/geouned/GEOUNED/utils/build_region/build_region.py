@@ -1,7 +1,8 @@
+import math
 import Part
 
 from .splitFunction import SplitBase, SplitSolid, joinBase
-from .Objects import CellObj, Plane, Cylinder, myBox
+from .Objects import CellObj, Plane, Cylinder, Cone, Sphere, myBox
 from ..boolean_function import BoolSurface, BoolSequence
 from ..basic_functions_part1 import round_corner_region
 
@@ -92,6 +93,151 @@ def get_cell_object(geoObj):
             for cyl in Rcyl:
                 region = region * cyl
 
+    elif geoObj.Type == "Can":
+        cyl = geoObj.Surf.Cylinder.Surf.Cylinder
+        s12_surf = ((geoObj.Surf.s1, geoObj.Surf.s1_configuration), (geoObj.Surf.s2, geoObj.Surf.s2_configuration))
+
+        cid = cyl.bVar
+        region = BoolSurface(0, cid) if geoObj.Surf.Cylinder.Orientation == "Reversed" else BoolSurface(0, -cid)
+
+        cell.surfaces[abs(cid)] = get_surface(abs(cid), cyl)
+        for si_ri in s12_surf:
+            si, ri = si_ri
+            if si.Type == "Plane":
+                pid = si.bVar
+                cell.surfaces[abs(pid)] = get_surface(abs(pid), si)
+                si_region = BoolSurface(0, pid) if ri == "AND" else BoolSurface(0, -pid)
+            elif si.Type == "Cylinder":
+                # AND Rev -> c p
+                # AND Fwd -> -c :p
+                # OR Fwd -> -c : -p
+                # OR Rev -> c -p
+
+                scyl = si.Surf.Cylinder
+                sid = scyl.bVar
+                cell.surfaces[abs(sid)] = get_surface(abs(sid), scyl)
+
+                plane = si.Surf.Plane
+                pid = plane.bVar
+                cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+
+                if si.Orientation == "Forward":
+                    if ri == "AND":
+                        si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
+                    else:
+                        si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
+                else:
+                    if ri == "AND":
+                        si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
+                    else:
+                        si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
+
+            elif si.Type == "Cone":
+                # AND Rev -> c p
+                # AND Fwd -> -c :p
+                # OR Fwd -> -c : -p
+                # OR Rev -> c -p
+                # with ApexPlane
+                # AND Rev -> ap : (c p)
+                # AND Fwd -> ap (-c :p)
+                # OR Fwd -> ap (-c : -p)
+                # OR Rev -> ap : (c -p)
+
+                scone = si.Surf.Cone
+                sid = scone.bVar
+                cell.surfaces[abs(sid)] = get_surface(abs(sid), scone)
+
+                plane = si.Surf.Plane
+                apexplane = si.Surf.ApexPlane
+
+                if plane is None:
+                    if apexplane is None:
+                        if si.Orientation == "Forward":
+                            si_region = BoolSurface(0, -sid)
+                        else:
+                            si_region = BoolSurface(0, sid)
+                    else:
+                        apid = apexplane.bVar
+                        cell.surfaces[abs(apid)] = get_surface(abs(apid), apexplane)
+                        if si.Orientation == "Forward":
+                            si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
+                        else:
+                            si_region = BoolSurface(0, apid) * BoolSurface(0, sid)
+                else:
+                    pid = plane.bVar
+                    cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+
+                    if apexplane is not None:
+                        apid = apexplane.bVar
+                        cell.surfaces[abs(apid)] = get_surface(abs(apid), apexplane)
+
+                        if si.Orientation == "Forward":
+                            if ri == "AND":
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, pid))
+                            else:
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, -pid))
+                        else:
+                            if ri == "AND":
+                                si_region = BoolSurface(0, apid) + (BoolSurface(0, sid) * BoolSurface(0, pid))
+                            else:
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, sid) * BoolSurface(0, -pid))
+                    else:
+                        pid = plane.bVar
+                        cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+
+                        if si.Orientation == "Forward":
+                            if ri == "AND":
+                                si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
+                            else:
+                                si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
+                        else:
+                            if ri == "AND":
+                                si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
+                            else:
+                                si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
+
+            elif si.Type == "Sphere":
+                # AND Rev -> c p
+                # AND Fwd -> -c :p
+                # OR Fwd -> -c : -p
+                # OR Rev -> c -p
+
+                ssph = si.Surf.Sphere
+                sid = ssph.bVar
+                cell.surfaces[abs(sid)] = get_surface(abs(sid), ssph)
+
+                plane = si.Surf.Plane
+                pid = plane.bVar
+                cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+
+                if si.Orientation == "Forward":
+                    if ri == "AND":
+                        si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
+                    else:
+                        si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
+                else:
+                    if ri == "AND":
+                        si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
+                    else:
+                        si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
+
+            region = region * si_region if ri == "AND" else region + si_region
+
+    elif geoObj.Type == "TCone":
+        kne = geoObj.Surf.Cone.Surf.Cone
+        s12_surf = ((geoObj.Surf.p1, geoObj.Surf.p1_configuration), (geoObj.Surf.p2, geoObj.Surf.p2_configuration))
+
+        cid = kne.bVar
+        region = BoolSurface(0, cid) if geoObj.Surf.Cone.Orientation == "Reversed" else BoolSurface(0, -cid)
+
+        cell.surfaces[abs(cid)] = get_surface(abs(cid), kne)
+        for si_ri in s12_surf:
+            si, ri = si_ri
+            pid = si.bVar
+            cell.surfaces[abs(pid)] = get_surface(abs(pid), si)
+            si_region = BoolSurface(0, pid) if ri == "AND" else BoolSurface(0, -pid)
+            region = region * si_region if ri == "AND" else region + si_region
+
     cell.definition = region.to_integer()
 
     return cell
@@ -105,6 +251,12 @@ def get_surface(id, surf):
     elif surf.Type == "CylinderOnly":
         params = (surf.Surf.Center, surf.Surf.Axis, surf.Surf.Radius)
         return Cylinder(id, id, params)
+    elif surf.Type == "ConeOnly":
+        params = (surf.Surf.Apex, surf.Surf.Axis, math.tan(surf.Surf.SemiAngle), False)
+        return Cone(id, id, params)
+    elif surf.Type == "SphereOnly":
+        params = (surf.Surf.Center, surf.Surf.Radius)
+        return Sphere(id, id, params)
 
 
 def getPart(slist):

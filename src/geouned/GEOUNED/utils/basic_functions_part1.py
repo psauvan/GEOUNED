@@ -116,10 +116,6 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
 
     if fwd_cyl:
-        AND_p1_cyl = not AND_p1_cyl
-        AND_p2_cyl = not AND_p2_cyl
-        AND_p1_pd = not AND_p1_pd
-        AND_p2_pd = not AND_p2_pd
         p1id = -p1id
         p2id = -p2id
 
@@ -144,12 +140,12 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
             if OR_bracket:
                 rc_region = (BoolSurface(0, p1id) + BoolSurface(0, pid)) * BoolSurface(0, p2id) * BoolSurface(0, cid)
             else:
-                rc_region = BoolSurface(0, p1id) + (BoolSurface(0, pid) * BoolSurface(0, p2id) * BoolSurface(0, cid))
+                rc_region = (BoolSurface(0, p1id) + (BoolSurface(0, pid) * BoolSurface(0, p2id))) * BoolSurface(0, cid)
         else:
             if OR_bracket:
                 rc_region = (BoolSurface(0, p2id) + BoolSurface(0, pid)) * BoolSurface(0, p1id) * BoolSurface(0, cid)
             else:
-                rc_region = BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, p1id) * BoolSurface(0, cid))
+                rc_region = (BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, p1id))) * BoolSurface(0, cid)
 
     elif not AND_p1_cyl and not AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
@@ -215,7 +211,8 @@ def multi_round_corner_region(mRoundC):
                 pcid = None
 
             if rc.Orientation == "Forward":
-                multi_rc_region = BoolSurface.mult(multi_rc_region, -pcid)
+                if pcid is not None:
+                    multi_rc_region = BoolSurface.mult(multi_rc_region, -pcid)
                 or_comp.append(-cid)
             else:
                 multi_rc_region = BoolSurface.mult(multi_rc_region, pcid) * cid
@@ -236,7 +233,10 @@ def multi_round_corner_region(mRoundC):
                 pcid = None
 
             if rc.Orientation == "Forward":
-                multi_rc_region = BoolSurface.add(multi_rc_region, -pcid) - cid
+                if pcid is not None:
+                    multi_rc_region = BoolSurface.add(multi_rc_region, -pcid) - cid
+                else:
+                    multi_rc_region = multi_rc_region - cid
             else:
                 multi_rc_region = BoolSurface.add(multi_rc_region, pcid)
                 and_comp.append(cid)

@@ -266,11 +266,11 @@ class BoolSurface(int):
 
         if self.region == region2.region:
             if self.reverse != region2.reverse:
-                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}")
+                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {region2.__int__()}")
             return 1
         elif self.region == region2.region.get_complementary():
             if self.reverse == region2.reverse:
-                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {self.region.__int__()}")
+                raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {region2.__int__()}")
             return -1
         else:
             return 0
@@ -341,13 +341,13 @@ class BoolSequence:
             return False
         if self.level != def2.level:
             return False
-        if self.operator != def2.operator:
-            return False
         if type(self.elements) != type(def2.elements):
             return False
         if type(self.elements) is bool:
             return self.elements == def2.elements
         if len(self.elements) != len(def2.elements):
+            return False
+        if self.operator != def2.operator and len(self.elements) > 1:
             return False
         if self.level == 0:
             set1 = self.get_lev0_surfaces()
@@ -587,7 +587,7 @@ class BoolSequence:
             levIn = self.level
             self.simplify_sequence(CT, surfaces=surfaces)
 
-            if self.level > levIn and depth < 10:
+            if self.level > levIn and depth < 5:
                 self.simplify(CT, depth + 1)
 
         if outOp is not None:

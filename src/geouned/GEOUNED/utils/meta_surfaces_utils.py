@@ -142,7 +142,7 @@ def get_adjacent_cylknesurf(cylkne, Faces):
                     adjacent.append(af)
 
         if len(adjacent) > 2:
-            adjacent = most_outer_faces(cylkne, adjacent)
+            adjacent, dummy = most_outer_faces(cylkne, adjacent)
         return adjacent
 
     else:
@@ -154,7 +154,8 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
 
     other_index = set()
     for e in cylkne.OuterWire.Edges:
-
+        if e.Length < 1e-6:
+            continue
         if isinstance(e.Curve, Part.Line):
             continue
         otherface = other_face_edge(e, cylkne, Faces, outer_only=False)
@@ -693,8 +694,15 @@ def most_outer_faces(cyl, faces):
         d = cylSurf.Axis.dot(f.CenterOfMass)
         surfPos.append((d, i))
     surfPos.sort()
+    face1 = faces[surfPos[0][1]]
+    face2 = faces[surfPos[-1][1]]
+    remove_surf = set()
 
-    return (faces[surfPos[0][1]], faces[surfPos[-1][1]])
+    for f in faces:
+        if not f.Surface.isSameSurface(face1.Surface) and not f.Surface.isSameSurface(face2.Surface):
+            remove_surf.add(f.Index)
+
+    return (face1, face2), remove_surf
 
 
 def eligible_plane(plane):
@@ -814,8 +822,10 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def cyl_plane_region_conf(cylinder, ep1, ep2):
+
     e1, p1 = ep1
     e2, p2 = ep2
+
     u1, u2, v1, v2 = cylinder.ParameterRange
     r1 = cylinder.Surface.face.valueAt(u1, 0.5 * (v1 + v2))
     r2 = cylinder.Surface.face.valueAt(u2, 0.5 * (v1 + v2))
@@ -891,42 +901,6 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     configuration += notp2 * mask.notp2
     configuration += same_p1_pd * mask.same_p1_pd
     configuration += same_p2_pd * mask.same_p2_pd
-
-    return configuration
-
-
-def cyl_plane_region_conf_old(cylinder, ep1, ep2):
-
-    p1, p2 = ep1[1], ep2[1]
-    p1c = region_sign(p1, cylinder)
-    p2c = region_sign(p2, cylinder)
-    cross_in = cross_in_cylinder(p1, p2, cylinder)
-    same_pc_side, p12, v1_inter_dir, sameplane = plane_region(ep1, ep2, cross_in)
-
-    fwd_cyl = cylinder.Orientation == "Forward"
-
-    if p12 is None:
-        p12 = "AND" if fwd_cyl else "OR"
-    elif sameplane:
-        cross_in = True
-        p12 = "OR" if fwd_cyl else "AND"
-    elif v1_inter_dir is None:
-        cross_in = True
-        v1_inter_dir = False
-
-    AND_P12 = p12 == "AND"
-    fwd_corner = AND_P12 if same_pc_side else fwd_cyl
-
-    configuration = fwd_cyl * mask.fwd_cyl
-    configuration += (p1c == "AND") * mask.p1_cyl
-    configuration += (p2c == "AND") * mask.p2_cyl
-    configuration += AND_P12 * mask.p1_p2
-    configuration += same_pc_side * mask.pc_side
-    configuration += cross_in * mask.cross_in
-    # configuration += (p1pc == "AND") * mask.p1_pc
-    # configuration += (p2pc == "AND") * mask.p2_pc
-    configuration += v1_inter_dir * mask.inter_v1
-    configuration += fwd_corner * mask.fwd_corner
 
     return configuration
 

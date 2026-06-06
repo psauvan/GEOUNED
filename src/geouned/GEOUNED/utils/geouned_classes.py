@@ -335,10 +335,10 @@ class GeounedSurface:
             self.shell = multiplane
 
         elif self.Type == "Can":
-            self.shape, self.shell = makeCan(self.Surf, Box)
+            self.shape, self.shell = makeCan(self, Box)
 
         elif self.Type == "TCone":
-            self.shape, self.shell = makeTCone(self.Surf, Box)
+            self.shape, self.shell = makeTCone(self, Box)
 
         elif self.Type == "RoundCorner":
             Box.enlarge(10)
@@ -460,11 +460,10 @@ class MetaSurfacesDict(dict):
             if not same_dir:
                 pid = -pid
 
-            planeregion = BoolSurface(self.surfaceNumber, pid)
             for p_surf in self["Planes"]:
-                boundary = planeregion.isSameInterface(p_surf.region)
-                if abs(boundary) == 1:
+                if abs(p_surf.region.region.elements[0]) == abs(pid):
                     add_plane = False
+                    same_sign = pid == int(math.copysign(pid, p_surf.region.region.elements[0]))
                     break
 
         if add_plane:
@@ -474,7 +473,7 @@ class MetaSurfacesDict(dict):
             self["Planes"].append(plane)
             self.__surfIndex__["Planes"].append(plane.region.__int__())
         else:
-            newregion = p_surf.region if boundary > 0 else -p_surf.region
+            newregion = p_surf.region if same_sign else -p_surf.region
 
         return newregion
 
@@ -684,6 +683,96 @@ class MetaSurfacesDict(dict):
     #  - RR AND : same as RF OR
     # if only plane assume S = True in the previous expressions
 
+    def Can_region(self, FRCan):
+        cylCan = FRCan.Surf.Cylinder
+        cid, exist = self.primitive_surfaces.add_cylinder(cylCan.Surf.Cylinder, True)
+        region = BoolSurface(0, cid) if cylCan.Orientation == "Reversed" else BoolSurface(0, -cid)
+
+        surf_list = []
+        if FRCan.Surf.s1 is not None:
+            surf_list.append((FRCan.Surf.s1, FRCan.Surf.s1_configuration))
+
+        if FRCan.Surf.s2 is not None:
+            surf_list.append((FRCan.Surf.s2, FRCan.Surf.s2_configuration))
+
+        for si, configuration in surf_list:
+            if si.Type == "Plane":
+                plane = si
+                pid, exist = self.primitive_surfaces.add_surface(plane, True)
+                if exist:
+                    p = self.get_primitive_surface(pid)
+                    if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
+                si_region = BoolSurface(0, pid) if configuration == "AND" else BoolSurface(0, -pid)
+
+            elif si.Type in ("Cylinder", "Cone", "Sphere"):
+                plane = si.Surf.Plane
+                aplane = None
+                if si.Type == "Cylinder":
+                    surf = si.Surf.Cylinder
+                elif si.Type == "Cone":
+                    surf = si.Surf.Cone
+                    aplane = si.Surf.ApexPlane
+                elif si.Type == "Sphere":
+                    surf = si.Surf.Sphere
+
+                sid, exist = self.primitive_surfaces.add_surface(surf, True)
+                if plane is not None:
+                    pid, exist = self.primitive_surfaces.add_surface(plane, True)
+                    if exist:
+                        p = self.get_primitive_surface(pid)
+                        if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pid = -pid
+
+                    if aplane is None:
+                        if si.Orientation == "Forward":
+                            if configuration == "AND":
+                                si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
+                            else:
+                                si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
+                        else:
+                            if configuration == "AND":
+                                si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
+                            else:
+                                si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
+                    else:
+                        apid, exist = self.primitive_surfaces.add_surface(aplane, True)
+                        if exist:
+                            p = self.get_primitive_surface(apid)
+                            if is_opposite(aplane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                                apid = -apid
+
+                        if si.Orientation == "Forward":
+                            if configuration == "AND":
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, pid))
+                            else:
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, -pid))
+                        else:
+                            if configuration == "AND":
+                                si_region = BoolSurface(0, apid) + (BoolSurface(0, sid) * BoolSurface(0, pid))
+                            else:
+                                si_region = BoolSurface(0, apid) * (BoolSurface(0, sid) * BoolSurface(0, -pid))
+                else:
+                    if aplane is None:
+                        if si.Orientation == "Forward":
+                            si_region = BoolSurface(0, -sid)
+                        else:
+                            si_region = BoolSurface(0, sid)
+                    else:
+                        apid, exist = self.primitive_surfaces.add_surface(aplane, True)
+                        if exist:
+                            p = self.get_primitive_surface(apid)
+                            if is_opposite(aplane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                                apid = -apid
+
+                        if si.Orientation == "Forward":
+                            si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
+                        else:
+                            si_region = BoolSurface(0, apid) * BoolSurface(0, sid)
+
+            region = region * si_region if configuration == "AND" else region + si_region
+        return region
+
     def forwardCan_region(self, forwardCan):
         cylCan = forwardCan.Surf.Cylinder
         cid, exist = self.primitive_surfaces.add_cylinder(cylCan.Surf.Cylinder, True)
@@ -791,10 +880,11 @@ class MetaSurfacesDict(dict):
             else:
                 reversedCan_region = reversedCan_region + pregion
 
+        reversedCan_region.reverse = True
         return reversedCan_region
 
     def add_forwardCan(self, forwardCan):
-        fwd_region = self.forwardCan_region(forwardCan)
+        fwd_region = self.Can_region(forwardCan)
 
         add_can = True
         for kind in ("FwdCan", "RevCan"):
@@ -817,7 +907,7 @@ class MetaSurfacesDict(dict):
         return newregion
 
     def add_reverseCan(self, reverseCan):
-        rev_region = self.reversedCan_region(reverseCan)
+        rev_region = self.Can_region(reverseCan)
 
         add_can = True
         for kind in ("RevCan", "FwdCan"):

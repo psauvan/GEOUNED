@@ -311,7 +311,7 @@ class VoidBox:
         complementary.expand_regions_to_boolVar()
 
         if simplify == "full":
-            compSeq.simplify(CTable)
+            # compSeq.simplify(CTable)
             compSeq.expand_regions_to_boolVar()
             surfaceDict = {}
 
