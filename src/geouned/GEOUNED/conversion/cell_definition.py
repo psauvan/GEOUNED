@@ -88,11 +88,6 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             omitFaces.update(planeset)
             multiplane_surface = True
 
-        # reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
-        # for cs in reversedCC:
-        #    cc_region = Surfaces.add_reversedCC(cs)
-        #    component_definition.append(cc_region)
-
     else:
         omitFaces = set()
         omit_isolated_planes(solid_gu.Faces, omitFaces)
