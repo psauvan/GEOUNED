@@ -583,6 +583,13 @@ def check_sign(solid_or_point, surf):
     elif surf.Type == "Torus":
         return check_sign(point, tor=surf.Surf.Torus)
 
+    elif surf.Type == "MultiPlane":
+        for plane in surf.Surf.Planes:
+            p_sign = check_sign(point, plane)
+            if p_sign == 1:
+                return 1
+        return -1
+
     elif surf.Type == "Can" or surf.Type == "TCone":
         if surf.Type == "Can":
             can_surfaces = [surf.Surf.Cylinder.Surf.Cylinder]
@@ -619,13 +626,6 @@ def check_sign(solid_or_point, surf):
 
             inside = surf.region.region.evaluate(surfSet)
             return 1 if inside else -1
-
-    elif surf.Type == "MultiPlane":
-        for plane in surf.Surf.Planes:
-            p_sign = check_sign(point, plane)
-            if p_sign == 1:
-                return 1
-        return -1
 
     elif surf.Type == "RoundCorner":
         multiDef = surf.region.region.copy()
