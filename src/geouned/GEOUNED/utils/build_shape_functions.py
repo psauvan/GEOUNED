@@ -144,6 +144,10 @@ def build_complex_shape(surface, Box):
         shapeParts.append(s.base)
 
     solid = FuseSolid(shapeParts)
+    if rc.boundBox.sameBox(myBox(solid.BoundBox)):
+        # surface shape doesn't cut box
+        return (None, None)
+
     if len(solid.Shells) == 0:
         shell = solid.Shells[0]
     else:

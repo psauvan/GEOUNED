@@ -274,14 +274,19 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
         CTable.add_element(s1, s1, CTelement(res, s1, s1))
         if simplification_mode == "diag":
             continue
-        if splitRegions is None:
-            continue  # loop, no region to be split by s2
 
         if s1 in omit_surfaces:
             val = (1, 1, 1, 1)
             for s2 in surfaceList[i + 1 :]:
                 CTable.add_element(s1, s2, CTelement(val, s1, s2))
             continue
+
+        if splitRegions is None:
+            if res == 0:
+                # case that s1 cut the box but the split fails and return only one solids
+                # the following function try to split box with surface s2 instead surface s1
+                split_s2_s1((i, s1), Box, CTable, surfaceList, surfaces, omit_surfaces, options)
+            continue  # loop, no region to be split by s2
 
         for s2 in surfaceList[i + 1 :]:
             if s2 in omit_surfaces:
@@ -323,6 +328,50 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
     return CTable
 
 
+def split_s2_s1(s1tuple, Box, CTable, surfaceList, surfaces, omit_surfaces, options):
+    i1, s1 = s1tuple
+    for s2 in surfaceList[i1 + 1 :]:
+        if surfaces[s2].shape:
+            res, splitRegions = split_solid_fast(Box, surfaces[s2], True, options)
+        else:
+            res = check_sign(solid, surfaces[s2]), None
+
+        if s2 in omit_surfaces:
+            CTable.add_element(s1, s2, CTelement((1, 1, 1, 1), s1, s2))
+            continue
+
+        if splitRegions is None:
+            continue
+
+        posS2, negS2 = splitRegions
+        pos0 = None
+        for solid in posS2:
+            pos = split_solid_fast(solid, surfaces[s1], False, options)
+            if pos == (1, 1):
+                break  # s1 intersect S2 Region
+            if pos0 is None:
+                pos0 = pos
+            else:
+                if pos != pos0:  # s2 regions are on both side of s1
+                    pos = (1, 1)
+                    break
+
+        neg0 = None
+        for solid in negS2:
+            neg = split_solid_fast(solid, surfaces[s1], False, options)
+            if neg == (1, 1):
+                break  # s2 intersect S1 Region
+            if neg0 is None:
+                neg0 = neg
+            else:
+                if neg != neg0:  # s1 regions are on both side of s2
+                    neg = (1, 1)
+                    break
+
+        val = (pos[0], pos[1], neg[1], neg[0])
+        CTable.add_element(s1, s2, CTelement(val, s1, s2).get_transpose())
+
+
 def remove_extra_surfaces(CellSeq, CTable):
     # checking is make on solid cell definition to be removed from void cell
     outSurfaces = set(CTable.get_out_surfaces())
@@ -340,7 +389,8 @@ def remove_extra_surfaces(CellSeq, CTable):
 
     for subCell in CellSeq.elements:
         nullcell = False
-        subCell.check()
+        if type(subCell) is not BoolSurface:
+            subCell.check()
         if type(subCell.elements) is bool:
             chk = not subCell.elements
         else:
@@ -398,7 +448,14 @@ def split_solid_fast(solid, surf, box, options):
             return check_sign(solid, surf), None
 
         if len(comsolid.Solids) <= 1:
-            return check_sign(solid, surf), None
+            if len(comsolid.Solids) == 1:
+                res = split_solid_fast(solid, surf, False, options)
+                if res == (1, 1):
+                    return 0, None
+                else:
+                    return check_sign(solid, surf), None
+            else:
+                return check_sign(solid, surf), None
         # sgn = check_sign(solid,surf)   # if "box" and single object => the box is not split, surface s1 out of the box.
         # if sgn == 1 :                 # The sign is the side of surface s1 where the box is located
         #    # return ((1,0),(0,0)),None  # return the diagonal element of the Constraint Table for s1
@@ -425,8 +482,11 @@ def split_solid_fast(solid, surf, box, options):
         # "not box" => return the position of the +/- region of s1 (the solid) with respect s2
         if surf.shell:
             dist = solid.distToShape(surf.shell)[0]
-            # cc = solid.common(surf.shell)
-            # volume = cc.Volume
+            if dist > 1e-6:
+                # chech if surf and solid don't intersect actually
+                cc = solid.common(surf.shell)
+                if abs(cc.Area) > 0:
+                    dist = 0
         else:
             dist = 1.0
             # volume = 0
@@ -734,4 +794,5 @@ def get_kne_planes(Surfaces):
         for index in kne.region.get_surfaces_numbers():
             if Surfaces.primitive_surfaces.get_surface(index).Type == "Plane":
                 kne_planes.add(index)
-    return kne_planes
+    # return kne_planes
+    return set()

@@ -692,8 +692,13 @@ class BoolSequence:
         if type(self.elements) is bool:
             return self.elements
         if self.level == 0:
-            signed_surf = set(self.elements)
-            self.elements = list(signed_surf)
+            if self.base_type is BoolSurface:
+                signed_surf = set()
+                for r in self.elements:
+                    signed_surf.add(-r.__int__()) if r.reverse else signed_surf.add(r.__int__())
+            else:
+                signed_surf = set(self.elements)
+                self.elements = list(signed_surf)
 
             surf_name = self.get_surfaces_numbers()
             if len(signed_surf) == len(surf_name):

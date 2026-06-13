@@ -705,6 +705,7 @@ class MetaSurfacesDict(dict):
                         pid = -pid
                         # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
                         plane.Surf.Axis = -plane.Surf.Axis
+                        plane.bVar = pid
 
                 si_region = BoolSurface(0, pid) if configuration == "AND" else BoolSurface(0, -pid)
 
@@ -728,6 +729,7 @@ class MetaSurfacesDict(dict):
                             pid = -pid
                             # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
                             plane.Surf.Axis = -plane.Surf.Axis
+                            plane.bVar = pid
 
                     if aplane is None:
                         if si.Orientation == "Forward":
@@ -748,6 +750,7 @@ class MetaSurfacesDict(dict):
                                 apid = -apid
                                 # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
                                 aplane.Surf.Axis = -aplane.Surf.Axis
+                                aplane.bVar = apid
 
                         if si.Orientation == "Forward":
                             if configuration == "AND":
@@ -773,6 +776,7 @@ class MetaSurfacesDict(dict):
                                 apid = -apid
                                 # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
                                 aplane.Surf.Axis = -aplane.Surf.Axis
+                                aplane.bVar = apid
 
                         if si.Orientation == "Forward":
                             si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
@@ -842,6 +846,7 @@ class MetaSurfacesDict(dict):
                     pid = -pid
                     # change plane axis because TCone shape is build with solid definition based on Surfaces dict reference
                     pi.Surf.Axis = -pi.Surf.Axis
+                    pi.bVar = pid
 
             if TCone.Orientation == "Forward":
                 TCone_region = TCone_region * BoolSurface(0, pid)
@@ -906,10 +911,10 @@ class MetaSurfacesDict(dict):
                 if exist:
                     p = self.get_primitive_surface(pid)
                     if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
                         # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                         plane.Surf.Axis = -plane.Surf.Axis
-                        pid = -pid
-                plane.bVar = pid
+                        plane.bVar = pid
 
             for rc in mRoundC.Surf.Corners:
                 cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder, True)
@@ -919,10 +924,10 @@ class MetaSurfacesDict(dict):
                     if exist_p:
                         p = self.get_primitive_surface(pcid)
                         if is_opposite(rc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pcid = -pcid
                             # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                             rc.Surf.Plane.Surf.Axis = -rc.Surf.Plane.Surf.Axis
-                            pcid = -pcid
-                    rc.Surf.Plane.bVar = pcid
+                            rc.Surf.Plane.bVar = pcid
         else:
             for plane in mRoundC.Surf.Planes:
                 pid, exist = self.primitive_surfaces.add_plane(plane, True)
@@ -932,7 +937,7 @@ class MetaSurfacesDict(dict):
                         pid = -pid
                         # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                         plane.Surf.Axis = -plane.Surf.Axis
-                plane.bVar = pid
+                        plane.bVar = pid
 
             for rc in mRoundC.Surf.Corners:
                 cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder, True)
@@ -945,7 +950,7 @@ class MetaSurfacesDict(dict):
                             pcid = -pcid
                             # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                             rc.Surf.Plane.Surf.Axis = -rc.Surf.Plane.Surf.Axis
-                    rc.Surf.Plane.bVar = pcid
+                            rc.Surf.Plane.bVar = pcid
 
         multi_rc_region = multi_round_corner_region(mRoundC)
         add_mcorner = True
@@ -980,7 +985,7 @@ class MetaSurfacesDict(dict):
                     pcid = -pcid
                     # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                     cylinder.Surf.Plane.Surf.Axis = -cylinder.Surf.Plane.Surf.Axis
-            cylinder.Surf.Plane.bVar = pcid
+                    cylinder.Surf.Plane.bVar = pcid
         else:
             pcid = None
 
@@ -992,7 +997,7 @@ class MetaSurfacesDict(dict):
                 p1id = -p1id
                 # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                 p1.Surf.Axis = -p1.Surf.Axis
-        p1.bVar = p1id
+                p1.bVar = p1id
 
         if p1 != p2:
             p2id, exist = self.primitive_surfaces.add_plane(p2, True)
@@ -1002,7 +1007,7 @@ class MetaSurfacesDict(dict):
                     p2id = -p2id
                     # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                     p2.Surf.Axis = -p2.Surf.Axis
-            p2.bVar = p2id
+                    p2.bVar = p2id
         else:
             p2id = p1id
 
