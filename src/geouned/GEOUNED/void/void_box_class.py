@@ -219,10 +219,12 @@ class VoidBox:
         # join all basic solids into one big meta Object
         # CAD solid representation is not needed because
         # here we are working with surfaces and void box
-
+        voidSolidDef.same_level()
         complementary = BoolSequence(operator="AND")
         complementary.append(boxDef)
-        if simplify != "no":
+        if (
+            simplify != "no" and False
+        ):  # temporary removed because remove_extra_surface not modified to handle correctly surface regions
             surfList = voidSolidDef.get_regions()
 
             if enclosure:
