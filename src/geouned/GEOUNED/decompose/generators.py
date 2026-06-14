@@ -216,7 +216,6 @@ def next_truncCone(solid, tconeface_index):
             if f.Index in tconeface_index:
                 continue
 
-            solid.solid.exportStep("sol.stp")
             cs, surfindex = get_tcone_surfaces(f, solidFaces)
             if cs is not None:
                 gc = GeounedSurface(("TCone", build_tcone_params(cs)))

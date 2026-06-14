@@ -835,7 +835,7 @@ class MetaSurfacesDict(dict):
     def TCone_region(self, TCone):
         kneCan = TCone.Surf.Cone
         cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
-        TCone_region = BoolSurface(0, -cid) if TCone.Orientation == "Forward" else BoolSurface(0, -cid)
+        TCone_region = BoolSurface(0, -cid) if TCone.Orientation == "Forward" else BoolSurface(0, cid)
 
         surf_list = (TCone.Surf.p1, TCone.Surf.p2)
         for pi in surf_list:
@@ -1028,6 +1028,74 @@ class MetaSurfacesDict(dict):
             self.__surfIndex__["RoundC"].append(roundC.region.__int__())
         else:
             newregion = rc_surf.region if boundary > 0 else -rc_surf.region
+        return newregion
+
+    def add_reversedCC(self, reversedCC):
+        reversedCC_region = None
+        for cc in reversedCC.Surf.CylCones:
+            if cc.Type == "CylinderOnly":
+                cid, exist = self.primitive_surfaces.add_cylinder(cc, True)
+                cc.bVar = cid
+                reversedCC_region = BoolSurface.mult(reversedCC_region, BoolSurface(0, cid))
+            else:
+                cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
+                cc.Surf.Cone.bVar = cid
+                if cc.Surf.ApexPlane:
+                    pid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True)
+                    if exist:
+                        p = self.get_primitive_surface(pid)
+                        if is_opposite(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pid = -pid
+                    coneRegion = BoolSurface(0, cid) + BoolSurface(0, pid)
+                else:
+                    coneRegion = BoolSurface(0, cid)
+                reversedCC_region = BoolSurface.mult(reversedCC_region, coneRegion)
+
+        plane_region = None
+        for cp in reversedCC.Surf.PlaneSeq:
+            if type(cp) is list:
+                ORregion = None
+                for cpp in cp:
+                    pid, exist = self.primitive_surfaces.add_plane(cpp, True)
+                    if exist:
+                        p = self.get_primitive_surface(pid)
+                        if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                            pid = -pid
+                    ORregion = BoolSurface.add(ORregion, BoolSurface(0, pid))
+                plane_region = BoolSurface.mult(plane_region, ORregion)
+            else:
+                pid, exist = self.primitive_surfaces.add_plane(cp, True)
+                if exist:
+                    p = self.get_primitive_surface(pid)
+                    if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
+                plane_region = BoolSurface.mult(plane_region, BoolSurface(0, pid))
+
+        for cp in reversedCC.Surf.AddPlanes:
+            pid, exist = self.primitive_surfaces.add_plane(cp, True)
+            if exist:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            plane_region = BoolSurface.add(plane_region, BoolSurface(0, pid))
+
+        reversedCC_region = reversedCC_region * plane_region
+
+        add_cc = True
+        for cs_surf in self["RevCC"]:
+            boundary = reversedCC_region.isSameInterface(cs_surf.region)
+            if abs(boundary) == 1:
+                add_cc = False
+                break
+
+        if add_cc:
+            self.surfaceNumber += 1
+            newregion = reversedCC_region.copy(self.surfaceNumber)
+            reversedCC.region = newregion
+            self["RevCC"].append(reversedCC)
+            self.__surfIndex__["RevCC"].append(reversedCC.region.__int__())
+        else:
+            newregion = cs_surf.region if boundary > 0 else -cs_surf.region
         return newregion
 
 
