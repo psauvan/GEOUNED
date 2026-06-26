@@ -186,11 +186,9 @@ def build_roundC_params(rc_list):
     roundcorner_list = []
     plane_list = []
     var_id = 0
-    for cyl, p1, p2, config_orientation in rc_list:
 
+    for cyl, p1, p2, config_orientation in rc_list:
         config, fwd_corner = config_orientation
-        # cross_in = config & mask.cross_in == mask.cross_in
-        cross_in = False
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
         cylOnly.bVar = BoolVariable(var_id)
@@ -198,8 +196,12 @@ def build_roundC_params(rc_list):
             gpa = None
         else:
             gpa = get_additional_corner_plane(cyl, p1, p2)
-            var_id += 1
-            gpa.bVar = BoolVariable(var_id)
+            if gpa in plane_list:
+                index = plane_list.index(gpa)
+                gpa.bVar = plane_list[index].bVar
+            else:
+                var_id += 1
+                gpa.bVar = BoolVariable(var_id)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
         p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
@@ -207,11 +209,22 @@ def build_roundC_params(rc_list):
 
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
-        var_id += 1
-        gp1.bVar = BoolVariable(var_id)
-        if gp1 != gp2:
+
+        if gp1 in plane_list:
+            index = plane_list.index(gp1)
+            gp1.bVar = plane_list[index].bVar
+        else:
             var_id += 1
-        gp2.bVar = BoolVariable(var_id)
+            gp1.bVar = BoolVariable(var_id)
+
+        if gp1 != gp2:
+            if gp2 in plane_list:
+                index = plane_list.index(gp2)
+                gp2.bVar = plane_list[index].bVar
+            else:
+                var_id += 1
+                gp2.bVar = BoolVariable(var_id)
+
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"
@@ -248,9 +261,9 @@ def build_roundC_params(rc_list):
 
         if multi_round:
             cylinder_list = []
-            for rc in roundcorner_list:
-                cylinder_list.append(rc.Surf.Cylinder)
-            roundcorner_list = cylinder_list
+            # for rc in roundcorner_list:
+            #    cylinder_list.append(rc.Surf.Cylinder)
+            # roundcorner_list = cylinder_list
             center = FreeCAD.Vector(0, 0, 0)
             for p in plane_list:
                 center = center + p.Surf.Position

@@ -1118,7 +1118,7 @@ def planar_edges(edges):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < 1e-8:
+    if e0.Length < 1e-5:
         return False
     if type(e0.Curve) is Part.BSplineCurve:
         d0 = e0.derivative1At(0)

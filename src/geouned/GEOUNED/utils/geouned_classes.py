@@ -9,6 +9,7 @@ import Part
 
 logger = logging.getLogger("general_logger")
 
+from .data_constants import mask
 from .basic_functions_part1 import (
     PlaneParams,
     ConeOnlyParams,
@@ -905,48 +906,25 @@ class MetaSurfacesDict(dict):
         # will not return correct results for any multi corner configuration
         # must be adjusted one basics feature works correclty
         # multi_rc_region = None
-        overlapCorner  =False
-        if len(mRoundC.Surf.Planes) == 1 and len(mRoundC.Surf.Corners) == 2:
-            c1c2 = (mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Center - mRoundC.Surf.Corners[1].Surf.Cylinder.Surf.Center)
-            v = mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Axis.dot(c1c2)
-            dcenter = math.sqrt(c1c2.Length**2 - v**2)
-            totradius = mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Radius + mRoundC.Surf.Corners[1].Surf.Cylinder.Surf.Radius
-            overlapCorner = dcenter < totradius             
-        
+        overlapCorner = False
+        if len(mRoundC.Surf.Planes) < 3 and len(mRoundC.Surf.Corners) == 2:
+            c1c2 = (
+                mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Center
+                - mRoundC.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Center
+            )
+            v = mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Axis.dot(c1c2)
+            dcenter = math.sqrt(abs(c1c2.Length**2 - v**2))
+            totradius = (
+                mRoundC.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Radius
+                + mRoundC.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Radius
+            )
+            overlapCorner = dcenter < totradius
+
         if overlapCorner:
-            plane = mRoundC.Surf.Planes[0]
-            cylmin = mRoundC.Surf.Corners[0].Surf.Cylinder
-            cylmin.Orientation = mRoundC.Surf.Corners[0].Orientation
-            cylmax = mRoundC.Surf.Corners[1].Surf.Cylinder
-            cylmax.Orientation = mRoundC.Surf.Corners[1].Orientation
-            if cylmin.Surf.Radius > cylmax.Surf.Radius:
-                cylmin,cylmax = cylmax, cylmin
-
-            pid, exist = self.primitive_surfaces.add_plane(plane, True)
-            if exist:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
-                    # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
-                    plane.Surf.Axis = -plane.Surf.Axis
-                    plane.bVar = pid
-
-            cminid, exist_c = self.primitive_surfaces.add_cylinder(cylmin, True)
-            cylmin.bVar = cminid
-            cmaxid, exist_c = self.primitive_surfaces.add_cylinder(cylmax, True)
-            cylmax.bVar = cmaxid
-            
-            pregion = BoolSurface(0, plane.bVar)
-            if cylmin.Orientation == "Reversed":
-                region = BoolSurface.mult(pregion, BoolSurface(0, cminid))
-            else:    
-                region = BoolSurface.add(pregion, BoolSurface(0, -cminid))
-
-            if cylmax.Orientation == "Reversed":
-                multi_rc_region = BoolSurface.add(region, BoolSurface(0, cmaxid))
-            else:    
-                multi_rc_region = BoolSurface.mult(region, BoolSurface(0, -cmaxid))
-        else:    
+            rc1 = mRoundC.Surf.Corners[0]
+            rc2 = mRoundC.Surf.Corners[1]
+            multi_rc_region = self.get_overlap_rc(rc1, rc2, mRoundC.Orientation)
+        else:
             if mRoundC.Orientation == "Forward":
                 for plane in mRoundC.Surf.Planes:
                     pid, exist = self.primitive_surfaces.add_plane(plane, True)
@@ -959,10 +937,10 @@ class MetaSurfacesDict(dict):
                             plane.bVar = pid
 
                 for rc in mRoundC.Surf.Corners:
-                    cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder, True)
-                    rc.Surf.Cylinder.bVar = cid
-                    if rc.Surf.Plane is not None:
-                        pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Plane, True)
+                    cid, exist_c = self.primitive_surfaces.add_cylinder(rc.Surf.Cylinder.Surf.Cylinder, True)
+                    rc.Surf.Cylinder.Surf.Cylinder.bVar = cid
+                    if rc.Surf.Cylinder.Surf.Plane is not None:
+                        pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Cylinder.Surf.Plane, True)
                         if exist_p:
                             p = self.get_primitive_surface(pcid)
                             if is_opposite(rc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
@@ -995,7 +973,7 @@ class MetaSurfacesDict(dict):
                                 rc.Surf.Plane.bVar = pcid
 
             multi_rc_region = multi_round_corner_region(mRoundC)
-        
+
         add_mcorner = True
         for rc_surf in self["MultiRoundC"]:
             boundary = multi_rc_region.isSameInterface(rc_surf.region)
@@ -1013,7 +991,7 @@ class MetaSurfacesDict(dict):
             newregion = rc_surf.region
         return newregion
 
-    def add_roundCorner(self, roundC):
+    def get_roundCorner_region(self, roundC):
         config = roundC.Surf.Configuration
         cylinder = roundC.Surf.Cylinder
         planes = roundC.Surf.Planes
@@ -1054,7 +1032,149 @@ class MetaSurfacesDict(dict):
         else:
             p2id = p1id
 
-        roundC_region = round_corner_region(p1id, p2id, cid, pcid, config)
+        return round_corner_region(p1id, p2id, cid, pcid, config)
+
+    def get_overlap_rc(self, rc1, rc2, orientation):
+
+        AND1_p1_cyl = not (rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
+        AND1_p2_cyl = not (rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
+        AND2_p1_cyl = not (rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
+        AND2_p2_cyl = not (rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
+
+        if AND1_p1_cyl and AND1_p2_cyl and AND2_p1_cyl and AND2_p2_cyl:
+            rc1_region = self.get_roundCorner_region(rc1)
+            rc2_region = self.get_roundCorner_region(rc2)
+            multi_rc_region = rc1_region * rc2_region if orientation == "Forward" else rc1_region + rc2_region
+        elif AND1_p1_cyl and AND1_p2_cyl:
+            rc2_region = self.get_roundCorner_region(rc2)
+            cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
+            cyl1.Orientation = rc1.Surf.Cylinder.Orientation
+            pc1 = rc1.Surf.Cylinder.Surf.Plane
+
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl1, True)
+            cyl1.bVar = cid
+            if pc1 is not None:
+                pcid, exist_p = self.primitive_surfaces.add_plane(pc1, True)
+                if exist_p:
+                    p = self.get_primitive_surface(pcid)
+                    if is_opposite(pc1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pcid = -pcid
+                        # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
+                        pc1.Surf.Axis = -pc1.Surf.Axis
+                        pc1.bVar = pcid
+            else:
+                pcid = None
+            comp1 = (
+                -BoolSurface(0, cid) - BoolSurface(0, pcid)
+                if cyl1.Orientation == "Forward"
+                else BoolSurface(0, cid) * BoolSurface(0, pcid)
+            )
+            multi_rc_region = rc2_region * comp1 if orientation == "Forward" else rc2_region + comp1
+
+        elif AND2_p1_cyl and AND2_p2_cyl:
+            rc1, rc2 = rc2, rc1
+            rc2_region = self.get_roundCorner_region(rc2)
+            cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
+            cyl1.Orientation = rc1.Surf.Cylinder.Orientation
+            pc1 = rc1.Surf.Cylinder.Surf.Plane
+
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl1, True)
+            cyl1.bVar = cid
+            if pc1 is not None:
+                pcid, exist_p = self.primitive_surfaces.add_plane(pc1, True)
+                if exist_p:
+                    p = self.get_primitive_surface(pcid)
+                    if is_opposite(pc1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pcid = -pcid
+                        # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
+                        pc1.Surf.Axis = -pc1.Surf.Axis
+                        pc1.bVar = pcid
+            else:
+                pcid = None
+            comp1 = (
+                -BoolSurface(0, cid) - BoolSurface(0, pcid)
+                if cyl1.Orientation == "Forward"
+                else BoolSurface(0, cid) * BoolSurface(0, pcid)
+            )
+            multi_rc_region = rc2_region * comp1 if orientation == "Forward" else rc2_region + comp1
+        elif not AND1_p1_cyl and not AND1_p2_cyl:
+            rc2_region = self.get_roundCorner_region(rc2)
+            cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
+            cyl1.Orientation = rc1.Surf.Cylinder.Orientation
+            pc1 = rc1.Surf.Cylinder.Surf.Plane
+
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl1, True)
+            cyl1.bVar = cid
+            if pc1 is not None:
+                pcid, exist_p = self.primitive_surfaces.add_plane(pc1, True)
+                if exist_p:
+                    p = self.get_primitive_surface(pcid)
+                    if is_opposite(pc1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pcid = -pcid
+                        # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
+                        pc1.Surf.Axis = -pc1.Surf.Axis
+                        pc1.bVar = pcid
+            else:
+                pcid = None
+
+            if orientation == "Forward":
+                multi_rc_region = -BoolSurface(0, pcid) * rc2_region + BoolSurface(0, -cid)
+            else:
+                multi_rc_region = rc2_region * (BoolSurface(0, cid) - BoolSurface(0, pcid))
+        elif not AND2_p1_cyl and not AND2_p2_cyl:
+            rc1, rc2 = rc2, rc1
+            rc2_region = self.get_roundCorner_region(rc2)
+            cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
+            cyl1.Orientation = rc1.Surf.Cylinder.Orientation
+            pc1 = rc1.Surf.Cylinder.Surf.Plane
+
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl1, True)
+            cyl1.bVar = cid
+            if pc1 is not None:
+                pcid, exist_p = self.primitive_surfaces.add_plane(pc1, True)
+                if exist_p:
+                    p = self.get_primitive_surface(pcid)
+                    if is_opposite(pc1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pcid = -pcid
+                        # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
+                        pc1.Surf.Axis = -pc1.Surf.Axis
+                        pc1.bVar = pcid
+            else:
+                pcid = None
+
+            if orientation == "Forward":
+                multi_rc_region = -BoolSurface(0, pcid) * rc2_region + BoolSurface(0, -cid)
+            else:
+                multi_rc_region = rc2_region * (BoolSurface(0, cid) - BoolSurface(0, pcid))
+        else:
+            rc2_region = self.get_roundCorner_region(rc2)
+            cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
+            cyl1.Orientation = rc1.Surf.Cylinder.Orientation
+            pc1 = rc1.Surf.Cylinder.Surf.Plane
+
+            cid, exist_c = self.primitive_surfaces.add_cylinder(cyl1, True)
+            cyl1.bVar = cid
+            if pc1 is not None:
+                pcid, exist_p = self.primitive_surfaces.add_plane(pc1, True)
+                if exist_p:
+                    p = self.get_primitive_surface(pcid)
+                    if is_opposite(pc1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pcid = -pcid
+                        # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
+                        pc1.Surf.Axis = -pc1.Surf.Axis
+                        pc1.bVar = pcid
+            else:
+                pcid = None
+
+            if orientation == "Forward":
+                multi_rc_region = (BoolSurface(0, -pcid) * rc2_region) + (BoolSurface(0, pcid) * BoolSurface(0, -cid))
+            else:
+                multi_rc_region = (BoolSurface(0, -pcid) * rc2_region) + (BoolSurface(0, pcid) * BoolSurface(0, cid))
+
+        return multi_rc_region
+
+    def add_roundCorner(self, roundC):
+        roundC_region = self.get_roundCorner_region(roundC)
 
         add_corner = True
         for rc_surf in self["RoundC"]:

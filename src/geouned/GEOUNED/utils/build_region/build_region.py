@@ -4,7 +4,7 @@ import Part
 from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, Plane, Cylinder, Cone, Sphere, myBox
 from ..boolean_function import BoolSurface, BoolSequence
-from ..basic_functions_part1 import round_corner_region
+from ..basic_functions_part1 import round_corner_region, multi_round_corner_region
 
 
 def get_cell_object(geoObj):
@@ -34,64 +34,35 @@ def get_cell_object(geoObj):
             region = round_corner_region(p1id, p2id, cid, pcid, geoObj.Surf.Configuration)
 
     elif geoObj.Type == "MultiRoundCorner":
-        region = None
-        Fcyl = []
-        Rcyl = []
-        if geoObj.Orientation == "Forward":
-            for plane in geoObj.Surf.Planes:
+        overlapCorner = False
+        if len(geoObj.Surf.Planes) < 3 and len(geoObj.Surf.Corners) == 2:
+            c1c2 = (
+                geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Center
+                - geoObj.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Center
+            )
+            v = geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Axis.dot(c1c2)
+            dcenter = math.sqrt(abs(c1c2.Length**2 - v**2))
+            totradius = (
+                geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Radius
+                + geoObj.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Radius
+            )
+            overlapCorner = dcenter < totradius
+
+        for plane in geoObj.Surf.Planes:
+            pid = plane.bVar
+            cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
+
+        for rc in geoObj.Surf.Corners:
+            cylinder = rc.Surf.Cylinder.Surf.Cylinder
+            cid = cylinder.bVar
+            cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
+
+            plane = rc.Surf.Cylinder.Surf.Plane
+            if plane is not None:
                 pid = plane.bVar
-                region = BoolSurface.mult(region, BoolSurface(0, pid))
                 cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
 
-            for rc in geoObj.Surf.Corners:
-                cylinder = rc.Surf.Cylinder
-                plane = rc.Surf.Plane
-                if plane is not None:
-                    pid = plane.bVar
-                    cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
-                    if rc.Orientation == "Forward":
-                        region = region * (-BoolSurface(0, pid))
-                    else:
-                        region = region * BoolSurface(0, pid)
-
-                cid = cylinder.bVar
-                cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
-                if rc.Orientation == "Forward":
-                    Fcyl.append(-BoolSurface(0, cid))
-                else:
-                    Rcyl.append(BoolSurface(0, cid))
-            for cyl in Rcyl:
-                region = region * cyl
-            for cyl in Fcyl:
-                region = region + cyl
-        else:
-            for plane in geoObj.Surf.Planes:
-                pid = plane.bVar
-                region = BoolSurface.add(region, BoolSurface(0, pid))
-                cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
-
-            for rc in geoObj.Surf.Corners:
-                cylinder = rc.Surf.Cylinder
-                plane = rc.Surf.Plane
-                if plane is not None:
-                    pid = plane.bVar
-                    cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
-                    if rc.Orientation == "Forward":
-                        region = region - BoolSurface(0, pid)
-                    else:
-                        region = region + BoolSurface(0, pid)
-
-                cid = cylinder.bVar
-                cell.surfaces[abs(cid)] = get_surface(abs(cid), cylinder)
-                if rc.Orientation == "Forward":
-                    Fcyl.append(-BoolSurface(0, cid))
-                else:
-                    Rcyl.append(BoolSurface(0, cid))
-
-            for cyl in Fcyl:
-                region = region + cyl
-            for cyl in Rcyl:
-                region = region * cyl
+        region = multi_round_corner_region(geoObj, overlapCorner)
 
     elif geoObj.Type == "Can":
         cyl = geoObj.Surf.Cylinder.Surf.Cylinder

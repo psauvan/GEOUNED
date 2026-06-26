@@ -45,7 +45,7 @@ class CellObj:
 
 class myBox:
     def __init__(self, boundBox=None, orientation=None):
-
+        self.Volume = 0
         if boundBox is not None:
             if boundBox.XLength <= 1e-12:
                 self.Box = None
@@ -55,6 +55,7 @@ class myBox:
                 self.Box = None
             else:
                 self.Box = boundBox
+                self.Volume = boundBox.XLength * boundBox.YLength * boundBox.ZLength
         else:
             self.Box = None
         self.Orientation = orientation

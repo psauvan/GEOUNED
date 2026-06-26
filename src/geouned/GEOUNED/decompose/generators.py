@@ -167,14 +167,15 @@ def next_multiplanes(solidFaces, plane_index_set):
         if isinstance(f.Surface, PlaneGu):
             planes.append(f)
 
+    used_plane = set()
     for p in planes:
-        if p.Index in plane_index_set:
+        if p.Index in used_plane:
             continue
         if not eligible_plane(p):
             continue
         mp_plane_index = set()
         mplanes = multiplane(p, planes, mp_plane_index)
-        plane_index_set.update(mp_plane_index)
+        used_plane.update(mp_plane_index)
         if len(mplanes) != 1:
             if no_convex(mplanes):
                 remove_twice_parallel(mplanes)

@@ -372,6 +372,7 @@ class FaceGu(object):
             return (distmin,)
         else:
             shape2 = shape.__face__
+            return shape1.distToShape(shape2)
 
         if shape1 is shape2:
             return (0,)
