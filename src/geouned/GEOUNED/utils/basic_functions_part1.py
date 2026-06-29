@@ -212,20 +212,43 @@ def multi_round_corner_region(mRoundC, overlap):
 
         c1id = cyl1.bVar
         c2id = cyl2.bVar
-        pc1id = pc1.bVar
-        pc2id = pc2.bVar
+        if pc1 is None:
+            p11id = p11.bVar
+            p12id = p12.bVar
+            pc1id = None
+        else:
+            p11id = p11.bVar
+            p12id = p12.bVar
+            pc1id = pc1.bVar
 
-        AND1_p1_cyl = not (rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
-        AND1_p2_cyl = not (rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
-        AND2_p1_cyl = not (rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
-        AND2_p2_cyl = not (rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
+        if pc2 is None:
+            p21id = p21.bVar
+            p22id = p22.bVar
+            pc2id = None
+        else:
+            p21id = p21.bVar
+            p22id = p22.bVar
+            pc2id = pc2.bVar
+
+        AND1_p1_cyl = rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
+        AND1_p2_cyl = rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
+        if rc1.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
+            AND1_p1_cyl = not AND1_p1_cyl
+            AND1_p2_cyl = not AND1_p2_cyl
+
+        AND2_p1_cyl = rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
+        AND2_p2_cyl = rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
+
+        if rc2.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
+            AND2_p1_cyl = not AND2_p1_cyl
+            AND2_p2_cyl = not AND2_p2_cyl
 
         if AND1_p1_cyl and AND1_p2_cyl and AND2_p1_cyl and AND2_p2_cyl:
-            rc1_region = round_corner_region(p11.bVar, p12.bVar, c1id, pc1id, rc1.Surf.Configuration)
-            rc2_region = round_corner_region(p21.bVar, p22.bVar, c2id, pc2id, rc2.Surf.Configuration)
+            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
+            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
             multi_rc_region = rc1_region * rc2_region if mRoundC.Orientation == "Forward" else rc1_region + rc2_region
         elif AND1_p1_cyl and AND1_p2_cyl:
-            rc2_region = round_corner_region(p21.bVar, p22.bVar, c2id, pc2id, rc2.Surf.Configuration)
+            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
             comp1 = (
                 -BoolSurface(0, c1id) - BoolSurface(0, pc1id)
                 if cyl1.Orientation == "Forward"
@@ -233,7 +256,7 @@ def multi_round_corner_region(mRoundC, overlap):
             )
             multi_rc_region = rc2_region * comp1 if mRoundC.Orientation == "Forward" else rc2_region + comp1
         elif AND2_p1_cyl and AND2_p2_cyl:
-            rc1_region = round_corner_region(p11.bVar, p12.bVar, c1id, pc1id, rc1.Surf.Configuration)
+            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
             comp2 = (
                 -BoolSurface(0, c2id) - BoolSurface(0, pc2id)
                 if cyl2.Orientation == "Forward"
@@ -241,19 +264,19 @@ def multi_round_corner_region(mRoundC, overlap):
             )
             multi_rc_region = rc1_region * comp2 if mRoundC.Orientation == "Forward" else rc1_region + comp2
         elif not AND1_p1_cyl and not AND1_p2_cyl:
-            rc2_region = round_corner_region(p21.bVar, p22.bVar, c2id, pc2id, rc2.Surf.Configuration)
+            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
             if mRoundC.Orientation == "Forward":
                 multi_rc_region = -BoolSurface(0, pc1id) * rc2_region + BoolSurface(0, -c1id)
             else:
                 multi_rc_region = rc2_region * (BoolSurface(0, c1id) - BoolSurface(0, pc1id))
         elif not AND2_p1_cyl and not AND2_p2_cyl:
-            rc1_region = round_corner_region(p11.bVar, p12.bVar, c1id, pc1id, rc1.Surf.Configuration)
+            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
             if mRoundC.Orientation == "Forward":
                 multi_rc_region = -BoolSurface(0, pc2id) * rc1_region + BoolSurface(0, -c2id)
             else:
                 multi_rc_region = rc1_region * (BoolSurface(0, c2id) - BoolSurface(0, pc2id))
         else:
-            rc1_region = round_corner_region(p11.bVar, p12.bVar, c1id, pc1id, rc1.Surf.Configuration)
+            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
             p2surf = BoolSurface(0, pc2id)
             if mRoundC.Orientation == "Forward":
                 multi_rc_region = (-p2surf * rc1_region) + (p2surf * BoolSurface(0, -c2id))

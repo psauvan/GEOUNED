@@ -972,7 +972,7 @@ class MetaSurfacesDict(dict):
                                 rc.Surf.Plane.Surf.Axis = -rc.Surf.Plane.Surf.Axis
                                 rc.Surf.Plane.bVar = pcid
 
-            multi_rc_region = multi_round_corner_region(mRoundC)
+            multi_rc_region = multi_round_corner_region(mRoundC, False)
 
         add_mcorner = True
         for rc_surf in self["MultiRoundC"]:
@@ -1036,10 +1036,18 @@ class MetaSurfacesDict(dict):
 
     def get_overlap_rc(self, rc1, rc2, orientation):
 
-        AND1_p1_cyl = not (rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
-        AND1_p2_cyl = not (rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
-        AND2_p1_cyl = not (rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl)
-        AND2_p2_cyl = not (rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl)
+        AND1_p1_cyl = rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
+        AND1_p2_cyl = rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
+        AND2_p1_cyl = rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
+        AND2_p2_cyl = rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
+
+        if rc1.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
+            AND1_p1_cyl = not AND1_p1_cyl
+            AND1_p2_cyl = not AND1_p2_cyl
+
+        if rc2.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
+            AND2_p1_cyl = not AND2_p1_cyl
+            AND2_p2_cyl = not AND2_p2_cyl
 
         if AND1_p1_cyl and AND1_p2_cyl and AND2_p1_cyl and AND2_p2_cyl:
             rc1_region = self.get_roundCorner_region(rc1)

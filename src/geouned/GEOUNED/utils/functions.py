@@ -224,13 +224,14 @@ def build_roundC_params(rc_list):
             else:
                 var_id += 1
                 gp2.bVar = BoolVariable(var_id)
-
+            plane_list.extend((gp1, gp2))
+        else:
+            plane_list.append(gp1)
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"
         rc = GeounedSurface(("RoundCorner", params, orientation))
         roundcorner_list.append(rc)
-        plane_list.extend((gp1, gp2))
 
     multi_round = False
     orientation = None
