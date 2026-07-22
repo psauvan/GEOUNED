@@ -34,19 +34,6 @@ def get_cell_object(geoObj):
             region = round_corner_region(p1id, p2id, cid, pcid, geoObj.Surf.Configuration)
 
     elif geoObj.Type == "MultiRoundCorner":
-        overlapCorner = False
-        if len(geoObj.Surf.Planes) < 3 and len(geoObj.Surf.Corners) == 2:
-            c1c2 = (
-                geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Center
-                - geoObj.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Center
-            )
-            v = geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Axis.dot(c1c2)
-            dcenter = math.sqrt(abs(c1c2.Length**2 - v**2))
-            totradius = (
-                geoObj.Surf.Corners[0].Surf.Cylinder.Surf.Cylinder.Surf.Radius
-                + geoObj.Surf.Corners[1].Surf.Cylinder.Surf.Cylinder.Surf.Radius
-            )
-            overlapCorner = dcenter < totradius
 
         for plane in geoObj.Surf.Planes:
             pid = plane.bVar
@@ -62,7 +49,7 @@ def get_cell_object(geoObj):
                 pid = plane.bVar
                 cell.surfaces[abs(pid)] = get_surface(abs(pid), plane)
 
-        region = multi_round_corner_region(geoObj, overlapCorner)
+        region = multi_round_corner_region(geoObj)
 
     elif geoObj.Type == "Can":
         cyl = geoObj.Surf.Cylinder.Surf.Cylinder

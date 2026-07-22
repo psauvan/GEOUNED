@@ -194,148 +194,58 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     return -rc_region if fwd_cyl else rc_region
 
 
-def multi_round_corner_region(mRoundC, overlap):
-    multi_rc_region = None
-    if overlap:
-        rc1 = mRoundC.Surf.Corners[0]
-        rc2 = mRoundC.Surf.Corners[1]
-        cyl1 = rc1.Surf.Cylinder.Surf.Cylinder
-        cyl2 = rc2.Surf.Cylinder.Surf.Cylinder
+def multi_round_corner_region(mRoundC):
 
-        cyl1.Orientation = rc1.Surf.Cylinder.Orientation
-        cyl2.Orientation = rc2.Surf.Cylinder.Orientation
+    planes_region = None
+    revCyl_region = None
+    fwdCyl_region = None
 
-        pc1 = rc1.Surf.Cylinder.Surf.Plane
-        pc2 = rc2.Surf.Cylinder.Surf.Plane
-        p11, p12 = rc1.Surf.Planes
-        p21, p22 = rc2.Surf.Planes
+    if mRoundC.Orientation == "Forward":
+        for plane in mRoundC.Surf.Planes:
+            pid = BoolSurface(0, plane.bVar)
+            planes_region = BoolSurface.mult(planes_region, pid)
 
-        c1id = cyl1.bVar
-        c2id = cyl2.bVar
-        if pc1 is None:
-            p11id = p11.bVar
-            p12id = p12.bVar
-            pc1id = None
-        else:
-            p11id = p11.bVar
-            p12id = p12.bVar
-            pc1id = pc1.bVar
-
-        if pc2 is None:
-            p21id = p21.bVar
-            p22id = p22.bVar
-            pc2id = None
-        else:
-            p21id = p21.bVar
-            p22id = p22.bVar
-            pc2id = pc2.bVar
-
-        AND1_p1_cyl = rc1.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
-        AND1_p2_cyl = rc1.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
-        if rc1.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
-            AND1_p1_cyl = not AND1_p1_cyl
-            AND1_p2_cyl = not AND1_p2_cyl
-
-        AND2_p1_cyl = rc2.Surf.Configuration & mask.p1_cyl == mask.p1_cyl
-        AND2_p2_cyl = rc2.Surf.Configuration & mask.p2_cyl == mask.p2_cyl
-
-        if rc2.Surf.Configuration & mask.fwd_cyl == mask.fwd_cyl:
-            AND2_p1_cyl = not AND2_p1_cyl
-            AND2_p2_cyl = not AND2_p2_cyl
-
-        if AND1_p1_cyl and AND1_p2_cyl and AND2_p1_cyl and AND2_p2_cyl:
-            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
-            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
-            multi_rc_region = rc1_region * rc2_region if mRoundC.Orientation == "Forward" else rc1_region + rc2_region
-        elif AND1_p1_cyl and AND1_p2_cyl:
-            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
-            comp1 = (
-                -BoolSurface(0, c1id) - BoolSurface(0, pc1id)
-                if cyl1.Orientation == "Forward"
-                else BoolSurface(0, c1id) * BoolSurface(0, pc1id)
-            )
-            multi_rc_region = rc2_region * comp1 if mRoundC.Orientation == "Forward" else rc2_region + comp1
-        elif AND2_p1_cyl and AND2_p2_cyl:
-            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
-            comp2 = (
-                -BoolSurface(0, c2id) - BoolSurface(0, pc2id)
-                if cyl2.Orientation == "Forward"
-                else BoolSurface(0, c2id) * BoolSurface(0, pc2id)
-            )
-            multi_rc_region = rc1_region * comp2 if mRoundC.Orientation == "Forward" else rc1_region + comp2
-        elif not AND1_p1_cyl and not AND1_p2_cyl:
-            rc2_region = round_corner_region(p21id, p22id, c2id, pc2id, rc2.Surf.Configuration)
-            if mRoundC.Orientation == "Forward":
-                multi_rc_region = -BoolSurface(0, pc1id) * rc2_region + BoolSurface(0, -c1id)
+        for rc in mRoundC.Surf.Corners:
+            cylinder = rc.Surf.Cylinder.Surf.Cylinder
+            cid = BoolSurface(0, cylinder.bVar)
+            if rc.Surf.Cylinder.Surf.Plane is not None:
+                pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
             else:
-                multi_rc_region = rc2_region * (BoolSurface(0, c1id) - BoolSurface(0, pc1id))
-        elif not AND2_p1_cyl and not AND2_p2_cyl:
-            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
-            if mRoundC.Orientation == "Forward":
-                multi_rc_region = -BoolSurface(0, pc2id) * rc1_region + BoolSurface(0, -c2id)
-            else:
-                multi_rc_region = rc1_region * (BoolSurface(0, c2id) - BoolSurface(0, pc2id))
-        else:
-            rc1_region = round_corner_region(p11id, p12id, c1id, pc1id, rc1.Surf.Configuration)
-            p2surf = BoolSurface(0, pc2id)
-            if mRoundC.Orientation == "Forward":
-                multi_rc_region = (-p2surf * rc1_region) + (p2surf * BoolSurface(0, -c2id))
-            else:
-                multi_rc_region = (-p2surf * rc1_region) + (p2surf * BoolSurface(0, c2id))
+                pcid = BoolSurface(0, rc.Surf.Planes[0].bVar)
+                if rc.Surf.Cylinder.Orientation == "Forward":
+                    pcid = -pcid
 
+            if rc.Surf.Cylinder.Orientation == "Forward":
+                planes_region = BoolSurface.mult(planes_region, -pcid)
+                fwdCyl_region = BoolSurface.add(fwdCyl_region, -cid * pcid)
+            else:
+                planes_region = BoolSurface.mult(planes_region, pcid)
+                revCyl_region = BoolSurface.mult(revCyl_region, cid)
+
+        multi_rc_region = (planes_region + fwdCyl_region) * revCyl_region
     else:
-        if mRoundC.Orientation == "Forward":
-            for plane in mRoundC.Surf.Planes:
-                pid = BoolSurface(0, plane.bVar)
-                multi_rc_region = BoolSurface.mult(multi_rc_region, pid)
+        for plane in mRoundC.Surf.Planes:
+            pid = BoolSurface(0, plane.bVar)
+            planes_region = BoolSurface.add(planes_region, pid)
 
-            or_comp = []
-            for rc in mRoundC.Surf.Corners:
-                cylinder = rc.Surf.Cylinder.Surf.Cylinder
-                cid = BoolSurface(0, cylinder.bVar)
-                if rc.Surf.Cylinder.Surf.Plane is not None:
-                    pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
-                else:
-                    pcid = None
+        for rc in mRoundC.Surf.Corners:
+            cylinder = rc.Surf.Cylinder.Surf.Cylinder
+            cid = BoolSurface(0, cylinder.bVar)
+            if rc.Surf.Cylinder.Surf.Plane is not None:
+                pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
+            else:
+                pcid = BoolSurface(0, rc.Surf.Planes[0].bVar)
+                if rc.Surf.Cylinder.Orientation == "Forward":
+                    pcid = -pcid
 
-                if rc.Orientation == "Forward":
-                    if pcid is not None:
-                        multi_rc_region = BoolSurface.mult(multi_rc_region, -pcid)
-                        or_comp.append((-cid, pcid))
-                    else:
-                        or_comp.append((-cid,))
-                else:
-                    multi_rc_region = BoolSurface.mult(multi_rc_region, pcid) * cid
+            if rc.Surf.Cylinder.Orientation == "Forward":
+                planes_region = BoolSurface.add(planes_region, -pcid)
+                fwdCyl_region = BoolSurface.add(fwdCyl_region, -cid)
+            else:
+                planes_region = BoolSurface.add(planes_region, pcid)
+                revCyl_region = BoolSurface.mult(revCyl_region, -pcid + cid)
 
-            for cp in or_comp:
-                if len(cp) == 1:
-                    multi_rc_region = multi_rc_region + cp[0]
-                else:
-                    multi_rc_region = multi_rc_region + (cp[0] * cp[1])
-        else:
-            for plane in mRoundC.Surf.Planes:
-                pid = BoolSurface(0, plane.bVar)
-                multi_rc_region = BoolSurface.add(multi_rc_region, pid)
-
-            and_comp = []
-            for rc in mRoundC.Surf.Corners:
-                cylinder = rc.Surf.Cylinder.Surf.Cylinder
-                cid = BoolSurface(0, cylinder.bVar)
-                if rc.Surf.Plane is not None:
-                    pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
-                else:
-                    pcid = None
-
-                if rc.Orientation == "Forward":
-                    if pcid is not None:
-                        multi_rc_region = BoolSurface.add(multi_rc_region, -pcid) - cid
-                    else:
-                        multi_rc_region = multi_rc_region - cid
-                else:
-                    multi_rc_region = BoolSurface.add(multi_rc_region, pcid)
-                    and_comp.append((cid, -pcid))
-            for c, p in and_comp:
-                multi_rc_region = multi_rc_region * (c + p)
+        multi_rc_region = (planes_region * revCyl_region) + fwdCyl_region
 
     return multi_rc_region
 

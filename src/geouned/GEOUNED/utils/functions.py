@@ -246,19 +246,7 @@ def build_roundC_params(rc_list):
                     del plane_list[n - j]
             i += 1
 
-        center = FreeCAD.Vector(0, 0, 0)
-        for p in plane_list:
-            center = center + p.Surf.Position
-        center = center / len(plane_list)
-
-        ref = plane_list[0].Surf.Axis.dot(plane_list[0].Surf.Position - center)
-        orientation = "Forward" if ref > 0 else "Reversed"
-
-        for p in plane_list[1:]:
-            dot = p.Surf.Axis.dot(p.Surf.Position - center)
-            if dot * ref < 0:
-                multi_round = False
-                break
+        multi_round, orientation = convex_planes(plane_list, cyl.Surface.Axis)
 
         if multi_round:
             cylinder_list = []
@@ -542,6 +530,50 @@ def build_multip_params(plane_list):
             vertexes.append((v, n + 1))
 
     return (planeparams, edges, vertexes)
+
+
+def convex_planes(plane_list, zaxis):
+
+    center = FreeCAD.Vector(0, 0, 0)
+    for p in plane_list:
+        center = center + p.Surf.Position
+    center = center / len(plane_list)
+
+    ref = plane_list[0].Surf.Position - center
+    ref.normalize()
+    orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) > 0 else "Reversed"
+
+    if len(plane_list) < 3:
+        return True, orientation
+
+    angles = []
+    for i, p in enumerate(plane_list[1:]):
+        rp = p.Surf.Position - center
+        rp.normalize()
+        cosa = ref.dot(rp)
+        cross = ref.cross(rp)
+        sina = cross.Length
+        if cross.dot(ref) < 0:
+            sina = -sina
+        angles.append((math.atan2(sina, cosa), i))
+
+    angles.sort()
+
+    p1 = ref
+    p0 = plane_list[angles[-1][1] + 1].Surf.Axis
+    signref = zaxis.dot(p0.cross(p1))
+
+    p0 = p1
+    convex = True
+    for a, i in angles:
+        p1 = plane_list[i + 1].Surf.Axis
+        sign = zaxis.dot(p0.cross(p1))
+        if signref * sign < 0:
+            convex = False
+            break
+        p0 = p1
+
+    return convex, orientation
 
 
 def material_direction(pos, face_in, edge):
