@@ -10,7 +10,7 @@ from ..utils.functions import (
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
-    cyl_bound_planes,
+    cks_bound_planes,
     torus_bound_planes,
     exclude_no_cutting_planes,
     order_plane_face,
@@ -82,15 +82,15 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
         surf = str(face.Surface)
 
         if surf == "<Cylinder object>":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf == "<Cone object>":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf[0:6] == "Sphere":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf == "<Toroid object>":

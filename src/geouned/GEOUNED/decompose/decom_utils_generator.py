@@ -11,7 +11,7 @@ import Part
 
 from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import PlaneGu, TorusGu, SphereGu, other_face_edge
+from ..utils.geometry_gu import PlaneGu, TorusGu, SphereGu, ConeGu, CylinderGu, other_face_edge
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
@@ -117,7 +117,7 @@ def torus_bound_planes(solidFaces, face, tolerances):
     return planes
 
 
-def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
+def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
 
     if Edges is None:
         Edges = face.OuterWire.Edges
@@ -134,7 +134,33 @@ def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
                 continue  # doesn't create plane if other face is a torus
             if face.Surface.isSameSurface(adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
-            plane = cyl_edge_plane(face, [e])
+            if (type(face.Surface) is ConeGu or type(face.Surface) is CylinderGu) and (
+                type(adjacent_face.Surface) is ConeGu or type(adjacent_face.Surface) is CylinderGu
+            ):
+
+                if type(face.Surface) is ConeGu:
+                    p1 = face.Surface.Surface.Apex
+                else:
+                    p1 = face.Surface.Surface.Center
+
+                if type(adjacent_face.Surface) is ConeGu:
+                    p2 = adjacent_face.Surface.Surface.Apex
+                else:
+                    p2 = adjacent_face.Surface.Surface.Center
+
+                # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
+                cross = face.Surface.Surface.Axis.cross(adjacent_face.Surface.Surface.Axis)
+                if cross.Length > 1e-6:
+                    dist = abs(cross.dot(p1 - p2)) / cross.Length
+                    if dist > 1e-3:
+                        continue  # doesn't create plane if the axes are not close enough
+                else:
+                    # if the axes are parallel, check the distance between the two points
+                    dist = (p1 - p2).Length
+                    if dist > 1e-3:
+                        continue  # doesn't create plane if the axes are not close enough
+
+            plane = cks_edge_plane(face, [e])
             if plane is not None:
                 planes.append(plane)
     if len(planes) > 2 and type(face.Surface) is not SphereGu:
@@ -142,7 +168,7 @@ def cyl_bound_planes(solidFaces, face, omitfaces, Edges=None):
     return planes
 
 
-def cyl_edge_plane(face, edges, pc=None):
+def cks_edge_plane(face, edges, pc=None):
 
     planeParams = None
     spline = False

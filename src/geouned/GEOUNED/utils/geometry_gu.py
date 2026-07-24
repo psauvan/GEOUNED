@@ -666,6 +666,7 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
         for edge in Edges:
             if current_edge.isSame(edge):
                 return face
+    return None
 
 
 def join_wires(wireList):

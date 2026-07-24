@@ -15,7 +15,7 @@ from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
 from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane
-from ..decompose.decom_utils_generator import cyl_edge_plane
+from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
 
@@ -364,7 +364,7 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            pa = cyl_edge_plane(cyl, edges)
+            pa = cks_edge_plane(cyl, edges)
             if pa is not None:
                 sid += 1
                 pa.bVar = BoolVariable(sid)
@@ -411,7 +411,7 @@ def build_can_params(cs):
                     apexPlane.bVar = BoolVariable(sid)
                 pa = None
             else:
-                pa = cyl_edge_plane(cyl, edges)
+                pa = cks_edge_plane(cyl, edges)
                 apexPlane = None
                 if pa is not None:
                     sid += 1
@@ -435,7 +435,7 @@ def build_can_params(cs):
             sid += 1
             sphOnly.bVar = BoolVariable(sid)
 
-            pa = cyl_edge_plane(cyl, edges)
+            pa = cks_edge_plane(cyl, edges)
             if pa is not None:
                 sid += 1
                 pa.bVar = BoolVariable(sid)
