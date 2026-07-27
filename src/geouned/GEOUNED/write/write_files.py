@@ -94,7 +94,10 @@ def write_geometry(
             UniverseBox.ZMax,
         )
         if settings.voidGen:
-            outSphere = (Surfaces["Sph"][-1].Index, Surfaces["Sph"][-1].Surf.Radius)
+            geoSphere = Surfaces["Sph"][-1]
+            surf_num = geoSphere.region.get_surfaces_numbers().pop()
+            sph_primitive_index = surf_num
+            outSphere = (sph_primitive_index, geoSphere.Surf.Sphere.Surf.Radius)
         else:
             outSphere = None
 
@@ -125,9 +128,12 @@ def write_geometry(
             UniverseBox.ZMax,
         )
         if settings.voidGen:
+            geoSphere = Surfaces["Sph"][-1]
+            surf_num = geoSphere.region.get_surfaces_numbers().pop()
+            sph_primitive_index = surf_num
             PHITS_outSphere = (
-                Surfaces["Sph"][-1].Index,
-                Surfaces["Sph"][-1].Surf.Radius,
+                sph_primitive_index,
+                geoSphere.Surf.Sphere.Surf.Radius,
             )
         else:
             PHITS_outSphere = None

@@ -8,6 +8,7 @@ from ..utils.basic_functions_part1 import (
     is_in_line,
     is_parallel,
     is_same_value,
+    shapes_in_contact,
 )
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.geouned_classes import GeounedSurface
@@ -110,6 +111,11 @@ def V_torus_surfaces(face, v_params, Surfaces):
                 radius = max(d1, d2)
             else:
                 in_surf = False
+
+            if in_surf:
+                orientation = "Forward"
+            else:
+                orientation = "Reversed"
         else:
             if d1 < face.Surface.MajorRadius:
                 orientation = "Forward"
@@ -198,7 +204,7 @@ def gen_plane_sphere(face, solidFaces):
         if f.Surface.Center == face.Surface.Center and f.Surface.Radius == face.Surface.Radius:
             # print 'Warning: coincident sphere faces are the same'
             for f2 in same_faces:
-                if f.__face__.distToShape(f2.__face__)[0] < 1e-6:
+                if shapes_in_contact(f.__face__, f2.__face__):
                     same_faces.append(f)
                     break
 

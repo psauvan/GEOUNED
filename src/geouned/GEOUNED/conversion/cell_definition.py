@@ -12,7 +12,7 @@ from ..utils.functions import (
     get_Can,
     get_TCone,
     get_reversed_cone_cylinder,
-    my_dist_to_shape,
+    shapes_in_contact,
     get_box,
 )
 from ..utils.boolean_function import BoolSequence
@@ -197,7 +197,7 @@ def noOverlapCell(m, i, meta_list, surfaces, options):
     for other_cell in meta_list[0:i]:
         if other_cell.CellType != "solid" or other_cell.NullCell:
             continue
-        if my_dist_to_shape(m.CADSolid, other_cell.CADSolid) < 1e-6:
+        if shapes_in_contact(m.CADSolid, other_cell.CADSolid):
             complementary_cells.append(other_cell)
 
     if complementary_cells:

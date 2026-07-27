@@ -7,7 +7,7 @@ from .geometry_gu import ShellGu, PlaneGu, CylinderGu, ConeGu, SphereGu, TorusGu
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
 from .data_constants import twoPi, mask
-from ..utils.basic_functions_part1 import is_in_line, is_parallel
+from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 
 
@@ -780,7 +780,7 @@ def no_convex(mplane_list):
 
 
 def commonVertex(e1, e2):
-    if e1.distToShape(e2)[0] > 0:
+    if not shapes_in_contact(e1, e2):
         return []
 
     common = []

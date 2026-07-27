@@ -202,14 +202,13 @@ class SerpentInput:
 
     def write_source_block(self):
 
-        #       if self.SDEF_sphere is None:  return
         MODE = f"\nset nps 1e6\nset bc 1"
         if self.dummyMat:
             mat = list(self.Materials)
             mat.sort()
             MATCARD = ""
             for m in mat:
-                MATCARD += f"mat {m:<6d} {self.cell.Density:11.4e} \n1001 1 \n"
+                MATCARD += f"mat {m:<6d} 1.0e+00 \n1001 1 \n"
             Block = MATCARD + "% \n" + MODE
         else:
             Block = MODE

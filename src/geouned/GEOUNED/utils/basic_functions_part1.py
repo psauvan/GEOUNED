@@ -6,24 +6,39 @@ import math
 import FreeCAD
 from .data_constants import mask
 from .boolean_function import BoolSurface
+from ...geometry_backend import vector_geometry
+from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geometry_backend.geometry_backend_interface import GSolid, GVector
+from ...geometry_backend.geometry_backend_interface import PlaneParams as _GPlaneParams
+
+_backend = FreeCADBackend()
+
+
+def _to_gvector(vector: FreeCAD.Vector) -> GVector:
+    return GVector(vector.x, vector.y, vector.z)
+
+
+# The functions below are thin adapters over `vector_geometry.py` (the
+# backend-agnostic predicate layer): they convert FreeCAD.Vector to the
+# neutral GVector at the boundary, delegate the actual math, and convert
+# back. Call sites throughout GEOUNED still pass FreeCAD.Vector directly
+# and are unaffected -- only the implementation moved.
 
 
 def is_same_value(v1, v2, tolerance=1e-6):
-    return abs(v1 - v2) < tolerance
+    return vector_geometry.is_same_value(v1, v2, tolerance)
 
 
 def is_opposite(vector_1, vector_2, tolerance=1e-3):
-    return abs(vector_1.getAngle(-vector_2)) < tolerance
+    return vector_geometry.is_opposite(_to_gvector(vector_1), _to_gvector(vector_2), tolerance)
 
 
 def is_parallel(vector_1, vector_2, tolerance=1e-3):
-    angle = abs(vector_1.getAngle(vector_2))
-    return angle < tolerance or is_same_value(angle, math.pi, tolerance)
+    return vector_geometry.is_parallel(_to_gvector(vector_1), _to_gvector(vector_2), tolerance)
 
 
 def is_in_line(point, dir, pnt_line, tolerance=1e-6):
-    r12 = point - pnt_line
-    return is_parallel(dir, r12) or (r12.Length < tolerance)
+    return vector_geometry.is_in_line(_to_gvector(point), _to_gvector(dir), _to_gvector(pnt_line), tolerance)
 
 
 # TODO check this function is used in the code
@@ -45,7 +60,8 @@ def is_in_edge(edge1, edge2, tolerance=1e-8):
 
 
 def is_in_plane(point, plane, d_tolerance=1e-7):
-    return abs(point.distanceToPlane(plane.Surf.Position, plane.Surf.Axis)) < d_tolerance
+    plane_params = _GPlaneParams(_to_gvector(plane.Surf.Position), _to_gvector(plane.Surf.Axis))
+    return vector_geometry.is_in_plane(_to_gvector(point), plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -60,12 +76,18 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
 
 
 def sign_plane(point, plane):
-    value = plane.Surf.Axis.dot(point - plane.Surf.Position)
-    if value >= 0.0:
-        sign = 1
-    else:
-        sign = -1
-    return sign
+    plane_params = _GPlaneParams(_to_gvector(plane.Surf.Position), _to_gvector(plane.Surf.Axis))
+    return vector_geometry.sign_plane(_to_gvector(point), plane_params)
+
+
+def shapes_in_contact(shape1, shape2, tolerance=1e-6):
+    if shape1 is shape2:
+        return True
+    return _backend.in_contact(
+        GSolid(native=shape1, backend=_backend),
+        GSolid(native=shape2, backend=_backend),
+        tolerance,
+    )
 
 
 def points_to_coeffs(points):
