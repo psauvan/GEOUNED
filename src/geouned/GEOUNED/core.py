@@ -8,7 +8,6 @@ from importlib.metadata import version
 import time
 
 import FreeCAD
-import Part
 from tqdm import tqdm
 
 from .code_version import *
@@ -25,10 +24,11 @@ from .threading.geouned_threads import ThreadPoolExecutor
 from .void import void as void
 from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
+from ..geo import GSolid, Gmake_compound, kernel_version
 
 logger = logging.getLogger("general_logger")
 logger.info(f"GEOUNED version {version('geouned')}")
-logger.info(f"FreeCAD version {'.'.join(FreeCAD.Version()[:3])}")
+logger.info(f"FreeCAD version {kernel_version()}")
 
 
 class CadToCsg:
@@ -77,7 +77,7 @@ class CadToCsg:
         setup_logger("fuzzy_logger", log_path / "geouned_fuzzy.log")
         setup_logger("solids_logger", log_path / "geouned_solids.log")
         logger.info(f"GEOUNED version {version('geouned')}")
-        logger.info(f"FreeCAD version {'.'.join(FreeCAD.Version()[:3])}")
+        logger.info(f"FreeCAD version {kernel_version()}")
 
     @property
     def options(self):
@@ -568,7 +568,7 @@ class CadToCsg:
             if m.IsEnclosure:
                 continue
             solids.extend(m.Solids)
-        Part.makeCompound(solids).exportStep(filename)
+        Gmake_compound([GSolid(s) for s in solids]).__native__.exportStep(filename)
 
     def _set_geometry_bounding_box(self, padding: float = 10.0):
         """
@@ -644,22 +644,10 @@ class CadToCsg:
                 m.Solids[0].exportStep(str(self.debug_output_folder / f"origSolid_{i}.stp"))
 
         comsolid = main_split(
-            Part.makeCompound(m.Solids),
+            Gmake_compound([GSolid(s) for s in m.Solids]).__native__,
             self.options,
             self.tolerances,
         )
-
-        if False:  # todo decomposition error information
-            sus_output_folder = Path(self.settings.outPath) / "suspicious_solids"
-            sus_output_folder.mkdir(parents=True, exist_ok=True)
-            if m.IsEnclosure:
-                Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Enclosure_original_{i}.stp"))
-                comsolid.exportStep(str(sus_output_folder / f"Enclosure_split_{i}.stp"))
-            else:
-                Part.CompSolid(m.Solids).exportStep(str(sus_output_folder / f"Solid_original_{i}.stp"))
-                comsolid.exportStep(str(sus_output_folder / f"Solid_split_{i}.stp"))
-
-            warningSolids.append(i)
 
         if self.settings.debug:
             if m.IsEnclosure:

@@ -9,10 +9,21 @@ from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus
-from ...geometry_backend import vector_geometry
-from ...geometry_backend.freecad_backend import to_fc_vector
-from ...geometry_backend.vector_geometry import to_gvector
+from ...geo import (
+    GPlane,
+    GCylinder,
+    GCone,
+    GSphere,
+    GTorus,
+    GLine,
+    GCircle,
+    GEllipse,
+    GBSpline,
+    Gclassify_curve,
+    to_fc_vector,
+    to_gvector,
+    vector_geometry,
+)
 
 
 class reversedCCP:
@@ -73,7 +84,7 @@ def remove_twice_parallel(mplanes):
 def convex_wire(p):
     Edges = p.OuterWire.Edges
     for e in Edges:
-        if type(e.Curve) != Part.Line:
+        if type(Gclassify_curve(e)) is not GLine:
             return []
 
     axis = to_fc_vector(p.Surface.Axis)
@@ -98,7 +109,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
 
     if cornerPlanes:
         for e in cyl.OuterWire.Edges:
-            if not isinstance(e.Curve, Part.Line):
+            if type(Gclassify_curve(e)) is not GLine:
                 continue
             otherface = other_face_edge(e, cyl, Faces, outer_only=True)
             if otherface is None:
@@ -109,7 +120,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         return planes
     else:
         for e in cyl.OuterWire.Edges:
-            if isinstance(e.Curve, Part.Line):
+            if type(Gclassify_curve(e)) is GLine:
                 continue
             otherface = other_face_edge(e, cyl, Faces, outer_only=False)
             if otherface is None:
@@ -161,7 +172,7 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
     for e in cylkne.OuterWire.Edges:
         if e.Length < 1e-6:
             continue
-        if isinstance(e.Curve, Part.Line):
+        if type(Gclassify_curve(e)) is GLine:
             continue
         otherface = other_face_edge(e, cylkne, Faces, outer_only=False)
         if otherface is None:
@@ -231,7 +242,7 @@ def get_side_edges(cylinder_faces):
 
     for ic, cyl in enumerate(cylinder_faces):
         for ie, e in enumerate(cyl.OuterWire.Edges):
-            if isinstance(e.Curve, Part.Line):
+            if type(Gclassify_curve(e)) is GLine:
                 continue
             D = axis.dot(e.CenterOfMass - origin)
             if D < sideLow[0]:
@@ -249,7 +260,7 @@ def get_side_edges(cylinder_faces):
 
 def face_in_cylinder(edge, face):
     axis = to_fc_vector(face.Surface.Axis)
-    if isinstance(edge.Curve, Part.BSplineCurve):
+    if type(Gclassify_curve(edge)) is GBSpline:
         return edge.Curve.getD0(0).dot(axis) < 0
     else:
         return edge.Curve.Axis.dot(axis) < 0
@@ -554,7 +565,8 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
 def get_edge(v1, face, normal, axis):
     for edge in face.Edges:
-        if type(edge.Curve) == Part.Line:
+        curve = Gclassify_curve(edge)
+        if type(curve) is GLine:
             vect = v1 - edge.Curve.Location
             if vect.Length < 1e-8:
                 return edge
@@ -562,7 +574,7 @@ def get_edge(v1, face, normal, axis):
             if abs(abs(vect.dot(edge.Curve.Direction) - 1)) < 1e-5:
                 return edge
 
-        elif type(edge.Curve) == Part.BSplineCurve:
+        elif type(curve) is GBSpline:
             if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or v1.sub(edge.Vertexes[1].Point).Length < 1e-5:
                 vect = edge.Vertexes[0].Point - edge.Vertexes[1].Point
                 vect.normalize()
@@ -720,7 +732,7 @@ def eligible_plane(plane):
 
     Vertexes = []
     for e in Edges:
-        if type(e.Curve) is not Part.Line:
+        if type(Gclassify_curve(e)) is not GLine:
             # continue
             return False  # for now only plane with line for all outer edges are eligible
         Vertexes.append((e.Vertexes[0].Point, e.Vertexes[1].Point))
@@ -772,11 +784,7 @@ def no_convex(mplane_list):
         p = planes.pop()
         Edges = p.OuterWire.Edges
         for e in Edges:
-            try:
-                type_curve = type(e.Curve)
-            except:
-                type_curve = None
-            if type_curve is not Part.Line:
+            if type(Gclassify_curve(e)) is not GLine:
                 continue
             adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
             if adjacent_plane is not None:
@@ -947,7 +955,7 @@ def region_sign(s1_in, s2, outAngle=False):
     u, v = s2.parameter(pos)
     normal2 = s2.__face__.normalAt(u, v)
 
-    if isinstance(e1.Curve, Part.Line) and not isinstance(s2.Surface, GPlane):
+    if type(Gclassify_curve(e1)) is GLine and not isinstance(s2.Surface, GPlane):
         umin, umax, vmin, vmax = s2.ParameterRange
         arc = abs(umax - umin)
     else:
@@ -1031,7 +1039,7 @@ def planar_edges(edges):
     e0 = edges[0]
     if e0.Length < 1e-5:
         return False
-    if type(e0.Curve) is Part.BSplineCurve:
+    if type(Gclassify_curve(e0)) is GBSpline:
         d0 = e0.derivative1At(0)
         if d0.Length < 1e-5:
             dir0 = e0.Vertexes[1].Point - e0.Vertexes[0].Point
@@ -1059,7 +1067,8 @@ def planar_edges(edges):
     oneD = edge_1D(edges[0])
 
     for ei in edges[1:]:
-        if type(ei.Curve) is Part.BSplineCurve:
+        curve_i = Gclassify_curve(ei)
+        if type(curve_i) is GBSpline:
             di = ei.derivative1At(0)
             if di.Length < 1e-5:
                 dir = ei.Vertexes[1].Point - ei.Vertexes[0].Point
@@ -1071,7 +1080,7 @@ def planar_edges(edges):
                 center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
             else:
                 return False
-        elif isinstance(ei.Curve, (Part.Circle, Part.Ellipse)):
+        elif type(curve_i) in (GCircle, GEllipse):
             dir = ei.Curve.Axis
             center = ei.Curve.Center
         else:  # should be a line

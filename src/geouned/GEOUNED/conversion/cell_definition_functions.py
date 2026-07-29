@@ -1,7 +1,6 @@
 import math
 import logging
 
-import FreeCAD
 import Part
 
 from ..utils.basic_functions_part1 import (
@@ -12,8 +11,7 @@ from ..utils.basic_functions_part1 import (
 )
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.geouned_classes import GeounedSurface
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GVector
-from ...geometry_backend.freecad_backend import to_fc_vector
+from ...geo import GPlane, GCylinder, GCone, GSphere, GVector, to_fc_vector
 
 logger = logging.getLogger("general_logger")
 
@@ -74,12 +72,12 @@ def cone_apex_plane(cone, tolerances):
 
 
 def V_torus_surfaces(face, v_params, Surfaces):
-    if is_parallel(face.Surface.Axis, FreeCAD.Vector(1, 0, 0), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(1, 0, 0)
-    elif is_parallel(face.Surface.Axis, FreeCAD.Vector(0, 1, 0), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(0, 1, 0)
-    elif is_parallel(face.Surface.Axis, FreeCAD.Vector(0, 0, 1), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(0, 0, 1)
+    if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(1, 0, 0))
+    elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(0, 1, 0))
+    elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(0, 0, 1))
 
     torus_center = to_fc_vector(face.Surface.Center)
 
@@ -153,12 +151,12 @@ def V_torus_surfaces(face, v_params, Surfaces):
 
 def U_torus_planes(face, u_params, Surfaces):
 
-    if is_parallel(face.Surface.Axis, FreeCAD.Vector(1, 0, 0), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(1, 0, 0)
-    elif is_parallel(face.Surface.Axis, FreeCAD.Vector(0, 1, 0), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(0, 1, 0)
-    elif is_parallel(face.Surface.Axis, FreeCAD.Vector(0, 0, 1), Surfaces.tolerances.tor_angle):
-        axis = FreeCAD.Vector(0, 0, 1)
+    if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(1, 0, 0))
+    elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(0, 1, 0))
+    elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
+        axis = to_fc_vector(GVector(0, 0, 1))
 
     center = to_fc_vector(face.Surface.Center)
     p1 = face.valueAt(u_params[0], 0.0)
@@ -213,7 +211,7 @@ def gen_plane_sphere(face, solidFaces):
                     break
 
     # print same_faces
-    normal = FreeCAD.Vector(0, 0, 0)
+    normal = to_fc_vector(GVector(0, 0, 0))
     for f in same_faces:
         normal += f.Area * (f.CenterOfMass - sphere_center)
     normal.normalize()

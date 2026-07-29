@@ -3,21 +3,18 @@
 #
 
 import logging
-import Part
 
 from .decom_utils_generator import remove_solids
 from .generators import get_surfaces
-from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geo import GSolid, Gmake_compound, Gsplit
 
 logger = logging.getLogger("general_logger")
-
-_backend = FreeCADBackend()
 
 
 def split_surfaces(solid, options, tolerances):
 
     solid_components = generic_split(solid, options, tolerances)
-    comp = Part.makeCompound(solid_components)
+    comp = Gmake_compound([GSolid(s) for s in solid_components]).__native__
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > 0.001:
         logger.info("Lost {volratio*100:6.2f}% of the original volume")
@@ -34,11 +31,11 @@ def generic_split(solid, options, tolerances, loop=0):
     for surf in get_surfaces(solid, omitfaces, tolerances):
         surf.build_surface(bbox)
         try:
-            result = _backend.split(
-                _backend._wrap_solid(solid), _backend._wrap_solid(surf.shape), options.splitTolerance,
+            result = Gsplit(
+                GSolid(solid), GSolid(surf.shape), options.splitTolerance,
                 scale_up_floor=options.splitTolerance if options.scaleUp else None,
             )
-            comsolid_solids = [s.native for s in result.solids]
+            comsolid_solids = [s.__native__ for s in result.solids]
         except Exception:
             comsolid_solids = [solid]
             logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
@@ -76,4 +73,4 @@ def main_split(solidShape, options, tolerances):
         piece = split_surfaces(solid, options, tolerances)
         solid_parts.append(piece)
 
-    return Part.makeCompound(solid_parts)
+    return Gmake_compound([GSolid(s) for s in solid_parts]).__native__

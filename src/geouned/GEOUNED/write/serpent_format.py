@@ -6,12 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from importlib.metadata import version
 
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+from ...geo import GVector, kernel_version, to_fc_vector
 from .functions import serpent_surface, write_serpent_cell_def
 
 logger = logging.getLogger("general_logger")
-_backend = FreeCADBackend()
 
 
 class SerpentInput:
@@ -100,7 +98,7 @@ class SerpentInput:
 
     def write_header(self):
 
-        freeCAD_Version = _backend.kernel_version()
+        freeCAD_Version = kernel_version()
 
         Header = f"""{self.Title}
 %   ______ _______  _____      _     _ __   _ _______ ______  

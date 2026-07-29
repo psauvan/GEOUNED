@@ -6,15 +6,26 @@ import logging
 import math
 import numpy
 
-import FreeCAD
-import Part
-
 from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import other_face_edge, is_same_surface
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus
-from ...geometry_backend.vector_geometry import to_gvector
-from ...geometry_backend.freecad_backend import to_fc_vector
+from ...geo import (
+    GPlane,
+    GCylinder,
+    GCone,
+    GSphere,
+    GTorus,
+    GLine,
+    GCircle,
+    GEllipse,
+    GBSpline,
+    GVector,
+    GEdge,
+    Gclassify_curve,
+    Gmake_wire,
+    to_fc_vector,
+    to_gvector,
+)
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
@@ -22,57 +33,6 @@ from ..utils.basic_functions_part1 import (
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
 
 logger = logging.getLogger("general_logger")
-
-
-def gen_plane(pos, normal, diag):
-    plane = Part.makePlane(diag, diag, pos, normal)
-    vec_on_plane = plane.Vertexes[3].Point.sub(plane.Vertexes[0].Point)
-    new_pos = plane.Vertexes[0].Point.sub(vec_on_plane)
-    plane_center = Part.makePlane(2.0 * diag, 2.0 * diag, new_pos, normal)
-    return plane_center
-
-
-def cyl_bound_planes_first_version(solidFaces, face):
-    Edges = face.OuterWire.Edges
-    planes = []
-    for e in Edges:
-        try:
-            curve = str(e.Curve)
-        except:
-            curve = "none"
-
-        adjacent_face = other_face_edge(e, face, solidFaces)
-        if adjacent_face is None:
-            continue
-
-        if type(adjacent_face.Surface) is GTorus:
-            continue  # doesn't create plane if other face is a torus
-        if type(adjacent_face.Surface) is GPlane:
-            continue  # doesn't create plane if other face is a Plane
-        if is_same_surface(face.Surface, adjacent_face.Surface):
-            continue  # doesn't create plane if other face has same surface
-
-        if curve[0:6] == "Circle":
-            if e.Curve.Radius < 1e-6:
-                continue
-            dir = e.Curve.Axis
-            center = e.Curve.Center
-            dim1 = e.Curve.Radius
-            dim2 = e.Curve.Radius
-            plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
-            planes.append(plane)
-
-        elif curve == "<Ellipse object>":
-            if e.Curve.MinorRadius < 1e-6 or e.Curve.MajorRadius < 1e-6:
-                continue
-            dir = e.Curve.Axis
-            center = e.Curve.Center
-            dim1 = e.Curve.MinorRadius
-            dim2 = e.Curve.MajorRadius
-            plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
-            planes.append(plane)
-
-    return planes
 
 
 def torus_bound_planes(solidFaces, face, tolerances):
@@ -84,34 +44,31 @@ def torus_bound_planes(solidFaces, face, tolerances):
     Edges = face.OuterWire.Edges
 
     for e in Edges:
-        try:
-            curve = str(e.Curve)
-        except:
-            curve = "none"
+        curve = Gclassify_curve(e)
 
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
             if is_same_surface(face.Surface, adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
 
-        if curve[0:6] == "Circle":
-            dir = e.Curve.Axis
+        if type(curve) is GCircle:
+            dir = curve.Axis
             if not is_parallel(dir, face.Surface.Axis, tolerances.angle):
-                center = e.Curve.Center
-                dim1 = e.Curve.Radius
-                dim2 = e.Curve.Radius
+                center = curve.Center
+                dim1 = curve.Radius
+                dim2 = curve.Radius
                 plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
                 planes.append(plane)
 
-        elif curve == "<Ellipse object>":
-            dir = e.Curve.Axis
-            center = e.Curve.Center
-            dim1 = e.Curve.MinorRadius
-            dim2 = e.Curve.MajorRadius
+        elif type(curve) is GEllipse:
+            dir = curve.Axis
+            center = curve.Center
+            dim1 = curve.MinorRadius
+            dim2 = curve.MajorRadius
             plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
             planes.append(plane)
 
-        elif curve == "<BSplineCurve object>":
+        elif type(curve) is GBSpline:
             planeParams = spline_wires((e,), face)
             if planeParams is not None:
                 plane = GeounedSurface(("Plane", planeParams))
@@ -179,7 +136,7 @@ def cks_edge_plane(face, edges, pc=None):
     planeParams = None
     spline = False
     for edge in edges:
-        if type(edge.Curve) is Part.BSplineCurve:
+        if type(Gclassify_curve(edge)) is GBSpline:
             spline = True
             break
 
@@ -187,10 +144,11 @@ def cks_edge_plane(face, edges, pc=None):
         planeParams = spline_wires(edges, face, pc)
     else:
         edge = edges[0]
-        if isinstance(edge.Curve, (Part.Circle, Part.Ellipse)):
+        curve = Gclassify_curve(edge)
+        if type(curve) in (GCircle, GEllipse):
             pos = edge.Curve.value(0)
-            center = edge.Curve.Center
-            dir = edge.Curve.Axis
+            center = curve.Center
+            dir = curve.Axis
             vect, normalf = material_direction(pos, face.__face__, edge)
             if dir.dot(vect) < 0:
                 dir = -dir
@@ -206,10 +164,10 @@ def spline_wires(edges, face, pc=None):
     if type(face.Surface) in (GCylinder, GCone, GTorus):
         zaxis = to_fc_vector(zaxis)
     try:
-        W = Part.Wire(edges)
+        W = Gmake_wire([GEdge(e) for e in edges]).__native__
         majoraxis = get_axis_inertia(W.MatrixOfInertia)
     except:
-        majoraxis = FreeCAD.Vector(0, 0, 0)
+        majoraxis = to_fc_vector(GVector(0, 0, 0))
         for e in edges:
             majoraxis = majoraxis + get_axis_inertia(e.MatrixOfInertia)
         majoraxis.normalize()
@@ -226,15 +184,16 @@ def spline_wires(edges, face, pc=None):
     rmax = (-1e15, None)
 
     for edge in edges:
+        curve = Gclassify_curve(edge)
 
-        if type(edge.Curve) is Part.BSplineCurve:
+        if type(curve) is GBSpline:
             for p in edge.Curve.getPoles():
                 r = majoraxis.dot(p)
                 if rmin[0] > r:
                     rmin = (r, p)
                 if rmax[0] < r:
                     rmax = (r, p)
-        elif type(edge.Curve) is Part.Line:
+        elif type(curve) is GLine:
             for v in edge.Vertexes:
                 r = majoraxis.dot(v.Point)
                 if rmin[0] > r:
@@ -283,8 +242,9 @@ def spline_wires(edges, face, pc=None):
 def get_axis_inertia(mat):
     inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
     eigval, evect = numpy.linalg.eig(inertialMat)
+    principal = evect.T[numpy.argmax(eigval)]
 
-    return FreeCAD.Vector(evect.T[numpy.argmax(eigval)])
+    return to_fc_vector(GVector(principal[0], principal[1], principal[2]))
 
 
 def valid_solid(solid, Volume):
@@ -420,7 +380,7 @@ def omit_isolated_planes(Faces, omitfaces):
 
 def projection(edge, axis):
     pmin, pmax = edge.ParameterRange
-    if type(edge.Curve) == Part.Circle:
+    if type(Gclassify_curve(edge)) is GCircle:
         vmin = edge.valueAt(pmin) - edge.Curve.Center
         v1 = edge.Curve.Axis.cross(vmin)
         dmin = vmin.dot(axis)

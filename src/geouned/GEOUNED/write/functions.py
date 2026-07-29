@@ -3,8 +3,7 @@ import re
 
 from ..utils import q_form as q_form
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.vector_geometry import to_gvector
+from ...geo import GVector, to_gvector
 from .string_functions import remove_redundant
 
 

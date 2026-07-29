@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from geouned.geometry_backend.geometry_backend_interface import GVector
+from geouned.geo import GVector
 
 
 def test_add_sub():

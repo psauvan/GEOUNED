@@ -4,8 +4,7 @@
 #
 #
 
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.vector_geometry import to_gvector
+from ...geo import GVector, to_gvector
 
 
 class _RotationMatrix:

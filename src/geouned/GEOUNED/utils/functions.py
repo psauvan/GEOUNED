@@ -4,9 +4,6 @@
 import logging
 import math
 
-import FreeCAD
-import Part
-
 logger = logging.getLogger("general_logger")
 
 from .boolean_function import BoolVariable
@@ -18,17 +15,14 @@ from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edg
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere
-from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, to_fc_vector
 from .basic_functions_part1 import shapes_in_contact
-
-_backend = FreeCADBackend()
 
 
 def get_box(comp, enlargeBox):
     # comp is always a GeounedSolid here, whose BoundBox is a GBoundBox
     box = comp.BoundBox.enlarged(enlargeBox)
-    return _backend.make_box(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax).native
+    return Gmake_box(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax).__native__
 
 
 def get_multiplanes(solidFaces, omit_faces_set=None):
@@ -249,8 +243,8 @@ def build_roundC_params(rc_list):
             # for rc in roundcorner_list:
             #    cylinder_list.append(rc.Surf.Cylinder)
             # roundcorner_list = cylinder_list
-            center = FreeCAD.Vector(0, 0, 0)
-            for p in plane_list:
+            center = plane_list[0].Surf.Position
+            for p in plane_list[1:]:
                 center = center + p.Surf.Position
             center = center / len(plane_list)
             dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
@@ -530,8 +524,8 @@ def build_multip_params(plane_list):
 
 def convex_planes(plane_list, zaxis):
 
-    center = FreeCAD.Vector(0, 0, 0)
-    for p in plane_list:
+    center = plane_list[0].Surf.Position
+    for p in plane_list[1:]:
         center = center + p.Surf.Position
     center = center / len(plane_list)
 

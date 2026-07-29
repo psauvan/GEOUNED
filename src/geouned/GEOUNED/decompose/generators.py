@@ -9,7 +9,7 @@ from ..utils.functions import (
     build_roundC_params,
 )
 from ..utils.geometry_gu import SolidGu
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus
+from ...geo import GPlane, GCylinder, GCone, GSphere, GTorus
 from .decom_utils_generator import (
     cks_bound_planes,
     torus_bound_planes,

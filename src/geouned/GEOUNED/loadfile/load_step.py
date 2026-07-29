@@ -6,12 +6,10 @@ import os
 import re
 
 from ..utils.geouned_classes import GeounedSolid
-from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geo import Gload_step, Gload_step_labels
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
-
-_backend = FreeCADBackend()
 
 
 # Paco mod
@@ -41,7 +39,7 @@ def load_cad(filename, spline_surf, settings, options):
     else:
         m_dict = {}
 
-    Solids = [g.native for g in _backend.load_step(filename)]
+    Solids = [g.__native__ for g in Gload_step(filename)]
     meta_list = []
     spline_solids = []
     loop = spline_surf.lower() in ("remove", "stop")
@@ -63,7 +61,7 @@ def load_cad(filename, spline_surf, settings, options):
     i_solid = 0
     missing_mat = set()
 
-    nodes = _backend.load_step_labels(filename)
+    nodes = Gload_step_labels(filename)
 
     for node in nodes:
         comment = LF.getCommentTree(node, options)

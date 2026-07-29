@@ -56,55 +56,128 @@ Rationale:
   dependency solely for that export, drop `.FCStd` output, or treat it
   as a later migration phase.
 
-## Migration plan (in progress, in this order)
+## Migration history: attempt 1 (retired) — `GeometryBackend` ABC
 
-1. **Code cleanup first, before touching geometry dependencies:**
-   - Standardize style: PEP 8 naming, `ruff`/`black` for lint+format,
-     `mypy`/`pyright` for type hints (note: found at least one mutable
-     default argument bug pattern, `skip_solids=[]`, to fix during cleanup).
-   - Reorganize folder structure: split large modules by responsibility
-     (io / decomposition / surfaces / export), consolidate config into
-     `pyproject.toml`, add `pre-commit`.
-   - Build bridge/adapter layer (see below) BEFORE swapping the backend,
-     so the geometry-engine dependency is isolated to one place.
-2. **Introduce a `GeometryBackend` abstract interface** (Adapter /
-   Ports & Adapters pattern) so the rest of GEOUNED never imports
-   `Part`, `FreeCAD`, or `OCC.Core` directly — only neutral wrapper
-   types and this interface. See `geometry_backend_interface.py`
-   (attached alongside this file / already in the repo if committed).
-   Key design points:
-   - `GSolid`/`GFace`/`GEdge`/`GVertex` are opaque wrappers carrying a
-     `native` object + a reference to the backend that produced it.
-   - `classify_surface()` is the highest-value method: translates a
-     face into neutral `SurfaceType` + params (plane/cylinder/cone/
-     sphere/torus) — this is where most of today's FreeCAD-specific
-     logic in the decomposition module likely lives.
-   - `split()` returns a `SplitResult` that must never silently return
-     an uncut solid; the backend is responsible for resolving
-     degenerate/tangency cases internally (this is where the fix for
-     the motivating problem above should live, encapsulated).
-   - `faces_sharing_edge()` exposes the non-manifold-edge diagnostic
-     directly (edges shared by != 2 faces).
-3. **Implement `FreeCADBackend`** against the current `Part`/`FreeCAD`
-   API, validating the interface covers everything `decomposition/`
-   actually needs.
-4. **Implement `OCCBackend`** against pythonocc-core, with the
-   degenerate-split handling built in.
-5. Run existing test suite (`tests/`, `testing/`, CI via `ci.yml`)
-   parametrized over both backends to catch numerical divergences
-   before removing the FreeCAD backend.
+The migration was first attempted as a classic Adapter / Ports & Adapters
+pattern: a `GeometryBackend` ABC (`geometry_backend/geometry_backend_interface.py`)
+with neutral, backend-agnostic dataclasses (`GSolid`/`GFace`/`GEdge`/`GVertex`/
+`GVector`/`GPlane`/...) that carried a `native` object *and* a reference to
+the backend instance that produced them, plus a concrete `FreeCADBackend`
+implementation. All of GEOUNED called through a single injected
+`_backend = FreeCADBackend()` instance (`_backend.split(gsolid, tool, tol)`,
+`_backend.get_faces(gsolid)`, etc.) rather than touching `Part`/`FreeCAD`
+directly.
+
+This was fully implemented and rolled out across the entire `GEOUNED`
+subpackage (write/, void/, boolean_solids.py, build_region/, load_step.py,
+geouned_classes.py, decompose/, conversion/, ...) and validated against
+the full test suite. It worked, but after living with it end-to-end the
+user judged the `.backend`-carrying dataclasses + `_backend.method(x, ...)`
+call convention too heavy and indirect for what it bought — see attempt 2.
+**This design has been retired**: `geometry_backend/` and `tests/geometry_backend/`
+were deleted once nothing else referenced them.
+
+## Current architecture: attempt 2 — the `geo` package
+
+`src/geouned/geo/` is now the ONLY place in GEOUNED allowed to import
+`Part`/`FreeCAD`/`BOPTools` (`GEOReverse` is explicitly out of scope for
+all of this, per the Project section above). Structure:
+
+- `geo/vector_geometry.py` — pure math, zero FreeCAD dependency: `GVector`,
+  `GBoundBox`, `GLabelNode`, and geometric predicates (`is_same_plane_surface`,
+  `is_parallel`, `plane_value_at`, ...). This is what a future `_occ_impl.py`
+  would reuse unchanged.
+- `geo/_freecad_impl.py` — the FreeCAD-specific implementation: analytic
+  surface/curve descriptor classes (`GPlane`, `GCylinder`, `GCone`, `GSphere`,
+  `GTorus`, `GLine`, `GCircle`, `GEllipse`, `GBSpline` — each constructed
+  directly from its native FreeCAD surface/curve object, plus a
+  `.from_values(...)` classmethod on
+  `GPlane`/`GCylinder` for the rare case of building one from already-known
+  values with no native face behind it); topology classes (`GEdge`, `GWire`,
+  `GFace`, `GShell`, `GSolid`) that are **eagerly** built from their native
+  equivalent and carry real behavior as methods (`gsolid.is_inside(point)`,
+  `gface.value_at(u, v)`, `gsolid.find_interior_point()`, `gsolid.export_step(...)`,
+  ...) instead of being passed to a separate backend object; free `Gmake_*`
+  constructor functions (`Gmake_box`, `Gmake_cylinder`, `Gmake_half_space`,
+  `Gmake_polygon_face`, ...) and free operation functions for anything
+  combining more than one independent shape (`Gcut`, `Gcommon`, `Gfuse`,
+  `Gsplit`, `Gin_contact`, `Gdistance`, `Gload_step`, `Gload_step_labels`,
+  `Gexport_step`).
+- `geo/__init__.py` — the single import point for the rest of GEOUNED:
+  `from ...geo import GSolid, Gmake_cylinder, ...`.
+
+As of the file-by-file closeout pass, 6 files in `GEOUNED` still carry a
+direct `import Part`/`import FreeCAD`, each scoped to a small, itemized
+set of deliberately deferred native uses with no faithful `geo` equivalent
+(verified: everything else in those files — classification, construction,
+vector arithmetic — now goes through `geo`). All are duck-typed native
+*values* flowing through, not module-level dependencies leaking outward —
+nothing outside these 6 files needs to `import Part`/`FreeCAD` itself to
+consume them.
+- `utils/geouned_classes.py`: `Box = FreeCAD.BoundBox(boundBox)` in
+  `GeounedSurface.build_surface` — the box is threaded natively into
+  `build_shape_functions.py`'s `Plane`/`Cylinder`/`Cone`/`MultiPlane`/
+  `Can`/`TCone`/`RoundCorner`/`MultiRoundCorner` branches, which need
+  `Box.getEdge(i)`/`Box.getPoint(i)` (no `GBoundBox` equivalent).
+- `core.py`: `self.geometry_bounding_box = FreeCAD.BoundBox(...)` in
+  `_set_geometry_bounding_box` — consumed natively well outside this
+  migration's scope (`void.py`, `write_files.py`,
+  `geouned_classes.py`'s `self.UniverseBox`).
+- `conversion/cell_definition_functions.py`: `Part.Plane(sphere_center,
+  normal).toShape()` in `gen_plane_sphere` — an actual infinite analytic
+  plane used for `distToShape`; `Gmake_half_space` is a *box-clipped*
+  (1e6-extent) approximation, not faithful enough to swap in.
+- `utils/geometry_gu.py`: `Part.Vertex(pos1)`/`Part.Vertex(pos2)` in
+  `same_wire` — no `geo` constructor for a lone vertex.
+- `utils/meta_surfaces_utils.py`: one `isinstance(e0.Curve, (Part.Circle,
+  Part.Ellipse, Part.Hyperbola, Part.Parabola))` in `planar_edges` —
+  `Gclassify_curve` doesn't model Hyperbola/Parabola, so narrowing this
+  to the 2 supported kinds would silently change behavior for the other 2.
+- `utils/build_shape_functions.py` (biggest file, still the most native):
+  `Part.Plane(...)` + the `cut_face`/`cut_box` analytic-intersection
+  machinery (same infinite-plane gap as above), `Part.makeSolid(shell)`
+  (no `Gmake_solid`), `Part.makeCone(...)` (kept native to avoid an
+  avoidable `atan`/`tan` round-trip vs. `Gmake_cone`'s `half_angle` API),
+  and the `box: FreeCAD.BoundBox` parameter threaded through from
+  `geouned_classes.py` above.
+
+Engine-swappability (the original motivation for the ABC in attempt 1) is
+now achieved at the *module* level instead of via dependency injection: a
+future `geo/_occ_impl.py` would define the same class/function names
+against pythonocc-core, and `geo/__init__.py` would choose which
+implementation to re-export — the rest of GEOUNED would not change.
+
+Design points carried over from attempt 1 (still true, just relocated to
+methods/free functions instead of ABC methods):
+- Faces are eagerly classified into one of 5 analytic surface types
+  (plane/cylinder/cone/sphere/torus) via `Gclassify_surface`; composite/
+  meta-surfaces (RoundCorner, Can, TCone, MultiPlane...) are assembled by
+  GEOUNED itself out of these via `Gcut`/`Gcommon`/`Gfuse`, never modeled
+  in `geo`. Curve classification (`GEdge.Curve`, one of `GLine`/`GCircle`/
+  `GEllipse`/`GBSpline`) is deliberately tolerant instead: it returns
+  `None` for a degenerate edge or a real-but-unsupported curve type (e.g.
+  `Part.Hyperbola`) rather than raising, because `GSolid`/`GFace` build
+  eagerly and an incidental edge nothing downstream needs must not abort
+  building the whole solid — only a face's `Surface` (what actually
+  becomes an MCNP/OpenMC surface) is a hard failure.
+- `Gsplit()` returns a `SplitResult` that must never silently come back
+  empty; degenerate/tangency cases are resolved internally (tolerance
+  retry, including a `scale_up_floor` branch mirroring the public
+  `Options.scaleUp`/`Options.splitTolerance`) and reported via
+  `degenerate_case_handled=True`. **Still NOT solved**: the original
+  motivating tangency bug itself (a plane's intersection with a solid
+  coinciding with a pre-existing tangency line) — `Gsplit` only ports
+  GEOUNED's existing tolerance-scaling retry, the same limitation
+  `FreeCADBackend.split()` had. The proper fix (face-adjacency graph
+  excluding non-manifold edges, reconstructing solids per connected
+  component) is still reserved for a future pyOCC implementation.
+- `GSolid.faces_sharing_edge(edge)` exposes the non-manifold-edge
+  diagnostic directly (edges shared by != 2 faces) — defined but not
+  currently called anywhere in GEOUNED (confirmed via grep before
+  simplifying the design around it).
 
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
   comments, docstrings, and variable/function names — must be written
   in English.
-
-## Artifacts already produced in the planning conversation
-
-- `geometry_backend_interface.py`: full draft of the `GeometryBackend`
-  ABC plus neutral dataclasses (`GSolid`, `GFace`, `GEdge`, `GVertex`,
-  `GVector`, `SurfaceType`, `PlaneParams`/`CylinderParams`/`ConeParams`/
-  `SphereParams`/`TorusParams`, `SurfaceGeometry`, `SplitResult`). Not
-  yet validated against the real `decomposition/` module — next step
-  is sketching `FreeCADBackend` against it to check coverage.

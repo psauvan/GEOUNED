@@ -3,15 +3,10 @@
 #
 import math
 
-import FreeCAD
 from .data_constants import mask
 from .boolean_function import BoolSurface
-from ...geometry_backend import vector_geometry
-from ...geometry_backend.vector_geometry import to_gvector
-from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
-from ...geometry_backend.geometry_backend_interface import GPlane, GVector
-
-_backend = FreeCADBackend()
+from ...geo import vector_geometry
+from ...geo import GPlane, GSolid, GVector, Gin_contact, to_fc_vector, to_gvector
 
 
 def _to_native_vector(vector):
@@ -67,7 +62,7 @@ def is_in_edge(edge1, edge2, tolerance=1e-8):
 
 
 def is_in_plane(point, plane, d_tolerance=1e-7):
-    plane_params = GPlane(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
+    plane_params = GPlane.from_values(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
     return vector_geometry.is_in_plane(to_gvector(point), plane_params, d_tolerance)
 
 
@@ -83,16 +78,16 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
 
 
 def sign_plane(point, plane):
-    plane_params = GPlane(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
+    plane_params = GPlane.from_values(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
     return vector_geometry.sign_plane(to_gvector(point), plane_params)
 
 
 def shapes_in_contact(shape1, shape2, tolerance=1e-6):
     if shape1 is shape2:
         return True
-    return _backend.in_contact(
-        _backend._wrap_solid(shape1),
-        _backend._wrap_solid(shape2),
+    return Gin_contact(
+        GSolid(shape1),
+        GSolid(shape2),
         tolerance,
     )
 

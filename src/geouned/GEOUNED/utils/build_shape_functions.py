@@ -6,6 +6,19 @@ import math
 from .data_classes import Options
 from .build_region.build_region import BuildDepth, get_cell_object, getPart, FuseSolid
 from .build_region.Objects import myBox
+from ...geo import (
+    GPlane,
+    GCylinder,
+    GCone,
+    GFace,
+    GVector,
+    Gclassify_surface,
+    Gmake_cylinder,
+    Gmake_shell,
+    Gmake_polygon_face,
+    to_fc_vector,
+    to_gvector,
+)
 
 
 def makePlane(normal, position, Box):
@@ -27,7 +40,7 @@ def makePlane(normal, position, Box):
     if len(pointEdge) == 0:
         return None  # Plane does not cross box
 
-    s = FreeCAD.Vector((0, 0, 0))
+    s = to_fc_vector(GVector(0, 0, 0))
     for v in pointEdge:
         s = s + v
     s = s / len(pointEdge)
@@ -45,7 +58,7 @@ def makePlane(normal, position, Box):
         orden.append((phi, i))
     orden.sort()
 
-    return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
+    return Gmake_polygon_face([to_gvector(pointEdge[p[1]]) for p in orden]).__native__
 
 
 def makeCylinder(cyl, Box):
@@ -63,10 +76,9 @@ def makeCylinder(cyl, Box):
 
     center = center + (dmin - 5) * axis
     length = dmax - dmin + 10
-    Cylinder = Part.makeCylinder(radius, length, center, axis, 360.0)
-    for f in Cylinder.Faces:
-        if type(f.Surface) is Part.Cylinder:
-            shell = f
+    gsolid = Gmake_cylinder(to_gvector(center), to_gvector(axis), radius, length)
+    Cylinder = gsolid.__native__
+    shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GCylinder)
     return (Cylinder, shell)
 
 
@@ -81,7 +93,7 @@ def makeCone(axis, apex, tan, Box):
         rad = tan * length
         cone = Part.makeCone(0.0, rad, length, apex, axis, 360.0)
         for f in cone.Faces:
-            if type(f.Surface) is Part.Cone:
+            if type(Gclassify_surface(f)) is GCone:
                 shell = f
         return (cone, shell)
     else:
@@ -109,7 +121,7 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
     if len(plane_points) == 0:
         return None  # multiplane doesn't cross box
     else:
-        return Part.makeShell(makeBoxFaces(plane_points))
+        return Gmake_shell([GFace(f) for f in makeBoxFaces(plane_points)]).__native__
 
 
 def makeRoundCorner(roundCorner, Box):
@@ -157,7 +169,7 @@ def build_complex_shape(surface, Box):
 def cylinder_cut_box(cylinder, plane):
     z = []
     for f in cylinder.Faces:
-        if type(f.Surface) is Part.Plane:
+        if type(Gclassify_surface(f)) is GPlane:
             z.append(f.CenterOfMass)
         else:
             radius = f.Surface.Radius
@@ -185,7 +197,7 @@ def cylinder_cut_box(cylinder, plane):
     p8 = pc + a * axis - c * vect
 
     boxvect = (p1, p2, p3, p4, p5, p6, p7, p8)
-    shell = Part.makeShell(makeBoxFaces(boxvect))
+    shell = Gmake_shell([GFace(f) for f in makeBoxFaces(boxvect)]).__native__
     return Part.makeSolid(shell)
 
 
@@ -234,7 +246,7 @@ def makeBoxFaces(box: list):
     for f in faces_points:
         if len(f) < 3:
             continue
-        faces.append(Part.Face(Part.makePolygon(f, True)))
+        faces.append(Gmake_polygon_face([to_gvector(p) for p in f]).__native__)
     return faces
 
 
@@ -289,7 +301,7 @@ def sort_points(point_list: list, normal: FreeCAD.Vector):
     if len(point_list) == 0:
         return []
 
-    s = FreeCAD.Vector((0, 0, 0))
+    s = to_fc_vector(GVector(0, 0, 0))
     for v in point_list:
         s = s + v
     s = s / len(point_list)
@@ -316,17 +328,23 @@ def remove_box_faces(point_face_list: list, faces: list, boxlim: list):
     tol = 1e-8
     plane_points = []
     for i, face in enumerate(faces):
-        if abs(face.Surface.Axis.dot(FreeCAD.Vector(1, 0, 0)) - 1) < tol and abs(boxlim[0] - face.Surface.Position.x) < tol:
+        if abs(face.Surface.Axis.dot(to_fc_vector(GVector(1, 0, 0))) - 1) < tol and abs(boxlim[0] - face.Surface.Position.x) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(-1, 0, 0)) - 1) < tol and abs(boxlim[3] - face.Surface.Position.x) < tol:
+        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(-1, 0, 0))) - 1) < tol and abs(
+            boxlim[3] - face.Surface.Position.x
+        ) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 1, 0)) - 1) < tol and abs(boxlim[1] - face.Surface.Position.y) < tol:
+        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 1, 0))) - 1) < tol and abs(boxlim[1] - face.Surface.Position.y) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, -1, 0)) - 1) < tol and abs(boxlim[4] - face.Surface.Position.y) < tol:
+        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, -1, 0))) - 1) < tol and abs(
+            boxlim[4] - face.Surface.Position.y
+        ) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, 1)) - 1) < tol and abs(boxlim[2] - face.Surface.Position.z) < tol:
+        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 0, 1))) - 1) < tol and abs(boxlim[2] - face.Surface.Position.z) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(FreeCAD.Vector(0, 0, -1)) - 1) < tol and abs(boxlim[5] - face.Surface.Position.z) < tol:
+        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 0, -1))) - 1) < tol and abs(
+            boxlim[5] - face.Surface.Position.z
+        ) < tol:
             continue
         plane_points.append(point_face_list[i])
 

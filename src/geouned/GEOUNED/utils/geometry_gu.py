@@ -13,14 +13,24 @@ import Part
 from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
 from ..utils.data_constants import twoPi
-from ...geometry_backend import vector_geometry
-from ...geometry_backend.vector_geometry import to_gvector
-from ...geometry_backend.freecad_backend import FreeCADBackend
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus, GFace
+from ...geo import vector_geometry
+from ...geo import (
+    GCone,
+    GCylinder,
+    GEdge,
+    GFace,
+    GLine,
+    GPlane,
+    GSphere,
+    GTorus,
+    Gclassify_curve,
+    Gclassify_surface,
+    Gmake_shell,
+    Gmake_wire,
+    to_gvector,
+)
 
 logger = logging.getLogger("general_logger")
-
-_backend = FreeCADBackend()
 
 _SAME_SURFACE_PREDICATE = {
     GPlane: vector_geometry.is_same_plane_surface,
@@ -252,17 +262,17 @@ class FaceGu(object):
 
     def distToShape(self, shape):
         shape1 = self.__face__
-        if isinstance(shape, Part.Shape):
-            shape2 = shape
-        elif isinstance(shape, ShellGu):
+        if isinstance(shape, ShellGu):
             distmin = 1
             for f in shape.Faces:
                 d = self.distToShape(f)
                 distmin = min(distmin, d[0])
             return (distmin,)
-        else:
+        elif hasattr(shape, "__face__"):
             shape2 = shape.__face__
             return shape1.distToShape(shape2)
+        else:
+            shape2 = shape
 
         if shape1 is shape2:
             return (0,)
@@ -315,25 +325,13 @@ class ShellGu:
             native_faces = [f.__face__ for f in self.Faces]
         else:
             native_faces = self.Faces
-        # Surface/Edges/OuterWire deliberately left unclassified: make_shell
-        # only reads .native, and eagerly classifying here (_build_gface)
-        # would force edge curve-classification on every boundary edge,
-        # which raises for curve types the backend doesn't model (e.g. a
-        # trimmed conic section's Part.Hyperbola) -- topology-only shell
-        # construction has no reason to require that.
-        gfaces = [
-            GFace(
-                native=nf,
-                backend=_backend,
-                Surface=None,
-                Edges=(),
-                OuterWire=None,
-                ParameterRange=nf.ParameterRange,
-                Orientation=nf.Orientation,
-            )
-            for nf in native_faces
-        ]
-        return _backend.make_shell(gfaces)
+        # GFace's eager construction tolerates edges with a curve type it
+        # doesn't model (e.g. a trimmed conic section's Part.Hyperbola --
+        # GEdge.Curve just comes back None for those), so building real
+        # GFace instances here no longer risks the crash that used to
+        # require a hand-built, deliberately unclassified GFace.
+        gfaces = [GFace(nf) for nf in native_faces]
+        return Gmake_shell(gfaces)
 
     def set_outerWire(self):
         wires = []
@@ -348,19 +346,14 @@ def define_list_face_gu(face_list):
     return tuple(FaceGu(face) for face in face_list)
 
 
-_NATIVE_SURFACE_KINDS = (Part.Plane, Part.Cylinder, Part.Cone, Part.Sphere, Part.Toroid, Part.BSplineSurface)
-
-
 def define_surface(face):
-    # Part.BSplineSurface is included: transport codes don't support BSpline
-    # surfaces at all, the only acceptable case is one that's geometrically
-    # just a mislabeled plane, which is what the backend raises on if it
-    # isn't -- see FreeCADBackend._classify_native_surface's docstring.
-    kind_surf = type(face.Surface)
-    if kind_surf in _NATIVE_SURFACE_KINDS:
-        return _backend._classify_native_surface(face)
-    logger.info(f"bad Surface type {kind_surf}")
-    return None
+    # Gclassify_surface itself returns None for a surface type GEOUNED can't
+    # model (a genuine BSplineSurface, SurfaceOfRevolution/Extrusion, ...) --
+    # see its docstring in geo/_freecad_impl.py.
+    surface = Gclassify_surface(face)
+    if surface is None:
+        logger.info(f"bad Surface type {type(face.Surface)}")
+    return surface
 
 
 def is_inverted(solid):
@@ -373,7 +366,9 @@ def is_inverted(solid):
     u = (parameter_range[1] + parameter_range[0]) / 2.0
     v = (parameter_range[3] + parameter_range[2]) / 2.0
 
-    if isinstance(face.Surface, Part.Cylinder):
+    surf_type = Gclassify_surface(face)
+
+    if type(surf_type) is GCylinder:
         dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Center, face.Surface.Axis)
         dist2 = (
             face.Surface.value(u, v)
@@ -384,7 +379,7 @@ def is_inverted(solid):
             # The normal of the cylinder is going inside
             return True
 
-    elif isinstance(face.Surface, Part.Cone):
+    elif type(surf_type) is GCone:
         dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Apex, face.Surface.Axis)
         dist2 = (
             face.Surface.value(u, v)
@@ -395,7 +390,7 @@ def is_inverted(solid):
             # The normal of the cylinder is going inside
             return True
     # MIO
-    elif isinstance(face.Surface, Part.Sphere):
+    elif type(surf_type) is GSphere:
         # radii = point - center
         radii = face.Surface.value(u, v).add(face.Surface.Center.multiply(-1))
         radii_b = face.Surface.value(u, v).add(face.Surface.normal(u, v).multiply(1.0e-6)).add(face.Surface.Center.multiply(-1))
@@ -404,7 +399,7 @@ def is_inverted(solid):
             # An increasing of the radii vector in the normal direction decreases the radii: oposite normal direction
             return True
 
-    elif isinstance(face.Surface, Part.Plane):
+    elif type(surf_type) is GPlane:
         dist1 = face.CenterOfMass.distanceToPoint(solid.BoundBox.Center)
         dist2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6)).distanceToPoint(solid.BoundBox.Center)
         point2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6))
@@ -469,7 +464,7 @@ def innerWires(wire, face):
         v_sum += v * edge.Length
         length += edge.Length
 
-        if type(edge.Curve) is Part.Line:
+        if type(Gclassify_curve(edge)) is GLine:
             direction = edge.Curve.Direction
         else:
             direction = edge.Curve.tangent(pe)[0]
@@ -515,7 +510,7 @@ def innerWires_org(wire, face, Faces):
 
         pe = edge.Curve.parameter(pos)
 
-        if type(edge.Curve) is Part.Line:
+        if type(Gclassify_curve(edge)) is GLine:
             direction = edge.Curve.Direction
         else:
             direction = edge.derivative1At(pe)
@@ -597,7 +592,7 @@ def merge_two_wires(wire1, wire2):
         else:
             joined.extend(w1 + w2)
         i += 1
-    return Part.Wire(joined)
+    return Gmake_wire([GEdge(e) for e in joined]).__native__
 
 
 def common_vertexes(w1, w2):

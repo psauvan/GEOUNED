@@ -2,11 +2,23 @@ import math
 
 import numpy as np
 
-from ....geometry_backend.freecad_backend import FreeCADBackend
-from ....geometry_backend.geometry_backend_interface import GBoundBox, GCone, GCylinder, GVector
-from ....geometry_backend.vector_geometry import to_gboundbox, to_gvector
-
-_backend = FreeCADBackend()
+from ....geo import (
+    GBoundBox,
+    GCone,
+    GCylinder,
+    GSolid,
+    GVector,
+    Gfuse,
+    Gmake_box,
+    Gmake_compound,
+    Gmake_cone,
+    Gmake_cylinder,
+    Gmake_polygon_face,
+    Gmake_shell,
+    Gmake_sphere,
+    to_gboundbox,
+    to_gvector,
+)
 
 
 class CellObj:
@@ -30,10 +42,10 @@ class CellObj:
         if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
             return None
         else:
-            return _backend.make_box(
+            return Gmake_box(
                 boundBox.XMin, boundBox.YMin, boundBox.ZMin,
                 boundBox.XMax, boundBox.YMax, boundBox.ZMax,
-            ).native
+            ).__native__
 
     def getSubCell(self, seq):
 
@@ -279,7 +291,7 @@ class Plane:
             orden.append((phi, i))
         orden.sort()
 
-        self.shape = _backend.make_polygon_face([pointEdge[p[1]] for p in orden]).native
+        self.shape = Gmake_polygon_face([pointEdge[p[1]] for p in orden]).__native__
         self.shell = self.shape
 
 
@@ -307,7 +319,7 @@ class Sphere:
 
     def buildShape(self, boundBox):
         origin, R = self.params
-        self.shape = _backend.make_sphere(to_gvector(origin), R).native
+        self.shape = Gmake_sphere(to_gvector(origin), R).__native__
         self.shell = self.shape.Faces[0]
 
 
@@ -353,14 +365,14 @@ class Cylinder:
             height = dmax - dmin
 
             point = p + dmin * vec
-            gsolid = _backend.make_cylinder(to_gvector(point), to_gvector(vec), r, height)
+            gsolid = Gmake_cylinder(to_gvector(point), to_gvector(vec), r, height)
         else:
-            gsolid = _backend.make_cylinder(to_gvector(p), to_gvector(vec), r, vec.Length)
+            gsolid = Gmake_cylinder(to_gvector(p), to_gvector(vec), r, vec.Length)
 
-        self.shape = gsolid.native
-        for f in _backend.get_faces(gsolid):
+        self.shape = gsolid.__native__
+        for f in gsolid.Faces:
             if type(f.Surface) is GCylinder:
-                self.shell = f.native
+                self.shell = f.__native__
         return
 
 
@@ -407,18 +419,18 @@ class Cone:
 
             length = max(abs(dmin), abs(dmax))
             half_angle = math.atan(t)
-            one_sheet = _backend.make_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
-            oneface = next(f for f in _backend.get_faces(one_sheet) if type(f.Surface) is GCone)
+            one_sheet = Gmake_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
+            oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
 
             if not dblsht:
-                self.shape = one_sheet.native
-                self.shell = oneface.native
+                self.shape = one_sheet.__native__
+                self.shell = oneface.__native__
             else:
-                other_sheet = _backend.make_cone(to_gvector(apex), to_gvector(-axis), half_angle, length)
-                otherface = next(f for f in _backend.get_faces(other_sheet) if type(f.Surface) is GCone)
-                double_sheet = _backend.fuse([one_sheet, other_sheet])
-                self.shape = double_sheet.native
-                self.shell = _backend.make_shell((oneface, otherface)).native
+                other_sheet = Gmake_cone(to_gvector(apex), to_gvector(-axis), half_angle, length)
+                otherface = next(f for f in other_sheet.Faces if type(f.Surface) is GCone)
+                double_sheet = Gfuse([one_sheet, other_sheet])
+                self.shape = double_sheet.__native__
+                self.shell = Gmake_shell((oneface, otherface)).__native__
         # truncated (frustum, two explicit radii) Cone is never constructed
         # with truncated=True anywhere in build_region -- no backend
         # primitive covers that case, so it is intentionally left
@@ -449,28 +461,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
-        gparts = [_backend._wrap_solid(p) for p in parts]
+        gparts = [GSolid(p) for p in parts]
         try:
-            fused = _backend.fuse(gparts)
+            fused = Gfuse(gparts)
         except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refined = _backend.refine(fused)
+                refined = fused.refine()
             except Exception:
                 refined = fused
 
-            if _backend.is_valid(refined):
+            if refined.is_valid():
                 gsolid = refined
-            elif _backend.is_valid(fused):
+            elif fused.is_valid():
                 gsolid = fused
             else:
-                gsolid = _backend.make_compound(gparts)
+                gsolid = Gmake_compound(gparts)
         else:
-            gsolid = _backend.make_compound(gparts)
-        solid = gsolid.native
+            gsolid = Gmake_compound(gparts)
+        solid = gsolid.__native__
 
     if solid.Volume < 0:
-        solid = _backend.reverse(_backend._wrap_solid(solid)).native
+        solid = GSolid(solid).reverse().__native__
     return solid

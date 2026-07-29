@@ -18,8 +18,7 @@ from pathlib import Path
 from importlib.metadata import version
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+from ...geo import GVector, kernel_version, to_fc_vector
 from .functions import (
     CellString,
     phits_surface,
@@ -27,7 +26,6 @@ from .functions import (
 )
 
 logger = logging.getLogger("general_logger")
-_backend = FreeCADBackend()
 
 
 class PhitsInput:
@@ -142,7 +140,7 @@ $
 
     def write_phits_header(self):
 
-        freeCAD_Version = _backend.kernel_version()
+        freeCAD_Version = kernel_version()
 
         Header = "$ " """{}
 $   ______ _______  _____      _     _ __   _ _______ ______  

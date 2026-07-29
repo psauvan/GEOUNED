@@ -13,7 +13,7 @@ from .basic_functions_part1 import (
     is_same_value,
 )
 from ..write.functions import mcnp_surface
-from ...geometry_backend.vector_geometry import to_gvector
+from ...geo import to_gvector
 
 
 def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_format):

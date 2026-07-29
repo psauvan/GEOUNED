@@ -7,8 +7,7 @@ from pathlib import Path
 
 from ..code_version import *
 from ..utils.boolean_function import BoolVariable
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.freecad_backend import to_fc_vector
+from ...geo import GVector, to_fc_vector
 from .functions import open_mc_surface, write_openmc_region
 
 logger = logging.getLogger("general_logger")

@@ -7,11 +7,7 @@ import math
 
 from .boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
-from ...geometry_backend.geometry_backend_interface import GSolid, GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend
-from ...geometry_backend.vector_geometry import to_gvector
-
-_backend = FreeCADBackend()
+from ...geo import GSolid, GVector, Gdistance, Gsplit, to_gvector
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -247,7 +243,7 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
     # Box is a GSolid when it comes from the (already migrated) void
     # pipeline, or a native Part.Shape when it comes from callers not
     # migrated yet (cell_definition.py/core.py's get_box) -- accept both.
-    box_native = Box.native if type(Box) is GSolid else Box
+    box_native = Box.__native__ if type(Box) is GSolid else Box
 
     if type(SurfInfo) is dict:
         surfaces = SurfInfo
@@ -450,11 +446,11 @@ def split_solid_fast(solid, surf, box, options):
 
     if box:
         if surf.shape:
-            result = _backend.split(
-                _backend._wrap_solid(solid), _backend._wrap_solid(surf.shape), options.splitTolerance,
+            result = Gsplit(
+                GSolid(solid), GSolid(surf.shape), options.splitTolerance,
                 scale_up_floor=options.splitTolerance if options.scaleUp else None,
             )
-            comsolid_solids = [s.native for s in result.solids]
+            comsolid_solids = [s.__native__ for s in result.solids]
         else:
             return check_sign(solid, surf), None
 
@@ -492,7 +488,7 @@ def split_solid_fast(solid, surf, box, options):
     else:
         # "not box" => return the position of the +/- region of s1 (the solid) with respect s2
         if surf.shell:
-            dist = _backend.distance(_backend._wrap_solid(solid), _backend._wrap_solid(surf.shell))
+            dist = Gdistance(GSolid(solid), GSolid(surf.shell))
             if dist > 1e-6:
                 # chech if surf and solid don't intersect actually (native call: distToShape's
                 # positive-distance report can be a false negative for a degenerate/tangent
@@ -521,10 +517,10 @@ def split_solid_fast(solid, surf, box, options):
 
 # find one point inside a solid (region)
 def point_inside(solid):
-    gsolid = _backend._wrap_solid(solid)
-    point = _backend.find_interior_point(gsolid)
+    gsolid = GSolid(solid)
+    point = gsolid.find_interior_point()
     if point is None:
-        logger.info(f"Solid not found in bounding Box (Volume : {_backend.volume(gsolid)})")
+        logger.info(f"Solid not found in bounding Box (Volume : {gsolid.Volume})")
     return point
 
 

@@ -7,12 +7,9 @@ from ..decompose.decom_one_generators import main_split
 from ..utils.boolean_function import BoolSequence, BoolVariable, BoolSurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
-from ...geometry_backend.geometry_backend_interface import GBoundBox, GSolid, GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend
-from ...geometry_backend.vector_geometry import to_gboundbox
+from ...geo import GBoundBox, GSolid, GVector, Gcommon, Gdistance, Gmake_box, to_gboundbox
 
 logger = logging.getLogger("general_logger")
-_backend = FreeCADBackend()
 
 
 class VoidBox:
@@ -27,7 +24,7 @@ class VoidBox:
             self.Definition = None
         else:
             self.BoundBox = box
-            self.PieceEnclosure = EnclosureCAD if type(EnclosureCAD) is GSolid else _backend._wrap_solid(EnclosureCAD)
+            self.PieceEnclosure = EnclosureCAD if type(EnclosureCAD) is GSolid else GSolid(EnclosureCAD)
             self.isEnclosure = True
             self.Definition = Definition
 
@@ -126,16 +123,16 @@ class VoidBox:
         If the limited region does not intersect with the piece, no void cell is created.
         """
 
-        cube = _backend.make_box(Box.XMin, Box.YMin, Box.ZMin, Box.XMax, Box.YMax, Box.ZMax)
-        dist = _backend.distance(cube, self.PieceEnclosure)
+        cube = Gmake_box(Box.XMin, Box.YMin, Box.ZMin, Box.XMax, Box.YMax, Box.ZMax)
+        dist = Gdistance(cube, self.PieceEnclosure)
         try:
             if abs(dist / Box.DiagonalLength) > Tolerance:
                 return None
         except ZeroDivisionError:
             return None
-        common_solids = _backend.common(cube, [self.PieceEnclosure])
-        cube_volume = _backend.volume(cube)
-        common_volume = sum(_backend.volume(s) for s in common_solids)
+        common_solids = Gcommon(cube, [self.PieceEnclosure])
+        cube_volume = cube.Volume
+        common_volume = sum(s.Volume for s in common_solids)
         try:
             reldif = (cube_volume - common_volume) / cube_volume
         except ZeroDivisionError:
@@ -148,7 +145,7 @@ class VoidBox:
             return None
 
     def refine(self):
-        Cube = _backend.make_box(
+        Cube = Gmake_box(
             self.BoundBox.XMin, self.BoundBox.YMin, self.BoundBox.ZMin,
             self.BoundBox.XMax, self.BoundBox.YMax, self.BoundBox.ZMax,
         )
@@ -181,7 +178,7 @@ class VoidBox:
             else:
                 boxDef.append(plane_region)
 
-        Box = _backend.make_box(
+        Box = Gmake_box(
             bBox.XMin - d, bBox.YMin - d, bBox.ZMin - d,
             bBox.XMax + d, bBox.YMax + d, bBox.ZMax + d,
         )
@@ -440,15 +437,15 @@ class VoidBox:
         # Compare Solid BoundBox (here Box is a GBoundBox)
         if mode == "box":
             for i, sol in enumerate(Obj.Solids):
-                if sol.BoundBox.isValid():
-                    if Box.intersects(sol.BoundBox):
+                if to_gboundbox(sol.BoundBox).is_valid():
+                    if Box.intersects(to_gboundbox(sol.BoundBox)):
                         reducedSol.append(sol)
                         reducedDef.append(Obj.Definition.elements[i])
 
         # Compare solid using distance (here Box is a GSolid Cube)
         else:
             for i, sol in enumerate(Obj.Solids):
-                dist = _backend.distance(Box, _backend._wrap_solid(sol))
+                dist = Gdistance(Box, GSolid(sol))
                 if dist == 0:
                     reducedSol.append(sol)
                     reducedDef.append(Obj.Definition.elements[i])

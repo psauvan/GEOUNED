@@ -5,7 +5,6 @@ import logging
 import math
 
 import FreeCAD
-import Part
 
 logger = logging.getLogger("general_logger")
 
@@ -43,11 +42,7 @@ from .build_shape_functions import (
     makeMultiRoundCorner,
 )
 from .basic_functions_part1 import is_parallel, is_opposite
-from ...geometry_backend.geometry_backend_interface import GBoundBox, GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend
-from ...geometry_backend.vector_geometry import to_gboundbox
-
-_backend = FreeCADBackend()
+from ...geo import GBoundBox, GSolid, GVector, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox, to_gvector
 
 
 def _empty_boundbox():
@@ -74,13 +69,13 @@ class GeounedSolid:
         else:
             if refine:
                 try:
-                    self.Solids = _backend.refine(_backend._wrap_solid(comsolid)).native.Solids
+                    self.Solids = GSolid(comsolid).refine().__shapes__
                 except Exception:
                     self.Solids = comsolid.Solids
 
                 for i, s in enumerate(self.Solids):
                     if s.Volume < 0:
-                        self.Solids[i] = _backend.reverse(_backend._wrap_solid(s)).native
+                        self.Solids[i] = GSolid(s).reverse().__native__
             else:
                 self.Solids = comsolid.Solids
             self.Volume = comsolid.Volume
@@ -121,15 +116,15 @@ class GeounedSolid:
 
     def set_cad_solid(self):
         if self.Solids is not None:
-            gcompound = _backend.make_compound([_backend._wrap_solid(s) for s in self.Solids])
-            self.CADSolid = gcompound.native
-            self.Volume = _backend.volume(gcompound)
+            gcompound = Gmake_compound([GSolid(s) for s in self.Solids])
+            self.CADSolid = gcompound.__native__
+            self.Volume = gcompound.Volume
             self.BoundBox = gcompound.BoundBox
 
     def optimalBoundingBox(self):
         if self.CADSolid is None:
             self.set_cad_solid()
-        return _backend.optimal_bounding_box(_backend._wrap_solid(self.CADSolid))
+        return GSolid(self.CADSolid).optimal_bounding_box()
 
     def set_definition(self, definition, simplify=False):
 
@@ -324,7 +319,7 @@ class GeounedSurface:
             sph = self.Surf.Sphere if self.Type == "Sphere" else self
             rad = sph.Surf.Radius
             pnt = sph.Surf.Center
-            self.shape = Part.makeSphere(rad, pnt)
+            self.shape = Gmake_sphere(to_gvector(pnt), rad).__native__
             self.shell = self.shape.Shells[0]
             return
 
@@ -335,7 +330,7 @@ class GeounedSurface:
             majorR = tor.Surf.MajorRadius
             minorR = tor.Surf.MinorRadius
 
-            torus = Part.makeTorus(majorR, minorR, center, axis)
+            torus = Gmake_torus(to_gvector(center), to_gvector(axis), majorR, minorR).__native__
             self.shape = torus.Faces[0]
             self.shell = torus.Shells[0]
             return

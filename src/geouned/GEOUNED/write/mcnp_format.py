@@ -8,12 +8,10 @@ from pathlib import Path
 from importlib.metadata import version
 
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
-from ...geometry_backend.geometry_backend_interface import GVector
-from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+from ...geo import GVector, kernel_version, to_fc_vector
 from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
-_backend = FreeCADBackend()
 
 
 # TODO rename as there are two classes with this name
@@ -104,7 +102,7 @@ C ##########################################################
 
     def write_header(self):
 
-        freeCAD_Version = _backend.kernel_version()
+        freeCAD_Version = kernel_version()
 
         Header = f"""{self.Title}
 C   ______ _______  _____      _     _ __   _ _______ ______  

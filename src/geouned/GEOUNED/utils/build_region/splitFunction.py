@@ -1,8 +1,6 @@
 import math
 
-from ....geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
-
-_backend = FreeCADBackend()
+from ....geo import GSolid, Gfuse, Gmake_compound, Gsplit, to_fc_vector
 
 
 class SplitBase:
@@ -70,8 +68,8 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
 
     Tools = tuple(s.shape for s in surfacesCut)
     if Tools[0] is not None:
-        result = _backend.split(_backend._wrap_solid(base.base), _backend._wrap_solid(Tools[0]), tolerance)
-        Solids = [s.native for s in result.solids]
+        result = Gsplit(GSolid(base.base), GSolid(Tools[0]), tolerance)
+        Solids = [s.__native__ for s in result.solids]
     else:
         Solids = [base.base]
 
@@ -114,7 +112,7 @@ def space_decomposition(solids, surfaces):
                 c.reverse()
                 print("Negative solid Volume", c.Volume)
         Svalues = {}
-        point = _backend.find_interior_point(_backend._wrap_solid(c))
+        point = GSolid(c).find_interior_point()
         if point is None:
             continue  # point not found in solid (solid is surface or very thin can be source of lost particules in MCNP)
         point = to_fc_vector(point)
@@ -303,28 +301,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
-        gparts = [_backend._wrap_solid(p) for p in parts]
+        gparts = [GSolid(p) for p in parts]
         try:
-            fused = _backend.fuse(gparts)
+            fused = Gfuse(gparts)
         except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refined = _backend.refine(fused)
+                refined = fused.refine()
             except Exception:
                 refined = fused
 
-            if _backend.is_valid(refined):
+            if refined.is_valid():
                 gsolid = refined
-            elif _backend.is_valid(fused):
+            elif fused.is_valid():
                 gsolid = fused
             else:
-                gsolid = _backend.make_compound(gparts)
+                gsolid = Gmake_compound(gparts)
         else:
-            gsolid = _backend.make_compound(gparts)
-        solid = gsolid.native
+            gsolid = Gmake_compound(gparts)
+        solid = gsolid.__native__
 
     if solid.Volume < 0:
-        solid = _backend.reverse(_backend._wrap_solid(solid)).native
+        solid = GSolid(solid).reverse().__native__
     return solid

@@ -4,9 +4,7 @@ from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, Plane, Cylinder, Cone, Sphere, myBox
 from ..boolean_function import BoolSurface, BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region
-from ....geometry_backend.freecad_backend import FreeCADBackend
-
-_backend = FreeCADBackend()
+from ....geo import GSolid, Gfuse, Gmake_compound
 
 
 def get_cell_object(geoObj):
@@ -412,28 +410,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
-        gparts = [_backend._wrap_solid(p) for p in parts]
+        gparts = [GSolid(p) for p in parts]
         try:
-            fused = _backend.fuse(gparts)
+            fused = Gfuse(gparts)
         except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refined = _backend.refine(fused)
+                refined = fused.refine()
             except Exception:
                 refined = fused
 
-            if _backend.is_valid(refined):
+            if refined.is_valid():
                 gsolid = refined
-            elif _backend.is_valid(fused):
+            elif fused.is_valid():
                 gsolid = fused
             else:
-                gsolid = _backend.make_compound(gparts)
+                gsolid = Gmake_compound(gparts)
         else:
-            gsolid = _backend.make_compound(gparts)
-        solid = gsolid.native
+            gsolid = Gmake_compound(gparts)
+        solid = gsolid.__native__
 
     if solid.Volume < 0:
-        solid = _backend.reverse(_backend._wrap_solid(solid)).native
+        solid = GSolid(solid).reverse().__native__
     return solid

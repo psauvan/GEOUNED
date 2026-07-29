@@ -1,10 +1,8 @@
-import Part
-
 from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
 from .geometry_gu import other_face_edge
-from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GTorus
+from ...geo import GLine, GPlane, GCylinder, GTorus, Gclassify_curve
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
     region_sign,
@@ -41,11 +39,8 @@ def multiplane(master_plane, planes, plane_index):
 
     addplane = []
     for e in Edges:
-        try:
-            type_curve = type(e.Curve)
-        except:
-            type_curve = None
-        if type_curve is not Part.Line:
+        type_curve = Gclassify_curve(e)
+        if type_curve is not GLine:
             continue
 
         adjacent_plane = other_face_edge(e, master_plane, planes, outer_only=True)
@@ -71,11 +66,8 @@ def multiplane_old(p, planes):
     Edges = p.OuterWire.Edges
     addplane = [p]
     for e in Edges:
-        try:
-            type_curve = type(e.Curve)
-        except:
-            type_curve = None
-        if type_curve is not Part.Line:
+        type_curve = Gclassify_curve(e)
+        if type_curve is not GLine:
             continue
 
         adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
