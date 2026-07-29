@@ -1,7 +1,6 @@
 import logging
 import re
 
-import FreeCAD
 import Part
 
 from ..utils.geouned_classes import GeounedSolid
@@ -22,13 +21,13 @@ def get_label(label, options):
         return label
 
 
-def getCommentTree(obj, options):
+def getCommentTree(node, options):
     recursive_list = []
-    c_obj = obj
-    while c_obj.InList:
-        label = get_label(c_obj.InList[0].Label, options)
+    c_node = node
+    while c_node.parent is not None:
+        label = get_label(c_node.parent.label, options)
         recursive_list.append(label)
-        c_obj = c_obj.InList[0]
+        c_node = c_node.parent
 
     comment = ""
     for label in reversed(recursive_list):
@@ -162,31 +161,9 @@ def set_enclosure_levels(enclosure_list):
     return nested_enclosure_list
 
 
-def check_enclosure(freecad_doc, enclosure_list):
+def check_enclosure(enclosure_list):
 
     stop = False
-    # check all enclosure labels have an associated solid
-    temp_list = []
-    for elem in freecad_doc.Objects:
-        if elem.TypeId == "Part::Feature":
-            if elem.Shape.Solids:
-                if elem.InList:
-                    templabel = re.search(
-                        "enclosure(?P<encl>[0-9]+)_(?P<parent>[0-9]+)_",
-                        elem.InList[0].Label,
-                    )
-                    if templabel is not None:
-                        if elem.TypeId == "Part::Feature" and len(elem.Shape.Solids) == 0:
-                            temp_list.append(elem)
-
-    if temp_list:
-        stop = True
-        logger.info("One or more nested enclosure labels in CAD solid tree view/structure tree do not have any CAD solid.")
-        logger.info("Each nested enclosure must have only one solid. Code STOPS.")
-        logger.info("List of problematic nested enclosure labels:")
-
-        for elem in temp_list:
-            logger.info(elem.EnclosureID)
 
     # check enclosure Labels don't make loops
 
@@ -307,18 +284,6 @@ def update_tree(Tree, level):
                 new_tree.append(lst + [encl.EnclosureID])
                 continue
     return new_tree
-
-
-def set_doc_options():
-    # set import step document options for FreeCAD version >0.18 compatible with FreeCAD0.18 opening options
-    p0 = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Import")
-    p0.SetBool("UseLinkGroup", False)
-    p0.SetBool("ReduceObjects", False)
-    p0.SetBool("ExpandCompound", False)
-
-    p1 = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Import/hSTEP")
-    p1.SetBool("UseLinkGroup", False)
-    p1.SetBool("ReadShapeCompoundMode", True)
 
 
 def check_index(docList, index, returnObject=False):

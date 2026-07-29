@@ -7,9 +7,11 @@ import Part
 
 from .decom_utils_generator import remove_solids
 from .generators import get_surfaces
-from ..utils.split_function import split_bop
+from ...geometry_backend.freecad_backend import FreeCADBackend
 
 logger = logging.getLogger("general_logger")
+
+_backend = FreeCADBackend()
 
 
 def split_surfaces(solid, options, tolerances):
@@ -32,19 +34,23 @@ def generic_split(solid, options, tolerances, loop=0):
     for surf in get_surfaces(solid, omitfaces, tolerances):
         surf.build_surface(bbox)
         try:
-            comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)
-        except:
-            comsolid = solid
+            result = _backend.split(
+                _backend._wrap_solid(solid), _backend._wrap_solid(surf.shape), options.splitTolerance,
+                scale_up_floor=options.splitTolerance if options.scaleUp else None,
+            )
+            comsolid_solids = [s.native for s in result.solids]
+        except Exception:
+            comsolid_solids = [solid]
             logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
 
-        if not comsolid.Solids:
+        if not comsolid_solids:
             cleaned = solid.Solids
-        elif comsolid.Volume == 0:
+        elif sum(s.Volume for s in comsolid_solids) == 0:
             cleaned = solid.Solids
-        elif len(comsolid.Solids) == 1:
+        elif len(comsolid_solids) == 1:
             cleaned = solid.Solids
         else:
-            cleaned = remove_solids(comsolid.Solids, solid.Volume)
+            cleaned = remove_solids(comsolid_solids, solid.Volume)
         if len(cleaned) > 1:
             new_split = True
             break

@@ -1,7 +1,5 @@
 import logging
 
-import FreeCAD
-import Part
 from tqdm import tqdm
 
 from ..loadfile import load_functions as LF
@@ -9,8 +7,10 @@ from ..utils.boolean_function import BoolSequence
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from . import void_functions as VF
 from .void_box_class import VoidBox
+from ...geometry_backend.freecad_backend import FreeCADBackend
 
 logger = logging.getLogger("general_logger")
+_backend = FreeCADBackend()
 
 
 def void_generation(
@@ -36,15 +36,12 @@ def void_generation(
         newMetaList = MetaList[:]
         NestedEnclosure = []
 
-    Box = Part.makeBox(
-        UniverseBox.XLength,
-        UniverseBox.YLength,
-        UniverseBox.ZLength,
-        FreeCAD.Vector(UniverseBox.XMin, UniverseBox.YMin, UniverseBox.ZMin),
-        FreeCAD.Vector(0, 0, 1),
+    Box = _backend.make_box(
+        UniverseBox.XMin, UniverseBox.YMin, UniverseBox.ZMin,
+        UniverseBox.XMax, UniverseBox.YMax, UniverseBox.ZMax,
     )
 
-    EnclosureBox = GeounedSolid(None, Box)
+    EnclosureBox = GeounedSolid(None, Box.native)
     if setting.voidMat:
         voidMat = setting.voidMat
         EnclosureBox.set_material(voidMat[0], voidMat[1], voidMat[2])
@@ -108,7 +105,12 @@ def get_void_def(
         simplifyVoid = "no"
 
     if Enclosure.IsEnclosure:
-        Universe = VoidBox(MetaList, Enclosure.CADSolid.optimalBoundingBox(), Enclosure.CADSolid, Enclosure.Definition)
+        Universe = VoidBox(
+            MetaList,
+            _backend.optimal_bounding_box(_backend._wrap_solid(Enclosure.CADSolid)),
+            Enclosure.CADSolid,
+            Enclosure.Definition,
+        )
     else:
         Universe = VoidBox(MetaList, Enclosure.BoundBox)
 

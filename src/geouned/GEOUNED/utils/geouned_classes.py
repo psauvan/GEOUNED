@@ -43,6 +43,16 @@ from .build_shape_functions import (
     makeMultiRoundCorner,
 )
 from .basic_functions_part1 import is_parallel, is_opposite
+from ...geometry_backend.geometry_backend_interface import GBoundBox, GVector
+from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geometry_backend.vector_geometry import to_gboundbox
+
+_backend = FreeCADBackend()
+
+
+def _empty_boundbox():
+    """Seed for accumulating a GBoundBox via .union() -- an inverted-infinite box, same trick as FreeCAD's own empty `BoundBox()`."""
+    return GBoundBox(math.inf, math.inf, math.inf, -math.inf, -math.inf, -math.inf)
 
 
 class GeounedSolid:
@@ -55,25 +65,26 @@ class GeounedSolid:
         elif type(comsolid) is list:
             self.Solids = comsolid
             vol = 0
-            self.BoundBox = FreeCAD.BoundBox()
+            bbox = _empty_boundbox()
             for s in comsolid:
                 vol += s.Volume
-                self.BoundBox.add(s.BoundBox)
+                bbox = bbox.union(to_gboundbox(s.BoundBox))
+            self.BoundBox = bbox
             self.Volume = vol
         else:
             if refine:
                 try:
-                    self.Solids = comsolid.removeSplitter().Solids
-                except:
+                    self.Solids = _backend.refine(_backend._wrap_solid(comsolid)).native.Solids
+                except Exception:
                     self.Solids = comsolid.Solids
 
-                for s in self.Solids:
+                for i, s in enumerate(self.Solids):
                     if s.Volume < 0:
-                        s.reverse()
+                        self.Solids[i] = _backend.reverse(_backend._wrap_solid(s)).native
             else:
                 self.Solids = comsolid.Solids
             self.Volume = comsolid.Volume
-            self.BoundBox = comsolid.BoundBox
+            self.BoundBox = to_gboundbox(comsolid.BoundBox)
 
         self.__id__ = id
         self.label = None
@@ -102,21 +113,23 @@ class GeounedSolid:
     def update_solids(self, solidList):
         self.Solids = solidList
         vol = 0
-        self.BoundBox = FreeCAD.BoundBox()
+        bbox = _empty_boundbox()
         for s in solidList:
             vol += s.Volume
-            self.BoundBox.add(s.BoundBox)
+            bbox = bbox.union(to_gboundbox(s.BoundBox))
+        self.BoundBox = bbox
 
     def set_cad_solid(self):
         if self.Solids is not None:
-            self.CADSolid = Part.makeCompound(self.Solids)
-            self.Volume = self.CADSolid.Volume
-            self.BoundBox = self.CADSolid.BoundBox
+            gcompound = _backend.make_compound([_backend._wrap_solid(s) for s in self.Solids])
+            self.CADSolid = gcompound.native
+            self.Volume = _backend.volume(gcompound)
+            self.BoundBox = gcompound.BoundBox
 
     def optimalBoundingBox(self):
         if self.CADSolid is None:
             self.set_cad_solid()
-        return self.CADSolid.optimalBoundingBox()
+        return _backend.optimal_bounding_box(_backend._wrap_solid(self.CADSolid))
 
     def set_definition(self, definition, simplify=False):
 
@@ -1345,9 +1358,9 @@ class SurfacesDict(dict):
             return self.add_torus(surface.Surf.Torus)
 
     def add_plane(self, plane, fuzzy):
-        ex = FreeCAD.Vector(1, 0, 0)
-        ey = FreeCAD.Vector(0, 1, 0)
-        ez = FreeCAD.Vector(0, 0, 1)
+        ex = GVector(1, 0, 0)
+        ey = GVector(0, 1, 0)
+        ez = GVector(0, 0, 1)
 
         if is_parallel(plane.Surf.Axis, ex, self.tolerances.pln_angle):
             add_plane = True
@@ -1554,11 +1567,11 @@ class SurfacesDict(dict):
     def get_id(self, facein):
 
         if facein.Type == "Plane":
-            if is_parallel(facein.Surf.Axis, FreeCAD.Vector(1, 0, 0), self.tolerances.pln_angle):
+            if is_parallel(facein.Surf.Axis, GVector(1, 0, 0), self.tolerances.pln_angle):
                 p = "PX"
-            elif is_parallel(facein.Surf.Axis, FreeCAD.Vector(0, 1, 0), self.tolerances.pln_angle):
+            elif is_parallel(facein.Surf.Axis, GVector(0, 1, 0), self.tolerances.pln_angle):
                 p = "PY"
-            elif is_parallel(facein.Surf.Axis, FreeCAD.Vector(0, 0, 1), self.tolerances.pln_angle):
+            elif is_parallel(facein.Surf.Axis, GVector(0, 0, 1), self.tolerances.pln_angle):
                 p = "PZ"
             else:
                 p = "P"

@@ -7,15 +7,22 @@ import FreeCAD
 from .data_constants import mask
 from .boolean_function import BoolSurface
 from ...geometry_backend import vector_geometry
-from ...geometry_backend.freecad_backend import FreeCADBackend
-from ...geometry_backend.geometry_backend_interface import GSolid, GVector
-from ...geometry_backend.geometry_backend_interface import PlaneParams as _GPlaneParams
+from ...geometry_backend.vector_geometry import to_gvector
+from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+from ...geometry_backend.geometry_backend_interface import GPlane, GVector
 
 _backend = FreeCADBackend()
 
 
-def _to_gvector(vector: FreeCAD.Vector) -> GVector:
-    return GVector(vector.x, vector.y, vector.z)
+def _to_native_vector(vector):
+    """
+    Normalizes a possibly-neutral GVector back to a native FreeCAD.Vector.
+    Boundary point between decomposition-side code (migrated to GVector
+    per-surface-type) and the legacy output-side surface classes below
+    (PlaneParams etc, not yet migrated, consumed by write/*.py with
+    native-only assumptions like `.isEqual()`).
+    """
+    return to_fc_vector(vector) if isinstance(vector, GVector) else vector
 
 
 # The functions below are thin adapters over `vector_geometry.py` (the
@@ -30,15 +37,15 @@ def is_same_value(v1, v2, tolerance=1e-6):
 
 
 def is_opposite(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_opposite(_to_gvector(vector_1), _to_gvector(vector_2), tolerance)
+    return vector_geometry.is_opposite(to_gvector(vector_1), to_gvector(vector_2), tolerance)
 
 
 def is_parallel(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_parallel(_to_gvector(vector_1), _to_gvector(vector_2), tolerance)
+    return vector_geometry.is_parallel(to_gvector(vector_1), to_gvector(vector_2), tolerance)
 
 
 def is_in_line(point, dir, pnt_line, tolerance=1e-6):
-    return vector_geometry.is_in_line(_to_gvector(point), _to_gvector(dir), _to_gvector(pnt_line), tolerance)
+    return vector_geometry.is_in_line(to_gvector(point), to_gvector(dir), to_gvector(pnt_line), tolerance)
 
 
 # TODO check this function is used in the code
@@ -60,8 +67,8 @@ def is_in_edge(edge1, edge2, tolerance=1e-8):
 
 
 def is_in_plane(point, plane, d_tolerance=1e-7):
-    plane_params = _GPlaneParams(_to_gvector(plane.Surf.Position), _to_gvector(plane.Surf.Axis))
-    return vector_geometry.is_in_plane(_to_gvector(point), plane_params, d_tolerance)
+    plane_params = GPlane(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
+    return vector_geometry.is_in_plane(to_gvector(point), plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -76,16 +83,16 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
 
 
 def sign_plane(point, plane):
-    plane_params = _GPlaneParams(_to_gvector(plane.Surf.Position), _to_gvector(plane.Surf.Axis))
-    return vector_geometry.sign_plane(_to_gvector(point), plane_params)
+    plane_params = GPlane(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
+    return vector_geometry.sign_plane(to_gvector(point), plane_params)
 
 
 def shapes_in_contact(shape1, shape2, tolerance=1e-6):
     if shape1 is shape2:
         return True
     return _backend.in_contact(
-        GSolid(native=shape1, backend=_backend),
-        GSolid(native=shape2, backend=_backend),
+        _backend._wrap_solid(shape1),
+        _backend._wrap_solid(shape2),
         tolerance,
     )
 
@@ -115,9 +122,9 @@ def points_to_coeffs(points):
             xm = 1 / tpp[4 - i]
         coeff[4 - i] = tpp[4 - i] * xm
 
-    axis = FreeCAD.Vector(coeff[0:3])
-    distance = coeff[3] / axis.Length
-    axis.normalize()
+    axis = GVector(*coeff[0:3])
+    distance = coeff[3] / axis.length
+    axis = axis.normalized()
 
     return axis, distance
 
@@ -296,8 +303,8 @@ class Plane3PtsParams:
 
 class PlaneParams:
     def __init__(self, params):
-        self.Position = params[0]
-        self.Axis = params[1]
+        self.Position = _to_native_vector(params[0])
+        self.Axis = _to_native_vector(params[1])
         self.dimL1 = params[2]
         self.dimL2 = params[3]
         if len(params) > 4:
@@ -326,8 +333,8 @@ class PlaneParams:
 
 class CylinderOnlyParams:
     def __init__(self, params, real=True):
-        self.Center = params[0]
-        self.Axis = params[1]
+        self.Center = _to_native_vector(params[0])
+        self.Axis = _to_native_vector(params[1])
         self.Radius = params[2]
         self.dimL = params[3]
         self.real = real
@@ -359,8 +366,8 @@ class CylinderOnlyParams:
 
 class ConeOnlyParams:
     def __init__(self, params, real=True):
-        self.Apex = params[0]
-        self.Axis = params[1]
+        self.Apex = _to_native_vector(params[0])
+        self.Axis = _to_native_vector(params[1])
         self.SemiAngle = params[2]
         self.dimL = params[3]
         self.dimR = params[4]
@@ -393,7 +400,7 @@ class ConeOnlyParams:
 
 class SphereOnlyParams:
     def __init__(self, params):
-        self.Center = params[0]
+        self.Center = _to_native_vector(params[0])
         self.Radius = params[1]
 
     def __eq__(self, s2):
@@ -418,8 +425,8 @@ class SphereOnlyParams:
 
 class TorusOnlyParams:
     def __init__(self, params):
-        self.Center = params[0]
-        self.Axis = params[1]
+        self.Center = _to_native_vector(params[0])
+        self.Axis = _to_native_vector(params[1])
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
 

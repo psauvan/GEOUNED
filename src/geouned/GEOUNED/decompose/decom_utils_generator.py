@@ -11,7 +11,10 @@ import Part
 
 from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import PlaneGu, TorusGu, SphereGu, ConeGu, CylinderGu, other_face_edge
+from ..utils.geometry_gu import other_face_edge, is_same_surface
+from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus
+from ...geometry_backend.vector_geometry import to_gvector
+from ...geometry_backend.freecad_backend import to_fc_vector
 from ..utils.basic_functions_part1 import (
     is_parallel,
     is_same_value,
@@ -42,11 +45,11 @@ def cyl_bound_planes_first_version(solidFaces, face):
         if adjacent_face is None:
             continue
 
-        if type(adjacent_face.Surface) is TorusGu:
+        if type(adjacent_face.Surface) is GTorus:
             continue  # doesn't create plane if other face is a torus
-        if type(adjacent_face.Surface) is PlaneGu:
+        if type(adjacent_face.Surface) is GPlane:
             continue  # doesn't create plane if other face is a Plane
-        if face.Surface.isSameSurface(adjacent_face.Surface):
+        if is_same_surface(face.Surface, adjacent_face.Surface):
             continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
@@ -88,7 +91,7 @@ def torus_bound_planes(solidFaces, face, tolerances):
 
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
-            if face.Surface.isSameSurface(adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
 
         if curve[0:6] == "Circle":
@@ -128,42 +131,45 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
             continue
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
-            if type(adjacent_face.Surface) is PlaneGu and adjacent_face.Index in omitfaces:
+            if type(adjacent_face.Surface) is GPlane and adjacent_face.Index in omitfaces:
                 continue
-            if type(adjacent_face.Surface) is TorusGu:
+            if type(adjacent_face.Surface) is GTorus:
                 continue  # doesn't create plane if other face is a torus
-            if face.Surface.isSameSurface(adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface):
                 continue  # doesn't create plane if other face has same surface
-            if (type(face.Surface) is ConeGu or type(face.Surface) is CylinderGu) and (
-                type(adjacent_face.Surface) is ConeGu or type(adjacent_face.Surface) is CylinderGu
+            if (type(face.Surface) is GCone or type(face.Surface) is GCylinder) and (
+                type(adjacent_face.Surface) is GCone or type(adjacent_face.Surface) is GCylinder
             ):
 
-                if type(face.Surface) is ConeGu:
-                    p1 = face.Surface.Surface.Apex
+                if type(face.Surface) is GCone:
+                    p1 = to_gvector(face.Surface.Apex)
                 else:
-                    p1 = face.Surface.Surface.Center
+                    p1 = to_gvector(face.Surface.Center)
 
-                if type(adjacent_face.Surface) is ConeGu:
-                    p2 = adjacent_face.Surface.Surface.Apex
+                if type(adjacent_face.Surface) is GCone:
+                    p2 = to_gvector(adjacent_face.Surface.Apex)
                 else:
-                    p2 = adjacent_face.Surface.Surface.Center
+                    p2 = to_gvector(adjacent_face.Surface.Center)
+
+                axis1 = to_gvector(face.Surface.Axis)
+                axis2 = to_gvector(adjacent_face.Surface.Axis)
 
                 # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
-                cross = face.Surface.Surface.Axis.cross(adjacent_face.Surface.Surface.Axis)
-                if cross.Length > 1e-6:
-                    dist = abs(cross.dot(p1 - p2)) / cross.Length
+                cross = axis1.cross(axis2)
+                if cross.length > 1e-6:
+                    dist = abs(cross.dot(p1 - p2)) / cross.length
                     if dist > 1e-3:
                         continue  # doesn't create plane if the axes are not close enough
                 else:
                     # if the axes are parallel, check the distance between the two points
-                    dist = (p1 - p2).Length
+                    dist = (p1 - p2).length
                     if dist > 1e-3:
                         continue  # doesn't create plane if the axes are not close enough
 
             plane = cks_edge_plane(face, [e])
             if plane is not None:
                 planes.append(plane)
-    if len(planes) > 2 and type(face.Surface) is not SphereGu:
+    if len(planes) > 2 and type(face.Surface) is not GSphere:
         planes = most_outer_planes(face.Surface.Axis, planes)
     return planes
 
@@ -197,6 +203,8 @@ def cks_edge_plane(face, edges, pc=None):
 def spline_wires(edges, face, pc=None):
 
     zaxis = face.Surface.Axis
+    if type(face.Surface) in (GCylinder, GCone, GTorus):
+        zaxis = to_fc_vector(zaxis)
     try:
         W = Part.Wire(edges)
         majoraxis = get_axis_inertia(W.MatrixOfInertia)
@@ -332,7 +340,7 @@ def external_plane(plane, Faces):
         if adjacent_face is None:
             continue
         if isinstance(
-            adjacent_face.Surface, PlaneGu
+            adjacent_face.Surface, GPlane
         ):  # if not plane not sure current plane will not cut other part of the solid
             if region_sign(plane, adjacent_face) == "OR":
                 return False
@@ -350,7 +358,7 @@ def exclude_no_cutting_planes(Faces, omit=None):
     for f in Faces:
         if f.Index in omit:
             continue
-        if isinstance(f.Surface, PlaneGu):
+        if isinstance(f.Surface, GPlane):
             if external_plane(f, Faces):
                 omit.add(f.Index)
 
@@ -366,7 +374,7 @@ def cutting_face_number(f, Faces, omitfaces):
             continue
         if adjacent_face.Index in omitfaces:
             continue
-        if isinstance(adjacent_face.Surface, PlaneGu):
+        if isinstance(adjacent_face.Surface, GPlane):
             ncut += 1
         elif adjacent_face.Surface is None:
             adjacent_face.__face__.exportStep("Spline_surface.stp")
@@ -382,7 +390,7 @@ def order_plane_face(Faces, omitfaces):
     for f in Faces:
         if f.Index in omitfaces:
             continue
-        if not isinstance(f.Surface, PlaneGu):
+        if not isinstance(f.Surface, GPlane):
             continue
         ncut = cutting_face_number(f, Faces, omitfaces)
         counts.append((ncut, f.Index))
@@ -396,14 +404,14 @@ def omit_isolated_planes(Faces, omitfaces):
     for f in Faces:
         if f.Index in omitfaces:
             continue
-        if not isinstance(f.Surface, PlaneGu):
+        if not isinstance(f.Surface, GPlane):
             continue
 
         for e in f.OuterWire.Edges:
             adjacent_face = other_face_edge(e, f, Faces)
             if adjacent_face is None:
                 continue
-            if type(adjacent_face.Surface) is PlaneGu:
+            if type(adjacent_face.Surface) is GPlane:
                 if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < 1e-5:
                     if adjacent_face.Index not in omitfaces:
                         omitfaces.add(f.Index)

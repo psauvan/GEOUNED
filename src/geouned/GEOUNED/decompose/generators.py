@@ -8,7 +8,8 @@ from ..utils.functions import (
     build_tcone_params,
     build_roundC_params,
 )
-from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
+from ..utils.geometry_gu import SolidGu
+from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus
 from .decom_utils_generator import (
     cks_bound_planes,
     torus_bound_planes,
@@ -20,7 +21,7 @@ from .decom_utils_generator import (
 
 def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
-    solid_GU = SolidGu(solid, tolerances=tolerances, plane3Pts=False)
+    solid_GU = SolidGu(solid, tolerances=tolerances)
 
     if meta_surface:
 
@@ -79,21 +80,21 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
-        surf = str(face.Surface)
+        surf_type = type(face.Surface)
 
-        if surf == "<Cylinder object>":
+        if surf_type is GCylinder:
             for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
-        elif surf == "<Cone object>":
+        elif surf_type is GCone:
             for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
-        elif surf[0:6] == "Sphere":
+        elif surf_type is GSphere:
             for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
-        elif surf == "<Toroid object>":
+        elif surf_type is GTorus:
             for p in torus_bound_planes(GUFaces, face, tolerances):
                 yield p
 
@@ -102,8 +103,7 @@ def cylinder_generator(GUFaces, omitfaces):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
-        surf = str(face.Surface)
-        if surf != "<Cylinder object>":
+        if type(face.Surface) is not GCylinder:
             continue
 
         dir = face.Surface.Axis
@@ -118,8 +118,7 @@ def cone_generator(GUFaces, omitfaces):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
-        surf = str(face.Surface)
-        if surf != "<Cone object>":
+        if type(face.Surface) is not GCone:
             continue
         dir = face.Surface.Axis
         apex = face.Surface.Apex
@@ -134,8 +133,7 @@ def sphere_generator(GUFaces, omitfaces):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
-        surf = str(face.Surface)
-        if surf[0:6] != "Sphere":
+        if type(face.Surface) is not GSphere:
             continue
 
         rad = face.Surface.Radius
@@ -146,8 +144,7 @@ def sphere_generator(GUFaces, omitfaces):
 
 def torus_generator(GUFaces):
     for face in GUFaces:
-        surf = str(face.Surface)
-        if surf != "<Toroid object>":
+        if type(face.Surface) is not GTorus:
             continue
 
         radMaj = face.Surface.MajorRadius
@@ -164,7 +161,7 @@ def next_multiplanes(solidFaces, plane_index_set):
     for f in solidFaces:
         if f.Index in plane_index_set:
             continue
-        if isinstance(f.Surface, PlaneGu):
+        if isinstance(f.Surface, GPlane):
             planes.append(f)
 
     used_plane = set()
@@ -194,7 +191,7 @@ def next_Can(solid, canface_index):
     solidFaces = solid.Faces
 
     for f in solidFaces:
-        if isinstance(f.Surface, CylinderGu):
+        if isinstance(f.Surface, GCylinder):
             if f.Index in canface_index:
                 continue
 
@@ -213,7 +210,7 @@ def next_truncCone(solid, tconeface_index):
     solidFaces = solid.Faces
 
     for f in solidFaces:
-        if isinstance(f.Surface, ConeGu):
+        if isinstance(f.Surface, GCone):
             if f.Index in tconeface_index:
                 continue
 
@@ -230,7 +227,7 @@ def next_roundCorner(solid, cornerface_index):
     """identify and return all roundcorner type in the solid."""
     solidFaces = solid.Faces
     for f in solidFaces:
-        if isinstance(f.Surface, CylinderGu):
+        if isinstance(f.Surface, GCylinder):
             if f.Index in cornerface_index:
                 continue
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})

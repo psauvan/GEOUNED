@@ -8,14 +8,34 @@
 import logging
 import math
 
-import FreeCAD
 import Part
 
 from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
 from ..utils.data_constants import twoPi
+from ...geometry_backend import vector_geometry
+from ...geometry_backend.vector_geometry import to_gvector
+from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GCone, GSphere, GTorus, GFace
 
 logger = logging.getLogger("general_logger")
+
+_backend = FreeCADBackend()
+
+_SAME_SURFACE_PREDICATE = {
+    GPlane: vector_geometry.is_same_plane_surface,
+    GCylinder: vector_geometry.is_same_cylinder_surface,
+    GCone: vector_geometry.is_same_cone_surface,
+    GSphere: vector_geometry.is_same_sphere_surface,
+    GTorus: vector_geometry.is_same_torus_surface,
+}
+
+
+def is_same_surface(surface_1, surface_2):
+    """Dispatches to the neutral-type predicate for the 5 analytic surface types."""
+    if type(surface_1) is not type(surface_2):
+        return False
+    return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2)
 
 
 class face_index:
@@ -40,148 +60,12 @@ class SurfacesGu(object):
         return self.type
 
 
-class PlaneGu(SurfacesGu):
-    """GEOUNED Plane Class"""
-
-    def __init__(self, face, plane3Pts=False, BSpline_Plane=None):
-        SurfacesGu.__init__(self, face)
-        self.pointDef = plane3Pts
-        if BSpline_Plane is None:
-            self.Axis = face.Surface.Axis
-            self.Position = face.Surface.Position
-            if plane3Pts:
-                self.Points = tuple(v.Point for v in face.Vertexes)
-                d1 = self.Points[0] - self.Points[1]
-                d2 = self.Points[0] - self.Points[2]
-                d3 = self.Points[1] - self.Points[2]
-                self.dim1 = max(d1.Length, d2.Length, d3.Length)
-                self.dim2 = min(d1.Length, d2.Length, d3.Length)
-            else:
-                self.dim1 = face.ParameterRange[1] - face.ParameterRange[0]
-                self.dim2 = face.ParameterRange[3] - face.ParameterRange[2]
-        else:
-            self.Axis = BSpline_Plane.Axis
-            self.Position = BSpline_Plane.Position
-            self.dim1 = 1
-            self.dim2 = 1
-
-    def isSameSurface(self, surface):
-        if type(surface) is not PlaneGu:
-            return False
-        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
-            return False
-        if abs(self.Axis.dot(self.Position) - surface.Axis.dot(surface.Position)) > 1e-5:
-            return False
-        return True
-
-    def isParallel(self, surface):
-        if type(surface) is not PlaneGu:
-            return False
-        return abs(self.Axis.dot(surface.Axis)) > 0.99999
-
-    def reverse(self):
-        self.Axis = -self.Axis
-
-
-class CylinderGu(SurfacesGu):
-    """GEOUNED Cylinder Class"""
-
-    def __init__(self, face):
-        SurfacesGu.__init__(self, face)
-        self.Axis = face.Surface.Axis
-        self.Radius = face.Surface.Radius
-        self.Center = face.Surface.Center
-        self.dimL = face.ParameterRange[3] - face.ParameterRange[2]
-
-    def isSameSurface(self, surface):
-        if type(surface) is not CylinderGu:
-            return False
-        if abs(self.Radius - surface.Radius) > 1e-5:
-            return False
-        d = self.Center - surface.Center
-        if d.Length > 1e-5:
-            return False
-        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
-            return False
-        return True
-
-
-class ConeGu(SurfacesGu):
-    """GEOUNED Cone Class"""
-
-    def __init__(self, face):
-        SurfacesGu.__init__(self, face)
-        self.Axis = face.Surface.Axis
-        self.Apex = face.Surface.Apex
-        self.SemiAngle = face.Surface.SemiAngle
-        self.dimL = face.ParameterRange[3] - face.ParameterRange[2]
-        self.dimR = face.Surface.Radius
-        self.Radius = face.Surface.Radius
-
-    def isSameSurface(self, surface):
-        if type(surface) is not ConeGu:
-            return False
-        if abs(self.SemiAngle - surface.SemiAngle) > 1e-5:
-            return False
-        d = self.Apex - surface.Apex
-        if d.Length > 1e-5:
-            return False
-        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
-            return False
-        return True
-
-
-class SphereGu(SurfacesGu):
-    """GEOUNED Sphere Class"""
-
-    def __init__(self, face):
-        SurfacesGu.__init__(self, face)
-        self.type = self.type[0:6]
-        self.Center = face.Surface.Center
-        self.Radius = face.Surface.Radius
-
-    def isSameSurface(self, surface):
-        if type(surface) is not SphereGu:
-            return False
-        if abs(self.Radius - surface.Radius) > 1e-5:
-            return False
-        d = self.Center - surface.Center
-        if d.Length > 1e-5:
-            return False
-        return True
-
-
-class TorusGu(SurfacesGu):
-    """GEOUNED Torus Class"""
-
-    def __init__(self, face):
-        SurfacesGu.__init__(self, face)
-        self.Center = face.Surface.Center
-        self.Axis = face.Surface.Axis
-        self.MajorRadius = face.Surface.MajorRadius
-        self.MinorRadius = face.Surface.MinorRadius
-
-    def isSameSurface(self, surface):
-        if type(surface) is not TorusGu:
-            return False
-        if abs(self.MajorRadius - surface.MajorRadius) > 1e-5:
-            return False
-        if abs(self.MinorRadius - surface.MinorRadius) > 1e-5:
-            return False
-        d = self.Center - surface.Center
-        if d.Length > 1e-5:
-            return False
-        if abs(self.Axis.dot(surface.Axis)) < 0.99999:
-            return False
-        return True
-
-
 class SolidGu:
     """GEOUNED Solid Class"""
 
-    def __init__(self, solid, tolerances, plane3Pts=False):
+    def __init__(self, solid, tolerances):
         self.solid = solid
-        faces = define_list_face_gu(solid.Faces, plane3Pts)
+        faces = define_list_face_gu(solid.Faces)
         self.Faces = faces
         self.tolerances = tolerances
         self.Solids = solid.Solids
@@ -199,7 +83,7 @@ class SolidGu:
 
         toroidIndex = []
         for i, face in enumerate(self.Faces):
-            if isinstance(face.Surface, TorusGu):
+            if isinstance(face.Surface, GTorus):
                 toroidIndex.append(i)
 
         if len(toroidIndex) != 0:
@@ -320,12 +204,12 @@ class SolidGu:
 class FaceGu(object):
     """GEOUNED Face Class"""
 
-    def __init__(self, face, Plane3Pts=False):
+    def __init__(self, face):
         # GEOUNED based atributes
 
         self.__face__ = face
         self.Index = None
-        self.Surface = define_surface(face, Plane3Pts)  # Define the appropiate GU Surface of the face
+        self.Surface = define_surface(face)  # Define the appropiate GU Surface of the face
 
         # FreeCAD based Atributes
         self.Area = face.Area
@@ -359,6 +243,12 @@ class FaceGu(object):
 
     def valueAt(self, u, v):
         return self.__face__.valueAt(u, v)
+
+    def tangentAt(self, u, v):
+        return self.__face__.tangentAt(u, v)
+
+    def parameter(self, point):
+        return self.__face__.Surface.parameter(point)
 
     def distToShape(self, shape):
         shape1 = self.__face__
@@ -416,31 +306,34 @@ class ShellGu:
     def __init__(self, faces):
         self.Faces = faces
         self.__shell__ = self.makeShell()
-        self.Edges = []
-        self.Indexes = []
-        self.Area = 0
-        self.CenterOfMass = FreeCAD.Vector(0, 0, 0)
-        for f in faces:
-            self.Edges.extend(f.Edges)
-            self.Indexes.append(f.Index)
-            self.Area += f.Area
-            self.CenterOfMass += f.Area * f.CenterOfMass
+        self.Indexes = [f.Index for f in faces]
         self.Orientation = faces[0].Orientation
         # self.set_outerWire() #produce error and no used anymore
 
     def makeShell(self):
         if type(self.Faces[0]) is FaceGu:
-            ff = [f.__face__ for f in self.Faces]
+            native_faces = [f.__face__ for f in self.Faces]
         else:
-            ff = self.Faces
-        return Part.makeShell(ff)
-
-    def distToShape(self, shape):
-        distmin = 1
-        for f in shape.Faces:
-            d = f.distToShape(shape)
-            distmin = min(distmin, d[0])
-        return (distmin,)
+            native_faces = self.Faces
+        # Surface/Edges/OuterWire deliberately left unclassified: make_shell
+        # only reads .native, and eagerly classifying here (_build_gface)
+        # would force edge curve-classification on every boundary edge,
+        # which raises for curve types the backend doesn't model (e.g. a
+        # trimmed conic section's Part.Hyperbola) -- topology-only shell
+        # construction has no reason to require that.
+        gfaces = [
+            GFace(
+                native=nf,
+                backend=_backend,
+                Surface=None,
+                Edges=(),
+                OuterWire=None,
+                ParameterRange=nf.ParameterRange,
+                Orientation=nf.Orientation,
+            )
+            for nf in native_faces
+        ]
+        return _backend.make_shell(gfaces)
 
     def set_outerWire(self):
         wires = []
@@ -450,30 +343,24 @@ class ShellGu:
 
 
 # Aux functions
-def define_list_face_gu(face_list, plane3Pts=False):
+def define_list_face_gu(face_list):
     """Return the list of the  corresponding Face_GU  object of a FaceList"""
-    return tuple(FaceGu(face, plane3Pts) for face in face_list)
+    return tuple(FaceGu(face) for face in face_list)
 
 
-def define_surface(face, plane3Pts):
+_NATIVE_SURFACE_KINDS = (Part.Plane, Part.Cylinder, Part.Cone, Part.Sphere, Part.Toroid, Part.BSplineSurface)
 
+
+def define_surface(face):
+    # Part.BSplineSurface is included: transport codes don't support BSpline
+    # surfaces at all, the only acceptable case is one that's geometrically
+    # just a mislabeled plane, which is what the backend raises on if it
+    # isn't -- see FreeCADBackend._classify_native_surface's docstring.
     kind_surf = type(face.Surface)
-    if kind_surf is Part.Plane:
-        Surf_GU = PlaneGu(face, plane3Pts)
-    elif kind_surf is Part.Cylinder:
-        Surf_GU = CylinderGu(face)
-    elif kind_surf is Part.Cone:
-        Surf_GU = ConeGu(face)
-    elif kind_surf is Part.Sphere:
-        Surf_GU = SphereGu(face)
-    elif kind_surf is Part.Toroid:
-        Surf_GU = TorusGu(face)
-    elif kind_surf is Part.BSplineSurface:
-        Surf_GU = BSplineGu(face)
-    else:
-        logger.info(f"bad Surface type {kind_surf}")
-        Surf_GU = None
-    return Surf_GU
+    if kind_surf in _NATIVE_SURFACE_KINDS:
+        return _backend._classify_native_surface(face)
+    logger.info(f"bad Surface type {kind_surf}")
+    return None
 
 
 def is_inverted(solid):
@@ -527,15 +414,6 @@ def is_inverted(solid):
     return False
 
 
-def BSplineGu(face):
-
-    plane = face.findPlane()
-    if plane is None:
-        return None
-    else:
-        return PlaneGu(face, BSpline_Plane=plane)
-
-
 def set_outerWire(wires, face):
     if len(wires) == 1:
         return wires[0]
@@ -576,7 +454,7 @@ def innerWires(wire, face):
         pmin, pmax = edge.ParameterRange
         pe = 0.5 * (pmin + pmax)
         pos = edge.valueAt(pe)
-        u, v = face.__face__.Surface.parameter(pos)
+        u, v = face.parameter(pos)
         if u < umin:
             u += twoPi
         elif u > umax:
@@ -632,7 +510,7 @@ def innerWires_org(wire, face, Faces):
     for edge in wire.Edges:
         adjface = other_face_edge(edge, face, Faces)
         pos = edge.Vertexes[0].Point
-        u, v = face.__face__.Surface.parameter(pos)
+        u, v = face.parameter(pos)
         normal = face.__face__.normalAt(u, v)
 
         pe = edge.Curve.parameter(pos)
@@ -646,7 +524,7 @@ def innerWires_org(wire, face, Faces):
         direction.normalize()
 
         vect = direction.cross(normal)
-        u, v = adjface.__face__.Surface.parameter(pos)
+        u, v = adjface.parameter(pos)
         vect2 = adjface.__face__.normalAt(u, v)
         scalar = vect.dot(vect2)
         if abs(scalar) < 1e-5:
@@ -818,10 +696,10 @@ def line_projection(p1, v1, p2, v2):
     """return the point of the projection of the line with point p2 and axis v2
     on line (p1,v1)"""
 
-    x = FreeCAD.Vector(v1)
-    y = FreeCAD.Vector(v2)
-    x.normalize()
-    y.normalize()
+    p1 = to_gvector(p1)
+    p2 = to_gvector(p2)
+    x = to_gvector(v1).normalized()
+    y = to_gvector(v2).normalized()
 
     alpha = p1.dot(x)
     beta = p2.dot(x)

@@ -5,11 +5,13 @@
 import logging
 import math
 
-import FreeCAD
-
 from .boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
-from .split_function import split_bop
+from ...geometry_backend.geometry_backend_interface import GSolid, GVector
+from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geometry_backend.vector_geometry import to_gvector
+
+_backend = FreeCADBackend()
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -242,6 +244,11 @@ def combine_diag_elements(d1, d2):
 
 def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_surfaces=set()):
 
+    # Box is a GSolid when it comes from the (already migrated) void
+    # pipeline, or a native Part.Shape when it comes from callers not
+    # migrated yet (cell_definition.py/core.py's get_box) -- accept both.
+    box_native = Box.native if type(Box) is GSolid else Box
+
     if type(SurfInfo) is dict:
         surfaces = SurfInfo
         surfaceList = tuple(surfaces.keys())
@@ -254,10 +261,10 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
     if type(surfaces[surfaceList[0]]) is GeounedSurface:
         for s in surfaceList:
             ss = surfaces[s]
-            ss.build_surface(Box.BoundBox)
+            ss.build_surface(box_native.BoundBox)
     else:
         for s in surfaceList:
-            surfaces[s].buildShape(Box.BoundBox)
+            surfaces[s].buildShape(box_native.BoundBox)
 
     CTable = ConstraintTable()
     if simplification_mode == "diag":
@@ -443,12 +450,16 @@ def split_solid_fast(solid, surf, box, options):
 
     if box:
         if surf.shape:
-            comsolid = split_bop(solid, [surf.shape], options.splitTolerance, options)
+            result = _backend.split(
+                _backend._wrap_solid(solid), _backend._wrap_solid(surf.shape), options.splitTolerance,
+                scale_up_floor=options.splitTolerance if options.scaleUp else None,
+            )
+            comsolid_solids = [s.native for s in result.solids]
         else:
             return check_sign(solid, surf), None
 
-        if len(comsolid.Solids) <= 1:
-            if len(comsolid.Solids) == 1:
+        if len(comsolid_solids) <= 1:
+            if len(comsolid_solids) == 1:
                 res = split_solid_fast(solid, surf, False, options)
                 if res == (1, 1):
                     return 0, None
@@ -466,7 +477,7 @@ def split_solid_fast(solid, surf, box, options):
         else:
             posSol = []
             negSol = []
-            for s in comsolid.Solids:
+            for s in comsolid_solids:
                 sgn = check_sign(s, surf)
                 if sgn == 1:
                     posSol.append(s)
@@ -481,9 +492,12 @@ def split_solid_fast(solid, surf, box, options):
     else:
         # "not box" => return the position of the +/- region of s1 (the solid) with respect s2
         if surf.shell:
-            dist = solid.distToShape(surf.shell)[0]
+            dist = _backend.distance(_backend._wrap_solid(solid), _backend._wrap_solid(surf.shell))
             if dist > 1e-6:
-                # chech if surf and solid don't intersect actually
+                # chech if surf and solid don't intersect actually (native call: distToShape's
+                # positive-distance report can be a false negative for a degenerate/tangent
+                # contact, e.g. touching along a zero-area line -- common()'s Area is the
+                # authoritative check in that case, not covered by the generic `in_contact`)
                 cc = solid.common(surf.shell)
                 if abs(cc.Area) > 0:
                     dist = 0
@@ -507,123 +521,16 @@ def split_solid_fast(solid, surf, box, options):
 
 # find one point inside a solid (region)
 def point_inside(solid):
-
-    point = solid.CenterOfMass
-    if solid.isInside(point, 0.0, False):
-        return point
-
-    cut_line = 32
-    cut_box = 2
-
-    v1 = solid.Vertexes[0].Point
-    for vi in range(len(solid.Vertexes) - 1, 0, -1):
-        v2 = solid.Vertexes[vi].Point
-        dv = (v2 - v1) * 0.5
-
-        n = 1
-        while True:
-            for i in range(n):
-                point = v1 + dv * (1 + 0.5 * i)
-                if solid.isInside(point, 0.0, False):
-                    return point
-            n = n * 2
-            dv = dv * 0.5
-            if n > cut_line:
-                break
-
-    BBox = solid.optimalBoundingBox(False)
-    box = [BBox.XMin, BBox.XMax, BBox.YMin, BBox.YMax, BBox.ZMin, BBox.ZMax]
-
-    boxes, centers = divide_box(box)
-    n = 0
-
-    while True:
-        for p in centers:
-            pp = FreeCAD.Vector(p[0], p[1], p[2])
-            if solid.isInside(pp, 0.0, False):
-                return pp
-
-        subbox = []
-        centers = []
-        for b in boxes:
-            btab, ctab = divide_box(b)
-            subbox.extend(btab)
-            centers.extend(ctab)
-        boxes = subbox
-        n = n + 1
-
-        if n == cut_box:
-            break
-
-    return point_from_surface(solid)
-
-
-def point_from_surface(solid):
-
-    for face in solid.Faces:
-        parameters = face.ParameterRange
-        u = (parameters[0] + parameters[1]) / 2
-        v = (parameters[2] + parameters[3]) / 2
-        pface = face.valueAt(u, v)
-        normal = face.normalAt(u, v)
-
-        d = 10
-        pp = pface + d * normal
-        while d > 1e-8:
-            if solid.isInside(pp, 0.0, False):
-                return pp
-            d *= 0.5
-            pp = pface + d * normal
-
-        normal = -normal
-        d = 10
-        pp = pface + d * normal
-        while d > 1e-8:
-            if solid.isInside(pp, 0.0, False):
-                return pp
-            d *= 0.5
-            pp = pface + d * normal
-
-    logger.info(f"Solid not found in bounding Box (Volume : {solid.Volume})")
-    return None
-
-
-# divide a box into 8 smaller boxes
-def divide_box(Box):
-    xmid = (Box[1] + Box[0]) * 0.5
-    ymid = (Box[3] + Box[2]) * 0.5
-    zmid = (Box[5] + Box[4]) * 0.5
-
-    b1 = (Box[0], xmid, Box[2], ymid, Box[4], zmid)
-    p1 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
-
-    b2 = (xmid, Box[1], Box[2], ymid, Box[4], zmid)
-    p2 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
-
-    b3 = (Box[0], xmid, ymid, Box[3], Box[4], zmid)
-    p3 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
-
-    b4 = (xmid, Box[1], ymid, Box[3], Box[4], zmid)
-    p4 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
-
-    b5 = (Box[0], xmid, Box[2], ymid, zmid, Box[5])
-    p5 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
-
-    b6 = (xmid, Box[1], Box[2], ymid, zmid, Box[5])
-    p6 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
-
-    b7 = (Box[0], xmid, ymid, Box[3], zmid, Box[5])
-    p7 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
-
-    b8 = (xmid, Box[1], ymid, Box[3], zmid, Box[5])
-    p8 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
-
-    return (b1, b2, b3, b4, b5, b6, b7, b8), (p1, p2, p3, p4, p5, p6, p7, p8)
+    gsolid = _backend._wrap_solid(solid)
+    point = _backend.find_interior_point(gsolid)
+    if point is None:
+        logger.info(f"Solid not found in bounding Box (Volume : {_backend.volume(gsolid)})")
+    return point
 
 
 def check_sign(solid_or_point, surf):
 
-    if type(solid_or_point) is FreeCAD.Vector:
+    if type(solid_or_point) is GVector:
         point = solid_or_point
     else:
         point = point_inside(solid_or_point)
@@ -740,16 +647,16 @@ def check_sign(solid_or_point, surf):
 def check_sign_primitive(point, surf):
 
     if surf.Type == "Plane":
-        r = point - surf.Surf.Position
-        if surf.Surf.Axis.dot(r) > 0:
+        r = point - to_gvector(surf.Surf.Position)
+        if to_gvector(surf.Surf.Axis).dot(r) > 0:
             return 1
         else:
             return -1
 
     elif surf.Type == "CylinderOnly":
-        r = point - surf.Surf.Center
-        L2 = r.Length * r.Length
-        z = surf.Surf.Axis.dot(r)
+        r = point - to_gvector(surf.Surf.Center)
+        L2 = r.length * r.length
+        z = to_gvector(surf.Surf.Axis).dot(r)
         z2 = z * z
         R2 = surf.Surf.Radius * surf.Surf.Radius
         if L2 - z2 > R2:
@@ -758,16 +665,15 @@ def check_sign_primitive(point, surf):
             return -1
 
     elif surf.Type == "SphereOnly":
-        r = point - surf.Surf.Center
-        if r.Length > surf.Surf.Radius:
+        r = point - to_gvector(surf.Surf.Center)
+        if r.length > surf.Surf.Radius:
             return 1
         else:
             return -1
 
     elif surf.Type == "ConeOnly":
-        r = point - surf.Surf.Apex
-        r.normalize()
-        z = round(surf.Surf.Axis.dot(r), 15)
+        r = (point - to_gvector(surf.Surf.Apex)).normalized()
+        z = round(to_gvector(surf.Surf.Axis).dot(r), 15)
         alpha = math.acos(z)
 
         if alpha > surf.Surf.SemiAngle:
@@ -776,11 +682,12 @@ def check_sign_primitive(point, surf):
             return -1
 
     elif surf.Type == "TorusOnly":
-        r = point - surf.Surf.Center
-        h = r.dot(surf.Surf.Axis)
-        rho = r - h * surf.Surf.Axis
+        axis = to_gvector(surf.Surf.Axis)
+        r = point - to_gvector(surf.Surf.Center)
+        h = r.dot(axis)
+        rho = r - h * axis
 
-        rp = math.sqrt((rho.Length - surf.Surf.MajorRadius) ** 2 + h**2)
+        rp = math.sqrt((rho.length - surf.Surf.MajorRadius) ** 2 + h**2)
         if rp > surf.Surf.MinorRadius:
             return 1
         else:

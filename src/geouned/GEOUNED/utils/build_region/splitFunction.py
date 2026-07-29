@@ -1,8 +1,8 @@
 import math
 
-import BOPTools.SplitAPI
-import FreeCAD
-import Part
+from ....geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
+
+_backend = FreeCADBackend()
 
 
 class SplitBase:
@@ -70,12 +70,8 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
 
     Tools = tuple(s.shape for s in surfacesCut)
     if Tools[0] is not None:
-        try:
-            Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
-        except:
-            Solids = []
-        if not Solids:
-            Solids = [base.base]
+        result = _backend.split(_backend._wrap_solid(base.base), _backend._wrap_solid(Tools[0]), tolerance)
+        Solids = [s.native for s in result.solids]
     else:
         Solids = [base.base]
 
@@ -118,37 +114,16 @@ def space_decomposition(solids, surfaces):
                 c.reverse()
                 print("Negative solid Volume", c.Volume)
         Svalues = {}
-        point = point_inside(c)
-        if point == None:
+        point = _backend.find_interior_point(_backend._wrap_solid(c))
+        if point is None:
             continue  # point not found in solid (solid is surface or very thin can be source of lost particules in MCNP)
+        point = to_fc_vector(point)
         for surf in surfaces:
             Svalues[surf.id] = surface_side(point, surf)
 
         component.append(Svalues)
         good_solids.append(c)
     return component, good_solids
-
-
-def point_inside(solid):
-
-    point = solid.Solids[0].CenterOfMass
-    if solid.isInside(point, 0.0, False):
-        return point
-
-    L = 0.5 * abs(solid.Volume) ** 0.33333
-    for face in solid.Faces:
-        u0, u1, v0, v1 = face.ParameterRange
-        u = 0.5 * (u0 + u1)
-        v = 0.5 * (v0 + v1)
-        if face.isPartOfDomain(u, v):
-            normal = -face.normalAt(u, v)
-            pos = face.valueAt(u, v)
-            d = L
-            for i in range(12):
-                d = d * 0.5
-                point = pos + d * normal
-                if solid.isInside(point, 0.0, False):
-                    return point
 
 
 # check the position of the point with respect
@@ -328,29 +303,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
+        gparts = [_backend._wrap_solid(p) for p in parts]
         try:
-            fused = parts[0]
-            for part in parts[1:]:
-                fused = fused.fuse(part)
-        except:
+            fused = _backend.fuse(gparts)
+        except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refinedfused = fused.removeSplitter()
-            except:
-                refinedfused = fused
+                refined = _backend.refine(fused)
+            except Exception:
+                refined = fused
 
-            if refinedfused.isValid():
-                solid = refinedfused
+            if _backend.is_valid(refined):
+                gsolid = refined
+            elif _backend.is_valid(fused):
+                gsolid = fused
             else:
-                if fused.isValid():
-                    solid = fused
-                else:
-                    solid = Part.makeCompound(parts)
+                gsolid = _backend.make_compound(gparts)
         else:
-            solid = Part.makeCompound(parts)
+            gsolid = _backend.make_compound(gparts)
+        solid = gsolid.native
 
     if solid.Volume < 0:
-        solid.reverse()
+        solid = _backend.reverse(_backend._wrap_solid(solid)).native
     return solid

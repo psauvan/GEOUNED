@@ -3,7 +3,8 @@ import Part
 from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
-from .geometry_gu import CylinderGu, PlaneGu, TorusGu, other_face_edge
+from .geometry_gu import other_face_edge
+from ...geometry_backend.geometry_backend_interface import GPlane, GCylinder, GTorus
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
     region_sign,
@@ -100,10 +101,10 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         axis = adjacent_planes[0].Surface.Axis
         for p in adjacent_planes[1:]:
             d = p.Surface.Position - r1
-            if d.Length < 1e-5:
+            if d.length < 1e-5:
                 p1s.append(p)
             else:
-                d.normalize()
+                d = d.normalized()
                 if abs(axis.dot(d)) < 1e-5:
                     p1s.append(p)
                 else:
@@ -132,14 +133,14 @@ def get_can_surfaces(cylinder, solidFaces):
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
 
     for s in ext_faces:
-        if type(s.Surface) is CylinderGu:
+        if type(s.Surface) is GCylinder:
             if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
                 edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=True)
                 if edges is not None:
                     if planar_edges(edges):
                         surfaces.append((s, None))
                         continue
-        elif type(s.Surface) is TorusGu:
+        elif type(s.Surface) is GTorus:
             return None, None
 
         r = region_sign(cylinder_shell, s)
@@ -174,7 +175,7 @@ def get_tcone_surfaces(cone, solidFaces):
     kne_value = 1 if cone_shell.Orientation == "Reversed" else -1
 
     for s in ext_faces:
-        if type(s.Surface) is not PlaneGu:
+        if type(s.Surface) is not GPlane:
             return None, None
 
         r = region_sign(cone_shell, s)
@@ -232,7 +233,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
             f = other_face_edge(edge, newplane, Faces)
-            if type(f.Surface) != CylinderGu:
+            if type(f.Surface) != GCylinder:
                 continue
             if f.Index in cylinders_set:
                 continue

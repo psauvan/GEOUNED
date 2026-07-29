@@ -13,6 +13,7 @@ from .basic_functions_part1 import (
     is_same_value,
 )
 from ..write.functions import mcnp_surface
+from ...geometry_backend.vector_geometry import to_gvector
 
 
 def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_format):
@@ -95,11 +96,14 @@ def is_same_cylinder(
 
     if is_same_rad:
         if is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
-            c12 = cyl1.Center - cyl2.Center
-            d = cyl1.Axis.cross(c12).Length
+            axis1 = to_gvector(cyl1.Axis)
+            center1 = to_gvector(cyl1.Center)
+            center2 = to_gvector(cyl2.Center)
+            c12 = center1 - center2
+            d = axis1.cross(c12).length
 
             if tolerances.relativeTol:
-                tol = tolerances.cyl_distance * max(cyl1.Center.Length, cyl2.Center.Length)
+                tol = tolerances.cyl_distance * max(center1.length, center2.length)
             else:
                 tol = tolerances.cyl_distance
 
@@ -124,11 +128,13 @@ def is_same_cylinder(
 def is_same_cone(cone1, cone2, dtol=1e-6, atol=1e-6, rel_tol=True):
     if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
         if is_parallel(cone1.Axis, cone2.Axis, atol):
+            apex1 = to_gvector(cone1.Apex)
+            apex2 = to_gvector(cone2.Apex)
             if rel_tol:
-                tol = dtol * max(cone1.Apex.Length, cone2.Apex.Length)
+                tol = dtol * max(apex1.length, apex2.length)
             else:
                 tol = dtol
-            return cone1.Apex.isEqual(cone2.Apex, tol)
+            return apex1.is_equal(apex2, tol)
     return False
 
 
@@ -138,11 +144,13 @@ def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
     else:
         rtol = tolerance
     if is_same_value(sph1.Radius, sph2.Radius, rtol):
+        center1 = to_gvector(sph1.Center)
+        center2 = to_gvector(sph2.Center)
         if rel_tol:
-            ctol = tolerance * max(sph2.Center.Length, sph1.Center.Length)
+            ctol = tolerance * max(center1.length, center2.length)
         else:
             ctol = tolerance
-        return sph1.Center.isEqual(sph2.Center, ctol)
+        return center1.is_equal(center2, ctol)
 
     return False
 
@@ -159,11 +167,13 @@ def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True):
             rtol = dtol
 
         if is_same_value(tor1.MajorRadius, tor2.MajorRadius, Rtol) and is_same_value(tor1.MinorRadius, tor2.MinorRadius, rtol):
+            center1 = to_gvector(tor1.Center)
+            center2 = to_gvector(tor2.Center)
             if rel_tol:
-                ctol = dtol * max(tor1.Center.Length, tor2.Center.Length)
+                ctol = dtol * max(center1.length, center2.length)
             else:
                 ctol = dtol
-            return tor1.Center.isEqual(tor2.Center, ctol)
+            return center1.is_equal(center2, ctol)
     return False
 
 

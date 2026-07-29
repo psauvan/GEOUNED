@@ -61,3 +61,14 @@ def test_angle_to_opposite():
 
 def test_iter():
     assert tuple(GVector(1, 2, 3)) == (1, 2, 3)
+
+
+def test_truediv():
+    assert GVector(2, 4, 6) / 2 == GVector(1, 2, 3)
+
+
+def test_getitem():
+    v = GVector(1, 2, 3)
+    assert v[0] == 1
+    assert v[1] == 2
+    assert v[2] == 3

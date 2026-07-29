@@ -1,10 +1,12 @@
 import math
-import Part
 
 from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, Plane, Cylinder, Cone, Sphere, myBox
 from ..boolean_function import BoolSurface, BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region
+from ....geometry_backend.freecad_backend import FreeCADBackend
+
+_backend = FreeCADBackend()
 
 
 def get_cell_object(geoObj):
@@ -410,27 +412,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
+        gparts = [_backend._wrap_solid(p) for p in parts]
         try:
-            fused = parts[0].fuse(parts[1:])
-        except:
+            fused = _backend.fuse(gparts)
+        except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refinedfused = fused.removeSplitter()
-            except:
-                refinedfused = fused
+                refined = _backend.refine(fused)
+            except Exception:
+                refined = fused
 
-            if refinedfused.isValid():
-                solid = refinedfused
+            if _backend.is_valid(refined):
+                gsolid = refined
+            elif _backend.is_valid(fused):
+                gsolid = fused
             else:
-                if fused.isValid():
-                    solid = fused
-                else:
-                    solid = Part.makeCompound(parts)
+                gsolid = _backend.make_compound(gparts)
         else:
-            solid = Part.makeCompound(parts)
+            gsolid = _backend.make_compound(gparts)
+        solid = gsolid.native
 
     if solid.Volume < 0:
-        solid.reverse()
+        solid = _backend.reverse(_backend._wrap_solid(solid)).native
     return solid

@@ -2,38 +2,40 @@
 
 import logging
 
-import FreeCAD
-import Part
-
 from ..conversion import cell_definition as Conv
 from ..decompose.decom_one_generators import main_split
 from ..utils.boolean_function import BoolSequence, BoolVariable, BoolSurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
+from ...geometry_backend.geometry_backend_interface import GBoundBox, GSolid, GVector
+from ...geometry_backend.freecad_backend import FreeCADBackend
+from ...geometry_backend.vector_geometry import to_gboundbox
 
 logger = logging.getLogger("general_logger")
+_backend = FreeCADBackend()
 
 
 class VoidBox:
     def __init__(self, MetaSolids, Box, EnclosureCAD=None, Definition=None):
 
         self.Objects = []
+        box = Box if type(Box) is GBoundBox else to_gboundbox(Box)
         if EnclosureCAD is None:
-            self.BoundBox = Box
+            self.BoundBox = box
             self.PieceEnclosure = None
             self.isEnclosure = False
             self.Definition = None
         else:
-            self.BoundBox = Box
-            self.PieceEnclosure = EnclosureCAD
+            self.BoundBox = box
+            self.PieceEnclosure = EnclosureCAD if type(EnclosureCAD) is GSolid else _backend._wrap_solid(EnclosureCAD)
             self.isEnclosure = True
             self.Definition = Definition
 
         for m in MetaSolids:
             if not m.BoundBox:
                 continue
-            if m.BoundBox.isValid():
-                if self.BoundBox.intersect(m.BoundBox):
+            if m.BoundBox.is_valid():
+                if self.BoundBox.intersects(m.BoundBox):
                     Obj = self.copy_meta(m)
                     self.remove_extra_comp(Obj, self.BoundBox)
                     self.Objects.append(Obj)
@@ -98,12 +100,8 @@ class VoidBox:
             Z2Min = pos
             Z2Max = self.BoundBox.ZMax
 
-        VMin1 = FreeCAD.Vector(X1Min, Y1Min, Z1Min)
-        VMax1 = FreeCAD.Vector(X1Max, Y1Max, Z1Max)
-        VMin2 = FreeCAD.Vector(X2Min, Y2Min, Z2Min)
-        VMax2 = FreeCAD.Vector(X2Max, Y2Max, Z2Max)
-        box1 = FreeCAD.BoundBox(VMin1, VMax1)
-        box2 = FreeCAD.BoundBox(VMin2, VMax2)
+        box1 = GBoundBox(X1Min, Y1Min, Z1Min, X1Max, Y1Max, Z1Max)
+        box2 = GBoundBox(X2Min, Y2Min, Z2Min, X2Max, Y2Max, Z2Max)
 
         if self.PieceEnclosure is None:
             Space1 = VoidBox(self.Objects, box1)
@@ -128,39 +126,31 @@ class VoidBox:
         If the limited region does not intersect with the piece, no void cell is created.
         """
 
-        cube = Part.makeBox(
-            Box.XLength,
-            Box.YLength,
-            Box.ZLength,
-            FreeCAD.Vector(Box.XMin, Box.YMin, Box.ZMin),
-            FreeCAD.Vector(0, 0, 1),
-        )
-        dist = cube.distToShape(self.PieceEnclosure)[0]
+        cube = _backend.make_box(Box.XMin, Box.YMin, Box.ZMin, Box.XMax, Box.YMax, Box.ZMax)
+        dist = _backend.distance(cube, self.PieceEnclosure)
         try:
             if abs(dist / Box.DiagonalLength) > Tolerance:
                 return None
         except ZeroDivisionError:
             return None
-        ShapeObject = cube.common(self.PieceEnclosure)
+        common_solids = _backend.common(cube, [self.PieceEnclosure])
+        cube_volume = _backend.volume(cube)
+        common_volume = sum(_backend.volume(s) for s in common_solids)
         try:
-            reldif = (cube.Volume - ShapeObject.Volume) / cube.Volume
+            reldif = (cube_volume - common_volume) / cube_volume
         except ZeroDivisionError:
             return None
         if abs(reldif) <= Tolerance:
             return VoidBox(self.Objects, Box, cube, self.Definition)
-        elif ShapeObject.Solids:
-            solid = ShapeObject.Solids[0]
-            return VoidBox(self.Objects, Box, solid, self.Definition)
+        elif common_solids:
+            return VoidBox(self.Objects, Box, common_solids[0], self.Definition)
         else:
             return None
 
     def refine(self):
-        Cube = Part.makeBox(
-            self.BoundBox.XLength,
-            self.BoundBox.YLength,
-            self.BoundBox.ZLength,
-            FreeCAD.Vector(self.BoundBox.XMin, self.BoundBox.YMin, self.BoundBox.ZMin),
-            FreeCAD.Vector(0, 0, 1),
+        Cube = _backend.make_box(
+            self.BoundBox.XMin, self.BoundBox.YMin, self.BoundBox.ZMin,
+            self.BoundBox.XMax, self.BoundBox.YMax, self.BoundBox.ZMax,
         )
 
         for m in self.Objects:
@@ -191,12 +181,9 @@ class VoidBox:
             else:
                 boxDef.append(plane_region)
 
-        Box = Part.makeBox(
-            bBox.XLength + 2 * d,
-            bBox.YLength + 2 * d,
-            bBox.ZLength + 2 * d,
-            FreeCAD.Vector(bBox.XMin - d, bBox.YMin - d, bBox.ZMin - d),
-            FreeCAD.Vector(0, 0, 1),
+        Box = _backend.make_box(
+            bBox.XMin - d, bBox.YMin - d, bBox.ZMin - d,
+            bBox.XMax + d, bBox.YMax + d, bBox.ZMax + d,
         )
 
         voidSolidDef = BoolSequence(operator="OR")
@@ -374,8 +361,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(self.BoundBox.XMin, Ymid, Zmid),
-                    FreeCAD.Vector(1, 0, 0),
+                    GVector(self.BoundBox.XMin, Ymid, Zmid),
+                    GVector(1, 0, 0),
                     LY,
                     LZ,
                 ),
@@ -386,8 +373,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(self.BoundBox.XMax, Ymid, Zmid),
-                    FreeCAD.Vector(-1, 0, 0),
+                    GVector(self.BoundBox.XMax, Ymid, Zmid),
+                    GVector(-1, 0, 0),
                     LY,
                     LZ,
                 ),
@@ -398,8 +385,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(Xmid, self.BoundBox.YMin, Zmid),
-                    FreeCAD.Vector(0, 1, 0),
+                    GVector(Xmid, self.BoundBox.YMin, Zmid),
+                    GVector(0, 1, 0),
                     LZ,
                     LX,
                 ),
@@ -410,8 +397,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(Xmid, self.BoundBox.YMax, Zmid),
-                    FreeCAD.Vector(0, -1, 0),
+                    GVector(Xmid, self.BoundBox.YMax, Zmid),
+                    GVector(0, -1, 0),
                     LZ,
                     LX,
                 ),
@@ -422,8 +409,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(Xmid, Ymid, self.BoundBox.ZMin),
-                    FreeCAD.Vector(0, 0, 1),
+                    GVector(Xmid, Ymid, self.BoundBox.ZMin),
+                    GVector(0, 0, 1),
                     LX,
                     LY,
                 ),
@@ -434,8 +421,8 @@ class VoidBox:
             (
                 "Plane",
                 (
-                    FreeCAD.Vector(Xmid, Ymid, self.BoundBox.ZMax),
-                    FreeCAD.Vector(0, 0, -1),
+                    GVector(Xmid, Ymid, self.BoundBox.ZMax),
+                    GVector(0, 0, -1),
                     LX,
                     LY,
                 ),
@@ -450,18 +437,18 @@ class VoidBox:
         reducedDef = BoolSequence(operator="OR")
         if not Obj.Solids:
             return
-        # Compare Solid BoundBox (here Box is BoundBox Object)
+        # Compare Solid BoundBox (here Box is a GBoundBox)
         if mode == "box":
             for i, sol in enumerate(Obj.Solids):
                 if sol.BoundBox.isValid():
-                    if Box.intersect(sol.BoundBox):
+                    if Box.intersects(sol.BoundBox):
                         reducedSol.append(sol)
                         reducedDef.append(Obj.Definition.elements[i])
 
-        # Compare solid using distToshape (here Box is a Solid Cube object)
+        # Compare solid using distance (here Box is a GSolid Cube)
         else:
             for i, sol in enumerate(Obj.Solids):
-                dist = Box.distToShape(sol)[0]
+                dist = _backend.distance(Box, _backend._wrap_solid(sol))
                 if dist == 0:
                     reducedSol.append(sol)
                     reducedDef.append(Obj.Definition.elements[i])

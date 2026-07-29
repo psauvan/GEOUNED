@@ -112,12 +112,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         if face.Orientation not in ("Forward", "Reversed"):
             continue
 
-        if isinstance(face.Surface, GU.PlaneGu):
+        if isinstance(face.Surface, GU.GPlane):
             plane = gen_plane(face)
             plane_region = Surfaces.add_plane(plane, True)
             component_definition.append(plane_region)
 
-        elif isinstance(face.Surface, GU.CylinderGu):
+        elif isinstance(face.Surface, GU.GCylinder):
             cylinderOnly = gen_cylinder(face)
             if face.Orientation == "Reversed":
                 plane = gen_plane_cylinder(
@@ -130,7 +130,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
-        elif isinstance(face.Surface, GU.ConeGu):
+        elif isinstance(face.Surface, GU.GCone):
             coneOnly = gen_cone(face)
             apexPlane = cone_apex_plane(face, Surfaces.tolerances)
             if face.Orientation == "Reversed":
@@ -144,7 +144,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 
-        elif isinstance(face.Surface, GU.SphereGu):
+        elif isinstance(face.Surface, GU.GSphere):
             sphereOnly = gen_sphere(face)
             plane = None
             if face.Orientation == "Reversed":
@@ -156,7 +156,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             sphere_region = Surfaces.add_sphere(sphere)
             component_definition.append(sphere_region)
 
-        elif isinstance(face.Surface, GU.TorusGu):
+        elif isinstance(face.Surface, GU.GTorus):
             torusOnly = gen_torus(face, Surfaces.tolerances)
             if torusOnly is not None:
                 index, u_params = solid_gu.TorusUParams[iface]

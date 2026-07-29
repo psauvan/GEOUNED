@@ -7,12 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from importlib.metadata import version
 
-import FreeCAD
-
 from ..utils.basic_functions_part1 import is_opposite, points_to_coeffs
+from ...geometry_backend.geometry_backend_interface import GVector
+from ...geometry_backend.freecad_backend import FreeCADBackend, to_fc_vector
 from .functions import CardLine, mcnp_surface, write_mcnp_cell_def
 
 logger = logging.getLogger("general_logger")
+_backend = FreeCADBackend()
 
 
 # TODO rename as there are two classes with this name
@@ -103,7 +104,7 @@ C ##########################################################
 
     def write_header(self):
 
-        freeCAD_Version = "{V[0]:}.{V[1]:}.{V[2]:}".format(V=FreeCAD.Version())
+        freeCAD_Version = _backend.kernel_version()
 
         Header = f"""{self.Title}
 C   ______ _______  _____      _     _ __   _ _______ ______  
@@ -310,17 +311,17 @@ C **************************************************************
 
         for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
-                p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
+                p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
                 p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
-                p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
+                p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
                 p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
-                p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
+                p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
                 p.bVar.change_ref()
 
         if self.options.prnt3PPlane:

@@ -1,8 +1,12 @@
 import math
 
-import FreeCAD
 import numpy as np
-import Part
+
+from ....geometry_backend.freecad_backend import FreeCADBackend
+from ....geometry_backend.geometry_backend_interface import GBoundBox, GCone, GCylinder, GVector
+from ....geometry_backend.vector_geometry import to_gboundbox, to_gvector
+
+_backend = FreeCADBackend()
 
 
 class CellObj:
@@ -23,11 +27,13 @@ class CellObj:
 
     def makeBox(self):
         boundBox = self.boundBox.Box
-        box_origin = FreeCAD.Vector(boundBox.XMin, boundBox.YMin, boundBox.ZMin)
         if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
             return None
         else:
-            return Part.makeBox(boundBox.XLength, boundBox.YLength, boundBox.ZLength, box_origin)
+            return _backend.make_box(
+                boundBox.XMin, boundBox.YMin, boundBox.ZMin,
+                boundBox.XMax, boundBox.YMax, boundBox.ZMax,
+            ).native
 
     def getSubCell(self, seq):
 
@@ -47,6 +53,7 @@ class myBox:
     def __init__(self, boundBox=None, orientation=None):
         self.Volume = 0
         if boundBox is not None:
+            boundBox = to_gboundbox(boundBox)
             if boundBox.XLength <= 1e-12:
                 self.Box = None
             elif boundBox.YLength <= 1e-12:
@@ -73,7 +80,7 @@ class myBox:
                 self.Box = None
                 self.Orientation = "Reversed"
         elif self.Orientation == box.Orientation:
-            self.Box.add(box.Box)
+            self.Box = self.Box.union(box.Box)
         else:
             # -A OR B == -(A AND -B)
             if self.Orientation == "Forward":
@@ -97,7 +104,7 @@ class myBox:
                 self.Orientation = "Forward"
         elif self.Orientation == box.Orientation:
             inter = self.Box.intersected(box.Box)
-            if inter.isValid():
+            if inter.is_valid():
                 self.Box = inter
             else:
                 self.Box = None
@@ -117,9 +124,9 @@ class myBox:
                 return False
 
         for i in range(6):
-            p1 = self.Box.getPoint(i)
-            p2 = box.Box.getPoint(i)
-            if (p1 - p2).Length > 1e-6:
+            p1 = self.Box.get_point(i)
+            p2 = box.Box.get_point(i)
+            if (p1 - p2).length > 1e-6:
                 return False
         return True
 
@@ -140,23 +147,23 @@ def box_intersect(Fbox, Rbox):
     xmin, xmax = plane_region(PX1, PX2, orientation)
     boxes = []
     if xmin is not None:
-        box = FreeCAD.BoundBox(xmin, bYmin, bZmin, xmax, bYmax, bZmax)
+        box = GBoundBox(xmin, bYmin, bZmin, xmax, bYmax, bZmax)
         boxes.append(box)
 
     ymin, ymax = plane_region(PY1, PY2, orientation)
     if ymin is not None:
-        box = FreeCAD.BoundBox(bXmin, ymin, bZmin, bXmax, ymax, bZmax)
+        box = GBoundBox(bXmin, ymin, bZmin, bXmax, ymax, bZmax)
         boxes.append(box)
 
     zmin, zmax = plane_region(PZ1, PZ2, orientation)
     if zmin is not None:
-        box = FreeCAD.BoundBox(bXmin, bYmin, zmin, bXmax, bYmax, zmax)
+        box = GBoundBox(bXmin, bYmin, zmin, bXmax, bYmax, zmax)
         boxes.append(box)
 
     if len(boxes) > 0:
         box = boxes[0]
         for b in boxes[1:]:
-            box.add(b)
+            box = box.union(b)
         return box
     else:
         return None
@@ -236,13 +243,12 @@ class Plane:
         self.params = (v, d)
 
     def buildShape(self, boundBox):
-        normal, p0 = self.params
-        Box = FreeCAD.BoundBox(boundBox)
-        Box.enlarge(10)
+        normal, p0 = to_gvector(self.params[0]), self.params[1]
+        Box = to_gboundbox(boundBox).enlarged(10)
 
         pointEdge = []
         for i in range(12):
-            edge = Box.getEdge(i)
+            edge = Box.get_edge(i)
             p1 = normal.dot(edge[0])
             p2 = normal.dot(edge[1])
             d0 = p0 - p1
@@ -255,7 +261,7 @@ class Plane:
         if len(pointEdge) == 0:
             self.shape = None
             return
-        s = FreeCAD.Vector((0, 0, 0))
+        s = GVector(0, 0, 0)
         for v in pointEdge:
             s = s + v
         s = s / len(pointEdge)
@@ -273,7 +279,7 @@ class Plane:
             orden.append((phi, i))
         orden.sort()
 
-        self.shape = Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
+        self.shape = _backend.make_polygon_face([pointEdge[p[1]] for p in orden]).native
         self.shell = self.shape
 
 
@@ -301,7 +307,7 @@ class Sphere:
 
     def buildShape(self, boundBox):
         origin, R = self.params
-        self.shape = Part.makeSphere(R, origin)
+        self.shape = _backend.make_sphere(to_gvector(origin), R).native
         self.shell = self.shape.Faces[0]
 
 
@@ -347,15 +353,14 @@ class Cylinder:
             height = dmax - dmin
 
             point = p + dmin * vec
-            self.shape = Part.makeCylinder(r, height, point, vec, 360)
-            # self.shape = makeCylinder2( r,height,point,vec)
+            gsolid = _backend.make_cylinder(to_gvector(point), to_gvector(vec), r, height)
         else:
-            self.shape = Part.makeCylinder(r, vec.Length, p, vec, 360)
-            # self.shape = Part.makeCylinder2( r,vec.Length,p,vec)
+            gsolid = _backend.make_cylinder(to_gvector(p), to_gvector(vec), r, vec.Length)
 
-        for f in self.shape.Faces:
-            if type(f.Surface) is Part.Cylinder:
-                self.shell = f
+        self.shape = gsolid.native
+        for f in _backend.get_faces(gsolid):
+            if type(f.Surface) is GCylinder:
+                self.shell = f.native
         return
 
 
@@ -401,129 +406,23 @@ class Cone:
                 dmax = max(d, dmax)
 
             length = max(abs(dmin), abs(dmax))
-            R = length * t
-            OneSheetCone = Part.makeCone(0, R, length, apex, axis, 360)
-            for f in OneSheetCone.Faces:
-                if type(f.Surface) is Part.Cone:
-                    oneface = f
+            half_angle = math.atan(t)
+            one_sheet = _backend.make_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
+            oneface = next(f for f in _backend.get_faces(one_sheet) if type(f.Surface) is GCone)
+
             if not dblsht:
-                self.shape = OneSheetCone
-                self.shell = oneface
+                self.shape = one_sheet.native
+                self.shell = oneface.native
             else:
-                OtherSheet = Part.makeCone(0, R, length, apex, -axis, 360)
-                DoubleSheetCone = OneSheetCone.fuse([OtherSheet])
-                DoubleSheetCone.removeSplitter()
-                self.shape = DoubleSheetCone
-                for f in OtherSheet.Faces:
-                    if type(f.Surface) is Part.Cone:
-                        otherface = f
-                self.shell = Part.makeShell((oneface, otherface))
-        else:
-            center, axis, r1, r2 = self.params
-            self.shape = Part.makeCone(r1, r2, axis.Length, center, axis, 360)
-            for f in self.shape.Faces:
-                if type(f.Surface) is Part.Cone:
-                    self.shell = f
-
-
-class Torus:
-    def __init__(self, label, Id, params, tr=None):
-        self.label = label
-        self.type = "torus"
-        self.id = Id
-        self.shape = None
-        self.params = params
-        if params[2] < 0:
-            print(f"{self.type} surface {label} has a negative major radius: {params[2]}")
-        if params[3] <= 0:
-            print(f"{self.type} surface {label} has a bad minor radius a value: {params[3]}")
-        if params[4] <= 0:
-            print(f"{self.type} surface {label} has a bad minor radius b value: {params[4]}")
-
-        if tr:
-            self.transform(tr)
-
-    def copy(self):
-        torus = Torus(self.label, self.id, self.params)
-        torus.shape = self.shape
-        return torus
-
-    def transform(self, matrix):
-        p, v, Ra, Rb, Rc = self.params
-        v = matrix.submatrix(3).multVec(v)
-        p = matrix.multVec(p)
-        self.params = (p, v, Ra, Rb, Rc)
-
-    def buildShape(self, boundBox):
-        center, axis, Ra, Rb, Rc = self.params  # Ra distance from torus axis; R radius of toroidal-cylinder
-        if (abs(Rb - Rc) < 1e-5) and Ra > 0:
-            self.shape = Part.makeTorus(Ra, Rb, center, axis)  # FreeCAD circular Torus
-            self.shell = self.shape.Shells[0]
-        else:
-            self.shape, self.shell = makeEllipticTorus(Ra, Rb, Rc, center, axis)  # Home made elliptic Torus
-
-
-class Box:
-    def __init__(self, label, Id, params, tr=None):
-        self.label = label
-        self.type = "box"
-        self.id = Id
-        self.shape = None
-        self.params = params
-        if params[1].Length <= 0:
-            print(f"{self.type} surface {label} has a bad X dimension: {params[1]}")
-        if params[2].Length <= 0:
-            print(f"{self.type} surface {label} has a bad Y dimension: {params[2]}")
-        if params[3].Length <= 0:
-            print(f"{self.type} surface {label} has a bad Z dimension: {params[3]}")
-
-        if tr:
-            self.transform(tr)
-
-    def copy(self):
-        box = Box(self.label, self.id, self.params)
-        box.shape = self.shape
-        return box
-
-    def transform(self, matrix):
-        p, v1, v2, v3 = self.params
-        p = matrix.multVec(p)
-        v1 = matrix.multVec(v1)
-        v2 = matrix.multVec(v2)
-        v3 = matrix.multVec(v3)
-        self.params = (p, v1, v2, v3)
-
-    def buildShape(self, boundBox):
-        p, v1, v2, v3 = self.params
-        a1 = FreeCAD.Vector(v1)
-        a2 = FreeCAD.Vector(v2)
-        a3 = FreeCAD.Vector(v3)
-        a1.normalize()
-        a2.normalize()
-        a3.normalize()
-
-        m = FreeCAD.Matrix(
-            a1.x,
-            a2.x,
-            a3.x,
-            p.x,
-            a1.y,
-            a2.y,
-            a3.y,
-            p.y,
-            a1.z,
-            a2.z,
-            a3.z,
-            p.z,
-            0,
-            0,
-            0,
-            1,
-        )
-        box = Part.makeBox(v1.Length, v2.Length, v3.Length)
-        self.shape = box.transformGeometry(m)
-        trsfBox = box.transformGeometry(m)
-        self.shell = trsfBox.Shells[0]
+                other_sheet = _backend.make_cone(to_gvector(apex), to_gvector(-axis), half_angle, length)
+                otherface = next(f for f in _backend.get_faces(other_sheet) if type(f.Surface) is GCone)
+                double_sheet = _backend.fuse([one_sheet, other_sheet])
+                self.shape = double_sheet.native
+                self.shell = _backend.make_shell((oneface, otherface)).native
+        # truncated (frustum, two explicit radii) Cone is never constructed
+        # with truncated=True anywhere in build_region -- no backend
+        # primitive covers that case, so it is intentionally left
+        # unimplemented rather than ported speculatively.
 
 
 class Undefined:
@@ -550,83 +449,28 @@ def FuseSolid(parts):
         else:
             return None
     else:
+        gparts = [_backend._wrap_solid(p) for p in parts]
         try:
-            fused = parts[0].fuse(parts[1:])
-        except:
+            fused = _backend.fuse(gparts)
+        except Exception:
             fused = None
 
         if fused is not None:
             try:
-                refinedfused = fused.removeSplitter()
-            except:
-                refinedfused = fused
+                refined = _backend.refine(fused)
+            except Exception:
+                refined = fused
 
-            if refinedfused.isValid():
-                solid = refinedfused
+            if _backend.is_valid(refined):
+                gsolid = refined
+            elif _backend.is_valid(fused):
+                gsolid = fused
             else:
-                if fused.isValid():
-                    solid = fused
-                else:
-                    solid = Part.makeCompound(parts)
+                gsolid = _backend.make_compound(gparts)
         else:
-            solid = Part.makeCompound(parts)
+            gsolid = _backend.make_compound(gparts)
+        solid = gsolid.native
 
     if solid.Volume < 0:
-        solid.reverse()
+        solid = _backend.reverse(_backend._wrap_solid(solid)).native
     return solid
-
-
-def makeEllipticTorus(R, RZ, RX, center, ZAxis):
-
-    rMaj = RZ
-    rMin = RX
-    XAxis = ortoVect(ZAxis)
-
-    majorAxis = ZAxis
-    minorAxis = XAxis
-    if rMaj < rMin:
-        rMaj, rMin = rMin, rMaj
-        majorAxis, minorAxis = minorAxis, majorAxis
-
-    eCenter = center + R * XAxis
-    S1 = eCenter + majorAxis * rMaj  # major axis
-    S2 = eCenter + minorAxis * rMin  # minor axis
-
-    ellipse = Part.Ellipse(S1, S2, eCenter)
-    if abs(R) < RX:  # degenerated Torus
-        pz = RZ * math.sqrt(1 - (R / RX) ** 2)
-        pz1 = center - pz * ZAxis
-        pz2 = center + pz * ZAxis
-
-        p1 = ellipse.parameter(pz1)
-        p2 = ellipse.parameter(pz2)
-        if p2 < p1:
-            p2 += 2 * math.pi
-        shape = ellipse.toBSpline(p1, p2).toShape(p1, p2)  # revolution around Major axis
-        rev = shape.revolve(center, ZAxis, 360)
-    else:
-        shape = ellipse.toBSpline().toShape()  # revolution around Minor axis
-        rev = shape.revolve(center, ZAxis, 360)
-    shell = Part.makeShell((rev,))
-    return (Part.makeSolid(shell), shell)
-
-
-def ortoVect(v):
-    vmax = 0
-    vOrto = None
-    if abs(v.x) > vmax:
-        vOrto = (0, 1, 0)
-        vmax = abs(v.x)
-    if abs(v.y) > vmax:
-        vOrto = (0, 0, 1)
-        vmax = abs(v.y)
-    if abs(v.z) > vmax:
-        vOrto = (1, 0, 0)
-        vmax = abs(v.z)
-
-    if vOrto is None:
-        return None
-
-    vOrto = v.cross(FreeCAD.Vector(vOrto))
-    vOrto.normalize()
-    return vOrto

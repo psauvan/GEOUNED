@@ -5,10 +5,10 @@
 import logging
 from pathlib import Path
 
-import FreeCAD
-
 from ..code_version import *
 from ..utils.boolean_function import BoolVariable
+from ...geometry_backend.geometry_backend_interface import GVector
+from ...geometry_backend.freecad_backend import to_fc_vector
 from .functions import open_mc_surface, write_openmc_region
 
 logger = logging.getLogger("general_logger")
@@ -232,17 +232,17 @@ import openmc
 
         for p in Surfaces.primitive_surfaces["PX"]:
             if p.Surf.Axis[0] < 0:
-                p.Surf.Axis = FreeCAD.Vector(1, 0, 0)
+                p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
                 p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PY"]:
             if p.Surf.Axis[1] < 0:
-                p.Surf.Axis = FreeCAD.Vector(0, 1, 0)
+                p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
                 p.bVar.change_ref()
 
         for p in Surfaces.primitive_surfaces["PZ"]:
             if p.Surf.Axis[2] < 0:
-                p.Surf.Axis = FreeCAD.Vector(0, 0, 1)
+                p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
                 p.bVar.change_ref()
         return
 
