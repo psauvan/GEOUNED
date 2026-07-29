@@ -163,6 +163,14 @@ cython_debug/
 *.h5
 *.xml
 
+# default-stem CSG output files written to the repo root by
+# test_cad_to_csg_from_json_with_defaults (config default geometryName: "csg")
+/csg.inp
+/csg.mcnp
+/csg.py
+/csg.serp
+/csg_summary.txt
+
 # testing folder
 tests_outputs/
 
