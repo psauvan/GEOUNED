@@ -105,6 +105,24 @@ class GPlane:
     def tangent_at(self, u: float, v: float) -> tuple[GVector, GVector]:
         return plane_tangent_at(self, u, v)
 
+    def is_inside(self, point: GVector) -> bool:
+        """Which side of the (infinite) plane `point` is on -- True on the
+        side `Axis` points toward. Pure GVector math; same formula as
+        `boolean_solids.check_sign_primitive`'s Plane branch and
+        `splitFunction.surface_side`'s (formerly native) plane branch,
+        which both now delegate here instead of duplicating it."""
+        return self.Axis.dot(point - self.Position) > 0
+
+    def transform(self, matrix) -> "GPlane":
+        """Apply a native FreeCAD.Matrix affine transform, returning a new
+        GPlane (this one is not mutated). Not currently exercised by
+        CadToCsg (the corresponding Objects.py::Plane.transform() this
+        replaces was confirmed dead there) -- kept/ported for CsgToCad
+        (GEOReverse), which does need to move surfaces around."""
+        position = to_gvector(matrix.multVec(to_fc_vector(self.Position)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis))).normalized()
+        return GPlane.from_values(position, axis)
+
     def intersect_plane(self, other: "GPlane") -> "GLine | None":
         """
         Intersection line of this (infinite) plane with `other`. Returns
@@ -180,6 +198,22 @@ class GCylinder:
     def tangent_at(self, u: float, v: float) -> tuple[GVector, GVector]:
         return cylinder_tangent_at(self, u, v)
 
+    def is_inside(self, point: GVector) -> bool:
+        """True if `point` is outside the (infinite) cylinder. Pure
+        GVector math; see GPlane.is_inside for the shared-formula
+        rationale."""
+        r = point - self.Center
+        z = self.Axis.dot(r)
+        return (r.length * r.length - z * z) > self.Radius * self.Radius
+
+    def transform(self, matrix) -> "GCylinder":
+        """Apply a native FreeCAD.Matrix affine transform, returning a new
+        GCylinder. See GPlane.transform for why this isn't exercised by
+        CadToCsg today but is kept for CsgToCad (GEOReverse)."""
+        center = to_gvector(matrix.multVec(to_fc_vector(self.Center)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis)))
+        return GCylinder.from_values(center, axis, self.Radius)
+
 
 class GCone:
     def __init__(self, native):
@@ -203,6 +237,25 @@ class GCone:
         cone.__native__ = None
         return cone
 
+    def is_inside(self, point: GVector) -> bool:
+        """True if `point` is outside the (infinite, single-sheet) cone.
+        Pure GVector math; see GPlane.is_inside for the shared-formula
+        rationale. Rounds the dot product to 15 decimals before acos,
+        matching check_sign_primitive's original guard against a
+        just-past-1.0 float rounding error."""
+        r = (point - self.Apex).normalized()
+        z = round(self.Axis.dot(r), 15)
+        alpha = math.acos(z)
+        return alpha > self.SemiAngle
+
+    def transform(self, matrix) -> "GCone":
+        """Apply a native FreeCAD.Matrix affine transform, returning a new
+        GCone. See GPlane.transform for why this isn't exercised by
+        CadToCsg today but is kept for CsgToCad (GEOReverse)."""
+        apex = to_gvector(matrix.multVec(to_fc_vector(self.Apex)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis)))
+        return GCone.from_values(apex, axis, self.SemiAngle, self.Radius)
+
 
 class GSphere:
     def __init__(self, native):
@@ -218,6 +271,18 @@ class GSphere:
         sphere.Radius = radius
         sphere.__native__ = None
         return sphere
+
+    def is_inside(self, point: GVector) -> bool:
+        """True if `point` is outside the sphere. Pure GVector math; see
+        GPlane.is_inside for the shared-formula rationale."""
+        return (point - self.Center).length > self.Radius
+
+    def transform(self, matrix) -> "GSphere":
+        """Apply a native FreeCAD.Matrix affine transform, returning a new
+        GSphere. See GPlane.transform for why this isn't exercised by
+        CadToCsg today but is kept for CsgToCad (GEOReverse)."""
+        center = to_gvector(matrix.multVec(to_fc_vector(self.Center)))
+        return GSphere.from_values(center, self.Radius)
 
 
 class GTorus:

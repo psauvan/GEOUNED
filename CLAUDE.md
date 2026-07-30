@@ -616,10 +616,11 @@ directly:
   `.Center`/`.Apex` and packed them straight into `Objects.py`'s
   `Plane`/`Cylinder`/`Cone`/`Sphere`, whose own algebra
   (`splitFunction.py`'s `surface_side`/`btwPPlanes`, plus native
-  `Matrix.multVec` in `.transform()`) is genuinely native-only --
-  fixed by converting explicitly at `get_surface()`, the entry point
-  into that still-native subsystem (`to_fc_vector` on each field before
-  building the `Plane`/`Cylinder`/`Cone`/`Sphere`).
+  `Matrix.multVec` in `.transform()`) was native-only at the time --
+  fixed then by converting explicitly at `get_surface()` (`to_fc_vector`
+  on each field). Superseded shortly after by the deeper fix below,
+  which eliminates the native detour entirely instead of just moving
+  where the conversion happens.
 - `write/functions.py::simplify_planes` (added this session, during the
   writer-unification pass) reassigned `p.Surf.Axis = to_fc_vector(GVector(...))`
   -- mirroring the old, pre-GVector-migration behavior it was ported
@@ -645,6 +646,89 @@ surveys are necessary but not sufficient when the field passes through
 an intermediate object (a `.params` tuple, a locally-derived variable)
 before reaching the operation that cares about its type -- always
 follow up with a real end-to-end run, not just static tracing.
+
+### `build_region/Objects.py`: the third copy collapses into `geo`
+
+The GVector-storage migration above led straight into the question that
+had been bugging the user throughout: `build_region.py::get_surface()`
+translates a `GeounedSurface` primitive into `Objects.py`'s own `Plane`/
+`Cylinder`/`Cone`/`Sphere` classes -- a *third* parallel representation of
+"a plane" (`geo.GPlane`, `basic_functions_part1.PlaneParams`, and this)
+existing purely so `build_region/`'s CSG-cell-building machinery
+(`get_cell_object`/`BuildDepth`/`SplitSolid`) had something to hold an
+`id` + a per-cell-box-rebuildable CAD shape + point-in/out classification.
+Traced why that third copy existed and whether it still needed to:
+
+- **`Objects.py::Plane/Cylinder/Cone/Sphere.transform()`** -- the one
+  thing that seemed to force these to be native (`FreeCAD.Matrix.multVec`)
+  -- turned out to be **confirmed dead in CadToCsg**: grepped every
+  constructor call and found `tr` is always the default `None`;
+  `get_surface()` never passes one. `.buildShape()` was already a thin,
+  fully-`GVector`-tolerant wrapper around `geo`'s own
+  `plane_polygon_from_box`/`cylinder_from_box`/`cone_from_box`.
+- **`splitFunction.py::surface_side`** (point-in/out classification for
+  `SplitSolid`) turned out to be running the *exact same formulas*,
+  natively, that `boolean_solids.check_sign_primitive` already runs in
+  pure `GVector` for the main decomposition path -- confirmed
+  formula-by-formula (plane: `axis.dot(point-position)`; cylinder:
+  distance-from-axis vs radius, cross-product form here vs Pythagorean
+  form there, same quantity; cone: `acos` of the axis/direction dot
+  product vs `SemiAngle`). Also handled 7 surface types
+  (`cone_elliptic`, `hyperboloid`, `ellipsoid`, `cylinder_elliptic`,
+  `cylinder_hyperbolic`, `paraboloid`, generic `torus`, plus `box`) that
+  `get_surface()` never actually constructs -- confirmed unreachable in
+  this pipeline (leftover from a broader original toolkit).
+
+Consolidated by moving the point-classification formulas to where they
+conceptually belong -- `geo` itself, as `.is_inside(point: GVector) ->
+bool` methods on `GPlane`/`GCylinder`/`GCone`/`GSphere` (same rationale
+as `.intersect_plane`/`.intersect_line`: this is intrinsic analytic
+geometry, not GEOUNED-CSG-specific) -- and `.transform(matrix)` methods
+(taking a native `FreeCAD.Matrix`, consistent with `_freecad_impl.py`
+being the FreeCAD-specific implementation file; a future `_occ_impl.py`
+would accept whatever OCC's native transform type is under the same
+method name). **`.transform()` is ported, not dropped, despite being
+dead in CadToCsg today** -- explicit user call: `CsgToCad` (GEOReverse)
+does need to move surfaces around, and this is the natural place for
+that capability to live when that work starts.
+
+`Objects.py`'s `Plane`/`Cylinder`/`Cone`/`Sphere` then collapsed into one
+`CellSurface` class wrapping a `geo` descriptor directly (`.type` derived
+from the wrapped descriptor's class, `.is_inside`/`.transform` delegating
+straight to it, `.buildShape` dispatching on `.type` the same way the
+old classes' `buildShape`s already did). The old classes' `truncated`
+flag (explicit-end-planes cylinder/cone) and the double-sheet `Cone`
+branch were **not** carried over -- both were already marked dead in
+comments left by an earlier pass of this migration (`get_surface()`
+never sets `truncated=True` or builds a double-sheet cone), and neither
+has an equivalent in `geo`. `get_surface()` now builds `GPlane`/
+`GCylinder`/`GCone`/`GSphere` directly via `.from_values(...)` -- no
+translation step, no native detour. `surface_side` collapsed to `return
+surf.is_inside(p)`; `btwPPlanes` (only used by the now-gone
+truncated-cylinder/cone/box/cylinder_elliptic branches) deleted as a
+consequence.
+
+Verified via `tests/geo` (107/107), `tests/test_cadtocsg.py` (50/50),
+and a re-scan of all 39 `RoundCorners` STEP files (same
+per-file OK/MultiRoundCorner-count results as before -- this is the
+code path that exercises `get_cell_object`/`BuildDepth`/`SplitSolid`
+most heavily, so it was worth checking beyond the standard suite).
+
+This closes essentially all of the "two/three parallel representations
+of the same analytic surface" complaint for Plane/Cylinder/Cone/Sphere:
+what's left is `geo`'s descriptor (the single geometric source of truth)
+plus `basic_functions_part1`'s `*OnlyParams` (still a separate class,
+per the earlier decision above, but now storage-identical and with no
+duplicated behavior) plus `GeounedSurface` (the CSG-numbering/`bVar`/
+`region`/`components` layer). `check_sign_primitive`
+(`boolean_solids.py`) was deliberately **not** changed to call
+`.is_inside()` -- it operates on `GeounedSurface`/`*OnlyParams` objects,
+not `geo` descriptors directly, and per the "Option B, no wrapping"
+decision above, building a transient `GPlane`/etc just to call one
+method on a path this hot wasn't judged worth it. Its formulas remain a
+second, independent copy of the same math -- a candidate for the
+broader `components`/`definition` redesign below to close later, not
+this pass.
 
 - The broader design goal (stated by the user): a homogeneous
   `components`/`definition`/`bVar` representation covering *every*

@@ -6,7 +6,9 @@ from ....geo import (
     GBoundBox,
     GCone,
     GCylinder,
+    GPlane,
     GSolid,
+    GSphere,
     GVector,
     Gfuse,
     Gmake_box,
@@ -14,10 +16,8 @@ from ....geo import (
     Gmake_cone,
     Gmake_cylinder,
     Gmake_polygon_face,
-    Gmake_shell,
     Gmake_sphere,
     to_gboundbox,
-    to_gvector,
 )
 
 
@@ -323,181 +323,73 @@ def cone_from_box(apex: GVector, axis: GVector, tan: float, box: GBoundBox):
     return Gmake_cone(apex, build_axis, half_angle, dmax * 1.1)
 
 
-class Plane:
-    def __init__(self, label, Id, params, tr=None):
+class CellSurface:
+    """A CSG-cell surface used by BuildDepth/SplitSolid to reconstruct a
+    composite (Can/TCone/RoundCorner/MultiRoundCorner) meta-surface's CAD
+    shape from its primitive components. Wraps one `geo` analytic
+    descriptor (GPlane/GCylinder/GCone/GSphere) with the id/label CSG
+    numbering and a CAD shape that gets rebuilt per call against whatever
+    (shrinking, as BuildDepth recurses) box it's asked for -- this is why
+    it can't just reuse GeounedSurface.shape (built once, against the
+    top-level box).
+
+    Point classification (`is_inside`) and affine transform are delegated
+    straight to the wrapped descriptor instead of reimplementing them
+    natively a third time -- this replaces the old separate Plane/
+    Cylinder/Cone/Sphere classes here, whose `.transform()` (native
+    FreeCAD.Matrix) was confirmed dead in CadToCsg (get_surface() never
+    passed a `tr`) and whose point-classification (splitFunction.py's
+    surface_side) duplicated boolean_solids.check_sign_primitive's
+    formulas natively instead of reusing them. `.transform()` is kept
+    (not deleted outright) because CsgToCad (GEOReverse) does need to
+    move surfaces around -- see GPlane.transform et al.
+
+    The old classes' `truncated` flag (an explicit-end-planes cylinder/
+    cone variant) and Cone's double-sheet branch are not carried over:
+    both were already confirmed dead in the code they came from
+    (get_surface() never sets `truncated=True` or builds a double-sheet
+    Cone), and neither has an equivalent in `geo`'s descriptors.
+    """
+
+    _TYPE_NAMES = {GPlane: "plane", GCylinder: "cylinder", GCone: "cone", GSphere: "sphere"}
+
+    def __init__(self, label, Id, descriptor, tr=None):
         self.label = label
-        self.type = "plane"
         self.id = Id
         self.shape = None
-        self.params = params
-        if tr:
-            self.transform(tr)
-
-    def __str__(self):
-        return f"plane : {self.id}\nParameters : {self.params}"
+        self.descriptor = descriptor if tr is None else descriptor.transform(tr)
+        self.type = self._TYPE_NAMES[type(self.descriptor)]
+        if self.type in ("sphere", "cylinder") and self.descriptor.Radius <= 0:
+            print(f"{self.type} surface {label} has a bad radius value: {self.descriptor.Radius}")
 
     def copy(self):
-        plane = Plane(self.label, self.id, self.params)
-        plane.shape = self.shape
-        return plane
+        s = CellSurface(self.label, self.id, self.descriptor)
+        s.shape = self.shape
+        return s
+
+    def is_inside(self, point):
+        return self.descriptor.is_inside(point)
 
     def transform(self, matrix):
-        v, d = self.params
-        p = d * v  # vector p is d*plane normal
-        v = matrix.submatrix(3).multVec(v)
-        v.normalize()
-        d = matrix.multVec(p) * v
-        self.params = (v, d)
+        self.descriptor = self.descriptor.transform(matrix)
 
     def buildShape(self, boundBox):
-        normal, p0 = to_gvector(self.params[0]), self.params[1]
         box = to_gboundbox(boundBox).enlarged(10)
+        d = self.descriptor
 
-        face = plane_polygon_from_box(normal, p0, box)
-        if face is None:
-            self.shape = None
-            return
+        if self.type == "plane":
+            face = plane_polygon_from_box(d.Axis, d.Axis.dot(d.Position), box)
+            self.shape = face.__native__ if face is not None else None
 
-        self.shape = face.__native__
-        self.shell = self.shape
+        elif self.type == "cylinder":
+            self.shape = cylinder_from_box(d.Center, d.Axis, d.Radius, box).__native__
 
+        elif self.type == "cone":
+            gsolid = cone_from_box(d.Apex, d.Axis, math.tan(d.SemiAngle), box)
+            self.shape = gsolid.__native__ if gsolid is not None else None
 
-class Sphere:
-    def __init__(self, label, Id, params, tr=None):
-        self.label = label
-        self.type = "sphere"
-        self.id = Id
-        self.shape = None
-        self.params = params
-        if params[1] <= 0:
-            print(f"{self.type} surface {label} has a bad radius value: {params[1]}")
-        if tr:
-            self.transform(tr)
-
-    def copy(self):
-        sphere = Sphere(self.label, self.id, self.params)
-        sphere.shape = self.shape
-        return sphere
-
-    def transform(self, matrix):
-        p, R = self.params
-        p = matrix.multVec(p)
-        self.params = (p, R)
-
-    def buildShape(self, boundBox):
-        origin, R = self.params
-        self.shape = Gmake_sphere(to_gvector(origin), R).__native__
-        self.shell = self.shape.Faces[0]
-
-
-class Cylinder:
-    def __init__(self, label, Id, params, tr=None, truncated=False):
-        self.label = label
-        self.type = "cylinder"
-        self.id = Id
-        self.shape = None
-        self.params = params
-        self.truncated = truncated
-        if params[2] <= 0:
-            print(f"{self.type} surface {label} has a bad radius value: {params[2]}")
-        if tr:
-            self.transform(tr)
-
-    def copy(self):
-        cylinder = Cylinder(self.label, self.id, self.params, truncated=self.truncated)
-        cylinder.shape = self.shape
-        return cylinder
-
-    def transform(self, matrix):
-        p, v, R = self.params
-        v = matrix.submatrix(3).multVec(v)
-        p = matrix.multVec(p)
-        self.params = (p, v, R)
-
-    def buildShape(self, boundBox):
-
-        p, vec, r = self.params
-
-        if not self.truncated:
-            gsolid = cylinder_from_box(to_gvector(p), to_gvector(vec), r, to_gboundbox(boundBox))
-        else:
-            gsolid = Gmake_cylinder(to_gvector(p), to_gvector(vec), r, vec.Length)
-
-        self.shape = gsolid.__native__
-        for f in gsolid.Faces:
-            if type(f.Surface) is GCylinder:
-                self.shell = f.__native__
-        return
-
-
-class Cone:
-    def __init__(self, label, Id, params, tr=None, truncated=False):
-        self.label = label
-        self.type = "cone"
-        self.id = Id
-        self.shape = None
-        self.params = params
-        self.truncated = truncated
-        # if params[2] <= 0:
-        #    print(f"{self.type} surface {label} has a zero semi-angle value.")
-        if tr:
-            self.transform(tr)
-
-    def copy(self):
-        cone = Cone(self.label, self.id, self.params, truncated=self.truncated)
-        cone.shape = self.shape
-        return cone
-
-    def transform(self, matrix):
-        if not self.truncated:
-            p, v, t, dbl = self.params
-            v = matrix.submatrix(3).multVec(v)
-            p = matrix.multVec(p)
-            self.params = (p, v, t, dbl)
-        else:
-            p, v, r1, r2 = self.params
-            v = matrix.submatrix(3).multVec(v)
-            p = matrix.multVec(p)
-            self.params = (p, v, r1, r2)
-
-    def buildShape(self, boundBox):
-        if not self.truncated:
-            apex, axis, t, dblsht = self.params
-
-            if not dblsht:
-                one_sheet = cone_from_box(to_gvector(apex), to_gvector(axis), t, to_gboundbox(boundBox))
-                if one_sheet is None:
-                    self.shape = None
-                    return
-                oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
-                self.shape = one_sheet.__native__
-                self.shell = oneface.__native__
-            else:
-                # dead branch: get_surface() never constructs a Cone with
-                # dblsht=True, so this is left on its pre-existing
-                # (unsigned-direction) logic rather than ported
-                # speculatively through cone_from_box's single-direction API.
-                box = to_gboundbox(boundBox)
-                dmin = axis.dot(box.get_point(0) - apex)
-                dmax = dmin
-                for i in range(1, 8):
-                    d = axis.dot(box.get_point(i) - apex)
-                    dmin = min(d, dmin)
-                    dmax = max(d, dmax)
-
-                length = max(abs(dmin), abs(dmax))
-                half_angle = math.atan(t)
-                one_sheet = Gmake_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
-                oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
-                other_sheet = Gmake_cone(to_gvector(apex), to_gvector(-axis), half_angle, length)
-                otherface = next(f for f in other_sheet.Faces if type(f.Surface) is GCone)
-                double_sheet = Gfuse([one_sheet, other_sheet])
-                self.shape = double_sheet.__native__
-                self.shell = Gmake_shell((oneface, otherface)).__native__
-        # truncated (frustum, two explicit radii) Cone is never constructed
-        # with truncated=True anywhere in build_region -- no backend
-        # primitive covers that case, so it is intentionally left
-        # unimplemented rather than ported speculatively.
+        elif self.type == "sphere":
+            self.shape = Gmake_sphere(d.Center, d.Radius).__native__
 
 
 class Undefined:
