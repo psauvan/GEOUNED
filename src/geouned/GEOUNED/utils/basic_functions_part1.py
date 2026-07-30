@@ -274,6 +274,90 @@ def multi_round_corner_region(mRoundC):
     return multi_rc_region
 
 
+def can_region(cid, cyl_orientation, surf_list):
+    """
+    Boolean AND/OR definition of a Can meta-surface (a cylinder bounded by
+    up to two secondary surfaces s1/s2, each a Plane, Cylinder, Cone or
+    Sphere), built purely from already-resolved signed ids -- shared by
+    the two places that need this same region: `MetaSurfacesDict.Can_region`
+    (global, deduplicated ids, registered via `primitive_surfaces.add_*`)
+    and `get_cell_object` (local, decomposition-time ids read straight off
+    `.bVar`). Only the id *scope* differs between the two callers; the
+    combination rule itself must not be duplicated.
+
+    cid: id of the cylinder component (sign convention: cyl_orientation
+        decides the sign actually used, same as round_corner_region).
+    cyl_orientation: "Forward" or "Reversed", orientation of the cylinder.
+    surf_list: iterable of (kind, sid, pid, apid, orientation, configuration)
+        kind: "Plane" | "Cylinder" | "Cone" | "Sphere"
+        sid: id of the secondary analytic surface; None for kind=="Plane"
+        pid: id of the plane bounding the secondary surface (or the plane
+            itself when kind=="Plane"); None if there is none
+        apid: id of the cone's apex plane; only meaningful for kind=="Cone"
+        orientation: "Forward"/"Reversed" of the secondary surface; not
+            used for kind=="Plane"
+        configuration: "AND" or "OR", how this surface combines with cid
+    """
+    region = BoolSurface(0, cid) if cyl_orientation == "Reversed" else BoolSurface(0, -cid)
+
+    for kind, sid, pid, apid, orientation, configuration in surf_list:
+        if kind == "Plane":
+            si_region = BoolSurface(0, pid) if configuration == "AND" else BoolSurface(0, -pid)
+        elif pid is None:
+            if apid is None:
+                si_region = BoolSurface(0, -sid) if orientation == "Forward" else BoolSurface(0, sid)
+            elif orientation == "Forward":
+                si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
+            else:
+                si_region = BoolSurface(0, apid) * BoolSurface(0, sid)
+        elif apid is None:
+            if orientation == "Forward":
+                if configuration == "AND":
+                    si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
+                else:
+                    si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
+            else:
+                if configuration == "AND":
+                    si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
+                else:
+                    si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
+        else:
+            if orientation == "Forward":
+                if configuration == "AND":
+                    si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, pid))
+                else:
+                    si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, -pid))
+            else:
+                if configuration == "AND":
+                    si_region = BoolSurface(0, apid) + (BoolSurface(0, sid) * BoolSurface(0, pid))
+                else:
+                    si_region = BoolSurface(0, apid) * (BoolSurface(0, sid) * BoolSurface(0, -pid))
+
+        region = region * si_region if configuration == "AND" else region + si_region
+
+    return region
+
+
+def tcone_region(cid, cone_orientation, surf_list):
+    """
+    Boolean AND/OR definition of a TCone meta-surface (a cone bounded by
+    two planes p1/p2), built purely from already-resolved signed ids --
+    same rationale and shared-by-two-callers reasoning as `can_region`.
+
+    cid: id of the cone component.
+    cone_orientation: "Forward" or "Reversed", orientation of the cone.
+    surf_list: iterable of (pid, configuration), one per bounding plane;
+        configuration is "AND" or "OR".
+    """
+    region = BoolSurface(0, -cid) if cone_orientation == "Forward" else BoolSurface(0, cid)
+
+    for pid, configuration in surf_list:
+        si_region = BoolSurface(0, pid) if configuration == "AND" else BoolSurface(0, -pid)
+        region = region * si_region if configuration == "AND" else region + si_region
+
+    return region
+
+
 class Plane3PtsParams:
     def __init__(self, params, real=True):
         self.Position = params[0]
@@ -334,23 +418,6 @@ class CylinderOnlyParams:
         self.dimL = params[3]
         self.real = real
 
-    def __eq__(self, c2):
-        if type(c2) is not CylinderParams:
-            return False
-
-        if abs(self.Radius - c2.Radius) > 1.0e-8:
-            return False
-
-        r = self.Center - c2.Center
-        if r.Length > 1e-8:
-            return False
-
-        d = self.Axis.dot(c2.Axis)
-        if abs(d - 1) > 1e-8:
-            return False
-        else:
-            return True
-
     def __str__(self):
         outstr = f"""Cylinder :
     Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
@@ -368,23 +435,6 @@ class ConeOnlyParams:
         self.dimR = params[4]
         self.real = real
 
-    def __eq__(self, c2):
-        if type(c2) is not ConeParams:
-            return False
-
-        if abs(self.SemiAngle - c2.SemiAngle) > 1.0e-8:
-            return False
-
-        r = self.apex - c2.Apex
-        if r.Length > 1e-8:
-            return False
-
-        d = self.Axis.dot(c2.Axis)
-        if abs(d - 1) > 1e-8:
-            return False
-        else:
-            return True
-
     def __str__(self):
         outstr = f"""Cone :
     Axis     : {self.Axis.x}  {self.Axis.y}  {self.Axis.z} 
@@ -397,19 +447,6 @@ class SphereOnlyParams:
     def __init__(self, params):
         self.Center = _to_native_vector(params[0])
         self.Radius = params[1]
-
-    def __eq__(self, s2):
-        if type(s2) is not SphereParams:
-            return False
-
-        if abs(self.Radius - s2.Radius) > 1.0e-8:
-            return False
-
-        r = self.Center - s2.Center
-        if r.Length > 1e-8:
-            return False
-        else:
-            return True
 
     def __str__(self):
         outstr = f"""Sphere :
@@ -424,26 +461,6 @@ class TorusOnlyParams:
         self.Axis = _to_native_vector(params[1])
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
-
-    def __eq__(self, t2):
-        if type(t2) is not TorusParams:
-            return False
-
-        if abs(self.MajorRadius - t2.MajorRadius) > 1.0e-8:
-            return False
-
-        if abs(self.MinorRadius - t2.MinorRadius) > 1.0e-8:
-            return False
-
-        r = self.Center - t2.Center
-        if r.Length > 1e-8:
-            return False
-
-        d = self.Axis.dot(t2.Axis)
-        if abs(d - 1) > 1e-8:
-            return False
-        else:
-            return True
 
     def __str__(self):
         outstr = f"""Torus :

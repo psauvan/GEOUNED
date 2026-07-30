@@ -72,5 +72,6 @@ from ._freecad_impl import (
     Gmake_wire,
     Gsplit,
     kernel_version,
+    pick_outer_wire,
     to_fc_vector,
 )

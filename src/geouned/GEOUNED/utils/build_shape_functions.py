@@ -1,8 +1,5 @@
-import FreeCAD
 import numpy
-import math
 
-from .data_classes import Options
 from .build_region.build_region import BuildDepth, get_cell_object, getPart, FuseSolid
 from .build_region.Objects import myBox, plane_polygon_from_box, cylinder_from_box, cone_from_box
 from ...geo import (
@@ -14,29 +11,25 @@ from ...geo import (
     GVector,
     Gmake_shell,
     Gmake_polygon_face,
-    to_fc_vector,
-    to_gboundbox,
     to_gvector,
 )
 
 
-def makePlane(normal, position, Box):
-    normal_g = to_gvector(normal)
-    p0 = normal_g.dot(to_gvector(position))
-
-    face = plane_polygon_from_box(normal_g, p0, to_gboundbox(Box))
+def makePlane(normal: GVector, position: GVector, box: GBoundBox):
+    p0 = normal.dot(position)
+    face = plane_polygon_from_box(normal, p0, box)
     return face.__native__ if face is not None else None  # None: Plane does not cross box
 
 
-def makeCylinder(cyl, Box):
-    gsolid = cylinder_from_box(to_gvector(cyl.Center), to_gvector(cyl.Axis), cyl.Radius, to_gboundbox(Box))
+def makeCylinder(center: GVector, axis: GVector, radius: float, box: GBoundBox):
+    gsolid = cylinder_from_box(center, axis, radius, box)
     Cylinder = gsolid.__native__
     shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GCylinder)
     return (Cylinder, shell)
 
 
-def makeCone(axis, apex, tan, Box):
-    gsolid = cone_from_box(to_gvector(apex), to_gvector(axis), tan, to_gboundbox(Box))
+def makeCone(axis: GVector, apex: GVector, tan: float, box: GBoundBox):
+    gsolid = cone_from_box(apex, axis, tan, box)
     if gsolid is None:
         return None
     cone = gsolid.__native__
@@ -50,10 +43,13 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
     cutfaces = makeBoxFaces(boxlim)
 
     for p in plane_list:
-        axis = (
-            -p.Surf.Axis if multibuild else p.Surf.Axis
-        )  # for mutliplane shape construction planes direction must be inverted
-        plane = GPlane.from_values(to_gvector(p.Surf.Position), to_gvector(axis))
+        # p.Surf.{Position,Axis} are the one native-holding boundary this
+        # file can't push further out: they live on PlaneParams, a domain
+        # type shared far beyond this file (see CLAUDE.md).
+        axis = to_gvector(p.Surf.Axis)
+        if multibuild:
+            axis = -axis  # for mutliplane shape construction planes direction must be inverted
+        plane = GPlane.from_values(to_gvector(p.Surf.Position), axis)
         newbox_points = cut_box(cutfaces, plane)
         cutfaces = makeBoxFaces(newbox_points)
     if multibuild:
@@ -65,7 +61,7 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
     if len(plane_points) == 0:
         return None  # multiplane doesn't cross box
     else:
-        return Gmake_shell([GFace(f) for f in makeBoxFaces(plane_points)]).__native__
+        return Gmake_shell(makeBoxFaces(plane_points)).__native__
 
 
 def makeRoundCorner(roundCorner, Box):
@@ -110,15 +106,8 @@ def build_complex_shape(surface, Box):
     return (solid, shell)
 
 
-def intersection(sol1, sol2):
-    d1 = sol1.cut(sol2)
-    d2 = sol2.cut(sol1)
-    d12 = d1.fuse(d2)
-    return sol1.cut(d12)
-
-
 def makeBoxFaces(box: list):
-    """Build faces of a box."""
+    """Build faces of a box. Returns a list of GFace."""
     if isinstance(box[0], (int, float)):
         xmin, ymin, zmin, xmax, ymax, zmax = box
         v0 = GVector(xmin, ymin, zmin)
@@ -145,7 +134,7 @@ def makeBoxFaces(box: list):
     for f in faces_points:
         if len(f) < 3:
             continue
-        faces.append(Gmake_polygon_face([to_gvector(p) for p in f]).__native__)
+        faces.append(Gmake_polygon_face(f))
     return faces
 
 
@@ -162,17 +151,17 @@ def cut_face(gface: GFace, plane: GPlane):
                 point = gline.intersect_line(edge_line)
 
             if point is not None and e.is_inside(point, 1e-8):
-                inter.append(to_fc_vector(point))
+                inter.append(point)
 
     newpoints = inter[:]
     for v in gface.Vertexes:
         if plane.Axis.dot(v - plane.Position) > 0:
-            newpoints.append(to_fc_vector(v))
+            newpoints.append(v)
     if len(newpoints) == 0:
         return None, None
     else:
-        sorted = sort_points(newpoints, to_fc_vector(gface.Surface.Axis))
-        return sorted, inter
+        sorted_points = sort_points(newpoints, gface.Surface.Axis)
+        return sorted_points, inter
 
 
 def cut_box(faces: list, plane: GPlane):
@@ -180,25 +169,25 @@ def cut_box(faces: list, plane: GPlane):
     updatedfaces = []
     newface_points = []
     for f in faces:
-        newface, newpoints = cut_face(GFace(f), plane)
+        newface, newpoints = cut_face(f, plane)
         if newface is None:
             continue
         updatedfaces.append(newface)
         newface_points.extend(newpoints)
 
     fix_same_points(newface_points)
-    sorted = sort_points(newface_points, to_fc_vector(plane.Axis))
-    updatedfaces.append(sorted)
+    sorted_points = sort_points(newface_points, plane.Axis)
+    updatedfaces.append(sorted_points)
 
     return updatedfaces
 
 
-def sort_points(point_list: list, normal: FreeCAD.Vector):
+def sort_points(point_list: list, normal: GVector):
     """Sort the points of the polygon face in anti-clock wise with respect vector "normal"."""
     if len(point_list) == 0:
         return []
 
-    s = to_fc_vector(GVector(0, 0, 0))
+    s = GVector(0, 0, 0)
     for v in point_list:
         s = s + v
     s = s / len(point_list)
@@ -224,24 +213,20 @@ def remove_box_faces(point_face_list: list, faces: list, boxlim: list):
     """Remove the remaing initial BoundBox faces from the multplane faces produced"""
     tol = 1e-8
     plane_points = []
-    for i, face in enumerate(faces):
-        if abs(face.Surface.Axis.dot(to_fc_vector(GVector(1, 0, 0))) - 1) < tol and abs(boxlim[0] - face.Surface.Position.x) < tol:
+    for i, gface in enumerate(faces):
+        axis = gface.Surface.Axis
+        position = gface.Surface.Position
+        if abs(axis.dot(GVector(1, 0, 0)) - 1) < tol and abs(boxlim[0] - position.x) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(-1, 0, 0))) - 1) < tol and abs(
-            boxlim[3] - face.Surface.Position.x
-        ) < tol:
+        elif abs(axis.dot(GVector(-1, 0, 0)) - 1) < tol and abs(boxlim[3] - position.x) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 1, 0))) - 1) < tol and abs(boxlim[1] - face.Surface.Position.y) < tol:
+        elif abs(axis.dot(GVector(0, 1, 0)) - 1) < tol and abs(boxlim[1] - position.y) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, -1, 0))) - 1) < tol and abs(
-            boxlim[4] - face.Surface.Position.y
-        ) < tol:
+        elif abs(axis.dot(GVector(0, -1, 0)) - 1) < tol and abs(boxlim[4] - position.y) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 0, 1))) - 1) < tol and abs(boxlim[2] - face.Surface.Position.z) < tol:
+        elif abs(axis.dot(GVector(0, 0, 1)) - 1) < tol and abs(boxlim[2] - position.z) < tol:
             continue
-        elif abs(face.Surface.Axis.dot(to_fc_vector(GVector(0, 0, -1))) - 1) < tol and abs(
-            boxlim[5] - face.Surface.Position.z
-        ) < tol:
+        elif abs(axis.dot(GVector(0, 0, -1)) - 1) < tol and abs(boxlim[5] - position.z) < tol:
             continue
         plane_points.append(point_face_list[i])
 
@@ -259,7 +244,7 @@ def fix_same_points(points_inplane: list):
             continue
         for p2 in points_inplane[i + 1 :]:
             r = p1 - p2
-            if r.Length < tol:
+            if r.length < tol:
                 remove.append(i)
 
     for ind in reversed(remove):
@@ -276,67 +261,12 @@ def fix_points(point_plane_list: list, vertex_list: list):
             for planepts in point_plane_list[i + 1 :]:
                 for j in range(len(planepts)):
                     r = point - planepts[j]
-                    if r.Length < tol:
+                    if r.length < tol:
                         planepts[j] = point
 
     for v, ord in vertex_list:
         for planepts in point_plane_list:
             for i in range(len(planepts)):
-                r = v.Point - planepts[i]
-                if r.Length < tol:
-                    planepts[i] = v.Point
-
-
-def check_sign(point, surf):
-
-    if surf.Type == "Plane":
-        pr = point - surf.Surf.Position
-        if surf.Surf.Axis.dot(pr) > 0:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "Cylinder":
-        cyl = surf.Surf.Cylinder.Surf
-        r = point - cyl.Center
-        L2 = r.Length * r.Length
-        z = cyl.Axis.dot(r)
-        z2 = z * z
-        R2 = cyl.Radius * cyl.Radius
-        if L2 - z2 > R2:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "Sphere":
-        sph = surf.Surf.Sphere.Surf
-        r = point - sph.Center
-        if r.Length > sph.Radius:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "Cone":
-        kne = surf.Surf.Cone.Surf
-        r = point - kne.Apex
-        r.normalize()
-        z = round(kne.Axis.dot(r), 15)
-        alpha = math.acos(z)
-
-        if alpha > kne.SemiAngle:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "Torus":
-        tor = surf.Surf.Torus.Surf
-        r = point - tor.Center
-        v = tor.Axis.cross(r)
-        if v.Length > 1e-8:
-            v.normalize()
-            t = v.cross(tor.Axis)
-            r = r + t * tor.MajorRadius
-        if r.Length > tor.MinorRadius:
-            return 1
-        else:
-            return -1
+                r = v - planepts[i]
+                if r.length < tol:
+                    planepts[i] = v

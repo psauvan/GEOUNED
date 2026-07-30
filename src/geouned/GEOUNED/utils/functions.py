@@ -513,7 +513,7 @@ def build_multip_params(plane_list):
         v = vertex_list.pop()
         n = 0
         for vi in reversed(vertex_list):
-            if v.Point == vi.Point:
+            if v == vi:
                 n += 1
                 vertex_list.remove(vi)
         if n > 0:

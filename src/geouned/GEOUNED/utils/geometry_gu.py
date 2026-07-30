@@ -23,6 +23,7 @@ from ...geo import (
     Gclassify_curve,
     Gclassify_surface,
     Gmake_shell,
+    pick_outer_wire,
     to_gvector,
 )
 
@@ -49,21 +50,6 @@ class face_index:
         self.face = face
         self.index = index
         self.orientation = orientation
-
-
-# SURFACES
-class SurfacesGu(object):
-    """GEOUNED surface class"""
-
-    def __init__(self, face):
-        self.face = face
-        self.Surface = self.face.Surface
-        self.type = str(self.Surface)
-
-    def __str__(self):
-        """str(Surface) is done for the classification of the surface.
-        Surface_GU saves this information in self.type"""
-        return self.type
 
 
 class SolidGu:
@@ -231,8 +217,7 @@ class FaceGu(object):
         self.Index = index
 
     def set_outerWire(self):
-        self.OuterWire = set_outerWire(self.__face__.Wires, self)
-        # self.OuterWire = self.__face__.OuterWire
+        self.OuterWire = pick_outer_wire(self.__face__)
 
     def tessellate(self, val, reset=False):
         res = self.__face__.tessellate(val, reset)
@@ -396,28 +381,6 @@ def is_inverted(solid):
             return True
 
     return False
-
-
-def set_outerWire(wires, face):
-    if len(wires) == 1:
-        return wires[0]
-
-    dist = 0
-    outWire = None
-    for w in wires:
-        ext = wire_extension(w)
-        if ext > dist:
-            outWire = w
-            dist = ext
-    return outWire
-
-
-def wire_extension(wire):
-    center = wire.CenterOfMass
-    dist = 0
-    for x in wire.OrderedVertexes:
-        dist += (x.Point - center).Length
-    return dist / len(wire.OrderedVertexes)
 
 
 def innerWires(wire, face):

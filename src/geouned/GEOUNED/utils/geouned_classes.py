@@ -24,7 +24,7 @@ from .basic_functions_part1 import (
     CanParams,
     TConeParams,
 )
-from .basic_functions_part1 import round_corner_region, multi_round_corner_region
+from .basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
@@ -203,6 +203,7 @@ class GeounedSurface:
         self.Index0 = 0
         self.bVar = None
         self.region = None
+        self.components = None  # dict[abs(id), GeounedSurface]: numbering<->surface relation for composite (Can/TCone) surfaces
         if params[0] == "Plane":
             self.Type = "Plane"
             self.Surf = PlaneParams(params[1])  # plane point defined as the shortest distance to origin
@@ -301,17 +302,17 @@ class GeounedSurface:
         Box = to_gboundbox(boundBox)
         if self.Type == "Plane":
             Box = Box.enlarged(10)
-            self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
+            self.shape = makePlane(to_gvector(self.Surf.Axis), to_gvector(self.Surf.Position), Box)
             self.shell = self.shape
 
         elif self.Type == "Cylinder" or self.Type == "CylinderOnly":
             cyl = self.Surf.Cylinder if self.Type == "Cylinder" else self
-            self.shape, self.shell = makeCylinder(cyl.Surf, Box)
+            self.shape, self.shell = makeCylinder(to_gvector(cyl.Surf.Center), to_gvector(cyl.Surf.Axis), cyl.Surf.Radius, Box)
 
         elif self.Type == "Cone" or self.Type == "ConeOnly":
             kne = self.Surf.Cone if self.Type == "Cone" else self
             tan = math.tan(kne.Surf.SemiAngle)
-            result = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
+            result = makeCone(to_gvector(kne.Surf.Axis), to_gvector(kne.Surf.Apex), tan, Box)
             if result is None:
                 self.shape = None
                 self.shell = None
@@ -695,111 +696,67 @@ class MetaSurfacesDict(dict):
     #  - RR AND : same as RF OR
     # if only plane assume S = True in the previous expressions
 
+    def _resolve_plane_id(self, plane):
+        """Register `plane` in the global primitive-surfaces dedup registry
+        and return its signed id, flipping the sign (and the plane's own
+        Axis/bVar, in place) if it turns out to be the opposite-facing
+        duplicate of an already-registered plane. Shared by Can_region and
+        TCone_region -- both build their solid from these ids, so the sign
+        must be kept consistent with whichever plane instance ends up
+        registered."""
+        pid, exist = self.primitive_surfaces.add_surface(plane, True)
+        if exist:
+            p = self.get_primitive_surface(pid)
+            if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                pid = -pid
+                # change plane axis because Can/TCone shape is build with solid definition based on Surfaces dict reference
+                plane.Surf.Axis = -plane.Surf.Axis
+                plane.bVar = pid
+        return pid
+
     def Can_region(self, FRCan):
         cylCan = FRCan.Surf.Cylinder
         cid, exist = self.primitive_surfaces.add_cylinder(cylCan.Surf.Cylinder, True)
-        region = BoolSurface(0, cid) if cylCan.Orientation == "Reversed" else BoolSurface(0, -cid)
 
-        surf_list = []
+        raw_surf_list = []
         if FRCan.Surf.s1 is not None:
-            surf_list.append((FRCan.Surf.s1, FRCan.Surf.s1_configuration))
-
+            raw_surf_list.append((FRCan.Surf.s1, FRCan.Surf.s1_configuration))
         if FRCan.Surf.s2 is not None:
-            surf_list.append((FRCan.Surf.s2, FRCan.Surf.s2_configuration))
+            raw_surf_list.append((FRCan.Surf.s2, FRCan.Surf.s2_configuration))
 
-        for si, configuration in surf_list:
+        components = {abs(cid): cylCan.Surf.Cylinder}
+        surf_list = []
+        for si, configuration in raw_surf_list:
             if si.Type == "Plane":
-                plane = si
-                pid, exist = self.primitive_surfaces.add_surface(plane, True)
-                if exist:
-                    p = self.get_primitive_surface(pid)
-                    if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                        pid = -pid
-                        # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
-                        plane.Surf.Axis = -plane.Surf.Axis
-                        plane.bVar = pid
+                pid = self._resolve_plane_id(si)
+                components[abs(pid)] = si
+                surf_list.append(("Plane", None, pid, None, None, configuration))
+                continue
 
-                si_region = BoolSurface(0, pid) if configuration == "AND" else BoolSurface(0, -pid)
+            plane = si.Surf.Plane
+            aplane = None
+            if si.Type == "Cylinder":
+                surf = si.Surf.Cylinder
+            elif si.Type == "Cone":
+                surf = si.Surf.Cone
+                aplane = si.Surf.ApexPlane
+            elif si.Type == "Sphere":
+                surf = si.Surf.Sphere
 
-            elif si.Type in ("Cylinder", "Cone", "Sphere"):
-                plane = si.Surf.Plane
-                aplane = None
-                if si.Type == "Cylinder":
-                    surf = si.Surf.Cylinder
-                elif si.Type == "Cone":
-                    surf = si.Surf.Cone
-                    aplane = si.Surf.ApexPlane
-                elif si.Type == "Sphere":
-                    surf = si.Surf.Sphere
+            sid, exist = self.primitive_surfaces.add_surface(surf, True)
+            components[abs(sid)] = surf
+            pid = self._resolve_plane_id(plane) if plane is not None else None
+            if plane is not None:
+                components[abs(pid)] = plane
+            apid = self._resolve_plane_id(aplane) if aplane is not None else None
+            if aplane is not None:
+                components[abs(apid)] = aplane
+            surf_list.append((si.Type, sid, pid, apid, si.Orientation, configuration))
 
-                sid, exist = self.primitive_surfaces.add_surface(surf, True)
-                if plane is not None:
-                    pid, exist = self.primitive_surfaces.add_surface(plane, True)
-                    if exist:
-                        p = self.get_primitive_surface(pid)
-                        if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                            pid = -pid
-                            # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
-                            plane.Surf.Axis = -plane.Surf.Axis
-                            plane.bVar = pid
-
-                    if aplane is None:
-                        if si.Orientation == "Forward":
-                            if configuration == "AND":
-                                si_region = BoolSurface(0, -sid) + BoolSurface(0, pid)
-                            else:
-                                si_region = BoolSurface(0, -sid) + BoolSurface(0, -pid)
-                        else:
-                            if configuration == "AND":
-                                si_region = BoolSurface(0, sid) * BoolSurface(0, pid)
-                            else:
-                                si_region = BoolSurface(0, sid) * BoolSurface(0, -pid)
-                    else:
-                        apid, exist = self.primitive_surfaces.add_surface(aplane, True)
-                        if exist:
-                            p = self.get_primitive_surface(apid)
-                            if is_opposite(aplane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                                apid = -apid
-                                # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
-                                aplane.Surf.Axis = -aplane.Surf.Axis
-                                aplane.bVar = apid
-
-                        if si.Orientation == "Forward":
-                            if configuration == "AND":
-                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, pid))
-                            else:
-                                si_region = BoolSurface(0, apid) * (BoolSurface(0, -sid) + BoolSurface(0, -pid))
-                        else:
-                            if configuration == "AND":
-                                si_region = BoolSurface(0, apid) + (BoolSurface(0, sid) * BoolSurface(0, pid))
-                            else:
-                                si_region = BoolSurface(0, apid) * (BoolSurface(0, sid) * BoolSurface(0, -pid))
-                else:
-                    if aplane is None:
-                        if si.Orientation == "Forward":
-                            si_region = BoolSurface(0, -sid)
-                        else:
-                            si_region = BoolSurface(0, sid)
-                    else:
-                        apid, exist = self.primitive_surfaces.add_surface(aplane, True)
-                        if exist:
-                            p = self.get_primitive_surface(apid)
-                            if is_opposite(aplane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                                apid = -apid
-                                # change plane axis because Can shape is build with solid definition based on Surfaces dict reference
-                                aplane.Surf.Axis = -aplane.Surf.Axis
-                                aplane.bVar = apid
-
-                        if si.Orientation == "Forward":
-                            si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
-                        else:
-                            si_region = BoolSurface(0, apid) * BoolSurface(0, sid)
-
-            region = region * si_region if configuration == "AND" else region + si_region
-        return region
+        return can_region(cid, cylCan.Orientation, surf_list), components
 
     def add_forwardCan(self, forwardCan):
-        fwd_region = self.Can_region(forwardCan)
+        fwd_region, components = self.Can_region(forwardCan)
 
         add_can = True
         for kind in ("FwdCan", "RevCan"):
@@ -815,6 +772,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = fwd_region.copy(self.surfaceNumber)
             forwardCan.region = newregion
+            forwardCan.components = components
             self["FwdCan"].append(forwardCan)
             self.__surfIndex__["FwdCan"].append(forwardCan.region.__int__())
         else:
@@ -822,7 +780,7 @@ class MetaSurfacesDict(dict):
         return newregion
 
     def add_reverseCan(self, reverseCan):
-        rev_region = self.Can_region(reverseCan)
+        rev_region, components = self.Can_region(reverseCan)
 
         add_can = True
         for kind in ("RevCan", "FwdCan"):
@@ -838,6 +796,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = rev_region.copy(self.surfaceNumber)
             reverseCan.region = newregion
+            reverseCan.components = components
             self["RevCan"].append(reverseCan)
             self.__surfIndex__["RevCan"].append(reverseCan.region.__int__())
         else:
@@ -847,28 +806,19 @@ class MetaSurfacesDict(dict):
     def TCone_region(self, TCone):
         kneCan = TCone.Surf.Cone
         cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
-        TCone_region = BoolSurface(0, -cid) if TCone.Orientation == "Forward" else BoolSurface(0, cid)
 
-        surf_list = (TCone.Surf.p1, TCone.Surf.p2)
-        for pi in surf_list:
-            pid, exist = self.primitive_surfaces.add_surface(pi, True)
-            if exist:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(pi.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
-                    # change plane axis because TCone shape is build with solid definition based on Surfaces dict reference
-                    pi.Surf.Axis = -pi.Surf.Axis
-                    pi.bVar = pid
+        configuration = "AND" if TCone.Orientation == "Forward" else "OR"
+        components = {abs(cid): kneCan.Surf.Cone}
+        surf_list = []
+        for pi in (TCone.Surf.p1, TCone.Surf.p2):
+            pid = self._resolve_plane_id(pi)
+            components[abs(pid)] = pi
+            surf_list.append((pid, configuration))
 
-            if TCone.Orientation == "Forward":
-                TCone_region = TCone_region * BoolSurface(0, pid)
-            else:
-                TCone_region = TCone_region + BoolSurface(0, -pid)
-
-        return TCone_region
+        return tcone_region(cid, TCone.Orientation, surf_list), components
 
     def add_forwardTCone(self, forwardTCone):
-        fwd_region = self.TCone_region(forwardTCone)
+        fwd_region, components = self.TCone_region(forwardTCone)
 
         add_kne = True
         for kind in ("FwdTCone", "RevTCone"):
@@ -884,6 +834,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = fwd_region.copy(self.surfaceNumber)
             forwardTCone.region = newregion
+            forwardTCone.components = components
             self["FwdTCone"].append(forwardTCone)
             self.__surfIndex__["FwdTCone"].append(forwardTCone.region.__int__())
         else:
@@ -891,7 +842,7 @@ class MetaSurfacesDict(dict):
         return newregion
 
     def add_reverseTCone(self, reverseTCone):
-        rev_region = self.TCone_region(reverseTCone)
+        rev_region, components = self.TCone_region(reverseTCone)
 
         add_kne = True
         for kind in ("RevTCone", "FwdTCone"):
@@ -907,6 +858,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = rev_region.copy(self.surfaceNumber)
             reverseTCone.region = newregion
+            reverseTCone.components = components
             self["RevTCone"].append(reverseTCone)
             self.__surfIndex__["RevTCone"].append(reverseTCone.region.__int__())
         else:

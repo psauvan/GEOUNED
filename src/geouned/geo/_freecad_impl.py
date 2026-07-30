@@ -414,12 +414,15 @@ class GWire:
         self.Edges = [GEdge(e) for e in native.OrderedEdges]
 
 
-def _pick_outer_wire(native_face) -> "Part.Wire":
+def pick_outer_wire(native_face) -> "Part.Wire":
     """
     GEOUNED's own heuristic (largest mean vertex-to-centroid distance
     among the face's wires), not FreeCAD's native `Face.OuterWire` --
     the native attribute picks the wrong wire for some faces (e.g. a
-    face with a through-hole).
+    face with a through-hole). Public (used both by `GFace.outer_wire()`
+    below and directly by `geometry_gu.py::FaceGu`, which needs the outer
+    wire natively -- no reason for that file to reimplement the same
+    algorithm a second time).
     """
     wires = native_face.Wires
     if len(wires) == 1:
@@ -453,7 +456,7 @@ class GFace:
         self.index: int | None = None
         # Wires/OuterWire are NOT part of GFace's eager enrichment (unlike
         # Surface/Edges/Vertexes above): OuterWire in particular runs
-        # _pick_outer_wire's heuristic over every wire of the face, which
+        # pick_outer_wire's heuristic over every wire of the face, which
         # is wasted work for the common case (most callers only ever touch
         # Surface/Edges/Vertexes) -- computed lazily instead, on the first
         # actual call to wires()/outer_wire(), and cached after that.
@@ -469,12 +472,12 @@ class GFace:
     def outer_wire(self) -> "GWire":
         """
         The face's outer wire, via GEOUNED's own largest-mean-vertex-distance
-        heuristic (`_pick_outer_wire`) -- not FreeCAD's native `Face.OuterWire`,
+        heuristic (`pick_outer_wire`) -- not FreeCAD's native `Face.OuterWire`,
         which picks the wrong wire for some faces (e.g. one with a through-hole).
         Computed lazily and cached.
         """
         if self.__outer_wire__ is None:
-            self.__outer_wire__ = GWire(_pick_outer_wire(self.__native__))
+            self.__outer_wire__ = GWire(pick_outer_wire(self.__native__))
         return self.__outer_wire__
 
     def value_at(self, u: float, v: float) -> GVector:

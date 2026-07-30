@@ -795,19 +795,22 @@ def no_convex(mplane_list):
 
 
 def commonVertex(e1, e2):
+    """Returns the GVector point(s) (not native Vertex objects -- nothing
+    downstream needs vertex identity, only the coordinate) shared by e1
+    and e2."""
     if not shapes_in_contact(e1, e2):
         return []
 
     common = []
     if e1.Vertexes[0].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[0])
+        common.append(to_gvector(e1.Vertexes[0].Point))
     elif e1.Vertexes[0].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[0])
+        common.append(to_gvector(e1.Vertexes[0].Point))
 
     if e1.Vertexes[1].Point == e2.Vertexes[0].Point:
-        common.append(e1.Vertexes[1])
+        common.append(to_gvector(e1.Vertexes[1].Point))
     elif e1.Vertexes[1].Point == e2.Vertexes[1].Point:
-        common.append(e1.Vertexes[1])
+        common.append(to_gvector(e1.Vertexes[1].Point))
 
     return common
 

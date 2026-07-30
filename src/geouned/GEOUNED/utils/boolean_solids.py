@@ -554,41 +554,16 @@ def check_sign(solid_or_point, surf):
         return -1
 
     elif surf.Type == "Can" or surf.Type == "TCone":
-        if surf.Type == "Can":
-            can_surfaces = [surf.Surf.Cylinder.Surf.Cylinder]
-            s12 = (surf.Surf.s1, surf.Surf.s2)
-            for si in s12:
-                if si.Type == "Plane":
-                    can_surfaces.append(si)
-                elif si.Type == "cylinder":
-                    can_surfaces.append(si.Surf.Plane)
-                    can_surfaces.append(si.Surf.Cylinder)
-                elif si.Type == "Cone":
-                    can_surfaces.append(si.Surf.Cone)
-                    if si.Surf.ApexPlane is not None:
-                        can_surfaces.append(si.Surf.ApexPlane)
-                    if si.Surf.Plane is not None:
-                        can_surfaces.append(si.Surf.Plane)
-
-                elif si.Type == "Sphere":
-                    can_surfaces.append(si.Surf.Plane)
-                    can_surfaces.append(si.Surf.Sphere)
-
-            surfSet = dict()
-            for s in can_surfaces:
-                surfSet[s.bVar] = check_sign(point, s) > 0
-
-            inside = surf.region.region.evaluate(surfSet)
-            return 1 if inside else -1
-
-        else:
-            tcone_surfaces = (surf.Surf.Cone.Surf.Cone, surf.Surf.p1, surf.Surf.p2)
-            surfSet = dict()
-            for s in tcone_surfaces:
-                surfSet[s.bVar] = check_sign(point, s) > 0
-
-            inside = surf.region.region.evaluate(surfSet)
-            return 1 if inside else -1
+        # surf.components (id -> primitive GeounedSurface) is the same
+        # numbering<->surface table built once in MetaSurfacesDict.Can_region
+        # /TCone_region -- no need to re-derive it here by walking .Surf.X.Y
+        # per Type (that walk previously had a latent bug: it matched
+        # si.Type == "cylinder", lowercase, which never matched the real
+        # "Cylinder" tag, silently dropping that component's plane/cylinder
+        # ids from surfSet).
+        surfSet = {id: check_sign(point, comp) > 0 for id, comp in surf.components.items()}
+        inside = surf.region.region.evaluate(surfSet)
+        return 1 if inside else -1
 
     elif surf.Type == "RoundCorner":
         multiDef = surf.region.region.copy()
