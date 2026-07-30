@@ -3,7 +3,7 @@ import re
 
 from ..utils import q_form as q_form
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
-from ...geo import GVector, to_gvector
+from ...geo import GVector, to_fc_vector, to_gvector
 from .string_functions import remove_redundant
 
 
@@ -1123,3 +1123,62 @@ def cut_line(line, lineLength):
         newLine = "{}\n{: <{n}}{}".format(line1, "", line2, n=tabNumber)
 
     return newLine
+
+
+# The 3 functions below are shared by every output format (MCNP-lineage
+# text formats and OpenMC alike) -- kept here, above both write/mcnp_like/
+# and write/openmc/, rather than in either, since neither owns the other.
+
+
+def get_cell_surf_summary(Cells):
+    """Tally solid/total cell counts and materials, and expand each cell's
+    Definition regions to integer form -- a required side effect before
+    writing any surface-numbered cell card."""
+    solid_cells = 0
+    n_cells = 0
+    materials = set()
+    for CellObj in Cells:
+        if CellObj.__id__ is None:
+            continue
+        n_cells += 1
+        if CellObj.Material != 0:
+            materials.add(CellObj.Material)
+        if not CellObj.Void:
+            solid_cells += 1
+        CellObj.Definition.expand_regions_to_integer()
+    return solid_cells, n_cells, materials
+
+
+def sorted_surfaces(Surfaces):
+    """Sort primitive_surfaces by absolute id and relabel each surface's
+    bVar with `Surfaces.IndexOffset` applied -- the canonical numbering
+    every output format's surface cards use."""
+    surfindex = Surfaces.get_sorted_surfaces()
+    surfList = []
+    for bsurf in surfindex:
+        label = Surfaces.IndexOffset + abs(bsurf.value())
+        s = Surfaces.get_surface(bsurf)
+        if s is not None:
+            s.bVar = bsurf.copy(label)
+            surfList.append(s)
+    return surfList
+
+
+def simplify_planes(Surfaces):
+    """Normalize axis-aligned plane surfaces (PX/PY/PZ) to point along the
+    positive axis, flipping the surface's bVar reference (via
+    BoolVariable.change_ref()) to preserve the same half-space."""
+    for p in Surfaces.primitive_surfaces["PX"]:
+        if p.Surf.Axis[0] < 0:
+            p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
+            p.bVar.change_ref()
+
+    for p in Surfaces.primitive_surfaces["PY"]:
+        if p.Surf.Axis[1] < 0:
+            p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
+            p.bVar.change_ref()
+
+    for p in Surfaces.primitive_surfaces["PZ"]:
+        if p.Surf.Axis[2] < 0:
+            p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
+            p.bVar.change_ref()

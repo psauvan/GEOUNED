@@ -6,13 +6,20 @@ from datetime import datetime
 from pathlib import Path
 from importlib.metadata import version
 
-from ...geo import GVector, kernel_version, to_fc_vector
-from .functions import serpent_surface, write_serpent_cell_def
+from ....geo import kernel_version
+from ..functions import serpent_surface, write_serpent_cell_def
+from .common_format import CommonInputWriter
 
 logger = logging.getLogger("general_logger")
 
 
-class SerpentInput:
+class SerpentInput(CommonInputWriter):
+
+    inline_comment_char = "%"
+    line_comment_char = "%"
+    _surface_formatter = staticmethod(serpent_surface)
+    _format_name = "Serpent"
+
     def __init__(
         self,
         Meta,
@@ -124,17 +131,6 @@ class SerpentInput:
         self.inpfile.write(Information)
         return
 
-    def write_surface_block(self):
-
-        for surf in self.Surfaces:
-            self.write_surfaces(surf)
-
-    def write_cell_block(self):
-
-        for i, cell in enumerate(self.Cells):
-            self.write_cells(cell)
-        return
-
     # to_mod
     def write_cells(self, cell):
         index = cell.label
@@ -177,24 +173,6 @@ class SerpentInput:
         )
         self.inpfile.write(serpent_cell)
 
-        return
-
-    def write_surfaces(self, surface):
-        """Write the surfaces in Serpent format"""
-
-        Serpent_def = serpent_surface(
-            surface.bVar.__int__(),
-            surface.Type,
-            surface.Surf,
-            self.options,
-            self.tolerances,
-            self.numeric_format,
-        )
-        if Serpent_def:
-            Serpent_def += "\n"
-            self.inpfile.write(Serpent_def)
-        else:
-            logger.info(f"Surface {surface.Type} cannot be written in Serpent input")
         return
 
     # No void all option in Serpent. For now remove addition of source.
@@ -267,85 +245,3 @@ class SerpentInput:
 
     #    return option
 
-    def comment_format(self, cComment, mComment=None):
-        comment = ""
-        if mComment:
-            mComment = mComment.split("\n")
-            for c in mComment:
-                if c:
-                    comment += f"{'':11s}%{c}\n"
-
-        if cComment.strip() != "":
-            cComment = cComment.strip().split("\n")
-            for c in cComment:
-                if c:
-                    comment += f"{'':11s}%{c}\n"
-        return comment
-
-    def comment_line(self, lineComment):
-        lineComment = lineComment.strip().split("\n")
-        comment = ""
-        if lineComment:
-            comment = "% \n"
-            for c in lineComment:
-                if c:
-                    comment += f"% {c}\n"
-            comment += "% \n"
-        return comment
-
-    def get_cell_surf_summary(self):
-        self.__solidCells__ = 0
-        self.__cells__ = 0
-        self.__materials__ = set()
-
-        for i, CellObj in enumerate(self.Cells):
-            if CellObj.__id__ is None:
-                continue
-            self.__cells__ += 1
-            if CellObj.Material != 0:
-                self.__materials__.add(CellObj.Material)
-
-            if not CellObj.Void:
-                self.__solidCells__ += 1
-            CellObj.Definition.expand_regions_to_integer()
-
-        return
-
-    def simplify_planes(self, Surfaces):
-
-        for p in Surfaces.primitive_surfaces["PX"]:
-            if p.Surf.Axis[0] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
-                p.bVar.change_ref()
-
-        for p in Surfaces.primitive_surfaces["PY"]:
-            if p.Surf.Axis[1] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
-                p.bVar.change_ref()
-
-        for p in Surfaces.primitive_surfaces["PZ"]:
-            if p.Surf.Axis[2] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
-                p.bVar.change_ref()
-
-        return
-
-    def sorted_surfaces(self, Surfaces):
-        surfindex = Surfaces.get_sorted_surfaces()
-        surfList = []
-        for bsurf in surfindex:
-            s = Surfaces.get_surface(bsurf)
-            if s is not None:
-                surfList.append(s)
-        return surfList
-
-    def get_solid_cell_volume(self):
-
-        solidList = []
-        volumeList = []
-        for m in self.Cells:
-            if m.CellType == "solid" and m.__id__ is not None:
-                solidList.append(m.label)
-                volumeList.append(m.Volume * 1e-3)
-
-        return solidList, volumeList

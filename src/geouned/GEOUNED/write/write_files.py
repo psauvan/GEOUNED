@@ -1,9 +1,9 @@
 from pathlib import Path
 from . import additional_files as OutFiles
-from .mcnp_format import McnpInput
-from .openmc_format import OpenmcInput
-from .phits_format import PhitsInput
-from .serpent_format import SerpentInput
+from .mcnp_like.mcnp_format import McnpInput
+from .mcnp_like.phits_format import PhitsInput
+from .mcnp_like.serpent_format import SerpentInput
+from .openmc.openmc_format import OpenmcInput
 
 
 def write_geometry(

@@ -471,12 +471,62 @@ geometrically right, because no available test model forces that code
 path to run. If a case is ever found that does exercise it, that's the
 first real end-to-end validation this branch will have had.
 
+### `write/`: `mcnp_like/` + `openmc/` subpackages, `CommonInputWriter` mixin
+
+`write/mcnp_format.py`/`serpent_format.py`/`phits_format.py`/`openmc_format.py`
+(the 4 output-format writer classes) had 4 near-identical implementations
+of several methods. Reorganized into `write/mcnp_like/` (MCNP, Serpent,
+PHITS — the 3 MCNP-lineage text formats, sharing real card-syntax
+conventions: full-line vs inline comment characters, `C`/`%`/`$`-style
+banners) and `write/openmc/` (structurally different: XML/Python output,
+no comment-card concept), per the user's explicit request to split by
+that boundary rather than force all 4 into one hierarchy. `write/functions.py`
+(already the shared home for `mcnp_surface`/`serpent_surface`/`phits_surface`/
+`open_mc_surface`/`write_*_cell_def`/`CardLine`/etc. — sitting above both
+new subpackages) gained 3 free functions used by *all 4* formats:
+`get_cell_surf_summary`, `simplify_planes`, `sorted_surfaces`.
+
+`write/mcnp_like/common_format.py`'s `CommonInputWriter` mixin (inherited
+by `McnpInput`/`SerpentInput`/`PhitsInput`) adds the methods confirmed
+duplicated *only* among the 3 MCNP-lineage formats on top of those 3 free
+functions: `get_solid_cell_volume`, `write_cell_block`, `write_surface_block`,
+`write_surfaces` (parametrized per-subclass by `_surface_formatter`/
+`_format_name` class attributes), and `comment_format`/`comment_line`
+(parametrized by `inline_comment_char`/`line_comment_char` — `$`/`C` for
+MCNP, `%`/`%` for Serpent, `$`/`$` for PHITS). `OpenmcInput` does not
+inherit this mixin (XML/Python output has no equivalent concept for most
+of it) — it calls the 3 shared free functions directly instead.
+`PhitsInput` keeps its historical `write_phits_surfaces`/
+`write_phits_surface_block` method names (its own internal call sites,
+and potentially external callers, use them) via one-line aliases to the
+mixin's `write_surfaces`/`write_surface_block`; MCNP's extra
+`prnt3PPlane` handling in `simplify_planes` is layered on top via
+`super().simplify_planes(Surfaces)`.
+
+**The `sorted_surfaces` unification is a real correction, per explicit
+user confirmation** — the pre-existing MCNP version applied
+`Surfaces.IndexOffset` when relabeling each surface's `bVar`
+(`s.bVar = bsurf.copy(Surfaces.IndexOffset + abs(bsurf.value()))`);
+Serpent/OpenMC/PHITS's versions skipped this relabeling entirely. The
+user confirmed this was unintentional (only MCNP had received "the
+adequate modifications") and that all 4 formats should behave like MCNP
+here — so the free function now used everywhere is MCNP's original
+version. Checked how much this actually changes today:
+`MetaSurfacesDict` is always constructed with `offset=0` (`core.py`
+never wires `settings.startSurf` through to it), so `IndexOffset` is
+currently always 0 in practice — this fix corrects a currently-dormant
+inconsistency, not a currently-visible bug; it will matter once/if
+`IndexOffset` ever gets wired to a nonzero value.
+
+Verified two ways: `tests/geo` (107/107) + `tests/test_cadtocsg.py`
+(50/50), and a direct before/after byte-diff of all 5 generated output
+files (`.mcnp`/`.serp`/`.inp`/`.xml`/`.py`) on two STEP files (a simple
+one, and one producing a MultiRoundCorner surface) — identical except
+for the non-deterministic `Creation Date` timestamp line, confirming
+zero observable output change from the reorganization itself.
+
 **Deferred, not yet done** (this is the live edge of the ongoing
 `*Params`/`GeounedSurface` redesign — resume here):
-- `write/mcnp_format.py`/`serpent_format.py`/`openmc_format.py`/
-  `phits_format.py`: 4 near-identical implementations of the same
-  plane-axis-normalization (`p.Surf.Axis[i] < 0` → flip + `bVar.change_ref()`)
-  and `bVar.__int__()`-for-card-numbering logic. Not yet touched.
 - Tier-1 `*OnlyParams` vs `geo`'s `GPlane`/`GCylinder`/`GCone`/`GSphere`/
   `GTorus`: still two separate representations of the same analytic
   surfaces. Not yet consolidated.

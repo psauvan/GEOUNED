@@ -5,10 +5,12 @@
 import logging
 from pathlib import Path
 
-from ..code_version import *
-from ..utils.boolean_function import BoolVariable
-from ...geo import GVector, to_fc_vector
-from .functions import open_mc_surface, write_openmc_region
+from ...code_version import *
+from ...utils.boolean_function import BoolVariable
+from ..functions import open_mc_surface, write_openmc_region
+from ..functions import get_cell_surf_summary as _get_cell_surf_summary
+from ..functions import simplify_planes as _simplify_planes
+from ..functions import sorted_surfaces as _sorted_surfaces
 
 logger = logging.getLogger("general_logger")
 
@@ -210,46 +212,10 @@ import openmc
         return
 
     def get_cell_surf_summary(self):
-        self.__solidCells__ = 0
-        self.__cells__ = 0
-        self.__materials__ = set()
-
-        for i, CellObj in enumerate(self.Cells):
-            if CellObj.__id__ is None:
-                continue
-            self.__cells__ += 1
-            if CellObj.Material != 0:
-                self.__materials__.add(CellObj.Material)
-
-            if not CellObj.Void:
-                self.__solidCells__ += 1
-            CellObj.Definition.expand_regions_to_integer()
-
-        return
+        self.__solidCells__, self.__cells__, self.__materials__ = _get_cell_surf_summary(self.Cells)
 
     def simplify_planes(self, Surfaces):
-
-        for p in Surfaces.primitive_surfaces["PX"]:
-            if p.Surf.Axis[0] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
-                p.bVar.change_ref()
-
-        for p in Surfaces.primitive_surfaces["PY"]:
-            if p.Surf.Axis[1] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
-                p.bVar.change_ref()
-
-        for p in Surfaces.primitive_surfaces["PZ"]:
-            if p.Surf.Axis[2] < 0:
-                p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
-                p.bVar.change_ref()
-        return
+        _simplify_planes(Surfaces)
 
     def sorted_surfaces(self, Surfaces):
-        surfindex = Surfaces.get_sorted_surfaces()
-        surfList = []
-        for bsurf in surfindex:
-            s = Surfaces.get_surface(bsurf)
-            if s is not None:
-                surfList.append(s)
-        return surfList
+        return _sorted_surfaces(Surfaces)
