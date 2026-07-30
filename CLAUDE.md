@@ -416,16 +416,63 @@ also fixed a latent, real bug: the old hand-walk matched
 silently dropped from `surfSet` during point classification — never
 triggered before because nothing exercised it this way.
 
+### RoundCorner/MultiRoundCorner: `.components`, and a real MultiRoundCorner bug found while adding it
+
+RoundCorner already shared its AND/OR rule the right way (`round_corner_region`,
+a pure function of ids -- same pattern `can_region`/`tcone_region` were
+given above), so only `.components` needed adding: built in
+`MetaSurfacesDict.get_roundCorner_region` (planes, then cylinder, then the
+cylinder's own bounding plane -- the same order `check_sign`'s hand-written
+version iterated in, so its incremental, short-circuiting
+`multiDef.evaluate({single_id: value})` stays exactly as cheap as before).
+`get_cell_object`'s `"RoundCorner"` branch was untouched -- it already
+called the shared `round_corner_region`, no duplicate logic existed there.
+
+`MetaSurfacesDict.get_overlap_rc` (~145 lines, merging two adjacent round
+corners into one region) turned out to have **zero callers anywhere in
+GEOUNED** -- confirmed by grep, and further confirmed dead by the fact
+that `get_roundCorner_region`'s new `(region, components)` return shape
+would have broken its `rc1_region * rc2_region`-style calls immediately
+had anything actually invoked it. Deleted, along with the now-unused
+`from .data_constants import mask` import it was the only consumer of.
+
+Extending `.components` to MultiRoundCorner surfaced 3 real, pre-existing
+bugs, all attribute-path mistakes consistent with this feature never
+having been exercised end-to-end (`add_multiRoundCorner` even carried its
+own comment admitting as much: *"will not return correct results for any
+multi corner configuration"*):
+- `add_multiRoundCorner`'s plane-sign-flip block wrote
+  `cylplane.Axis = -cylplane.Axis` (should be `cylplane.Surf.Axis`) and
+  `rc.Surf.Plane.bVar = pcid` (`RoundCornerParams` has no `.Plane`
+  attribute, only `.Planes`/`.Cylinder` -- should be `cylplane.bVar`).
+- `boolean_solids.py::check_sign`'s MultiRoundCorner branch read
+  `rc.Surf.Plane`/`rc.Surf.Cylinder` directly off each corner -- the
+  first is the same nonexistent-attribute mistake (guaranteed
+  `AttributeError`), the second reads the Tier-2 `Cylinder` wrapper's
+  `.bVar`, which never gets assigned (only the primitive
+  `rc.Surf.Cylinder.Surf.Cylinder` does, in `add_multiRoundCorner`).
+  Fixed to match `get_cell_object`'s already-correct
+  `rc.Surf.Cylinder.Surf.Plane`/`.Surf.Cylinder` -- and, once `.components`
+  existed for MultiRoundCorner too, this branch merged with RoundCorner's
+  into one `elif surf.Type == "RoundCorner" or surf.Type ==
+  "MultiRoundCorner":` block, both driven by `.components` identically.
+
+**Important caveat**: this fix is *not* verified end-to-end against real
+geometry. Instrumented `check_sign` directly and ran it across all 39
+STEP files in the user's `RoundCorners` model set (13 of which do produce
+a MultiRoundCorner surface, up to 6 in one file) -- `check_sign` was
+never actually called, on any surface type, in any of the 39 files.
+`Gsplit`'s normal CAD-based split path always resolved the cut before
+ever needing the algebraic fallback `check_sign` provides. So the fix is
+correct *relative to the established, working pattern used identically
+in `get_cell_object`* and no longer crashes if the fallback path is ever
+taken, but nobody has been able to confirm the *values* it produces are
+geometrically right, because no available test model forces that code
+path to run. If a case is ever found that does exercise it, that's the
+first real end-to-end validation this branch will have had.
+
 **Deferred, not yet done** (this is the live edge of the ongoing
 `*Params`/`GeounedSurface` redesign — resume here):
-- `.components` for RoundCorner/MultiRoundCorner: not attempted yet.
-  Their `check_sign` branches still evaluate incrementally
-  (`multiDef.evaluate({single_id: value})`, short-circuiting when the
-  result collapses to a bool) instead of building one `surfSet` upfront.
-  Blocked on understanding `MetaSurfacesDict.get_overlap_rc` first — it
-  merges *two* round corners' regions together with several special-cased
-  branches (~150 lines) that don't obviously map onto a flat
-  `components` dict without more analysis.
 - `write/mcnp_format.py`/`serpent_format.py`/`openmc_format.py`/
   `phits_format.py`: 4 near-identical implementations of the same
   plane-axis-normalization (`p.Surf.Axis[i] < 0` → flip + `bVar.change_ref()`)

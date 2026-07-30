@@ -565,52 +565,25 @@ def check_sign(solid_or_point, surf):
         inside = surf.region.region.evaluate(surfSet)
         return 1 if inside else -1
 
-    elif surf.Type == "RoundCorner":
+    elif surf.Type == "RoundCorner" or surf.Type == "MultiRoundCorner":
+        # surf.components (id -> primitive GeounedSurface) preserves the
+        # same order the hand-written versions used (planes, then per-corner
+        # cylinder, then that cylinder's plane), so the incremental,
+        # short-circuiting evaluate() below is unaffected -- see
+        # MetaSurfacesDict.get_roundCorner_region/add_multiRoundCorner.
+        # (MultiRoundCorner's .components previously didn't exist; this
+        # branch used to read rc.Surf.Plane/rc.Surf.Cylinder directly, which
+        # was wrong -- RoundCornerParams has no .Plane attribute, and
+        # rc.Surf.Cylinder is the Tier-2 wrapper, which never receives a
+        # bVar. Fixed to match get_cell_object's already-correct
+        # rc.Surf.Cylinder.Surf.Plane/.Surf.Cylinder. Not verified
+        # end-to-end against real geometry -- no available test model
+        # exercises check_sign on a MultiRoundCorner surface, since Gsplit's
+        # normal CAD-based path always resolves the split first.)
         multiDef = surf.region.region.copy()
-        p1, p2 = surf.Surf.Planes
-        if p1 == p2:
-            planes = (p1,)
-        else:
-            planes = (p1, p2)
-        for plane in planes:
-            value = check_sign(point, plane) > 0
-            multiDef = multiDef.evaluate({plane.bVar: value})
-            if type(multiDef) is bool:
-                return 1 if multiDef else -1
-
-        cyl = surf.Surf.Cylinder.Surf.Cylinder
-        value = check_sign(point, cyl) > 0
-        multiDef = multiDef.evaluate({cyl.bVar: value})
-        if type(multiDef) is bool:
-            return 1 if multiDef else -1
-
-        cplane = surf.Surf.Cylinder.Surf.Plane
-        if cplane is not None:
-            value = check_sign(point, cplane) > 0
-            multiDef = multiDef.evaluate({cplane.bVar: value})
-            if type(multiDef) is bool:
-                return 1 if multiDef else -1
-
-    elif surf.Type == "MultiRoundCorner":
-
-        multiDef = surf.region.region.copy()
-        for plane in surf.Surf.Planes:
-            value = check_sign(point, plane) > 0
-            multiDef = multiDef.evaluate({plane.bVar: value})
-            if type(multiDef) is bool:
-                return 1 if multiDef else -1
-
-        for rc in surf.Surf.Corners:
-            plane = rc.Surf.Plane
-            if plane is not None:
-                value = check_sign(point, plane) > 0
-                multiDef = multiDef.evaluate({plane.bVar: value})
-                if type(multiDef) is bool:
-                    return 1 if multiDef else -1
-
-            cyl = rc.Surf.Cylinder
-            value = check_sign(point, cyl) > 0
-            multiDef = multiDef.evaluate({cyl.bVar: value})
+        for id, comp in surf.components.items():
+            value = check_sign(point, comp) > 0
+            multiDef = multiDef.evaluate({id: value})
             if type(multiDef) is bool:
                 return 1 if multiDef else -1
 
