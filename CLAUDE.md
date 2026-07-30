@@ -730,14 +730,64 @@ second, independent copy of the same math -- a candidate for the
 broader `components`/`definition` redesign below to close later, not
 this pass.
 
-- The broader design goal (stated by the user): a homogeneous
-  `components`/`definition`/`bVar` representation covering *every*
-  surface — simple and composite alike — so a simple surface is just the
-  1-component, trivial-`definition` degenerate case of the same shape a
-  Can/RoundCorner uses. `.Type` (the string tag) must be kept regardless
-  of how this evolves — `write/*.py`'s `mcnp_surface` dispatches the MCNP
-  card *format* on it, which is an orthogonal concern from the geometric
-  boolean-composition redesign.
+- `check_sign_primitive` (`boolean_solids.py`) still duplicates
+  `GPlane`/`GCylinder`/`GCone`/`GSphere.is_inside()`'s formulas natively
+  in `GeounedSurface`/`*OnlyParams` space rather than reusing them (see
+  above for why it was left alone this pass).
+- `check_sign`'s dispatch for Tier-2 Cylinder/Cone/Sphere/Torus
+  (`elif surf.Type == "Cylinder": return check_sign(point,
+  surf.Surf.Cylinder)`) recurses straight into the bare open primitive,
+  ignoring the bounding plane(s) `.components` now tracks for these
+  types too -- not touched, since it doesn't read `.region`/
+  `.components` at all today and this looked like an existing design
+  choice (the plane matters for the CSG boolean expression and for CAD
+  construction, apparently not for this particular point-classification
+  path) rather than an oversight. Worth confirming with the user before
+  ever touching it.
+
+### `.components` for every registered surface, not just the 4 composite types
+
+The homogeneous design goal (below) called for *every* surface --
+simple, open-with-plane, and composite alike -- to carry the same
+`bVar`/`region`/`components` shape, not just Can/TCone/RoundCorner/
+MultiRoundCorner. Checked what `MetaSurfacesDict.add_plane` (Tier-1,
+standalone `Plane`) and `.add_cylinder`/`.add_cone`/`.add_sphere`/
+`.add_torus` (Tier-2, an open 2nd-order surface + its closing plane(s))
+already did: turned out **`.region` was already set uniformly** by all
+of these (a plane's is the trivial single-variable `BoolSurface`) --
+only `.components` was missing outside the 4 composite types. Added it
+to all 5, mirroring the same pattern: `add_plane`'s is the degenerate
+1-component case (`{abs(pid): plane}`, the plane referencing itself,
+since a standalone plane *is* its own only component); the Tier-2
+methods build `{abs(primitive_id): primitive, abs(plane_id): plane,
+...}` alongside the existing region computation (cone additionally
+keys its apex plane, if any; torus its 1-2 `UPlanes` and `VSurface`).
+
+Deliberately did **not** use the `_resolve_plane_id` helper (shared by
+Can/TCone) for the Tier-2 methods' plane-sign-flip step, even though the
+inline pattern is identical -- `_resolve_plane_id` also mutates
+`plane.Surf.Axis`/`.bVar` in place, which Can/TCone/RoundCorner need
+(their own `get_cell_object`/`build_complex_shape` re-reads
+`.Surf.Plane.Surf.Axis` later to build CAD) but Tier-2's `build_surface()`
+never reads its bounding plane at all when building `.shape` (only the
+open primitive) -- so that mutation would be a new, unrequested
+side-effect for these 4 methods, not just a refactor. Kept the original
+inline resolution logic unchanged and only added the `components`
+bookkeeping alongside it.
+
+Verified via `tests/geo` (107/107) and `tests/test_cadtocsg.py` (50/50).
+
+With this, the "broader design goal" is functionally done for the
+storage/bookkeeping layer: every surface that reaches `MetaSurfacesDict`
+now has a uniform `bVar` + `region` (the boolean definition) +
+`components` (the numbering<->surface relation) shape, whether it's a
+bare plane, a cylinder-with-plane, or a RoundCorner. What's *not* done
+(and wasn't asked for, this pass): consolidating the `.Type`-string
+18-way dispatch in `GeounedSurface.build_surface()`/`write/*.py`'s
+`mcnp_surface` etc into something that reads generically off
+`components`/`region` instead -- `.Type` still exists and is still
+required (card-format dispatch), it's just no longer the *only* way to
+introspect a surface's structure.
 
 Engine-swappability (the original motivation for the ABC in attempt 1) is
 now achieved at the *module* level instead of via dependency injection: a

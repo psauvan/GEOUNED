@@ -202,7 +202,7 @@ class GeounedSurface:
         self.Index0 = 0
         self.bVar = None
         self.region = None
-        self.components = None  # dict[abs(id), GeounedSurface]: numbering<->surface relation for composite (Can/TCone/RoundCorner/MultiRoundCorner) surfaces
+        self.components = None  # dict[abs(id), GeounedSurface]: numbering<->surface relation, set by MetaSurfacesDict.add_* for every registered surface (Plane's is the trivial 1-component case; Cylinder/Cone/Sphere/Torus and Can/TCone/RoundCorner/MultiRoundCorner hold their real components)
         if params[0] == "Plane":
             self.Type = "Plane"
             self.Surf = PlaneParams(params[1])  # plane point defined as the shortest distance to origin
@@ -482,6 +482,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = BoolSurface(self.surfaceNumber, pid)
             plane.region = newregion
+            plane.components = {abs(pid): plane}
             self["Planes"].append(plane)
             self.__surfIndex__["Planes"].append(plane.region.__int__())
         else:
@@ -494,6 +495,7 @@ class MetaSurfacesDict(dict):
         if cylinder.Orientation == "Forward":
             cid = -cid
         cylinder_region = BoolSurface(0, cid)
+        components = {abs(cid): cylinder.Surf.Cylinder}
 
         if cylinder.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
@@ -502,6 +504,7 @@ class MetaSurfacesDict(dict):
                 if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
             cylinder_region = cylinder_region * BoolSurface(0, pid)
+            components[abs(pid)] = cylinder.Surf.Plane
 
         add_cyl = True
         for cyl_surf in self["Cyl"]:
@@ -514,6 +517,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = cylinder_region.copy(self.surfaceNumber)
             cylinder.region = newregion
+            cylinder.components = components
             self["Cyl"].append(cylinder)
             self.__surfIndex__["Cyl"].append(cylinder.region.__int__())
         else:
@@ -527,6 +531,7 @@ class MetaSurfacesDict(dict):
         if cone.Orientation == "Forward":
             cid = -cid
         cone_region = BoolSurface(0, cid)
+        components = {abs(cid): cone.Surf.Cone}
 
         if cone.Surf.ApexPlane:
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.ApexPlane, True)
@@ -539,6 +544,7 @@ class MetaSurfacesDict(dict):
                 cone_region = cone_region * BoolSurface(0, pid)
             else:
                 cone_region = cone_region + BoolSurface(0, pid)
+            components[abs(pid)] = cone.Surf.ApexPlane
 
         if cone.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.Plane, True)
@@ -547,6 +553,7 @@ class MetaSurfacesDict(dict):
                 if is_opposite(cone.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
             cone_region = cone_region * BoolSurface(0, pid)
+            components[abs(pid)] = cone.Surf.Plane
 
         add_cone = True
         for kne_surf in self["Cone"]:
@@ -559,6 +566,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = cone_region.copy(self.surfaceNumber)
             cone.region = newregion
+            cone.components = components
             self["Cone"].append(cone)
             self.__surfIndex__["Cone"].append(cone.region.__int__())
         else:
@@ -572,6 +580,7 @@ class MetaSurfacesDict(dict):
             sid = -sid
 
         sphere_region = BoolSurface(0, sid)
+        components = {abs(sid): sphere.Surf.Sphere}
         if sphere.Surf.Plane:
             pid, exist_p = self.primitive_surfaces.add_plane(sphere.Surf.Plane, True)
             if exist_p:
@@ -579,6 +588,7 @@ class MetaSurfacesDict(dict):
                 if is_opposite(sphere.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
             sphere_region = sphere_region * BoolSurface(0, pid)
+            components[abs(pid)] = sphere.Surf.Plane
 
         add_sph = True
         for sph_surf in self["Sph"]:
@@ -591,6 +601,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = sphere_region.copy(self.surfaceNumber)
             sphere.region = newregion
+            sphere.components = components
             self["Sph"].append(sphere)
             self.__surfIndex__["Sph"].append(sphere.region.__int__())
         else:
@@ -604,6 +615,7 @@ class MetaSurfacesDict(dict):
             tid = -tid
 
         torus_region = BoolSurface(0, tid)
+        components = {abs(tid): torus.Surf.Torus}
 
         psurf = []
         for tp in torus.Surf.UPlanes:
@@ -613,6 +625,7 @@ class MetaSurfacesDict(dict):
                 if is_opposite(tp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
             psurf.append(pid)
+            components[abs(pid)] = tp
 
         if len(psurf) == 2:
             torus_region = torus_region * (BoolSurface(0, psurf[0]) + BoolSurface(0, psurf[1]))
@@ -638,6 +651,7 @@ class MetaSurfacesDict(dict):
                         sid = -sid
 
             torus_region = torus_region * BoolSurface(0, sid)
+            components[abs(sid)] = torus.Surf.VSurface
 
         add_torus = True
         for tor_surf in self["Tor"]:
@@ -650,6 +664,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = torus_region.copy(self.surfaceNumber)
             torus.region = newregion
+            torus.components = components
             self["Tor"].append(torus)
             self.__surfIndex__["Tor"].append(torus.region.__int__())
         else:
