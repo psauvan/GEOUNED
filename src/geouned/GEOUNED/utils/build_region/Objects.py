@@ -228,6 +228,101 @@ def operate_box(definition, boxes):
     return fullbox
 
 
+def plane_polygon_from_box(normal: GVector, offset: float, box: GBoundBox):
+    """
+    Build the (possibly non-rectangular) polygon face where the infinite
+    plane {p : normal.dot(p) == offset} crosses `box`, by intersecting the
+    plane with each of the box's 12 edges and ordering the resulting
+    points into a convex polygon. Returns None if the plane doesn't cross
+    the box at all. `box` should already include whatever margin the
+    caller wants (this function does not enlarge it).
+    """
+    pointEdge = []
+    for i in range(12):
+        edge = box.get_edge(i)
+        p1 = normal.dot(edge[0])
+        p2 = normal.dot(edge[1])
+        d0 = offset - p1
+        d1 = p2 - p1
+        if d1 != 0:
+            a = d0 / d1
+            if 0 <= a <= 1:
+                pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
+
+    if len(pointEdge) == 0:
+        return None
+
+    s = GVector(0, 0, 0)
+    for v in pointEdge:
+        s = s + v
+    s = s / len(pointEdge)
+
+    X0 = pointEdge[0] - s
+    Y0 = normal.cross(X0)
+
+    orden = []
+    for i, v in enumerate(pointEdge):
+        vv = v - s
+        phi = np.arctan2(vv.dot(Y0), vv.dot(X0))
+        orden.append((phi, i))
+    orden.sort()
+
+    return Gmake_polygon_face([pointEdge[p[1]] for p in orden])
+
+
+def cylinder_from_box(center: GVector, axis: GVector, radius: float, box: GBoundBox):
+    """
+    Build a cylinder solid long enough to fully cover `box` along its
+    axis, with a 10% margin on each end. Verified empirically (splitting a
+    real solid against the resulting tool) that the exact margin size
+    doesn't change the result as long as it's nonzero -- only that the
+    tool is big enough to clear the box.
+    """
+    dmin = axis.dot(box.get_point(0) - center)
+    dmax = dmin
+    for i in range(1, 8):
+        d = axis.dot(box.get_point(i) - center)
+        dmin = min(d, dmin)
+        dmax = max(d, dmax)
+
+    height = dmax - dmin
+    dmin -= 0.1 * height
+    dmax += 0.1 * height
+    height = dmax - dmin
+
+    point = center + dmin * axis
+    return Gmake_cylinder(point, axis, radius, height)
+
+
+def cone_from_box(apex: GVector, axis: GVector, tan: float, box: GBoundBox):
+    """
+    Build a cone solid extending from `apex` along `axis` (or `-axis`, if
+    `tan` is negative). OCC's native Cone.SemiAngle -- and therefore `tan`,
+    computed from it upstream -- is signed exactly to record which
+    direction the real material lies in (verified empirically: a frustum
+    whose wide end is on the -axis side of the apex reports a negative
+    SemiAngle, matching a sample point actually on that face). This must
+    be trusted, never re-derived by guessing from which side of the apex
+    the box happens to sit -- scanning the box in the *wrong* direction
+    can also come out positive, silently building a cone that misses the
+    box entirely instead of failing loudly. Returns None if the box
+    doesn't extend at all in the (correctly signed) direction the cone
+    opens in -- i.e. the cone genuinely doesn't intersect the box.
+    """
+    build_axis = axis if tan >= 0 else -axis
+    half_angle = math.atan(abs(tan))
+
+    dmax = build_axis.dot(box.get_point(0) - apex)
+    for i in range(1, 8):
+        d = build_axis.dot(box.get_point(i) - apex)
+        dmax = max(d, dmax)
+
+    if dmax <= 0:
+        return None
+
+    return Gmake_cone(apex, build_axis, half_angle, dmax * 1.1)
+
+
 class Plane:
     def __init__(self, label, Id, params, tr=None):
         self.label = label
@@ -256,42 +351,14 @@ class Plane:
 
     def buildShape(self, boundBox):
         normal, p0 = to_gvector(self.params[0]), self.params[1]
-        Box = to_gboundbox(boundBox).enlarged(10)
+        box = to_gboundbox(boundBox).enlarged(10)
 
-        pointEdge = []
-        for i in range(12):
-            edge = Box.get_edge(i)
-            p1 = normal.dot(edge[0])
-            p2 = normal.dot(edge[1])
-            d0 = p0 - p1
-            d1 = p2 - p1
-            if d1 != 0:
-                a = d0 / d1
-                if a >= 0 and a <= 1:
-                    pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
-
-        if len(pointEdge) == 0:
+        face = plane_polygon_from_box(normal, p0, box)
+        if face is None:
             self.shape = None
             return
-        s = GVector(0, 0, 0)
-        for v in pointEdge:
-            s = s + v
-        s = s / len(pointEdge)
 
-        vtxvec = []
-        for v in pointEdge:
-            vtxvec.append(v - s)
-
-        X0 = vtxvec[0]
-        Y0 = normal.cross(X0)
-
-        orden = []
-        for i, v in enumerate(vtxvec):
-            phi = np.arctan2(v.dot(Y0), v.dot(X0))
-            orden.append((phi, i))
-        orden.sort()
-
-        self.shape = Gmake_polygon_face([pointEdge[p[1]] for p in orden]).__native__
+        self.shape = face.__native__
         self.shell = self.shape
 
 
@@ -352,20 +419,7 @@ class Cylinder:
         p, vec, r = self.params
 
         if not self.truncated:
-            dmin = vec.dot(boundBox.getPoint(0) - p)
-            dmax = dmin
-            for i in range(1, 8):
-                d = vec.dot(boundBox.getPoint(i) - p)
-                dmin = min(d, dmin)
-                dmax = max(d, dmax)
-
-            height = dmax - dmin
-            dmin -= 0.1 * height
-            dmax += 0.1 * height
-            height = dmax - dmin
-
-            point = p + dmin * vec
-            gsolid = Gmake_cylinder(to_gvector(point), to_gvector(vec), r, height)
+            gsolid = cylinder_from_box(to_gvector(p), to_gvector(vec), r, to_gboundbox(boundBox))
         else:
             gsolid = Gmake_cylinder(to_gvector(p), to_gvector(vec), r, vec.Length)
 
@@ -410,22 +464,31 @@ class Cone:
         if not self.truncated:
             apex, axis, t, dblsht = self.params
 
-            dmin = axis.dot(boundBox.getPoint(0) - apex)
-            dmax = dmin
-            for i in range(1, 8):
-                d = axis.dot(boundBox.getPoint(i) - apex)
-                dmin = min(d, dmin)
-                dmax = max(d, dmax)
-
-            length = max(abs(dmin), abs(dmax))
-            half_angle = math.atan(t)
-            one_sheet = Gmake_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
-            oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
-
             if not dblsht:
+                one_sheet = cone_from_box(to_gvector(apex), to_gvector(axis), t, to_gboundbox(boundBox))
+                if one_sheet is None:
+                    self.shape = None
+                    return
+                oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
                 self.shape = one_sheet.__native__
                 self.shell = oneface.__native__
             else:
+                # dead branch: get_surface() never constructs a Cone with
+                # dblsht=True, so this is left on its pre-existing
+                # (unsigned-direction) logic rather than ported
+                # speculatively through cone_from_box's single-direction API.
+                box = to_gboundbox(boundBox)
+                dmin = axis.dot(box.get_point(0) - apex)
+                dmax = dmin
+                for i in range(1, 8):
+                    d = axis.dot(box.get_point(i) - apex)
+                    dmin = min(d, dmin)
+                    dmax = max(d, dmax)
+
+                length = max(abs(dmin), abs(dmax))
+                half_angle = math.atan(t)
+                one_sheet = Gmake_cone(to_gvector(apex), to_gvector(axis), half_angle, length)
+                oneface = next(f for f in one_sheet.Faces if type(f.Surface) is GCone)
                 other_sheet = Gmake_cone(to_gvector(apex), to_gvector(-axis), half_angle, length)
                 otherface = next(f for f in other_sheet.Faces if type(f.Surface) is GCone)
                 double_sheet = Gfuse([one_sheet, other_sheet])

@@ -1,8 +1,6 @@
 import math
 import logging
 
-import Part
-
 from ..utils.basic_functions_part1 import (
     is_in_line,
     is_parallel,
@@ -10,8 +8,9 @@ from ..utils.basic_functions_part1 import (
     shapes_in_contact,
 )
 from ..utils.basic_functions_part2 import is_same_plane
+from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
-from ...geo import GPlane, GCylinder, GCone, GSphere, GVector, to_fc_vector
+from ...geo import GPlane, GCylinder, GCone, GSphere, GBoundBox, GVector, to_fc_vector, to_gvector
 
 logger = logging.getLogger("general_logger")
 
@@ -198,7 +197,7 @@ def U_torus_planes(face, u_params, Surfaces):
 def gen_plane_sphere(face, solidFaces):
     same_faces = []
     same_faces.append(face)
-    sphere_center = to_fc_vector(face.Surface.Center)
+    center = face.Surface.Center
 
     for f in solidFaces:
         if f.isEqual(face) or type(f.Surface) is not GSphere:
@@ -211,11 +210,22 @@ def gen_plane_sphere(face, solidFaces):
                     break
 
     # print same_faces
-    normal = to_fc_vector(GVector(0, 0, 0))
+    normal = GVector(0, 0, 0)
     for f in same_faces:
-        normal += f.Area * (f.CenterOfMass - sphere_center)
-    normal.normalize()
-    tmp_plane = Part.Plane(sphere_center, normal).toShape()
+        normal = normal + f.Area * (to_gvector(f.CenterOfMass) - center)
+    normal = normal.normalized()
+
+    # A plane clipped to a box centered on the sphere (side = 2*radius, +1%
+    # margin) is enough: same_faces are all faces of this exact sphere, so
+    # every point we measure distToShape against is within `radius` of
+    # sphere_center in every direction -- well inside the box. No need for
+    # a true infinite Part.Plane.
+    half_side = face.Surface.Radius * 1.01
+    box = GBoundBox(
+        center.x - half_side, center.y - half_side, center.z - half_side,
+        center.x + half_side, center.y + half_side, center.z + half_side,
+    )
+    tmp_plane = plane_polygon_from_box(normal, normal.dot(center), box).__native__
 
     dmin = 2 * face.Surface.Radius
     for f in same_faces:
@@ -223,8 +233,8 @@ def gen_plane_sphere(face, solidFaces):
         dmin = min(dmin, dist)
 
     if dmin > 1e-6:
-        center = sphere_center + 0.95 * dmin * normal
-        plane = GeounedSurface(("Plane", (center, normal, 1, 1)))
+        new_center = center + 0.95 * dmin * normal
+        plane = GeounedSurface(("Plane", (new_center, normal, 1, 1)))
         return plane
     else:
         return None

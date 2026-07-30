@@ -1,106 +1,50 @@
-import Part
 import FreeCAD
 import numpy
 import math
 
 from .data_classes import Options
 from .build_region.build_region import BuildDepth, get_cell_object, getPart, FuseSolid
-from .build_region.Objects import myBox
+from .build_region.Objects import myBox, plane_polygon_from_box, cylinder_from_box, cone_from_box
 from ...geo import (
+    GBoundBox,
     GPlane,
     GCylinder,
     GCone,
     GFace,
     GVector,
-    Gclassify_surface,
-    Gmake_cylinder,
     Gmake_shell,
     Gmake_polygon_face,
     to_fc_vector,
+    to_gboundbox,
     to_gvector,
 )
 
 
 def makePlane(normal, position, Box):
+    normal_g = to_gvector(normal)
+    p0 = normal_g.dot(to_gvector(position))
 
-    p0 = normal.dot(position)
-
-    pointEdge = []
-    for i in range(12):
-        edge = Box.getEdge(i)
-        p1 = normal.dot(edge[0])
-        p2 = normal.dot(edge[1])
-        d0 = p0 - p1
-        d1 = p2 - p1
-        if d1 != 0:
-            a = d0 / d1
-            if a >= 0 and a <= 1:
-                pointEdge.append(edge[0] + a * (edge[1] - edge[0]))
-
-    if len(pointEdge) == 0:
-        return None  # Plane does not cross box
-
-    s = to_fc_vector(GVector(0, 0, 0))
-    for v in pointEdge:
-        s = s + v
-    s = s / len(pointEdge)
-
-    vtxvec = []
-    for v in pointEdge:
-        vtxvec.append(v - s)
-
-    X0 = vtxvec[0]
-    Y0 = normal.cross(X0)
-
-    orden = []
-    for i, v in enumerate(vtxvec):
-        phi = numpy.arctan2(v.dot(Y0), v.dot(X0))
-        orden.append((phi, i))
-    orden.sort()
-
-    return Gmake_polygon_face([to_gvector(pointEdge[p[1]]) for p in orden]).__native__
+    face = plane_polygon_from_box(normal_g, p0, to_gboundbox(Box))
+    return face.__native__ if face is not None else None  # None: Plane does not cross box
 
 
 def makeCylinder(cyl, Box):
-
-    axis = cyl.Axis
-    center = cyl.Center
-    radius = cyl.Radius
-
-    dmin = axis.dot((Box.getPoint(0) - center))
-    dmax = dmin
-    for i in range(1, 8):
-        d = axis.dot((Box.getPoint(i) - center))
-        dmin = min(d, dmin)
-        dmax = max(d, dmax)
-
-    center = center + (dmin - 5) * axis
-    length = dmax - dmin + 10
-    gsolid = Gmake_cylinder(to_gvector(center), to_gvector(axis), radius, length)
+    gsolid = cylinder_from_box(to_gvector(cyl.Center), to_gvector(cyl.Axis), cyl.Radius, to_gboundbox(Box))
     Cylinder = gsolid.__native__
     shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GCylinder)
     return (Cylinder, shell)
 
 
 def makeCone(axis, apex, tan, Box):
-    dmax = axis.dot((Box.getPoint(0) - apex))
-    for i in range(1, 8):
-        d = axis.dot((Box.getPoint(i) - apex))
-        dmax = max(d, dmax)
-
-    if dmax > 0:
-        length = dmax + 10
-        rad = tan * length
-        cone = Part.makeCone(0.0, rad, length, apex, axis, 360.0)
-        for f in cone.Faces:
-            if type(Gclassify_surface(f)) is GCone:
-                shell = f
-        return (cone, shell)
-    else:
+    gsolid = cone_from_box(to_gvector(apex), to_gvector(axis), tan, to_gboundbox(Box))
+    if gsolid is None:
         return None
+    cone = gsolid.__native__
+    shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GCone)
+    return (cone, shell)
 
 
-def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, multibuild=True):
+def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True):
     """build CAD object (FreeCAD Shell) of the multiplane surface"""
     boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
     cutfaces = makeBoxFaces(boxlim)
@@ -109,7 +53,7 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: FreeCAD.BoundBox, 
         axis = (
             -p.Surf.Axis if multibuild else p.Surf.Axis
         )  # for mutliplane shape construction planes direction must be inverted
-        plane = Part.Plane(p.Surf.Position, axis)
+        plane = GPlane.from_values(to_gvector(p.Surf.Position), to_gvector(axis))
         newbox_points = cut_box(cutfaces, plane)
         cutfaces = makeBoxFaces(newbox_points)
     if multibuild:
@@ -166,41 +110,6 @@ def build_complex_shape(surface, Box):
     return (solid, shell)
 
 
-def cylinder_cut_box(cylinder, plane):
-    z = []
-    for f in cylinder.Faces:
-        if type(Gclassify_surface(f)) is GPlane:
-            z.append(f.CenterOfMass)
-        else:
-            radius = f.Surface.Radius
-    z0, z1 = z[:]
-
-    axis = z1 - z0
-    h = axis.Length
-    axis.normalize()
-    normal = plane.Surf.Axis
-    vect = axis.cross(normal)
-
-    a = h * 1.1
-    b = normal.dot(plane.Surf.Position - z0)
-    c = radius * 1.1
-    pc = z0 + b * normal
-    p1 = pc + a * axis + c * vect
-    p2 = pc - a * axis + c * vect
-    p3 = pc - a * axis - c * vect
-    p4 = pc + a * axis - c * vect
-
-    pc -= radius * normal
-    p5 = pc + a * axis + c * vect
-    p6 = pc - a * axis + c * vect
-    p7 = pc - a * axis - c * vect
-    p8 = pc + a * axis - c * vect
-
-    boxvect = (p1, p2, p3, p4, p5, p6, p7, p8)
-    shell = Gmake_shell([GFace(f) for f in makeBoxFaces(boxvect)]).__native__
-    return Part.makeSolid(shell)
-
-
 def intersection(sol1, sol2):
     d1 = sol1.cut(sol2)
     d2 = sol2.cut(sol1)
@@ -212,14 +121,14 @@ def makeBoxFaces(box: list):
     """Build faces of a box."""
     if isinstance(box[0], (int, float)):
         xmin, ymin, zmin, xmax, ymax, zmax = box
-        v0 = FreeCAD.Vector(xmin, ymin, zmin)
-        v1 = FreeCAD.Vector(xmin, ymax, zmin)
-        v2 = FreeCAD.Vector(xmin, ymax, zmax)
-        v3 = FreeCAD.Vector(xmin, ymin, zmax)
-        v4 = FreeCAD.Vector(xmax, ymin, zmin)
-        v5 = FreeCAD.Vector(xmax, ymax, zmin)
-        v6 = FreeCAD.Vector(xmax, ymax, zmax)
-        v7 = FreeCAD.Vector(xmax, ymin, zmax)
+        v0 = GVector(xmin, ymin, zmin)
+        v1 = GVector(xmin, ymax, zmin)
+        v2 = GVector(xmin, ymax, zmax)
+        v3 = GVector(xmin, ymin, zmax)
+        v4 = GVector(xmax, ymin, zmin)
+        v5 = GVector(xmax, ymax, zmin)
+        v6 = GVector(xmax, ymax, zmax)
+        v7 = GVector(xmax, ymin, zmax)
         face1 = (v0, v1, v2, v3)
         face2 = (v7, v6, v5, v4)
         face3 = (v0, v3, v7, v4)
@@ -227,16 +136,6 @@ def makeBoxFaces(box: list):
         face5 = (v4, v5, v1, v0)
         face6 = (v6, v7, v3, v2)
 
-        faces_points = (face1, face2, face3, face4, face5, face6)
-
-    elif isinstance(box[0], FreeCAD.Vector):
-        v0, v1, v2, v3, v4, v5, v6, v7 = box
-        face1 = (v0, v1, v2, v3)
-        face2 = (v7, v6, v5, v4)
-        face3 = (v0, v3, v7, v4)
-        face4 = (v5, v6, v2, v1)
-        face5 = (v4, v5, v1, v0)
-        face6 = (v6, v7, v3, v2)
         faces_points = (face1, face2, face3, face4, face5, face6)
 
     else:
@@ -250,47 +149,45 @@ def makeBoxFaces(box: list):
     return faces
 
 
-def cut_face(face: Part.Face, plane: Part.Plane):
+def cut_face(gface: GFace, plane: GPlane):
     """Cut the "face" with the "plane". Remaining part is portion in "plane" normal direction."""
-    line = face.Surface.intersect(plane)
+    gline = gface.Surface.intersect_plane(plane)  # faces here are always planar (built by makeBoxFaces)
     inter = []
-    if len(line) > 0:
-        l = line[0]
-        for e in face.Edges:
-            if abs(abs(l.Direction.dot(e.Curve.Direction)) - 1) < 1e-6:
-                pt = []  # if e and line are parallel not point or infinity
+    if gline is not None:
+        for e in gface.Edges:
+            edge_line = e.Curve  # edges here are always straight (built by makeBoxFaces)
+            if abs(abs(gline.Direction.dot(edge_line.Direction)) - 1) < 1e-6:
+                point = None  # if e and line are parallel: no point or infinity
             else:
-                pt = l.intersect(e.Curve)
+                point = gline.intersect_line(edge_line)
 
-            if len(pt) > 0:
-                point = pt[0].toShape().Point
-                if e.isInside(point, 1e-8, True):
-                    inter.append(point)
+            if point is not None and e.is_inside(point, 1e-8):
+                inter.append(to_fc_vector(point))
 
     newpoints = inter[:]
-    for v in face.Vertexes:
-        if plane.Axis.dot(v.Point - plane.Position) > 0:
-            newpoints.append(v.Point)
+    for v in gface.Vertexes:
+        if plane.Axis.dot(v - plane.Position) > 0:
+            newpoints.append(to_fc_vector(v))
     if len(newpoints) == 0:
         return None, None
     else:
-        sorted = sort_points(newpoints, face.Surface.Axis)
+        sorted = sort_points(newpoints, to_fc_vector(gface.Surface.Axis))
         return sorted, inter
 
 
-def cut_box(faces: list, plane: Part.Plane):
+def cut_box(faces: list, plane: GPlane):
     """Cut the box make of planar faces with "plane" """
     updatedfaces = []
     newface_points = []
     for f in faces:
-        newface, newpoints = cut_face(f, plane)
+        newface, newpoints = cut_face(GFace(f), plane)
         if newface is None:
             continue
         updatedfaces.append(newface)
         newface_points.extend(newpoints)
 
     fix_same_points(newface_points)
-    sorted = sort_points(newface_points, plane.Axis)
+    sorted = sort_points(newface_points, to_fc_vector(plane.Axis))
     updatedfaces.append(sorted)
 
     return updatedfaces

@@ -4,8 +4,6 @@
 import logging
 import math
 
-import FreeCAD
-
 logger = logging.getLogger("general_logger")
 
 from .data_constants import mask
@@ -300,9 +298,9 @@ class GeounedSurface:
 
     def build_surface(self, boundBox):
 
-        Box = FreeCAD.BoundBox(boundBox)
+        Box = to_gboundbox(boundBox)
         if self.Type == "Plane":
-            Box.enlarge(10)
+            Box = Box.enlarged(10)
             self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
             self.shell = self.shape
 
@@ -313,7 +311,12 @@ class GeounedSurface:
         elif self.Type == "Cone" or self.Type == "ConeOnly":
             kne = self.Surf.Cone if self.Type == "Cone" else self
             tan = math.tan(kne.Surf.SemiAngle)
-            self.shape, self.shell = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
+            result = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
+            if result is None:
+                self.shape = None
+                self.shell = None
+            else:
+                self.shape, self.shell = result
 
         elif self.Type == "Sphere" or self.Type == "SphereOnly":
             sph = self.Surf.Sphere if self.Type == "Sphere" else self
@@ -336,7 +339,7 @@ class GeounedSurface:
             return
 
         elif self.Type == "MultiPlane":
-            Box.enlarge(10)
+            Box = Box.enlarged(10)
             planes = self.Surf.Planes
             vertexes = self.Surf.Vertexes
             multiplane = makeMultiPlanes(planes, vertexes, Box)
@@ -350,11 +353,11 @@ class GeounedSurface:
             self.shape, self.shell = makeTCone(self, Box)
 
         elif self.Type == "RoundCorner":
-            Box.enlarge(10)
+            Box = Box.enlarged(10)
             self.shape, self.shell = makeRoundCorner(self, Box)
 
         elif self.Type == "MultiRoundCorner":
-            Box.enlarge(10)
+            Box = Box.enlarged(10)
             self.shape, self.shell = makeMultiRoundCorner(self, Box)
 
         elif self.Type == "ReversedConeCylinder":

@@ -97,7 +97,12 @@ all of this, per the Project section above). Structure:
   `GFace`, `GShell`, `GSolid`) that are **eagerly** built from their native
   equivalent and carry real behavior as methods (`gsolid.is_inside(point)`,
   `gface.value_at(u, v)`, `gsolid.find_interior_point()`, `gsolid.export_step(...)`,
-  ...) instead of being passed to a separate backend object; free `Gmake_*`
+  ...) instead of being passed to a separate backend object — with one
+  deliberate exception: `GFace.wires()`/`.outer_wire()` are lazy
+  (computed on first call, then cached), not eager, since nothing in
+  GEOUNED actually needed them on most faces and `.outer_wire()` runs a
+  real heuristic over every wire of the face — see "cut_face/cut_box take
+  a GFace" below; free `Gmake_*`
   constructor functions (`Gmake_box`, `Gmake_cylinder`, `Gmake_half_space`,
   `Gmake_polygon_face`, ...) and free operation functions for anything
   combining more than one independent shape (`Gcut`, `Gcommon`, `Gfuse`,
@@ -106,40 +111,193 @@ all of this, per the Project section above). Structure:
 - `geo/__init__.py` — the single import point for the rest of GEOUNED:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
-As of the file-by-file closeout pass, 6 files in `GEOUNED` still carry a
+As of the file-by-file closeout pass, 3 files in `GEOUNED` still carry a
 direct `import Part`/`import FreeCAD`, each scoped to a small, itemized
 set of deliberately deferred native uses with no faithful `geo` equivalent
 (verified: everything else in those files — classification, construction,
 vector arithmetic — now goes through `geo`). All are duck-typed native
 *values* flowing through, not module-level dependencies leaking outward —
-nothing outside these 6 files needs to `import Part`/`FreeCAD` itself to
-consume them.
-- `utils/geouned_classes.py`: `Box = FreeCAD.BoundBox(boundBox)` in
-  `GeounedSurface.build_surface` — the box is threaded natively into
-  `build_shape_functions.py`'s `Plane`/`Cylinder`/`Cone`/`MultiPlane`/
-  `Can`/`TCone`/`RoundCorner`/`MultiRoundCorner` branches, which need
-  `Box.getEdge(i)`/`Box.getPoint(i)` (no `GBoundBox` equivalent).
+nothing outside these 3 files needs to `import Part`/`FreeCAD` itself to
+consume them. Three files documented in earlier passes (`conversion/
+cell_definition_functions.py`, `utils/geometry_gu.py`,
+`utils/geouned_classes.py`) have since been closed out completely:
+- `cell_definition_functions.py`/`geometry_gu.py` — see "Plane/Cylinder/Cone
+  unification" below for how `gen_plane_sphere`'s infinite `Part.Plane`
+  was replaced (a finite plane clipped to a box centered on the sphere,
+  2×radius +1% — verified numerically identical `distToShape` results
+  against bounded face fragments, the only kind `same_faces` ever is in
+  practice). No `Part.Vertex(...)` equivalent was needed for
+  `same_wire`'s point-on-edge check either: it reused the native
+  `edge.isInside(point, tolerance, True)` method already used elsewhere
+  (`build_shape_functions.py::cut_face`), verified empirically against
+  `distToShape` across 19 cases (line/circle/ellipse/BSpline curves,
+  endpoints, the tolerance boundary, points beyond a curve's trim).
+  `GEdge.is_inside(point, tolerance)` was added to `geo` as the general
+  form of this. `same_wire` itself, along with `join_wires`/
+  `merge_two_wires`/`common_vertexes`/`cut_wires`/`vertex_edge_index`
+  and `ShellGu.set_outerWire`, was then deleted outright — confirmed dead
+  code (the only call site was commented out with a note that it already
+  errored, and nothing else referenced any of them).
+- `geouned_classes.py`: `GeounedSurface.build_surface`'s
+  `Box = FreeCAD.BoundBox(boundBox)` became `Box = to_gboundbox(boundBox)`
+  (and each `Box.enlarge(10)` became `Box = Box.enlarged(10)`, `GBoundBox`
+  being non-mutating) once it was confirmed every downstream consumer
+  (`makePlane`/`makeCylinder`/`makeCone`, `makeMultiPlanes`,
+  `build_complex_shape`/`myBox`/`Objects.py`'s `buildShape` methods)
+  already normalizes via `to_gboundbox()` or plain attribute access,
+  tolerating either native or `GBoundBox` input interchangeably.
+
 - `core.py`: `self.geometry_bounding_box = FreeCAD.BoundBox(...)` in
   `_set_geometry_bounding_box` — consumed natively well outside this
   migration's scope (`void.py`, `write_files.py`,
   `geouned_classes.py`'s `self.UniverseBox`).
-- `conversion/cell_definition_functions.py`: `Part.Plane(sphere_center,
-  normal).toShape()` in `gen_plane_sphere` — an actual infinite analytic
-  plane used for `distToShape`; `Gmake_half_space` is a *box-clipped*
-  (1e6-extent) approximation, not faithful enough to swap in.
-- `utils/geometry_gu.py`: `Part.Vertex(pos1)`/`Part.Vertex(pos2)` in
-  `same_wire` — no `geo` constructor for a lone vertex.
 - `utils/meta_surfaces_utils.py`: one `isinstance(e0.Curve, (Part.Circle,
   Part.Ellipse, Part.Hyperbola, Part.Parabola))` in `planar_edges` —
   `Gclassify_curve` doesn't model Hyperbola/Parabola, so narrowing this
   to the 2 supported kinds would silently change behavior for the other 2.
-- `utils/build_shape_functions.py` (biggest file, still the most native):
-  `Part.Plane(...)` + the `cut_face`/`cut_box` analytic-intersection
-  machinery (same infinite-plane gap as above), `Part.makeSolid(shell)`
-  (no `Gmake_solid`), `Part.makeCone(...)` (kept native to avoid an
-  avoidable `atan`/`tan` round-trip vs. `Gmake_cone`'s `half_angle` API),
-  and the `box: FreeCAD.BoundBox` parameter threaded through from
-  `geouned_classes.py` above.
+- `utils/build_shape_functions.py`: only `sort_points`'s
+  `normal: FreeCAD.Vector` type hint remains (accurate — its callers
+  always still pass a native vector) — `import Part` is gone entirely.
+  `cylinder_cut_box` (the only caller of `Part.makeSolid` here, and of
+  `makeBoxFaces`'s vector-list branch) turned out to have no callers
+  anywhere in `GEOUNED` — confirmed dead and deleted, the same way
+  `decom_utils_generator.py`'s `gen_plane`/`cyl_bound_planes_first_version`
+  and `geometry_gu.py`'s wire-merging cluster were earlier in this pass.
+  That left `makeBoxFaces`'s `isinstance(box[0], FreeCAD.Vector)` branch
+  unreachable too, so it was deleted along with it; the remaining (float)
+  branch now constructs `GVector` directly instead of `FreeCAD.Vector`.
+  `makePlane`/`makeCylinder`/`makeCone`, `makeMultiPlanes`'s cutting-plane
+  construction, and `cut_face`'s line-vs-edge intersection no longer live
+  here either — see below.
+
+### Plane/Cylinder/Cone unification (`build_region/Objects.py`)
+
+`build_shape_functions.py` (used directly by `GeounedSurface.build_surface`
+for simple surfaces) and `build_region/Objects.py`'s `Plane`/`Cylinder`/
+`Cone` classes (used via `get_cell_object`/`BuildDepth` to reconstruct
+composite surfaces — RoundCorner/MultiRoundCorner/Can/TCone) used to each
+have their own copy of "analytic surface + bounding box -> finite clipped
+solid" for these 3 shapes. Now unified as 3 pure functions in
+`build_region/Objects.py`, in `GVector`/`GBoundBox` space, with no
+duplication left anywhere: `plane_polygon_from_box(normal, offset, box)`,
+`cylinder_from_box(center, axis, radius, box)`,
+`cone_from_box(apex, axis, tan, box)`. `build_shape_functions.py::makePlane`/
+`makeCylinder`/`makeCone` are now thin wrappers around these; `Objects.py`'s
+`Plane.buildShape`/`Cylinder.buildShape`/`Cone.buildShape` (`not dblsht`
+branch) call them too.
+
+Two real, pre-existing bugs were found and fixed while unifying, both
+predating this migration entirely (confirmed via `git show` against the
+last pre-migration commit) and both empirically verified before/after:
+- **Cylinder margin**: the two duplicate implementations used different
+  end-padding (`build_shape_functions.py`: fixed 5 units; `Objects.py`:
+  10% of height) — not a bug exactly, but verified empirically (splitting
+  a real solid against both tool variants, at tiny/normal/huge box
+  scales) that the margin size doesn't affect the split result, only that
+  it's nonzero. Unified on the 10%-proportional version.
+  `Objects.Cylinder.buildShape` also now converts its box to `GBoundBox`
+  up front (`Plane.buildShape` already did; `Cylinder.buildShape` used to
+  work in raw native-box space throughout, an inconsistency now closed).
+- **Cone direction (real bug)**: `makeCone` only scanned `dmax` (box
+  corners projected onto `+axis` from apex) and returned `None` if
+  `dmax <= 0`, uncaught by its only caller
+  (`geouned_classes.py::build_surface` did `self.shape, self.shell =
+  makeCone(...)`, an unhandled `TypeError` on `None`). Reproduced for
+  real: a frustum built with the wider end on the `-axis` side of its
+  (extrapolated) apex — `Part.makeCone(40, 20, 100)` — has
+  `dmax <= 0` for its own solid's bounding box. `Objects.py`'s
+  `Cone.buildShape` didn't crash here but was equally wrong: it always
+  built forward along `+axis` regardless, so in the same case it would
+  silently build a cone pointing *away* from the box, covering nothing.
+  Root cause: OCC's native `Cone.SemiAngle` is *signed* exactly to record
+  which direction the real material is in (verified empirically: the
+  above frustum reports `SemiAngle < 0`, matching a sample point actually
+  on the real face) — this sign already survives as far as
+  `geouned_classes.py`'s `tan = math.tan(kne.Surf.SemiAngle)`, but got
+  discarded (`abs()`) right before use. Fix: `cone_from_box` builds along
+  `axis if tan >= 0 else -axis` (trusting the inherited sign, never
+  re-derived by guessing from the box), sizes only by scanning in that
+  already-correct direction, and returns `None` only when the box
+  genuinely doesn't extend that way at all.
+  `build_surface`'s Cone branch now guards the `None` case explicitly
+  instead of blindly unpacking.
+
+### `GPlane.intersect_plane` — plane-plane intersection in pure math
+
+`makeMultiPlanes`'s `cut_face`/`cut_box` used to build a real infinite
+`Part.Plane` purely to compute `face.Surface.intersect(plane)` against a
+box face's (always planar) surface — a plane-plane intersection, which is
+closed-form linear algebra with no CAD kernel needed. Added
+`GPlane.intersect_plane(other) -> GLine | None` (`geo/_freecad_impl.py`)
+and `GLine.from_values(position, direction)` (mirroring `GPlane`/
+`GCylinder`'s existing `.from_values(...)` for a descriptor with no
+native object behind it).
+
+This was **not** a drop-in naive formula — empirically verified in stages:
+- The textbook closed-form point formula (dividing by `|n1×n2|²`) matches
+  native to floating-point precision for well-separated planes, but is
+  genuinely numerically unstable approaching parallel: at ~1e-4 rad from
+  parallel it already diverges from native by a relative ~1e-3, not just
+  round-off noise (confirmed by re-deriving the point from OCC's own
+  *stored* Axis/Position — after eliminating input round-trip error, the
+  divergence persisted).
+- A numerically-stabilized version (drop whichever coordinate axis the
+  intersection direction is most aligned with, solve the remaining
+  well-conditioned 2×2 system instead of the raw cross-product formula)
+  extends the safe range but still diverges below roughly 1e-4 to 1e-6
+  rad from parallel.
+- Given this project's specific history with near-tangent configurations,
+  `intersect_plane` is hybrid rather than trusting the stabilized formula
+  everywhere: pure `GVector` math when `|n1×n2| >= 0.05` (~2.9 deg from
+  parallel, a wide margin below the verified-safe ~0.01 rad boundary);
+  below that, builds a transient native `Part.Plane`/`.intersect()` and
+  wraps its result back into a `GLine`. Verified 42/42 against native
+  across random well-separated pairs *and* near-parallel pairs down to
+  1e-6 rad (the latter exercising the fallback branch, so those match
+  exactly — they *are* native).
+
+### `GLine.intersect_line` — line-vs-edge intersection, same treatment
+
+`cut_face` then still needed the resulting `GLine` intersected against
+each box-face edge to find where the cutting plane crosses the face's
+boundary (`l.intersect(e.Curve)`). Box-face edges (built by
+`makeBoxFaces`/`Gmake_polygon_face`) are always straight, so this reduces
+to line-vs-line — and, since both lines always lie in the same (box
+face's) plane by construction, to *coplanar* line-vs-line specifically.
+Added `GLine.intersect_line(other) -> GVector | None`, same hybrid
+treatment and same verified boundary as `intersect_plane` (pure math
+matches native to floating-point precision for well-separated directions
+and for skew — non-coplanar — pairs, which are unambiguous: the
+coplanarity gap is either ~1e-15 or clearly nonzero, never borderline;
+falls back to native below `|d1×d2| < 0.05`). Verified 46/46 against
+native (coplanar random pairs, skew pairs, near-parallel pairs exercising
+the fallback). No `Part.Line` of any kind remains in
+`cut_face`/`cut_box`/`makeMultiPlanes`.
+
+### `cut_face`/`cut_box` take a `GFace`, not a native face
+
+Once `cut_face` no longer needed `Part.Plane`/`Part.Line`, its `face`
+parameter itself was switched from a native `Part.Face` to a `GFace`
+(`cut_box` now wraps each native box face via `GFace(f)` before calling
+it). `GFace.Surface`/`.Edges`/`.Vertexes` are already eagerly classified,
+so `cut_face` no longer needs its own `Gclassify_surface(face)`/
+`Gclassify_curve(e)` calls, and point-membership uses `GEdge.is_inside(...)`
+(the same method added earlier for `same_wire`) instead of the native
+`e.isInside(...)`.
+
+This surfaced that `GFace.Wires`/`GFace.OuterWire` — eagerly computed in
+`GFace.__init__` alongside `Surface`/`Edges`/`Vertexes` — had **zero
+callers anywhere in GEOUNED** (confirmed by grep: every existing
+`.OuterWire.Edges` use in the codebase goes through `FaceGu`, the
+separate native wrapper in `geometry_gu.py`, never through `GFace`).
+`OuterWire` in particular runs `_pick_outer_wire`'s heuristic (compares
+mean vertex-to-centroid distance across every wire of the face) on
+*every* `GFace` ever constructed, for a value nothing read. Converted to
+lazy, cached methods — `.wires()`/`.outer_wire()` — computed only on
+first actual call. Since `GFace` is constructed pervasively throughout
+GEOUNED (every `GSolid`/`GShell`'s `.Faces`), this wasn't just a
+`cut_face`-local fix: the full `test_cadtocsg.py` suite dropped from
+~180s to ~134s after this change alone.
 
 Engine-swappability (the original motivation for the ABC in attempt 1) is
 now achieved at the *module* level instead of via dependency injection: a

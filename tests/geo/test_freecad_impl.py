@@ -118,7 +118,7 @@ def test_make_half_space_cuts_box_in_half(unit_box):
 
 def test_make_wire_round_trips_outer_wire_edges(unit_box):
     face = unit_box.Faces[0]
-    outer = face.OuterWire
+    outer = face.outer_wire()
     assert len(outer.Edges) == 4
 
     rebuilt = Gmake_wire(outer.Edges)
@@ -253,9 +253,15 @@ def test_faces_are_eagerly_enriched(unit_box):
     assert type(face.Surface) is GPlane
     assert len(face.Edges) == 4
     assert all(type(e.Curve) is GLine for e in face.Edges)
-    assert face.OuterWire is not None
     assert face.index in range(6)
     assert face.Orientation in ("Forward", "Reversed")
+
+
+def test_face_outer_wire_is_lazy_and_cached(unit_box):
+    face = unit_box.Faces[0]
+    assert face.outer_wire() is not None
+    assert face.outer_wire() is face.outer_wire()  # cached, not recomputed
+    assert face.wires() is face.wires()
 
 
 def test_edges_are_eagerly_enriched(unit_box):
@@ -272,7 +278,7 @@ def test_get_solid_orientation(unit_box):
 
 def test_outer_wire_single_wire_face_matches_only_wire(unit_box):
     face = unit_box.Faces[0]
-    assert len(face.OuterWire.Edges) == 4
+    assert len(face.outer_wire().Edges) == 4
 
 
 def test_outer_wire_picks_outer_boundary_not_a_hole():
@@ -294,7 +300,7 @@ def test_outer_wire_picks_outer_boundary_not_a_hole():
     )
     assert len(top_face.__native__.Wires) == 2
     assert len(top_face.Edges) == 5  # 4 outer + 1 circular hole
-    assert len(top_face.OuterWire.Edges) == 4
+    assert len(top_face.outer_wire().Edges) == 4
 
 
 def test_faces_sharing_edge(unit_box):
