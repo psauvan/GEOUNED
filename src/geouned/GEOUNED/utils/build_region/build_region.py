@@ -4,7 +4,7 @@ from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, Plane, Cylinder, Cone, Sphere, myBox
 from ..boolean_function import BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
-from ....geo import GSolid, Gfuse, Gmake_compound
+from ....geo import GSolid, Gfuse, Gmake_compound, to_fc_vector
 
 
 def get_cell_object(geoObj):
@@ -117,18 +117,24 @@ def get_cell_object(geoObj):
 
 
 def get_surface(id, surf):
-
+    # Objects.py's Plane/Cylinder/Cone/Sphere and splitFunction.py's point
+    # classification (surface_side/btwPPlanes) are native-Vector-only
+    # (raw .dot()/.cross()/.Length, native Matrix.multVec in .transform())
+    # -- convert here, at the point .Surf.Axis/.Position/etc (GVector,
+    # since basic_functions_part1.py's *OnlyParams/PlaneParams) are read,
+    # rather than expecting callers to have kept them native.
     if surf.Type == "Plane":
-        params = (surf.Surf.Axis, surf.Surf.Axis.dot(surf.Surf.Position))
+        axis = to_fc_vector(surf.Surf.Axis)
+        params = (axis, axis.dot(to_fc_vector(surf.Surf.Position)))
         return Plane(id, id, params)
     elif surf.Type == "CylinderOnly":
-        params = (surf.Surf.Center, surf.Surf.Axis, surf.Surf.Radius)
+        params = (to_fc_vector(surf.Surf.Center), to_fc_vector(surf.Surf.Axis), surf.Surf.Radius)
         return Cylinder(id, id, params)
     elif surf.Type == "ConeOnly":
-        params = (surf.Surf.Apex, surf.Surf.Axis, math.tan(surf.Surf.SemiAngle), False)
+        params = (to_fc_vector(surf.Surf.Apex), to_fc_vector(surf.Surf.Axis), math.tan(surf.Surf.SemiAngle), False)
         return Cone(id, id, params)
     elif surf.Type == "SphereOnly":
-        params = (surf.Surf.Center, surf.Surf.Radius)
+        params = (to_fc_vector(surf.Surf.Center), surf.Surf.Radius)
         return Sphere(id, id, params)
 
 

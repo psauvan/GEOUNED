@@ -3,7 +3,7 @@ import re
 
 from ..utils import q_form as q_form
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
-from ...geo import GVector, to_fc_vector, to_gvector
+from ...geo import GVector, to_gvector
 from .string_functions import remove_redundant
 
 
@@ -1170,15 +1170,15 @@ def simplify_planes(Surfaces):
     BoolVariable.change_ref()) to preserve the same half-space."""
     for p in Surfaces.primitive_surfaces["PX"]:
         if p.Surf.Axis[0] < 0:
-            p.Surf.Axis = to_fc_vector(GVector(1, 0, 0))
+            p.Surf.Axis = GVector(1, 0, 0)
             p.bVar.change_ref()
 
     for p in Surfaces.primitive_surfaces["PY"]:
         if p.Surf.Axis[1] < 0:
-            p.Surf.Axis = to_fc_vector(GVector(0, 1, 0))
+            p.Surf.Axis = GVector(0, 1, 0)
             p.bVar.change_ref()
 
     for p in Surfaces.primitive_surfaces["PZ"]:
         if p.Surf.Axis[2] < 0:
-            p.Surf.Axis = to_fc_vector(GVector(0, 0, 1))
+            p.Surf.Axis = GVector(0, 0, 1)
             p.bVar.change_ref()

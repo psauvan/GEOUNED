@@ -6,18 +6,7 @@ import math
 from .data_constants import mask
 from .boolean_function import BoolSurface
 from ...geo import vector_geometry
-from ...geo import GPlane, GSolid, GVector, Gin_contact, to_fc_vector, to_gvector
-
-
-def _to_native_vector(vector):
-    """
-    Normalizes a possibly-neutral GVector back to a native FreeCAD.Vector.
-    Boundary point between decomposition-side code (migrated to GVector
-    per-surface-type) and the legacy output-side surface classes below
-    (PlaneParams etc, not yet migrated, consumed by write/*.py with
-    native-only assumptions like `.isEqual()`).
-    """
-    return to_fc_vector(vector) if isinstance(vector, GVector) else vector
+from ...geo import GPlane, GSolid, GVector, Gin_contact, to_gvector
 
 
 # The functions below are thin adapters over `vector_geometry.py` (the
@@ -382,10 +371,8 @@ class Plane3PtsParams:
 
 class PlaneParams:
     def __init__(self, params):
-        self.Position = _to_native_vector(params[0])
-        self.Axis = _to_native_vector(params[1])
-        self.dimL1 = params[2]
-        self.dimL2 = params[3]
+        self.Position = to_gvector(params[0])
+        self.Axis = to_gvector(params[1])
         if len(params) > 4:
             self.real = params[4]
         else:
@@ -411,12 +398,10 @@ class PlaneParams:
 
 
 class CylinderOnlyParams:
-    def __init__(self, params, real=True):
-        self.Center = _to_native_vector(params[0])
-        self.Axis = _to_native_vector(params[1])
+    def __init__(self, params):
+        self.Center = to_gvector(params[0])
+        self.Axis = to_gvector(params[1])
         self.Radius = params[2]
-        self.dimL = params[3]
-        self.real = real
 
     def __str__(self):
         outstr = f"""Cylinder :
@@ -427,13 +412,10 @@ class CylinderOnlyParams:
 
 
 class ConeOnlyParams:
-    def __init__(self, params, real=True):
-        self.Apex = _to_native_vector(params[0])
-        self.Axis = _to_native_vector(params[1])
+    def __init__(self, params):
+        self.Apex = to_gvector(params[0])
+        self.Axis = to_gvector(params[1])
         self.SemiAngle = params[2]
-        self.dimL = params[3]
-        self.dimR = params[4]
-        self.real = real
 
     def __str__(self):
         outstr = f"""Cone :
@@ -445,7 +427,7 @@ class ConeOnlyParams:
 
 class SphereOnlyParams:
     def __init__(self, params):
-        self.Center = _to_native_vector(params[0])
+        self.Center = to_gvector(params[0])
         self.Radius = params[1]
 
     def __str__(self):
@@ -457,8 +439,8 @@ class SphereOnlyParams:
 
 class TorusOnlyParams:
     def __init__(self, params):
-        self.Center = _to_native_vector(params[0])
-        self.Axis = _to_native_vector(params[1])
+        self.Center = to_gvector(params[0])
+        self.Axis = to_gvector(params[1])
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
 

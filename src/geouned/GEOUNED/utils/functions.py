@@ -15,7 +15,7 @@ from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edg
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, to_fc_vector
+from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, to_fc_vector, to_gvector
 from .basic_functions_part1 import shapes_in_contact
 
 
@@ -523,14 +523,14 @@ def build_multip_params(plane_list):
 
 
 def convex_planes(plane_list, zaxis):
+    zaxis = to_gvector(zaxis)
 
     center = plane_list[0].Surf.Position
     for p in plane_list[1:]:
         center = center + p.Surf.Position
     center = center / len(plane_list)
 
-    ref = plane_list[0].Surf.Position - center
-    ref.normalize()
+    ref = (plane_list[0].Surf.Position - center).normalized()
     orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) > 0 else "Reversed"
 
     if len(plane_list) < 3:
@@ -538,11 +538,10 @@ def convex_planes(plane_list, zaxis):
 
     angles = []
     for i, p in enumerate(plane_list[1:]):
-        rp = p.Surf.Position - center
-        rp.normalize()
+        rp = (p.Surf.Position - center).normalized()
         cosa = ref.dot(rp)
         cross = ref.cross(rp)
-        sina = cross.Length
+        sina = cross.length
         if cross.dot(ref) < 0:
             sina = -sina
         angles.append((math.atan2(sina, cosa), i))

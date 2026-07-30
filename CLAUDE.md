@@ -527,9 +527,125 @@ zero observable output change from the reorganization itself.
 
 **Deferred, not yet done** (this is the live edge of the ongoing
 `*Params`/`GeounedSurface` redesign — resume here):
+- `settings.startSurf` is never wired to `MetaSurfacesDict`'s `IndexOffset`
+  (`core.py:385` always constructs it with the default `offset=0`) --
+  the `sorted_surfaces` unification above is currently a no-op in
+  practice because of this. Connect them so `startSurf` actually takes
+  effect.
 - Tier-1 `*OnlyParams` vs `geo`'s `GPlane`/`GCylinder`/`GCone`/`GSphere`/
-  `GTorus`: still two separate representations of the same analytic
-  surfaces. Not yet consolidated.
+  `GTorus`: the storage-type duplication (native vs `GVector`) is closed
+  (see below) -- but they're still two separate *class* definitions.
+  Considered wrapping `*OnlyParams` around a `geo` descriptor via
+  composition instead; rejected once traced through that nothing in
+  `GEOUNED` ever needs to hand a `*OnlyParams` instance to a `geo`
+  function expecting a real `GPlane`/`GCylinder`/etc (construction
+  always happens by pulling the individual fields back out first) --
+  so the extra indirection would have bought nothing. `geo`'s
+  `GCone`/`GSphere`/`GTorus` did gain `.from_values(...)` classmethods
+  either way (mirroring `GPlane`/`GCylinder`'s existing ones), for
+  whenever that judgment call needs revisiting.
+
+### Tier-1 `*OnlyParams` cleanup: dead `dimL`/`dimL1`/`dimL2`/`dimR` fields
+
+Mapped every reader of the "extra" fields `CylinderOnlyParams`/
+`ConeOnlyParams`/`PlaneParams` carry that `geo`'s `GCylinder`/`GCone`/
+`GPlane` don't (`dimL`, `dimR`, `dimL1`, `dimL2`, `real`). Findings:
+`CylinderOnlyParams.dimL`/`.real` and `ConeOnlyParams.dimL`/`.dimR`/
+`.real` were never read anywhere in `GEOUNED/` outside their own class
+definitions -- confirmed dead, deleted (along with the now-pointless
+`real=True` constructor parameter on both classes, since the sole
+caller of each, `geouned_classes.py`, always calls with one positional
+arg). `PlaneParams.real` **is** live (read 4x in
+`MetaSurfacesDict.add_plane`, as `stdtol=plane.Surf.real`, to choose
+between `tolerances.pln_angle`/`pln_distance` and
+`tolerances.add_pln_angle`/`add_pln_distance` -- `real=True` means the
+plane came from an actual face in the model, `real=False` marks a
+synthetic/auxiliary plane the code built itself, e.g. to close a
+cylinder or cone) -- kept.
+
+`PlaneParams.dimL1`/`.dimL2` were also live, but with only one reader:
+`is_same_plane`'s relative-tolerance branch,
+`tol = pln_distance * max(p2.dimL1, p2.dimL2)`. Deleting them required
+a replacement scale, since `test_with_relative_tol_true` genuinely
+exercises `relativeTol=True` (unlike the currently-dormant
+`IndexOffset` case above). Every other `is_same_*` (cylinder/cone/
+sphere/torus) already scales its relative tolerance by the surface's
+own distance from the origin (`max(center1.length, center2.length)` or
+equivalent) rather than by a face-extent measure -- `is_same_plane`
+already computes exactly that value for a plane (`d1`/`d2`, the
+signed distance from origin along the plane's own normal) as part of
+the same-plane test itself, so the natural, pattern-matching
+replacement is `tol = pln_distance * max(abs(d1), abs(d2))`, reusing
+those local variables instead of `dimL1`/`dimL2`. Verified via
+`tests/geo` (107/107) and `tests/test_cadtocsg.py` (50/50, including
+`test_with_relative_tol_true`).
+
+Constructor call sites (~30, across `decompose/`, `conversion/`,
+`utils/functions.py`, `utils/meta_surfaces_utils.py`) were left
+untouched -- they still pass the same 4-5 element tuples (many with
+placeholder `1`/`1.0` values that were never geometrically meaningful
+in the first place, per the mapping); `PlaneParams`/`CylinderOnlyParams`/
+`ConeOnlyParams.__init__` just no longer read the now-irrelevant
+positions. Not touched, and still dead: `Plane3PtsParams`
+(`basic_functions_part1.py`) -- confirmed never instantiated anywhere,
+same `dimL1`/`dimL2` pattern, but out of scope of this specific pass.
+
+### Tier-1 `*OnlyParams`: native `FreeCAD.Vector` -> `GVector` storage
+
+With the dead fields gone, converted `PlaneParams`/`CylinderOnlyParams`/
+`ConeOnlyParams`/`SphereOnlyParams`/`TorusOnlyParams` to store `GVector`
+directly instead of native `FreeCAD.Vector` via `_to_native_vector`
+(deleted, along with its docstring's justification for existing --
+"consumed by `write/*.py` with native-only assumptions like
+`.isEqual()`" -- which an exhaustive grep confirmed doesn't correspond
+to any surviving code path; same stale-blocker pattern already found
+once this session with `basic_functions_part3.py`). Considered (and
+rejected, per explicit user preference) wrapping each class around a
+composed `geo` descriptor instead of just swapping the field type --
+see the "Deferred" list above for why.
+
+This is the first change in the whole migration where **static analysis
+of "who reads these fields" wasn't sufficient** -- a grep-based survey
+(by a sub-agent) concluded every consumer already tolerated `GVector`
+(same operators: `.dot`, `.cross`, `.x/.y/.z`, scalar `*`, indexing).
+Running the real test suite immediately surfaced 5 native-only call
+sites the grep missed, because each reaches these fields through an
+intermediate object rather than reading `.Surf.Axis`/`.Position`/etc
+directly:
+- `build_region.py::get_surface()` read `.Surf.Axis`/`.Position`/
+  `.Center`/`.Apex` and packed them straight into `Objects.py`'s
+  `Plane`/`Cylinder`/`Cone`/`Sphere`, whose own algebra
+  (`splitFunction.py`'s `surface_side`/`btwPPlanes`, plus native
+  `Matrix.multVec` in `.transform()`) is genuinely native-only --
+  fixed by converting explicitly at `get_surface()`, the entry point
+  into that still-native subsystem (`to_fc_vector` on each field before
+  building the `Plane`/`Cylinder`/`Cone`/`Sphere`).
+- `write/functions.py::simplify_planes` (added this session, during the
+  writer-unification pass) reassigned `p.Surf.Axis = to_fc_vector(GVector(...))`
+  -- mirroring the old, pre-GVector-migration behavior it was ported
+  from -- now just `GVector(...)` directly.
+- `utils/functions.py::convex_planes`: native in-place `.normalize()`
+  (twice) -> `GVector.normalized()` (returns new, doesn't mutate);
+  native `.Length` -> `GVector.length`; its `zaxis` parameter arrives
+  native from its only caller (`cyl.Surface.Axis`, a real native
+  surface) -- converted once via `to_gvector` at the top of the
+  function so the rest of it is uniformly `GVector`.
+- `utils/meta_surfaces_utils.py::commonEdge`-adjacent code (2 sites):
+  `d.dot(adjPlane.Axis)` where `d` comes from native `face.valueAt(...)`
+  (this file is one of the 2 remaining files allowed direct
+  `import Part`/`FreeCAD`, so `d` staying native is correct) and
+  `adjPlane.Axis` is now `GVector` -- fixed with `to_fc_vector` at the
+  point of use, converting the `GVector` side rather than the native side.
+
+Verified via `tests/geo` (107/107) and `tests/test_cadtocsg.py` (50/50)
+-- but only after 3 rounds of "run the full suite, fix what it finds,
+re-run" (50 -> 49 -> 2 -> 0 failures). **Lesson for the next
+`*Params`/`GeounedSurface` step**: grep-based "who consumes this field"
+surveys are necessary but not sufficient when the field passes through
+an intermediate object (a `.params` tuple, a locally-derived variable)
+before reaching the operation that cares about its type -- always
+follow up with a real end-to-end run, not just static tracing.
+
 - The broader design goal (stated by the user): a homogeneous
   `components`/`definition`/`bVar` representation covering *every*
   surface — simple and composite alike — so a simple surface is just the

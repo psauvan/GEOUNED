@@ -398,7 +398,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
             if face.Index in parents:
                 i = parents.index(face.Index)
                 adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
+                operator = "AND" if d.dot(to_fc_vector(adjPlane.Axis)) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
         joined_faces.extend(new_adjacent1)
@@ -410,7 +410,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
             if face.Index in parents:
                 i = parents.index(face.Index)
                 adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
+                operator = "AND" if d.dot(to_fc_vector(adjPlane.Axis)) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
         joined_faces.extend(new_adjacent2)

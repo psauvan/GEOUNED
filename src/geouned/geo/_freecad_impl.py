@@ -189,12 +189,35 @@ class GCone:
         self.Radius = native.Radius  # radius of the reference circle at the face's v=0
         self.__native__ = native
 
+    @classmethod
+    def from_values(cls, apex: GVector, axis: GVector, semi_angle: float, radius: float | None = None) -> "GCone":
+        """Build a GCone from already-known values, with no native face/
+        surface backing it. `radius` (the reference circle at v=0) has no
+        meaning without a native face's own parametrization, so it's left
+        None unless the caller actually has it."""
+        cone = cls.__new__(cls)
+        cone.Apex = apex
+        cone.Axis = axis
+        cone.SemiAngle = semi_angle
+        cone.Radius = radius
+        cone.__native__ = None
+        return cone
+
 
 class GSphere:
     def __init__(self, native):
         self.Center = to_gvector(native.Center)
         self.Radius = native.Radius
         self.__native__ = native
+
+    @classmethod
+    def from_values(cls, center: GVector, radius: float) -> "GSphere":
+        """Build a GSphere from already-known values, with no native face/surface backing it."""
+        sphere = cls.__new__(cls)
+        sphere.Center = center
+        sphere.Radius = radius
+        sphere.__native__ = None
+        return sphere
 
 
 class GTorus:
@@ -204,6 +227,17 @@ class GTorus:
         self.MajorRadius = native.MajorRadius
         self.MinorRadius = native.MinorRadius
         self.__native__ = native
+
+    @classmethod
+    def from_values(cls, center: GVector, axis: GVector, major_radius: float, minor_radius: float) -> "GTorus":
+        """Build a GTorus from already-known values, with no native face/surface backing it."""
+        torus = cls.__new__(cls)
+        torus.Center = center
+        torus.Axis = axis
+        torus.MajorRadius = major_radius
+        torus.MinorRadius = minor_radius
+        torus.__native__ = None
+        return torus
 
 
 def Gclassify_surface(native_face):
