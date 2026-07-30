@@ -111,16 +111,17 @@ all of this, per the Project section above). Structure:
 - `geo/__init__.py` — the single import point for the rest of GEOUNED:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
-As of the file-by-file closeout pass, 3 files in `GEOUNED` still carry a
+As of the file-by-file closeout pass, 2 files in `GEOUNED` still carry a
 direct `import Part`/`import FreeCAD`, each scoped to a small, itemized
 set of deliberately deferred native uses with no faithful `geo` equivalent
 (verified: everything else in those files — classification, construction,
 vector arithmetic — now goes through `geo`). All are duck-typed native
 *values* flowing through, not module-level dependencies leaking outward —
-nothing outside these 3 files needs to `import Part`/`FreeCAD` itself to
-consume them. Three files documented in earlier passes (`conversion/
+nothing outside these 2 files needs to `import Part`/`FreeCAD` itself to
+consume them. Files documented in earlier passes (`conversion/
 cell_definition_functions.py`, `utils/geometry_gu.py`,
-`utils/geouned_classes.py`) have since been closed out completely:
+`utils/geouned_classes.py`, `utils/build_shape_functions.py`) have since
+been closed out completely:
 - `cell_definition_functions.py`/`geometry_gu.py` — see "Plane/Cylinder/Cone
   unification" below for how `gen_plane_sphere`'s infinite `Part.Plane`
   was replaced (a finite plane clipped to a box centered on the sphere,
@@ -155,20 +156,8 @@ cell_definition_functions.py`, `utils/geometry_gu.py`,
   Part.Ellipse, Part.Hyperbola, Part.Parabola))` in `planar_edges` —
   `Gclassify_curve` doesn't model Hyperbola/Parabola, so narrowing this
   to the 2 supported kinds would silently change behavior for the other 2.
-- `utils/build_shape_functions.py`: only `sort_points`'s
-  `normal: FreeCAD.Vector` type hint remains (accurate — its callers
-  always still pass a native vector) — `import Part` is gone entirely.
-  `cylinder_cut_box` (the only caller of `Part.makeSolid` here, and of
-  `makeBoxFaces`'s vector-list branch) turned out to have no callers
-  anywhere in `GEOUNED` — confirmed dead and deleted, the same way
-  `decom_utils_generator.py`'s `gen_plane`/`cyl_bound_planes_first_version`
-  and `geometry_gu.py`'s wire-merging cluster were earlier in this pass.
-  That left `makeBoxFaces`'s `isinstance(box[0], FreeCAD.Vector)` branch
-  unreachable too, so it was deleted along with it; the remaining (float)
-  branch now constructs `GVector` directly instead of `FreeCAD.Vector`.
-  `makePlane`/`makeCylinder`/`makeCone`, `makeMultiPlanes`'s cutting-plane
-  construction, and `cut_face`'s line-vs-edge intersection no longer live
-  here either — see below.
+- `utils/build_shape_functions.py`: fully closed out — see "convert at
+  the origin: build_shape_functions.py's GVector-only rewrite" below.
 
 ### Plane/Cylinder/Cone unification (`build_region/Objects.py`)
 
@@ -298,6 +287,160 @@ first actual call. Since `GFace` is constructed pervasively throughout
 GEOUNED (every `GSolid`/`GShell`'s `.Faces`), this wasn't just a
 `cut_face`-local fix: the full `test_cadtocsg.py` suite dropped from
 ~180s to ~134s after this change alone.
+
+### Convert at the origin: `build_shape_functions.py`'s GVector-only rewrite
+
+Once `cut_face`/`cut_box` took a `GFace`, the rest of the file still mixed
+native and `GVector` inputs, converting back and forth (`to_fc_vector`/
+`to_gvector`) at whatever point inside the file happened to need one or
+the other. Fully rewritten instead so every function *defined in this
+file* accepts only `G*` types (`GVector`/`GPlane`/`GFace`/`GBoundBox`) and
+contains zero `to_fc_vector`/`to_gvector` calls of its own — conversion is
+pushed out to the call site that originates the native value, tracked by
+running the test suite and following each resulting `TypeError` back to
+its source rather than converting locally. `makePlane`/`makeCylinder`/
+`makeCone` now take `GVector`s and return native shapes (their only native
+consumers, `geouned_classes.py::build_surface`, convert once at the call);
+`makeMultiPlanes` builds a `GPlane` at each iteration instead of a native
+plane; `makeBoxFaces` returns `list[GFace]`, which made `cut_box` and the
+final `Gmake_shell(...)` call in `makeMultiPlanes` stop needing per-call
+`GFace(f)` wrapping; `sort_points` now accumulates in pure `GVector` space
+(`.length` instead of `.Length`). Two more dead functions surfaced and
+were deleted along the way: `check_sign`/`intersection` (a broken,
+unused duplicate of the differently-signatured, actually-used
+`check_sign` in `boolean_solids.py`) and `cylinder_cut_box` (zero callers
+anywhere in `GEOUNED`), which in turn made `makeBoxFaces`'s
+`isinstance(box[0], FreeCAD.Vector)` branch unreachable too. Only 2
+`to_gvector` calls remain anywhere in the file, in `makeMultiPlanes`,
+reading `PlaneParams.Axis`/`.Position` — the one native-holding boundary
+this file can't push further out, since `PlaneParams` is a domain type
+shared far beyond this file (see "Params class family" below).
+
+### Dead-code cleanup: `basic_functions_part3.py` and 4 broken `__eq__` methods
+
+`utils/basic_functions_part3.py` (183 lines) was a near-exact duplicate of
+`basic_functions_part2.py`'s `is_same_plane`/`is_same_cylinder`/
+`is_same_cone`/`is_same_sphere`/`is_same_torus`/`Fuzzy`/
+`is_duplicate_in_list`, but the older, unmigrated, native-only version
+(`.isEqual()`/`.Length` instead of `to_gvector()` + `.is_equal()`/
+`.length`). Confirmed via exhaustive grep that nothing imports it anywhere
+(only appears in the auto-generated `SOURCES.txt` packaging artifact) —
+deleted outright. `basic_functions_part1.py`'s `CylinderOnlyParams`/
+`ConeOnlyParams`/`SphereOnlyParams`/`TorusOnlyParams` each also carried a
+broken, unreachable `__eq__` (compared `type(other)` against the wrong
+wrapper class; `ConeOnlyParams`'s additionally referenced a nonexistent
+`self.apex` lowercase typo) — confirmed via exhaustive search that the
+only live `==` paths on `GeounedSurface`/its `.Surf` always compare
+`Plane`-type params (triggering the correct `PlaneParams.__eq__`), so
+these 4 were never actually reachable — deleted.
+
+### The `Params` class family, `bVar`/`region`/`components`, and the two surface-numbering scopes
+
+`GeounedSurface.Surf` is always one of ~16 "`*Params`" classes in
+`basic_functions_part1.py`, in three informal tiers: pure geometric
+descriptors (`PlaneParams`, `CylinderOnlyParams`, `ConeOnlyParams`,
+`SphereOnlyParams`, `TorusOnlyParams` — largely redundant with `geo`'s
+`GPlane`/`GCylinder`/`GCone`/`GSphere`/`GTorus`, not yet consolidated);
+"basic surface + bounding plane(s)" (`CylinderParams`, `ConeParams`,
+`SphereParams`, `TorusParams`); and composite/meta-surfaces combining
+several of the above via AND/OR (`MultiPlanesParams`, `CanParams`,
+`TConeParams`, `RoundCornerParams`, `MultiRoundCornerParams`,
+`ReversedConeCylParams`) — the last group with inconsistent field naming
+for the same underlying idea (`s1`/`s1_configuration` vs `p1`/
+`p1_configuration` vs `Planes`+`Configuration`), not yet consolidated.
+
+Every `GeounedSurface` has `.bVar` (a `BoolVariable`, the signed id this
+surface is referred to by) and, for composite types, `.region` (a
+`BoolSurface` wrapping a `BoolSequence` — the AND/OR boolean definition
+over its components' `bVar`s). **These get computed/assigned in two
+different phases with two genuinely different numbering scopes, and
+conflating them would be wrong**:
+- **Decompose phase** (`utils/functions.py` constructs the composite
+  `GeounedSurface`, then `GeounedSurface.build_surface()` →
+  `build_complex_shape()` → `get_cell_object()` builds its CAD shape to
+  split the solid): `.bVar` here is a throwaway *local* id (sequential,
+  assigned right at construction in `functions.py`) — its only job is to
+  keep the AND/OR expression internally consistent for that one CAD
+  build; which actual integers are used doesn't matter and nothing
+  outside this one call depends on them.
+- **Conversion phase** (`conversion/cell_definition.py`, walking every
+  face of every decomposed solid element to reconstruct the whole
+  solid's CSG expression): `Surfaces.add_can`/`add_tcone`/`add_plane`/...
+  (`MetaSurfacesDict`, `geouned_classes.py`) **overwrite `.bVar` in place**
+  on the same instances with the *global*, deduplicated canonical id —
+  reusing an existing number if `is_same_plane`/`is_same_cylinder`/...
+  (with tolerance) finds an existing geometric match anywhere in the
+  model, incrementing `self.surfaceNumber` otherwise. Two geometrically
+  identical planes bounding two different solid elements MUST end up
+  with the same number here — that's the whole point of this phase.
+  `.region` is computed for the first time here too.
+
+Because of this split, `get_cell_object` (decompose-phase CAD building)
+and `MetaSurfacesDict.Can_region`/`.TCone_region` (conversion-phase
+global registration) **cannot** just have one read the other's already-
+computed `.region` — at the time `get_cell_object` runs, conversion
+hasn't happened yet and `.region` doesn't exist. What they *can* share
+(and, before this pass, did not) is the AND/OR **rule** itself, since it
+only depends on which ids and orientations/configurations are involved,
+never on whether those ids are local or global. `round_corner_region`/
+`multi_round_corner_region` (`basic_functions_part1.py`) already worked
+this way — pure functions of `(ids, configuration) -> BoolSurface`,
+called identically by both `get_cell_object` and
+`MetaSurfacesDict.add_roundcorner`/`add_multiroundcorner`. **Can and
+TCone did not**: `MetaSurfacesDict.Can_region`/`.TCone_region`
+(geouned_classes.py) and `get_cell_object`'s `"Can"`/`"TCone"` branches
+(build_region.py) each hand-rolled the identical AND/OR truth table
+inline (same "AND Rev -> c p / AND Fwd -> -c :p / ..." comments, copied).
+Extracted `can_region(cid, cyl_orientation, surf_list)` and
+`tcone_region(cid, cone_orientation, surf_list)` as the same kind of pure
+function (`basic_functions_part1.py`, next to `round_corner_region`);
+`MetaSurfacesDict.Can_region`/`.TCone_region` now only resolve ids
+(via `primitive_surfaces.add_*`, including the plane-sign-flip dance,
+factored into a shared `_resolve_plane_id` helper) and call the pure
+function; `get_cell_object` reads whatever is currently on `.bVar` and
+calls the same pure function. Verified via `tests/geo` (107/107) and
+`tests/test_cadtocsg.py` (50/50).
+
+`GeounedSurface` also now has `.components: dict[abs(id), GeounedSurface]`
+for Can/TCone — the numbering↔surface relation, materialized directly on
+the object (built once in `Can_region`/`TCone_region`, alongside
+`.region`) instead of being re-derived by walking `.Surf.X.Surf.Y` by
+hand wherever it's needed. This let `boolean_solids.py::check_sign`'s
+Can/TCone point-classification branches collapse from ~85 lines of
+per-type `.Surf` walking into one generic block:
+`surfSet = {id: check_sign(point, comp) > 0 for id, comp in
+surf.components.items()}; surf.region.region.evaluate(surfSet)`. This
+also fixed a latent, real bug: the old hand-walk matched
+`si.Type == "cylinder"` (lowercase) against the real tag `"Cylinder"`
+(capital C), so a Cylinder-type Can component's plane/cylinder ids were
+silently dropped from `surfSet` during point classification — never
+triggered before because nothing exercised it this way.
+
+**Deferred, not yet done** (this is the live edge of the ongoing
+`*Params`/`GeounedSurface` redesign — resume here):
+- `.components` for RoundCorner/MultiRoundCorner: not attempted yet.
+  Their `check_sign` branches still evaluate incrementally
+  (`multiDef.evaluate({single_id: value})`, short-circuiting when the
+  result collapses to a bool) instead of building one `surfSet` upfront.
+  Blocked on understanding `MetaSurfacesDict.get_overlap_rc` first — it
+  merges *two* round corners' regions together with several special-cased
+  branches (~150 lines) that don't obviously map onto a flat
+  `components` dict without more analysis.
+- `write/mcnp_format.py`/`serpent_format.py`/`openmc_format.py`/
+  `phits_format.py`: 4 near-identical implementations of the same
+  plane-axis-normalization (`p.Surf.Axis[i] < 0` → flip + `bVar.change_ref()`)
+  and `bVar.__int__()`-for-card-numbering logic. Not yet touched.
+- Tier-1 `*OnlyParams` vs `geo`'s `GPlane`/`GCylinder`/`GCone`/`GSphere`/
+  `GTorus`: still two separate representations of the same analytic
+  surfaces. Not yet consolidated.
+- The broader design goal (stated by the user): a homogeneous
+  `components`/`definition`/`bVar` representation covering *every*
+  surface — simple and composite alike — so a simple surface is just the
+  1-component, trivial-`definition` degenerate case of the same shape a
+  Can/RoundCorner uses. `.Type` (the string tag) must be kept regardless
+  of how this evolves — `write/*.py`'s `mcnp_surface` dispatches the MCNP
+  card *format* on it, which is an orthogonal concern from the geometric
+  boolean-composition redesign.
 
 Engine-swappability (the original motivation for the ABC in attempt 1) is
 now achieved at the *module* level instead of via dependency injection: a
