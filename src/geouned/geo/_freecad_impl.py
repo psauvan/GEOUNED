@@ -444,10 +444,13 @@ class GCircle:
         return self.__native__.parameter(to_fc_vector(point))
 
 class GEllipse:
+    """Field names match FreeCAD's own `Part.Ellipse` attribute names."""
+
     def __init__(self, native):
         self.Center = to_gvector(native.Center)
         self.Axis = to_gvector(native.Axis)
-        self.MajorAxis = to_gvector(native.XAxis)
+        self.XAxis = to_gvector(native.XAxis)
+        self.YAxis = to_gvector(native.YAxis)
         self.MajorRadius = native.MajorRadius
         self.MinorRadius = native.MinorRadius
         self.__native__ = native
@@ -544,6 +547,16 @@ class GEdge:
     def normal_at(self, u: float) -> GVector:
         """Curve normal at parametric coordinate `u`. Only meaningful for a curved edge -- undefined (raises) for a straight line."""
         return to_gvector(self.__native__.normalAt(u))
+
+    def parameter(self, point: GVector) -> float:
+        """
+        Parametric coordinate of the nearest point on the edge's curve to
+        `point`. Goes straight to the native curve rather than through
+        `.Curve` (which is None for a curve type Gclassify_curve doesn't
+        model, e.g. Hyperbola/Parabola) -- `.parameter()` itself is a basic
+        native curve operation, available regardless of classification.
+        """
+        return self.__native__.Curve.parameter(to_fc_vector(point))
 
     def is_same(self, other: "GEdge") -> bool:
         """

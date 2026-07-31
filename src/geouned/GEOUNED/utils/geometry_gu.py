@@ -10,22 +10,18 @@ import math
 
 from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
-from ..utils.data_constants import twoPi
 from ...geo import vector_geometry
 from ...geo import (
     GCone,
     GCylinder,
     GFace,
-    GLine,
     GPlane,
     GSolid,
     GSphere,
     GTorus,
-    Gclassify_curve,
     Gclassify_surface,
     Gmake_shell,
     pick_outer_wire,
-    to_gvector,
 )
 
 logger = logging.getLogger("general_logger")
@@ -224,12 +220,6 @@ class FaceGu(GFace):
     def set_outerWire(self):
         self.OuterWire = pick_outer_wire(self.wires())
 
-    def valueAt(self, u, v):
-        return self.__native__.valueAt(u, v)
-
-    def tangentAt(self, u, v):
-        return self.__native__.tangentAt(u, v)
-
     def parameter(self, point):
         return self.Surface.parameter(point)
 
@@ -293,17 +283,10 @@ class ShellGu:
         self.Orientation = faces[0].Orientation
 
     def makeShell(self):
-        if type(self.Faces[0]) is FaceGu:
-            native_faces = [f.__native__ for f in self.Faces]
-        else:
-            native_faces = self.Faces
-        # GFace's eager construction tolerates edges with a curve type it
-        # doesn't model (e.g. a trimmed conic section's Part.Hyperbola --
-        # GEdge.Curve just comes back None for those), so building real
-        # GFace instances here no longer risks the crash that used to
-        # require a hand-built, deliberately unclassified GFace.
-        gfaces = [GFace(nf) for nf in native_faces]
-        return Gmake_shell(gfaces)
+        # self.Faces is always FaceGu (its only caller, closed_cylinder_cone,
+        # always passes a SolidGu.Faces subset) -- FaceGu already IS a GFace
+        # via inheritance, so no unwrap-to-native/rebuild is needed here.
+        return Gmake_shell(self.Faces)
 
 
 # Aux functions
@@ -326,105 +309,6 @@ def define_surface(face, surface=None):
     return surface
 
 
-def innerWires(wire, face):
-    for i, x0 in enumerate(wire.OrderedVertexes):
-        for x1 in wire.OrderedVertexes[i + 1 :]:
-            dx = x0.Point - x1.Point
-            if dx.Length < 1e-5:
-                return False
-
-    positions = []
-    vect = []
-
-    length = 0
-    u_sum = 0
-    v_sum = 0
-    umin, umax, vmin, vmax = face.__native__.ParameterRange
-    for edge in wire.Edges:
-        pmin, pmax = edge.ParameterRange
-        pe = 0.5 * (pmin + pmax)
-        pos = edge.valueAt(pe)
-        u, v = face.parameter(pos)
-        if u < umin:
-            u += twoPi
-        elif u > umax:
-            u -= twoPi
-        if v < vmin:
-            v += twoPi
-        elif v > vmax:
-            v -= twoPi
-
-        normal = face.__native__.Surface.normal(u, v)
-        u_sum += u * edge.Length
-        v_sum += v * edge.Length
-        length += edge.Length
-
-        if type(Gclassify_curve(edge)) is GLine:
-            direction = edge.Curve.Direction
-        else:
-            direction = edge.Curve.tangent(pe)[0]
-
-        direction.normalize()
-        if edge.Orientation == "Forward":
-            direction = -direction
-
-        vect.append(direction.cross(normal))
-        positions.append(pos)
-
-    if len(wire.Edges) == 1:
-        center = wire.CenterOfMass
-    else:
-        umean = u_sum / length
-        vmean = v_sum / length
-        center = face.__native__.Surface.value(umean, vmean)
-
-    ssum = 0
-    i = 0
-    for v, p in zip(vect, positions):
-        dir = p - center
-        dir.normalize()
-        i += 1
-        ssum += v.dot(dir)
-    return ssum < 0
-
-
-def innerWires_org(wire, face, Faces):
-    for i, x0 in enumerate(wire.OrderedVertexes):
-        for x1 in wire.OrderedVertexes[i + 1 :]:
-            dx = x0.Point - x1.Point
-            if dx.Length < 1e-5:
-                return False
-
-    if len(Faces) == 0:
-        return True
-    for edge in wire.Edges:
-        adjface = other_face_edge(edge, face, Faces)
-        pos = edge.Vertexes[0].Point
-        u, v = face.parameter(pos)
-        normal = face.__native__.normalAt(u, v)
-
-        pe = edge.Curve.parameter(pos)
-
-        if type(Gclassify_curve(edge)) is GLine:
-            direction = edge.Curve.Direction
-        else:
-            direction = edge.derivative1At(pe)
-        if edge.Orientation == "Reversed":
-            direction = -direction
-        direction.normalize()
-
-        vect = direction.cross(normal)
-        u, v = adjface.parameter(pos)
-        vect2 = adjface.__native__.normalAt(u, v)
-        scalar = vect.dot(vect2)
-        if abs(scalar) < 1e-5:
-            continue
-        elif scalar > 0:
-            return False
-    else:
-        return True
-
-
 def other_face_edge(current_edge, current_face, Faces, outer_only=False):
     for face in Faces:
         if face.Index == current_face.Index:
@@ -435,24 +319,3 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
             if current_edge.is_same(edge):
                 return face
     return None
-
-
-def line_projection(p1, v1, p2, v2):
-    """return the point of the projection of the line with point p2 and axis v2
-    on line (p1,v1)"""
-
-    p1 = to_gvector(p1)
-    p2 = to_gvector(p2)
-    x = to_gvector(v1).normalized()
-    y = to_gvector(v2).normalized()
-
-    alpha = p1.dot(x)
-    beta = p2.dot(x)
-    gamma = p1.dot(y)
-    delta = p2.dot(y)
-    c = x.dot(y)
-    if abs(c) > 1 - 1e-6:
-        return None  # v1 and v2 parallel
-    else:
-        xm = (-alpha + beta + c * (gamma - delta)) / (1 - c * c)
-        return p1 + xm * x

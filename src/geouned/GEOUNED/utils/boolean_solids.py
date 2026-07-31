@@ -7,7 +7,7 @@ import math
 
 from .boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
-from ...geo import GSolid, GVector, Gdistance, Gsplit, to_gvector
+from ...geo import GSolid, GVector, Gdistance, Gsplit
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -240,10 +240,11 @@ def combine_diag_elements(d1, d2):
 
 def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_surfaces=set()):
 
-    # Box is a GSolid when it comes from the (already migrated) void
-    # pipeline, or a native Part.Shape when it comes from callers not
-    # migrated yet (cell_definition.py/core.py's get_box) -- accept both.
-    box_native = Box.__native__ if type(Box) is GSolid else Box
+    # Box is always a GSolid here (get_box/Gmake_box). Unwrapped once to
+    # native and passed as native from here on -- split_solid_fast wraps
+    # its own `solid` argument in a fresh GSolid(...), so passing the
+    # already-wrapped Box in would double-wrap and crash.
+    box_native = Box.__native__
 
     if type(SurfInfo) is dict:
         surfaces = SurfInfo
@@ -270,7 +271,7 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
 
     for i, s1 in enumerate(surfaceList):
         if s1 not in omit_surfaces:
-            res, splitRegions = split_solid_fast(Box, surfaces[s1], True, options)
+            res, splitRegions = split_solid_fast(box_native, surfaces[s1], True, options)
         else:
             res = 0
 
@@ -288,7 +289,7 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
             if res == 0:
                 # case that s1 cut the box but the split fails and return only one solids
                 # the following function try to split box with surface s2 instead surface s1
-                split_s2_s1((i, s1), Box, CTable, surfaceList, surfaces, omit_surfaces, options)
+                split_s2_s1((i, s1), box_native, CTable, surfaceList, surfaces, omit_surfaces, options)
             continue  # loop, no region to be split by s2
 
         for s2 in surfaceList[i + 1 :]:
@@ -331,13 +332,13 @@ def build_c_table_from_solids(Box, SurfInfo, simplification_mode, options, omit_
     return CTable
 
 
-def split_s2_s1(s1tuple, Box, CTable, surfaceList, surfaces, omit_surfaces, options):
+def split_s2_s1(s1tuple, box_native, CTable, surfaceList, surfaces, omit_surfaces, options):
     i1, s1 = s1tuple
     for s2 in surfaceList[i1 + 1 :]:
         if surfaces[s2].shape:
-            res, splitRegions = split_solid_fast(Box, surfaces[s2], True, options)
+            res, splitRegions = split_solid_fast(box_native, surfaces[s2], True, options)
         else:
-            res = check_sign(solid, surfaces[s2]), None
+            res, splitRegions = check_sign(box_native, surfaces[s2]), None
 
         if s2 in omit_surfaces:
             CTable.add_element(s1, s2, CTelement((1, 1, 1, 1), s1, s2))
@@ -591,16 +592,16 @@ def check_sign(solid_or_point, surf):
 def check_sign_primitive(point, surf):
 
     if surf.Type == "Plane":
-        r = point - to_gvector(surf.Surf.Position)
-        if to_gvector(surf.Surf.Axis).dot(r) > 0:
+        r = point - surf.Surf.Position
+        if surf.Surf.Axis.dot(r) > 0:
             return 1
         else:
             return -1
 
     elif surf.Type == "CylinderOnly":
-        r = point - to_gvector(surf.Surf.Center)
+        r = point - surf.Surf.Center
         L2 = r.length * r.length
-        z = to_gvector(surf.Surf.Axis).dot(r)
+        z = surf.Surf.Axis.dot(r)
         z2 = z * z
         R2 = surf.Surf.Radius * surf.Surf.Radius
         if L2 - z2 > R2:
@@ -609,15 +610,15 @@ def check_sign_primitive(point, surf):
             return -1
 
     elif surf.Type == "SphereOnly":
-        r = point - to_gvector(surf.Surf.Center)
+        r = point - surf.Surf.Center
         if r.length > surf.Surf.Radius:
             return 1
         else:
             return -1
 
     elif surf.Type == "ConeOnly":
-        r = (point - to_gvector(surf.Surf.Apex)).normalized()
-        z = round(to_gvector(surf.Surf.Axis).dot(r), 15)
+        r = (point - surf.Surf.Apex).normalized()
+        z = round(surf.Surf.Axis.dot(r), 15)
         alpha = math.acos(z)
 
         if alpha > surf.Surf.SemiAngle:
@@ -626,8 +627,8 @@ def check_sign_primitive(point, surf):
             return -1
 
     elif surf.Type == "TorusOnly":
-        axis = to_gvector(surf.Surf.Axis)
-        r = point - to_gvector(surf.Surf.Center)
+        axis = surf.Surf.Axis
+        r = point - surf.Surf.Center
         h = r.dot(axis)
         rho = r - h * axis
 

@@ -277,11 +277,11 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
     p1 = solidFaces[i1].value_at(u_1, v_1)
     p2 = solidFaces[i2].value_at(u_2, v_2)
 
-    if p1.is_qual(p2, 1e-5):
+    if p1.is_equal(p2, 1e-5):
         logger.error("Error in the additional place definition")
         return None
 
-    normal = p2.sub(p1).cross(face.Surface.Axis).normalized()
+    normal = (p2 - p1).cross(face.Surface.Axis).normalized()
     if normal.dot(face.CenterOfMass - p1) < 0:
         normal = -normal
 
@@ -326,7 +326,7 @@ def gen_plane_cone(face, solidFaces, tolerances):
     p1 = solidFaces[i1].value_at(u_1, v_1)
     p2 = solidFaces[i2].value_at(u_2, v_2)
 
-    if p1.is_qual(p2, 1e-5):
+    if p1.is_equal(p2, 1e-5):
         logger.error("in the additional place definition")
         return None
 

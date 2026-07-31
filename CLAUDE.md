@@ -1029,18 +1029,222 @@ started running further than before:
   above — MCNP quietly received a fix the other 3 formats didn't), not
   something introduced by this session's changes.
 
-### Known bugs, flagged but not fixed this pass — next debugging session should start here
+### Known bugs from the previous checkpoint — fixed
 
-While reviewing the user's manual edits to `conversion/
-cell_definition_functions.py` for this commit, two clear typos surfaced
-that were **not** fixed (left as-is per explicit instruction — this
-commit is a checkpoint of manual, expected-to-be-broken WIP work, with
-more changes and a real debugging pass to follow):
-- `gen_plane_cylinder`/`gen_plane_cone` both call `p1.is_qual(p2, 1e-5)`
-  — `GVector` has no `is_qual` method, only `is_equal`. Will raise
-  `AttributeError` the first time either function actually runs.
-- `gen_plane_cylinder` calls `p2.sub(p1)` — `GVector` has no `.sub()`
-  method either (only the `-` operator, `__sub__`); should be `p2 - p1`.
+The two typos flagged at the previous checkpoint (`cell_definition_functions.py`'s
+`gen_plane_cylinder`/`gen_plane_cone` calling the nonexistent `p1.is_qual(...)`
+and `p2.sub(p1)`) are fixed: `is_qual` → `is_equal`, `p2.sub(p1)` → `(p2 - p1)`.
+
+### `to_fc_vector`/`to_gvector` purged from all of `GEOUNED` — assume `GVector` everywhere
+
+Explicit user directive: strip every `to_fc_vector`/`to_gvector` call out
+of `GEOUNED` (everything except `geo/`, the backend, where they belong as
+the actual conversion boundary), on the working assumption that by this
+point in the migration every vector flowing through GEOUNED already *is*
+a `GVector` and every object already *is* a `G*` type — "aún si sabemos
+que el código puede cascar" (even knowing some of it will break). ~110
+occurrences across 11 files, all removed; where the removal exposed
+leftover native-style syntax on what's now known to be a `GVector`
+(`.Length` → `.length`, `.normalize()` → `.normalized()`, `.sub()`/`.add()`
+→ `-`/`+`, `.isEqual` → `.is_equal`), that was fixed too, function by
+function, checking real callers each time rather than assuming.
+
+Two structural pieces fell out of this pass:
+- **`FaceGu.valueAt`/`.tangentAt` deleted** (`geometry_gu.py`) — these were
+  thin native passthroughs shadowing `GFace`'s own already-inherited
+  `.value_at()`/`.tangent_at()` (which return `GVector`, not a native
+  `FreeCAD.Vector`). Every call site across `GEOUNED` that used to call
+  `.valueAt(`/`.tangentAt(` on a `FaceGu`/`GFace` was switched to the
+  snake_case form; confirmed via grep that no `.valueAt(`/`.tangentAt(`
+  call on a `FaceGu` object remains anywhere (the only survivors are on
+  confirmed-native objects: `edge.__native__.valueAt(...)`, and inside
+  `projection()`'s legacy native body — see below).
+- **`GEllipse` gained real `.XAxis`/`.YAxis`** (`geo/_freecad_impl.py`,
+  matching `Part.Ellipse`'s own attribute names exactly) replacing a
+  wrongly-named `.MajorAxis` field that actually held `native.XAxis` (a
+  vector) — confirmed via grep that nothing outside
+  `decom_utils_generator.py::projection()` ever read the old field, so
+  renaming was safe. `projection()`'s ellipse branch was rewritten to use
+  `.XAxis`/`.YAxis` (vectors) and `.MajorRadius`/`.MinorRadius` (the
+  actual scalars — the old code read `.MajorAxis`/`.MinorAxis` as if they
+  were scalars, which was simply wrong).
+
+`decom_utils_generator.py::projection()` (the one clearly-flagged native
+holdout from this pass) was converted to take a `GEdge` instead of a
+native edge, per explicit walkthrough: `GEdge` already had
+`.ParameterRange`; `type(Gclassify_curve(edge)) is GCircle` became
+`type(edge.Curve) is GCircle` (no need to re-classify, `edge.Curve` is
+already the classified result); every `edge.valueAt(...)` became
+`edge.value_at(...)`. Also fixed in the same function: a genuinely
+pre-existing bug where `dmin` was read in the ellipse branch's final
+comparison (`abs(d0 - dmin) < abs(d0 - dmax)`, mirroring the circle
+branch's use of the same variable) but never defined there — added the
+same `dmin = (edge.value_at(pmin) - edge.Curve.Center).dot(axis)`
+computation the circle branch already does, by direct analogy.
+
+Confirmed-dead code deleted along the way (zero callers anywhere,
+verified by grep before deleting, not just before this pass): `utils/
+functions.py::get_additional_corner_plane_old`; `utils/geometry_gu.py::
+innerWires`, `innerWires_org`, `line_projection`; `utils/
+meta_surfaces_utils.py::get_edge`; `utils/basic_functions_part1.py::
+is_in_edge`, `is_in_points`.
+
+### Real bugs the sweep, and the subsequent full test run, surfaced
+
+Removing a redundant conversion is safe by construction (the value was
+already the type being asked for); every one of the bugs below was found
+either while *tracing* a removal to confirm it was safe, or by then
+actually running the test suite — never guessed:
+
+- **`decom_one_generators.py::generic_split` — decomposition splitting
+  was silently a no-op** (the most serious finding this session). `core.py`
+  passes `main_split(Gmake_compound(m.Solids), ...)` — a `GSolid` — and
+  `generic_split`'s own `solid` parameter is that `GSolid` throughout. But
+  its body still did `Gsplit(GSolid(solid), ...)` — double-wrapping an
+  already-`GSolid` value, which crashes inside `GSolid.__init__` (a `GEdge`
+  reached through the re-parse is already-wrapped, and `v.Point` on its
+  already-`GVector` vertices doesn't exist). That crash was caught by a
+  broad `except Exception:`, whose fallback branch (`comsolid_solids =
+  [solid]`) *also* left the value un-unwrapped, silently returning "this
+  surface produced only 1 solid" — i.e., `Gsplit` never actually ran, and
+  decomposition treated every candidate surface as a non-split, for as
+  long as `core.py` has been passing `GSolid` here (i.e., since earlier
+  in this same migration). Fixed: pass `solid` (already `GSolid`) directly
+  to `Gsplit` instead of re-wrapping; fixed the `except` branch to
+  properly unwrap (`solid.__native__`) so `comsolid_solids` stays
+  native throughout, matching what `remove_solids` needs
+  (`.removeSplitter()`/`.isValid()`, native-only); re-wrap `remove_solids`'
+  native output back to `GSolid` at the one point `cleaned` needs to be
+  `GSolid` again.
+- **`void.py` — two separate native-`BoundBox` leaks**, both downstream
+  of `core.py::_set_geometry_bounding_box`'s `self.geometry_bounding_box
+  = FreeCAD.BoundBox(...)` (the one deliberately-deferred native holdout
+  documented earlier in this file): `void_generation`'s `EnclosureBox =
+  GeounedSolid(None, Box.__native__)` fed a *native* shape into
+  `GeounedSolid.__init__`'s `else` branch, which is written for a `GSolid`
+  (`comsolid.refine().Solids`, `comsolid.BoundBox`) — native.`.refine()`
+  doesn't exist, so it silently fell into `except Exception: self.Solids
+  = comsolid.Solids` (native list, not `GSolid`) and `self.BoundBox =
+  comsolid.BoundBox` (native `FreeCAD.BoundBox`, not `GBoundBox`) — a
+  `GeounedSolid` instance with different field *types* than every other
+  one in the system, undetected because the exception was swallowed.
+  Fixed by dropping the `.__native__` (`Box` was already `GSolid` three
+  lines up). `set_graveyard_cell`'s `center = UniverseBox.Center` (native
+  `FreeCAD.Vector`, from the same `UniverseBox`) flowed straight into
+  `SphereOnlyParams` — which, post-sweep, no longer converts on the way
+  in — surfacing much later as `AttributeError: 'Base.Vector' object has
+  no attribute 'is_equal'` in the MCNP writer. Fixed with an explicit
+  `to_gvector()` right at this one native-native boundary, matching the
+  "convert exactly at the native leak, nowhere else" pattern used
+  throughout this migration.
+- **`get_box` (`utils/functions.py`) → `build_c_table_from_solids` →
+  `split_solid_fast`/`split_s2_s1` (`utils/boolean_solids.py`) — the same
+  double-wrap risk as `generic_split`, closed at the root.**
+  `build_c_table_from_solids` had an explicit "accept both" shim
+  (`box_native = Box.__native__ if type(Box) is GSolid else Box`) because
+  `get_box` (used by `core.py`/`cell_definition.py`) returned native while
+  `void_box_class.py` (calling `Gmake_box` directly) passed `GSolid` —
+  but the *unconverted* `Box` (whichever type) was still being forwarded
+  straight into `split_solid_fast`/`split_s2_s1`, which wrap it in a fresh
+  `GSolid(solid)` — a live double-wrap risk whenever the `GSolid` branch
+  was taken. Fixed by making `get_box` return `GSolid` too (dropping its
+  own `.__native__|`), so both callers are consistent; the shim collapses
+  to an unconditional `box_native = Box.__native__`; and it's
+  `box_native` (always native, matching what `split_solid_fast`'s other
+  code path — pieces from `comsolid_solids` — already always is), not
+  `Box`, that gets passed onward. Found and fixed two more bugs in
+  `split_s2_s1`'s `else` branch while tracing this: `check_sign(solid,
+  surfaces[s2])` referenced a `solid` that was never defined anywhere in
+  the function (fixed to `box_native`, matching `split_solid_fast`'s own
+  identical `else: return check_sign(solid, surf)` fallback, which uses
+  its own first argument the same way); and `res = check_sign(...), None`
+  assigned a 2-tuple to `res` alone, leaving `splitRegions` undefined or
+  stale from a previous loop iteration (fixed to `res, splitRegions =
+  check_sign(...), None`, matching the sibling `if` branch's unpacking).
+- **`decom_utils_generator.py::get_axis_inertia` leaked `numpy.float64`
+  into `GVector`** — `numpy.linalg.eig`'s eigenvector components were
+  passed straight into `GVector(...)` uncast. Downstream comparisons
+  (`... > 0`) then produced `numpy.bool_` instead of Python `bool`,
+  which `BoolSequence.clean()` doesn't recognize as boolean
+  (`type(eVal) is not bool` → tries `.elements` on it → `AttributeError`).
+  Fixed with an explicit `float(...)` cast on all three components.
+- **`meta_surfaces_utils.py::region_sign`/`material_direction` didn't
+  handle an edge whose curve `Gclassify_curve` can't model** (Hyperbola/
+  Parabola — `edge.Curve is None`). `region_sign` used `e1.Curve.value(pe)`
+  to get a point on the edge; switched to `e1.value_at(pe)` (`GEdge`'s own
+  curve-classification-agnostic method — see the "GEdge/GWire enrichment"
+  section above). `material_direction` used `edge.Curve.parameter(pos)` to
+  go the other way (point → parameter); rather than special-case `None`
+  inline, added `GEdge.parameter(point) -> float` to `geo/_freecad_impl.py`
+  (going straight to the native curve, `self.__native__.Curve.parameter(...)`,
+  bypassing GEOUNED's own classification entirely — matching every other
+  `G*.parameter()` method's shape) and `material_direction` now just calls
+  `edge.parameter(pos)` unconditionally. This is the one place this pass
+  re-introduced a `to_fc_vector` call — but inside `geo/_freecad_impl.py`,
+  the correct location for it, not back in `GEOUNED`.
+- **`decom_utils_generator.py::cutting_face_number`**: `raise ("Spline
+  surface detectected")` — raising a bare string is invalid Python
+  (`TypeError: exceptions must derive from BaseException`); would have
+  masked the real "spline surface detected" error with a different one.
+  Fixed to `raise RuntimeError("Spline surface detected")` (typo fixed
+  too).
+
+Verified via the full suite after each fix, not just at the end: `tests/geo`
+(106/106) and `tests/test_cadtocsg.py` (50/50) both green.
+
+### More dead code, found while pushing point B (`.__native__` audit) — deleted
+
+- **`build_region/Objects.py::FuseSolid`** — a third, byte-for-byte-identical
+  copy of the same function already live in both `build_region.py` (used by
+  `build_shape_functions.py`) and `splitFunction.py` (used internally by
+  `joinBase`) — confirmed zero callers, deleted, along with the `GSolid`/
+  `Gfuse`/`Gmake_compound` imports that became unused with it. The two
+  *live* copies (`build_region.py`, `splitFunction.py` — also byte-for-byte
+  identical, confirmed via `diff`) were merged: `build_region.py` already
+  imports from `splitFunction.py` (no risk of a cycle the other way), so
+  its own copy was deleted and `FuseSolid` added to the existing `from
+  .splitFunction import ...` line instead.
+- **`MetaSurfacesDict`/`SurfacesDict` (`geouned_classes.py`)** — both
+  classes' constructors had a `surfaces=None` copy-constructor branch
+  (`if surfaces is not None: ...`) that turned out to be completely dead:
+  `MetaSurfacesDict` is constructed exactly once anywhere in `GEOUNED`
+  (`core.py`, always without a `surfaces=` argument), and the *only* other
+  place that ever called `SurfacesDict(some_dict)` with a real value was
+  inside `MetaSurfacesDict`'s own now-deleted dead branch. Both classes'
+  `__init__` collapsed to just the (previously `else`) live path, and the
+  now-pointless `surfaces` parameter was dropped from both signatures.
+
+### `settings.startSurf` finally wired to `MetaSurfacesDict`'s `IndexOffset`
+
+Closes the "Deferred, not yet done" item from earlier in this file.
+`core.py`'s `MetaSurfacesDict(...)` construction now passes
+`offset=self.settings.startSurf - 1` (the `-1` because internal surface
+numbering starts at 1, so `startSurf=1`, the default, must produce
+`offset=0` — verified against `MetaSurfacesDict.surfaceNumber`'s own
+`0`-then-pre-increment pattern). This alone wasn't sufficient: every
+writer reads `Surfaces.primitive_surfaces.IndexOffset`
+(`write/functions.py::sorted_surfaces`, called as
+`self.sorted_surfaces(Surfaces.primitive_surfaces)` in all 4 formats) —
+i.e. `SurfacesDict.IndexOffset`, a *different* object from
+`MetaSurfacesDict.IndexOffset` — so `MetaSurfacesDict.__init__` also
+needed to forward its own `offset` down into the `SurfacesDict(...)` it
+constructs, which it previously didn't. `startSurf=1` (default) now
+reproduces the exact previous behavior (`offset=0`, a no-op); other
+values actually shift the numbering for the first time.
+
+### Point C of the `.__native__` audit (`SolidGu`/`FaceGu`'s `super().__init__(x.__native__)`) — considered, left as-is
+
+`SolidGu.__init__`/`FaceGu.__init__` unwrap an already-`GSolid`/`GFace`
+argument back to native just to hand it to `GSolid.__init__`/`GFace.__init__`,
+which then re-parses everything from scratch (re-classifies faces, edges,
+vertices...) — real duplicated work, not just indirection. A backend-free
+alternative was considered (`self.__dict__.update(x.__dict__)` instead of
+re-parsing, adding only the `SolidGu`/`FaceGu`-specific fields on top) and
+would work correctly, but was declined: the existing docstring already
+established this cost as negligible (`SolidGu` is constructed twice in the
+whole pipeline), and the `__dict__` trick trades an explicit, obvious
+re-parse for an implicit dependency on `GSolid`/`GFace`'s internal field
+layout — not worth it for a cost that's already known to not matter.
 
 ## Code style preference
 

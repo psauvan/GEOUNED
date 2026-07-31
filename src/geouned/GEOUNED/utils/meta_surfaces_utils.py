@@ -22,7 +22,6 @@ from ...geo import (
     GEllipse,
     GBSpline,
     Gclassify_curve,
-    to_fc_vector,
     vector_geometry,
 )
 
@@ -88,7 +87,7 @@ def convex_wire(p):
         if type(Gclassify_curve(e)) is not GLine:
             return []
 
-    axis = to_fc_vector(p.Surface.Axis)
+    axis = p.Surface.Axis
     normal = axis
     v0 = Edges[0].Curve.Direction.cross(axis)
     if Edges[0].Orientation == "Forward":
@@ -236,8 +235,8 @@ def is_closed_cylinder_cone(shape):
 
 def get_side_edges(cylinder_faces):
 
-    origin = to_fc_vector(cylinder_faces[0].Surface.Center)
-    axis = to_fc_vector(cylinder_faces[0].Surface.Axis)
+    origin = cylinder_faces[0].Surface.Center
+    axis = cylinder_faces[0].Surface.Axis
     sideLow = (1e15, None)
     sideHigh = (-1e15, None)
 
@@ -260,7 +259,7 @@ def get_side_edges(cylinder_faces):
 
 
 def face_in_cylinder(edge, face):
-    axis = to_fc_vector(face.Surface.Axis)
+    axis = face.Surface.Axis
     if type(Gclassify_curve(edge)) is GBSpline:
         return edge.Curve.getD0(0).dot(axis) < 0
     else:
@@ -388,10 +387,9 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
     if new_adjacent1 or new_adjacent2:
         umin, umax, vmin, vmax = face.ParameterRange
         v = 0.5 * (vmin + vmax)
-        pmin = face.valueAt(umin, v)
-        pmax = face.valueAt(umax, v)
-        d = pmax - pmin
-        d.normalize()
+        pmin = face.value_at(umin, v)
+        pmax = face.value_at(umax, v)
+        d = (pmax - pmin).normalized()
 
         for adj in new_adjacent1:
             parents = [x[0] for x in adj.Connections]
@@ -399,7 +397,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
             if face.Index in parents:
                 i = parents.index(face.Index)
                 adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(to_fc_vector(adjPlane.Axis)) > 0 else "OR"
+                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
         joined_faces.extend(new_adjacent1)
@@ -411,7 +409,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
             if face.Index in parents:
                 i = parents.index(face.Index)
                 adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(to_fc_vector(adjPlane.Axis)) > 0 else "OR"
+                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
         joined_faces.extend(new_adjacent2)
@@ -470,12 +468,11 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             dmax = d
             indmax = i
 
-    V1 = Faces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
-    V2 = Faces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
+    V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], UVNode_min[indmin][1])
+    V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
-    axis = to_fc_vector(Faces[ifacemin].Surface.Axis)
-    normal = V2.sub(V1).cross(axis)
-    normal.normalize()
+    axis = Faces[ifacemin].Surface.Axis
+    normal = (V2 - V1).cross(axis).normalized()
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
 
@@ -539,16 +536,13 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
             dmax = d
             indmax = i
 
-    V1 = Faces[ifacemin].valueAt(UVNode_min[indmin][0], UVNode_min[indmin][1])
-    V2 = Faces[ifacemax].valueAt(UVNode_max[indmax][0], UVNode_max[indmax][1])
+    V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], UVNode_min[indmin][1])
+    V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
-    apex = to_fc_vector(Faces[ifacemin].Surface.Apex)
-    dir1 = V1 - apex
-    dir2 = V2 - apex
-    dir1.normalize()
-    dir2.normalize()
-    normal = dir2.cross(dir1)
-    normal.normalize()
+    apex = Faces[ifacemin].Surface.Apex
+    dir1 = (V1 - apex).normalized()
+    dir2 = (V2 - apex).normalized()
+    normal = dir2.cross(dir1).normalized()
 
     plane = GeounedSurface(("Plane", (apex, normal, 1, 1)))
 
@@ -562,32 +556,6 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
         add_planes.append(plane2)
 
     return plane, add_planes
-
-
-def get_edge(v1, face, normal, axis):
-    for edge in face.Edges:
-        curve = Gclassify_curve(edge)
-        if type(curve) is GLine:
-            vect = v1 - edge.Curve.Location
-            if vect.Length < 1e-8:
-                return edge
-            vect.normalize()
-            if abs(abs(vect.dot(edge.Curve.Direction) - 1)) < 1e-5:
-                return edge
-
-        elif type(curve) is GBSpline:
-            if v1.sub(edge.Vertexes[0].Point).Length < 1e-5 or v1.sub(edge.Vertexes[1].Point).Length < 1e-5:
-                vect = edge.Vertexes[0].Point - edge.Vertexes[1].Point
-                vect.normalize()
-                if abs(vect.dot(normal)) < 1e-5 and abs(vect.dot(axis)) < 1e-5:
-                    continue
-                else:
-                    return edge
-        else:
-            if abs(abs(edge.Curve.Axis.dot(to_fc_vector(face.Surface.Axis))) - 1) < 1e-5:
-                continue
-            else:
-                return edge
 
 
 def sort_range(Urange):
@@ -846,16 +814,16 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
 
     e1, p1 = ep1
     e2, p2 = ep2
-    p1_axis = to_fc_vector(p1.Surface.Axis)
-    p2_axis = to_fc_vector(p2.Surface.Axis)
-    cyl_center = to_fc_vector(cylinder.Surface.Center)
+    p1_axis = p1.Surface.Axis
+    p2_axis = p2.Surface.Axis
+    cyl_center = cylinder.Surface.Center
 
     u1, u2, v1, v2 = cylinder.ParameterRange
-    r1 = cylinder.__native__.valueAt(u1, 0.5 * (v1 + v2))
-    r2 = cylinder.__native__.valueAt(u2, 0.5 * (v1 + v2))
-    nt1 = cylinder.tangentAt(u1, v1)[0]
-    nc1 = -cylinder.__native__.normalAt(u1, v1)
-    nc2 = -cylinder.__native__.normalAt(u2, v2)
+    r1 = cylinder.value_at(u1, 0.5 * (v1 + v2))
+    r2 = cylinder.value_at(u2, 0.5 * (v1 + v2))
+    nt1 = cylinder.tangent_at(u1, v1)[0]
+    nc1 = -cylinder.normal_at(u1, v1)
+    nc2 = -cylinder.normal_at(u2, v2)
 
     if nc1.dot(r1 - cyl_center) < 0:
         nc1 = -nc1
@@ -863,50 +831,47 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
         nc2 = -nc2
 
     ac1 = nt1.cross(nc1)
-    nd = ac1.cross(r2 - r1)
-    nd.normalize()
+    nd = ac1.cross(r2 - r1).normalized()
 
-    u1 = r1 - to_fc_vector(e1.Vertexes[0])
-    u2 = r2 - to_fc_vector(e1.Vertexes[0])
-    u1.normalize()
-    u2.normalize()
-    d1 = abs(u1.dot(to_fc_vector(e1.Curve.Direction)))
-    d2 = abs(u2.dot(to_fc_vector(e1.Curve.Direction)))
+    u1 = (r1 - e1.Vertexes[0]).normalized()
+    u2 = (r2 - e1.Vertexes[0]).normalized()
+    d1 = abs(u1.dot(e1.Curve.Direction))
+    d2 = abs(u2.dot(e1.Curve.Direction))
     if d2 > d1:  # change semicircle orientation
         ac1 = -ac1
         r1, r2 = r2, r1
         nc1, nc2 = nc2, nc1
 
     pr1 = ac1.cross(p1_axis)
-    if pr1.dot(to_fc_vector(p1.CenterOfMass) - r1) < 0:
+    if pr1.dot(p1.CenterOfMass - r1) < 0:
         n1 = -p1_axis
     else:
         n1 = p1_axis
 
     pr2 = -ac1.cross(p2_axis)
-    if pr2.dot(to_fc_vector(p2.CenterOfMass) - r2) < 0:
+    if pr2.dot(p2.CenterOfMass - r2) < 0:
         n2 = -p2_axis
     else:
         n2 = p2_axis
 
     fwd_cyl = cylinder.Orientation == "Forward"
     n1xnd = n1.cross(nd)
-    same_p1_pd = n1xnd.Length < 1e-5
+    same_p1_pd = n1xnd.length < 1e-5
     AND_p1_pd = ac1.dot(n1xnd) > 0
 
     n2xnd = n2.cross(nd)
-    same_p2_pd = n2xnd.Length < 1e-5
+    same_p2_pd = n2xnd.length < 1e-5
     AND_p2_pd = -ac1.dot(n2xnd) > 0
 
     OR_p12_bracket = ac1.dot(n1.cross(n2)) > 0
     cross1 = n1.cross(nc1)
-    if cross1.Length < 1e-8:
+    if cross1.length < 1e-8:
         AND_p1_cyl = True
     else:
         AND_p1_cyl = ac1.dot(cross1) > 0
 
     cross2 = n2.cross(nc2)
-    if cross2.Length < 1e-8:
+    if cross2.length < 1e-8:
         AND_p2_cyl = True
     else:
         AND_p2_cyl = -ac1.dot(cross2) > 0
@@ -925,7 +890,7 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
 
 def material_direction(pos: GVector, face: GFace | FaceGu, edge: GEdge):
 
-    pe = edge.Curve.parameter(pos)
+    pe = edge.parameter(pos)
     dir = edge.derivative1_at(pe).normalized()
     if edge.Orientation == "Reversed":
         dir = -dir
@@ -946,7 +911,11 @@ def region_sign(s1_in, s2, outAngle=False):
     e1 = Edges[0]
     p0, p1 = e1.ParameterRange
     pe = 0.5 * (p1 + p0)
-    pos = e1.Curve.value(pe)
+    # e1.value_at (curve-agnostic) instead of e1.Curve.value: e1.Curve can
+    # be None for an edge whose curve type Gclassify_curve doesn't model
+    # (e.g. Hyperbola/Parabola) -- material_direction below only needs the
+    # point, not the classified curve.
+    pos = e1.value_at(pe)
 
     vect, normal1 = material_direction(pos, s1, e1)
 
@@ -996,7 +965,7 @@ def region_sign(s1_in, s2, outAngle=False):
 
 
 def angle(v1, v2, operator):
-    d = v1.dot(v2) / (v1.Length * v2.Length)
+    d = v1.dot(v2) / (v1.length * v2.length)
     a = math.acos(max(-1, min(1, d)))
     if operator == "AND":
         return a

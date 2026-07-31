@@ -1,8 +1,8 @@
-from .splitFunction import SplitBase, SplitSolid, joinBase
+from .splitFunction import SplitBase, SplitSolid, joinBase, FuseSolid
 from .Objects import CellObj, CellSurface, myBox
 from ..boolean_function import BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
-from ....geo import GCone, GCylinder, GPlane, GSolid, GSphere, Gfuse, Gmake_compound
+from ....geo import GCone, GCylinder, GPlane, GSphere
 
 
 def get_cell_object(geoObj):
@@ -315,37 +315,3 @@ def filterparts(parts, cell):
         else:
             process_part.append(p)
     return process_part, keep_part
-
-
-def FuseSolid(parts):
-    if (len(parts)) <= 1:
-        if parts:
-            solid = parts[0]
-        else:
-            return None
-    else:
-        gparts = [GSolid(p) for p in parts]
-        try:
-            fused = Gfuse(gparts)
-        except Exception:
-            fused = None
-
-        if fused is not None:
-            try:
-                refined = fused.refine()
-            except Exception:
-                refined = fused
-
-            if refined.is_valid():
-                gsolid = refined
-            elif fused.is_valid():
-                gsolid = fused
-            else:
-                gsolid = Gmake_compound(gparts)
-        else:
-            gsolid = Gmake_compound(gparts)
-        solid = gsolid.__native__
-
-    if solid.Volume < 0:
-        solid = GSolid(solid).reverse().__native__
-    return solid

@@ -11,7 +11,6 @@ from ...geo import (
     GVector,
     Gmake_shell,
     Gmake_polygon_face,
-    to_gvector,
 )
 
 
@@ -43,13 +42,10 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
     cutfaces = makeBoxFaces(boxlim)
 
     for p in plane_list:
-        # p.Surf.{Position,Axis} are the one native-holding boundary this
-        # file can't push further out: they live on PlaneParams, a domain
-        # type shared far beyond this file (see CLAUDE.md).
-        axis = to_gvector(p.Surf.Axis)
+        axis = p.Surf.Axis
         if multibuild:
             axis = -axis  # for mutliplane shape construction planes direction must be inverted
-        plane = GPlane.from_values(to_gvector(p.Surf.Position), axis)
+        plane = GPlane.from_values(p.Surf.Position, axis)
         newbox_points = cut_box(cutfaces, plane)
         cutfaces = makeBoxFaces(newbox_points)
     if multibuild:

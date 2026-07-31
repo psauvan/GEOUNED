@@ -3,7 +3,7 @@ import re
 
 from ..utils import q_form as q_form
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
-from ...geo import GVector, to_gvector
+from ...geo import GVector
 from .string_functions import remove_redundant
 
 
@@ -238,7 +238,7 @@ def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
             A = surf.Axis.x
             B = surf.Axis.y
             C = surf.Axis.z
-            axis = to_gvector(surf.Axis)
+            axis = surf.Axis
             if axis.is_equal(GVector(1, 0, 0), tolerances.pln_angle):
                 mcnp_def = "{:<6d} PX  {:{x}}".format(id, surf.Position.x / 10.0, x=numeric_format.P_xyz)
             elif axis.is_equal(GVector(0, 1, 0), tolerances.pln_angle):
@@ -258,7 +258,7 @@ def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
                 )
 
     elif Type == "CylinderOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         rad = surf.Radius * 0.1
         if is_parallel(Dir, GVector(1, 0, 0), tolerances.angle):
@@ -406,7 +406,7 @@ def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
         # corresponding logic
         rad = surf.Radius * 0.1
         pnt = surf.Center * 0.1
-        if to_gvector(pnt).is_equal(GVector(0, 0, 0), tolerances.sph_distance):
+        if pnt.is_equal(GVector(0, 0, 0), tolerances.sph_distance):
             mcnp_def = "{:<6d} SO  {:{r}}".format(id, rad, r=numeric_format.S_r)
         else:
             mcnp_def = "{:<6d} S  {:{xyz}} {:{xyz}} {:{xyz}} {:{r}}".format(
@@ -420,7 +420,7 @@ def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
             )
 
     elif Type == "TorusOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         radMaj = surf.MajorRadius * 0.1
         radMin = surf.MinorRadius * 0.1
@@ -475,7 +475,7 @@ def open_mc_surface(Type, surf, tolerances, numeric_format, out_xml=True, quadri
         A = surf.Axis.x
         B = surf.Axis.y
         C = surf.Axis.z
-        axis = to_gvector(surf.Axis)
+        axis = surf.Axis
         if axis.is_equal(GVector(1, 0, 0), tolerances.pln_angle):
             D = surf.Position.x * 0.1
             if out_xml:
@@ -515,7 +515,7 @@ def open_mc_surface(Type, surf, tolerances, numeric_format, out_xml=True, quadri
     elif Type == "CylinderOnly":
         pos = surf.Center * 0.1
         Rad = surf.Radius * 0.1
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
 
         if is_parallel(Dir, GVector(1, 0, 0), tolerances.angle):
             if out_xml:
@@ -564,7 +564,7 @@ def open_mc_surface(Type, surf, tolerances, numeric_format, out_xml=True, quadri
 
     elif Type == "ConeOnly":
         Apex = surf.Apex * 0.1
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         tan = math.tan(surf.SemiAngle)
         tan2 = tan * tan
 
@@ -661,7 +661,7 @@ def open_mc_surface(Type, surf, tolerances, numeric_format, out_xml=True, quadri
         Center = surf.Center * 0.1
         minRad = surf.MinorRadius * 0.1
         majRad = surf.MajorRadius * 0.1
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         if out_xml:
             coeffs = "{:{xyz}} {:{xyz}} {:{xyz}} {:{r}} {:{r}} {:{r}}".format(
                 Center.x,
@@ -709,7 +709,7 @@ def serpent_surface(id, Type, surf, options, tolerance, numeric_format):
             B = surf.Axis.y
             C = surf.Axis.z
             D = surf.Axis.dot(surf.Position)
-            axis = to_gvector(surf.Axis)
+            axis = surf.Axis
             if axis.is_equal(GVector(1, 0, 0), tolerance.pln_angle):
                 serpent_def = f"surf {id} px {surf.Position.x/10:{numeric_format.P_xyz}}"
             elif axis.is_equal(GVector(0, 1, 0), tolerance.pln_angle):
@@ -720,7 +720,7 @@ def serpent_surface(id, Type, surf, options, tolerance, numeric_format):
                 serpent_def = f"surf {id} plane {A:{numeric_format.P_d}} {B:{numeric_format.P_d}} {C:{numeric_format.P_d}} {D/10:{numeric_format.P_d}}"
 
     elif Type == "CylinderOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         rad = surf.Radius * 0.1
         if is_parallel(Dir, GVector(1, 0, 0), tolerance.angle):
@@ -811,7 +811,7 @@ surf quadratic  {v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}}
         serpent_def = f"surf {id} sph {pnt.x:{numeric_format.S_xyz}} {pnt.y:{numeric_format.S_xyz}} {pnt.z:{numeric_format.S_xyz}} {rad:{numeric_format.S_r}}"
 
     elif Type == "TorusOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         radMaj = surf.MajorRadius * 0.1
         radMin = surf.MinorRadius * 0.1
@@ -849,7 +849,7 @@ def phits_surface(id, Type, surf, options, tolerance, numeric_format):
             A = surf.Axis.x
             B = surf.Axis.y
             C = surf.Axis.z
-            axis = to_gvector(surf.Axis)
+            axis = surf.Axis
             if axis.is_equal(GVector(1, 0, 0), tolerance.pln_angle):
                 phits_def = "{:<6d} PX  {:{x}}".format(id, surf.Position.x / 10.0, x=numeric_format.P_xyz)
             elif axis.is_equal(GVector(0, 1, 0), tolerance.pln_angle):
@@ -869,7 +869,7 @@ def phits_surface(id, Type, surf, options, tolerance, numeric_format):
                 )
 
     elif Type == "CylinderOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         rad = surf.Radius * 0.1
         if is_parallel(Dir, GVector(1, 0, 0), tolerance.angle):
@@ -1017,7 +1017,7 @@ def phits_surface(id, Type, surf, options, tolerance, numeric_format):
         # corresponding logic
         rad = surf.Radius * 0.1
         pnt = surf.Center * 0.1
-        if to_gvector(pnt).is_equal(GVector(0, 0, 0), tolerance.sph_distance):
+        if pnt.is_equal(GVector(0, 0, 0), tolerance.sph_distance):
             phits_def = "{:<6d} SO  {:{r}}".format(id, rad, r=numeric_format.S_r)
         else:
             phits_def = "{:<6d} S  {:{xyz}} {:{xyz}} {:{xyz}} {:{r}}".format(
@@ -1031,7 +1031,7 @@ def phits_surface(id, Type, surf, options, tolerance, numeric_format):
             )
 
     elif Type == "TorusOnly":
-        Dir = to_gvector(surf.Axis).normalized()
+        Dir = surf.Axis.normalized()
         Pos = surf.Center * 0.1
         radMaj = surf.MajorRadius * 0.1
         radMin = surf.MinorRadius * 0.1

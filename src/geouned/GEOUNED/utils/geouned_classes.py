@@ -39,7 +39,7 @@ from .build_shape_functions import (
     makeMultiRoundCorner,
 )
 from .basic_functions_part1 import is_parallel, is_opposite
-from ...geo import GBoundBox, GSolid, GVector, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox, to_gvector
+from ...geo import GBoundBox, GSolid, GVector, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox
 
 
 def _empty_boundbox():
@@ -301,17 +301,17 @@ class GeounedSurface:
         Box = to_gboundbox(boundBox)
         if self.Type == "Plane":
             Box = Box.enlarged(10)
-            self.shape = makePlane(to_gvector(self.Surf.Axis), to_gvector(self.Surf.Position), Box)
+            self.shape = makePlane(self.Surf.Axis, self.Surf.Position, Box)
             self.shell = self.shape
 
         elif self.Type == "Cylinder" or self.Type == "CylinderOnly":
             cyl = self.Surf.Cylinder if self.Type == "Cylinder" else self
-            self.shape, self.shell = makeCylinder(to_gvector(cyl.Surf.Center), to_gvector(cyl.Surf.Axis), cyl.Surf.Radius, Box)
+            self.shape, self.shell = makeCylinder(cyl.Surf.Center, cyl.Surf.Axis, cyl.Surf.Radius, Box)
 
         elif self.Type == "Cone" or self.Type == "ConeOnly":
             kne = self.Surf.Cone if self.Type == "Cone" else self
             tan = math.tan(kne.Surf.SemiAngle)
-            result = makeCone(to_gvector(kne.Surf.Axis), to_gvector(kne.Surf.Apex), tan, Box)
+            result = makeCone(kne.Surf.Axis, kne.Surf.Apex, tan, Box)
             if result is None:
                 self.shape = None
                 self.shell = None
@@ -322,7 +322,7 @@ class GeounedSurface:
             sph = self.Surf.Sphere if self.Type == "Sphere" else self
             rad = sph.Surf.Radius
             pnt = sph.Surf.Center
-            self.shape = Gmake_sphere(to_gvector(pnt), rad).__native__
+            self.shape = Gmake_sphere(pnt, rad).__native__
             self.shell = self.shape.Shells[0]
             return
 
@@ -333,7 +333,7 @@ class GeounedSurface:
             majorR = tor.Surf.MajorRadius
             minorR = tor.Surf.MinorRadius
 
-            torus = Gmake_torus(to_gvector(center), to_gvector(axis), majorR, minorR).__native__
+            torus = Gmake_torus(center, axis, majorR, minorR).__native__
             self.shape = torus.Faces[0]
             self.shell = torus.Shells[0]
             return
@@ -380,7 +380,6 @@ class MetaSurfacesDict(dict):
 
     def __init__(
         self,
-        surfaces=None,
         offset: int = 0,
         options: Options = Options(),
         tolerances: Tolerances = Tolerances(),
@@ -412,24 +411,13 @@ class MetaSurfacesDict(dict):
 
         self.__surfIndex__ = dict()
 
-        if surfaces is not None:
-            for key in surfaces.keys():
-                self[key] = surfaces[key][:]
-                self.__surfIndex__[key] = surfaces.__surfIndex__[key][:]
-            self.surfaceNumber = surfaces.surfaceNumber
-            self.options = surfaces.options
-            self.tolerances = surfaces.tolerances
-            self.numeric_format = surfaces.numeric_format
-            self.__last_obj__ = (surfaces.__last_obj__[0], surfaces.__last_obj__[1])
-            self.primitive_surfaces = SurfacesDict(surfaces.primitive_surfaces)
-        else:
-            self.primitive_surfaces = SurfacesDict(
-                options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format
-            )
-            self.surfaceNumber = 0
-            self.__last_obj__ = ("", -1)
-            for key in surfname:
-                self.__surfIndex__[key] = []
+        self.primitive_surfaces = SurfacesDict(
+            offset=offset, options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format
+        )
+        self.surfaceNumber = 0
+        self.__last_obj__ = ("", -1)
+        for key in surfname:
+            self.__surfIndex__[key] = []
         return
 
     def get_surface(self, pindex):
@@ -1079,7 +1067,6 @@ class MetaSurfacesDict(dict):
 class SurfacesDict(dict):
     def __init__(
         self,
-        surfaces=None,
         offset: int = 0,
         options: Options = Options(),
         tolerances: Tolerances = Tolerances(),
@@ -1097,22 +1084,11 @@ class SurfacesDict(dict):
 
         self.__surfIndex__ = dict()
 
-        if surfaces is not None:
-            for key in surfaces.keys():
-                self[key] = surfaces[key][:]
-                self.__surfIndex__[key] = surfaces.__surfIndex__[key][:]
-            self.surfaceNumber = surfaces.surfaceNumber
-            self.metaSurfaceNumber = surfaces.metaSurfaceNumber
-            self.options = surfaces.options
-            self.tolerances = surfaces.tolerances
-            self.numeric_format = surfaces.numeric_format
-            self.__last_obj__ = (surfaces.__last_obj__[0], surfaces.__last_obj__[1])
-        else:
-            self.surfaceNumber = 0
-            self.metaSurfaceNumber = 0
-            self.__last_obj__ = ("", -1)
-            for key in surfname:
-                self.__surfIndex__[key] = []
+        self.surfaceNumber = 0
+        self.metaSurfaceNumber = 0
+        self.__last_obj__ = ("", -1)
+        for key in surfname:
+            self.__surfIndex__[key] = []
         return
 
     def __str__(self):

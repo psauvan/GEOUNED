@@ -24,7 +24,7 @@ from .threading.geouned_threads import ThreadPoolExecutor
 from .void import void as void
 from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
-from ..geo import GSolid, Gmake_compound, kernel_version
+from ..geo import Gmake_compound, kernel_version
 
 logger = logging.getLogger("general_logger")
 logger.info(f"GEOUNED version {version('geouned')}")
@@ -382,7 +382,12 @@ class CadToCsg:
 
     def build_solid_definition(self):
         # start Building CGS cells phase
-        self.Surfaces = MetaSurfacesDict(options=self.options, tolerances=self.tolerances, numeric_format=self.numeric_format)
+        self.Surfaces = MetaSurfacesDict(
+            offset=self.settings.startSurf - 1,
+            options=self.options,
+            tolerances=self.tolerances,
+            numeric_format=self.numeric_format,
+        )
 
         if self.options.n_thread > 1 and False:  # disabled sevral processes writting in the same self.Surface may induce errors
             onlysolidList = []
@@ -568,7 +573,7 @@ class CadToCsg:
             if m.IsEnclosure:
                 continue
             solids.extend(m.Solids)
-        Gmake_compound([GSolid(s) for s in solids]).__native__.exportStep(filename)
+        Gmake_compound(solids).export_step(filename)
 
     def _set_geometry_bounding_box(self, padding: float = 10.0):
         """

@@ -4,7 +4,7 @@
 #
 #
 
-from ...geo import GVector, to_gvector
+from ...geo import GVector
 
 
 class _RotationMatrix:
@@ -30,9 +30,6 @@ class _RotationMatrix:
 
 def rotation_matrix(u, v):
     """Definition of the rotation matrix for two vectors"""
-
-    u = to_gvector(u)
-    v = to_gvector(v)
 
     # defintion of the axis of rotation
     Axis = u.cross(v).normalized()
@@ -65,7 +62,7 @@ def q_form_cyl(Axis, Pos, rad):
 
     R = rotation_matrix(GVector(1, 0, 0), Axis)
     R.transpose()
-    Pos2 = -R.multiply(to_gvector(Pos))
+    Pos2 = -R.multiply(Pos)
 
     A = R.A21**2 + R.A31**2
     B = R.A22**2 + R.A32**2
@@ -88,7 +85,7 @@ def q_form_cone(Axis, Pos, tan):
 
     R = rotation_matrix(GVector(1, 0, 0), Axis)
     R.transpose()
-    Pos2 = -R.multiply(to_gvector(Pos))
+    Pos2 = -R.multiply(Pos)
 
     A = R.A21**2 + R.A31**2 - (tan * R.A11) ** 2
     B = R.A22**2 + R.A32**2 - (tan * R.A12) ** 2

@@ -6,14 +6,12 @@ import math
 from .data_constants import mask
 from .boolean_function import BoolSurface
 from ...geo import vector_geometry
-from ...geo import GPlane, GSolid, GVector, Gin_contact, to_gvector
+from ...geo import GPlane, GSolid, GVector, Gin_contact
 
 
 # The functions below are thin adapters over `vector_geometry.py` (the
-# backend-agnostic predicate layer): they convert FreeCAD.Vector to the
-# neutral GVector at the boundary, delegate the actual math, and convert
-# back. Call sites throughout GEOUNED still pass FreeCAD.Vector directly
-# and are unaffected -- only the implementation moved.
+# backend-agnostic predicate layer). Callers throughout GEOUNED are
+# expected to already pass GVector.
 
 
 def is_same_value(v1, v2, tolerance=1e-6):
@@ -21,38 +19,20 @@ def is_same_value(v1, v2, tolerance=1e-6):
 
 
 def is_opposite(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_opposite(to_gvector(vector_1), to_gvector(vector_2), tolerance)
+    return vector_geometry.is_opposite(vector_1, vector_2, tolerance)
 
 
 def is_parallel(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_parallel(to_gvector(vector_1), to_gvector(vector_2), tolerance)
+    return vector_geometry.is_parallel(vector_1, vector_2, tolerance)
 
 
 def is_in_line(point, dir, pnt_line, tolerance=1e-6):
-    return vector_geometry.is_in_line(to_gvector(point), to_gvector(dir), to_gvector(pnt_line), tolerance)
-
-
-# TODO check this function is used in the code
-def is_in_points(point, points, tolerance=1e-5):
-    if len(points) > 0:
-        for p in points:
-            if point.isEqual(p, tolerance):
-                return True
-    return False
-
-
-# TODO check this function is used in the code
-def is_in_edge(edge1, edge2, tolerance=1e-8):
-    ver1 = edge1.Vertexes
-    ver2 = edge2.Vertexes
-    con1 = ver1[0].Point.isEqual(ver2[0].Point, tolerance) or ver1[0].Point.isEqual(ver2[1].Point, tolerance)
-    con2 = ver1[1].Point.isEqual(ver2[0].Point, tolerance) or ver1[1].Point.isEqual(ver2[1].Point, tolerance)
-    return con1 and con2
+    return vector_geometry.is_in_line(point, dir, pnt_line, tolerance)
 
 
 def is_in_plane(point, plane, d_tolerance=1e-7):
-    plane_params = GPlane.from_values(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
-    return vector_geometry.is_in_plane(to_gvector(point), plane_params, d_tolerance)
+    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
+    return vector_geometry.is_in_plane(point, plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -67,8 +47,8 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
 
 
 def sign_plane(point, plane):
-    plane_params = GPlane.from_values(to_gvector(plane.Surf.Position), to_gvector(plane.Surf.Axis))
-    return vector_geometry.sign_plane(to_gvector(point), plane_params)
+    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
+    return vector_geometry.sign_plane(point, plane_params)
 
 
 def shapes_in_contact(shape1, shape2, tolerance=1e-6):
@@ -371,8 +351,8 @@ class Plane3PtsParams:
 
 class PlaneParams:
     def __init__(self, params):
-        self.Position = to_gvector(params[0])
-        self.Axis = to_gvector(params[1])
+        self.Position = params[0]
+        self.Axis = params[1]
         if len(params) > 4:
             self.real = params[4]
         else:
@@ -399,8 +379,8 @@ class PlaneParams:
 
 class CylinderOnlyParams:
     def __init__(self, params):
-        self.Center = to_gvector(params[0])
-        self.Axis = to_gvector(params[1])
+        self.Center = params[0]
+        self.Axis = params[1]
         self.Radius = params[2]
 
     def __str__(self):
@@ -413,8 +393,8 @@ class CylinderOnlyParams:
 
 class ConeOnlyParams:
     def __init__(self, params):
-        self.Apex = to_gvector(params[0])
-        self.Axis = to_gvector(params[1])
+        self.Apex = params[0]
+        self.Axis = params[1]
         self.SemiAngle = params[2]
 
     def __str__(self):
@@ -427,7 +407,7 @@ class ConeOnlyParams:
 
 class SphereOnlyParams:
     def __init__(self, params):
-        self.Center = to_gvector(params[0])
+        self.Center = params[0]
         self.Radius = params[1]
 
     def __str__(self):
@@ -439,8 +419,8 @@ class SphereOnlyParams:
 
 class TorusOnlyParams:
     def __init__(self, params):
-        self.Center = to_gvector(params[0])
-        self.Axis = to_gvector(params[1])
+        self.Center = params[0]
+        self.Axis = params[1]
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
 

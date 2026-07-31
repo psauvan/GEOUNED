@@ -13,7 +13,6 @@ from .basic_functions_part1 import (
     is_same_value,
 )
 from ..write.functions import mcnp_surface
-from ...geo import to_gvector
 
 
 def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_format):
@@ -96,9 +95,9 @@ def is_same_cylinder(
 
     if is_same_rad:
         if is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
-            axis1 = to_gvector(cyl1.Axis)
-            center1 = to_gvector(cyl1.Center)
-            center2 = to_gvector(cyl2.Center)
+            axis1 = cyl1.Axis
+            center1 = cyl1.Center
+            center2 = cyl2.Center
             c12 = center1 - center2
             d = axis1.cross(c12).length
 
@@ -128,8 +127,8 @@ def is_same_cylinder(
 def is_same_cone(cone1, cone2, dtol=1e-6, atol=1e-6, rel_tol=True):
     if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
         if is_parallel(cone1.Axis, cone2.Axis, atol):
-            apex1 = to_gvector(cone1.Apex)
-            apex2 = to_gvector(cone2.Apex)
+            apex1 = cone1.Apex
+            apex2 = cone2.Apex
             if rel_tol:
                 tol = dtol * max(apex1.length, apex2.length)
             else:
@@ -144,8 +143,8 @@ def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
     else:
         rtol = tolerance
     if is_same_value(sph1.Radius, sph2.Radius, rtol):
-        center1 = to_gvector(sph1.Center)
-        center2 = to_gvector(sph2.Center)
+        center1 = sph1.Center
+        center2 = sph2.Center
         if rel_tol:
             ctol = tolerance * max(center1.length, center2.length)
         else:
@@ -167,8 +166,8 @@ def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True):
             rtol = dtol
 
         if is_same_value(tor1.MajorRadius, tor2.MajorRadius, Rtol) and is_same_value(tor1.MinorRadius, tor2.MinorRadius, rtol):
-            center1 = to_gvector(tor1.Center)
-            center2 = to_gvector(tor2.Center)
+            center1 = tor1.Center
+            center2 = tor2.Center
             if rel_tol:
                 ctol = dtol * max(center1.length, center2.length)
             else:

@@ -7,12 +7,9 @@ from ....geo import (
     GCone,
     GCylinder,
     GPlane,
-    GSolid,
     GSphere,
     GVector,
-    Gfuse,
     Gmake_box,
-    Gmake_compound,
     Gmake_cone,
     Gmake_cylinder,
     Gmake_polygon_face,
@@ -407,37 +404,3 @@ class Undefined:
 
     def transform(self, matrix):
         return
-
-
-def FuseSolid(parts):
-    if (len(parts)) <= 1:
-        if parts:
-            solid = parts[0]
-        else:
-            return None
-    else:
-        gparts = [GSolid(p) for p in parts]
-        try:
-            fused = Gfuse(gparts)
-        except Exception:
-            fused = None
-
-        if fused is not None:
-            try:
-                refined = fused.refine()
-            except Exception:
-                refined = fused
-
-            if refined.is_valid():
-                gsolid = refined
-            elif fused.is_valid():
-                gsolid = fused
-            else:
-                gsolid = Gmake_compound(gparts)
-        else:
-            gsolid = Gmake_compound(gparts)
-        solid = gsolid.__native__
-
-    if solid.Volume < 0:
-        solid = GSolid(solid).reverse().__native__
-    return solid

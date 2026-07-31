@@ -11,18 +11,18 @@ from .geometry_gu import ShellGu, is_same_surface
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
-from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane
+from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane, material_direction
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, to_fc_vector, to_gvector
+from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box
 from .basic_functions_part1 import shapes_in_contact
 
 
 def get_box(comp, enlargeBox):
     # comp is always a GeounedSolid here, whose BoundBox is a GBoundBox
     box = comp.BoundBox.enlarged(enlargeBox)
-    return Gmake_box(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax).__native__
+    return Gmake_box(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
 
 
 def get_multiplanes(solidFaces, omit_faces_set=None):
@@ -385,8 +385,8 @@ def build_can_params(cs):
             coneOnly.bVar = BoolVariable(sid)
 
             # apex distance from cylinder axis
-            cp = s.Surface.Apex - to_fc_vector(cyl.Surface.Center)
-            a = to_fc_vector(cyl.Surface.Axis)
+            cp = s.Surface.Apex - cyl.Surface.Center
+            a = cyl.Surface.Axis
             alpha = cp.dot(a)
             sqr = cp.dot(cp) - alpha * alpha
             if abs(sqr) < 1e-8:
@@ -523,8 +523,6 @@ def build_multip_params(plane_list):
 
 
 def convex_planes(plane_list, zaxis):
-    zaxis = to_gvector(zaxis)
-
     center = plane_list[0].Surf.Position
     for p in plane_list[1:]:
         center = center + p.Surf.Position
@@ -565,21 +563,6 @@ def convex_planes(plane_list, zaxis):
     return convex, orientation
 
 
-def material_direction(pos, face_in, edge):
-
-    pe = edge.Curve.parameter(pos)
-    dir = edge.derivative1At(pe)
-    dir.normalize()
-    if edge.Orientation == "Reversed":
-        dir = -dir
-    u, v = face_in.Surface.parameter(pos)
-    normalf = face_in.normalAt(u, v)
-    normalf.normalize()
-    matvec = normalf.cross(dir)
-
-    return matvec, normalf
-
-
 def get_additional_corner_plane(cyl, p1, p2):
     Edges1 = commonEdge(cyl, p1)
     Edges2 = commonEdge(cyl, p2)
@@ -587,40 +570,8 @@ def get_additional_corner_plane(cyl, p1, p2):
     e2 = Edges2[0]
     p1 = e1.Vertexes[0]
     p2 = e2.Vertexes[0]
-    v1, n1 = material_direction(to_fc_vector(e1.Vertexes[0]), cyl.__native__, e1.__native__)
-    v2, n2 = material_direction(to_fc_vector(e2.Vertexes[0]), cyl.__native__, e2.__native__)
+    v1, n1 = material_direction(p1, cyl, e1)
+    v2, n2 = material_direction(p2, cyl, e2)
     point = 0.5 * (p1 + p2)
-    paxis = v1 + v2
-    paxis.normalize()
-    return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))
-
-
-def get_additional_corner_plane_old(cyl, p1, p2):
-    Edges1 = commonEdge(cyl, p1)
-    Edges2 = commonEdge(cyl, p2)
-    e1 = Edges1[0]
-    e2 = Edges2[0]
-    point11 = e1.Vertexes[0].Point
-    point12 = e1.Vertexes[1].Point
-    p1, p2 = e2.ParameterRange
-    point21 = e2.valueAt(p1)
-    point22 = e2.valueAt(p2)
-    v21 = point21 - point11
-    v22 = point22 - point11
-    cyl_axis = to_fc_vector(cyl.Surface.Axis)
-    dt1 = abs(cyl_axis.dot(v21))
-    dt2 = abs(cyl_axis.dot(v22))
-    vect = v21 if dt1 < dt2 else v22
-    paxis = vect.cross(cyl_axis)
-    paxis.normalize()
-    umin, umax, vmin, vmax = cyl.ParameterRange
-    surfpoint = cyl.valueAt(0.5 * (umin + umax), 0.5 * (vmin + vmax))
-    dir = surfpoint - to_fc_vector(cyl.Surface.Center)
-    dir.normalize()
-
-    if dir.dot(paxis) < 0:
-        paxis = -paxis  # normal plane toward existing cylinder surface
-    eps = 1e-7 * cyl.Surface.Radius  # used to avoid lost particles with possible complementary region
-    point = 0.25 * (point11 + point12 + point21 + point22) + eps * paxis
-
+    paxis = (v1 + v2).normalized()
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))

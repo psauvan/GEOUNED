@@ -22,11 +22,8 @@ from ...geo import (
     GEllipse,
     GBSpline,
     GVector,
-    GEdge,
     Gclassify_curve,
     Gmake_wire,
-    to_fc_vector,
-    to_gvector,
 )
 from ..utils.basic_functions_part1 import (
     is_parallel,
@@ -101,17 +98,17 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
             ):
 
                 if type(face.Surface) is GCone:
-                    p1 = to_gvector(face.Surface.Apex)
+                    p1 = face.Surface.Apex
                 else:
-                    p1 = to_gvector(face.Surface.Center)
+                    p1 = face.Surface.Center
 
                 if type(adjacent_face.Surface) is GCone:
-                    p2 = to_gvector(adjacent_face.Surface.Apex)
+                    p2 = adjacent_face.Surface.Apex
                 else:
-                    p2 = to_gvector(adjacent_face.Surface.Center)
+                    p2 = adjacent_face.Surface.Center
 
-                axis1 = to_gvector(face.Surface.Axis)
-                axis2 = to_gvector(adjacent_face.Surface.Axis)
+                axis1 = face.Surface.Axis
+                axis2 = adjacent_face.Surface.Axis
 
                 # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
                 cross = axis1.cross(axis2)
@@ -151,7 +148,7 @@ def cks_edge_plane(face, edges, pc=None):
             pos = edge.Curve.value(0)
             center = curve.Center
             dir = curve.Axis
-            vect, normalf = material_direction(to_gvector(pos), face, edge)
+            vect, normalf = material_direction(pos, face, edge)
             if dir.dot(vect) < 0:
                 dir = -dir
             planeParams = [center, dir, 1, 1, False]
@@ -188,7 +185,6 @@ def spline_wires(edges, face, pc=None):
 
         if type(curve) is GBSpline:
             for p in edge.Curve.Poles:
-                p = to_fc_vector(p)
                 r = majoraxis.dot(p)
                 if rmin[0] > r:
                     rmin = (r, p)
@@ -196,16 +192,15 @@ def spline_wires(edges, face, pc=None):
                     rmax = (r, p)
         elif type(curve) is GLine:
             for v in edge.Vertexes:
-                v = to_fc_vector(v)
                 r = majoraxis.dot(v)
                 if rmin[0] > r:
                     rmin = (r, v)
                 if rmax[0] < r:
                     rmax = (r, v)
         else:
-            p0, p1 = projection(edge.__native__, majoraxis)
+            p0, p1 = projection(edge, majoraxis)
             for pi in (p0, p1):
-                p = edge.__native__.valueAt(pi)
+                p = edge.value_at(pi)
                 r = majoraxis.dot(p)
                 if rmin[0] > r:
                     rmin = (r, p)
@@ -246,7 +241,7 @@ def get_axis_inertia(mat: GMatrix):
     eigval, evect = numpy.linalg.eig(inertialMat)
     principal = evect.T[numpy.argmax(eigval)]
 
-    return GVector(principal[0], principal[1], principal[2])
+    return GVector(float(principal[0]), float(principal[1]), float(principal[2]))
 
 
 def valid_solid(solid, Volume):
@@ -340,7 +335,7 @@ def cutting_face_number(f, Faces, omitfaces):
             ncut += 1
         elif adjacent_face.Surface is None:
             adjacent_face.__native__.exportStep("Spline_surface.stp")
-            raise ("Spline surface detectected")
+            raise RuntimeError("Spline surface detected")
         elif region_sign(f, adjacent_face) == "OR":
             ncut += 1
     return ncut
@@ -382,8 +377,8 @@ def omit_isolated_planes(Faces, omitfaces):
 
 def projection(edge, axis):
     pmin, pmax = edge.ParameterRange
-    if type(Gclassify_curve(edge)) is GCircle:
-        vmin = edge.valueAt(pmin) - edge.Curve.Center
+    if type(edge.Curve) is GCircle:
+        vmin = edge.value_at(pmin) - edge.Curve.Center
         v1 = edge.Curve.Axis.cross(vmin)
         dmin = vmin.dot(axis)
         d1 = v1.dot(axis)
@@ -396,9 +391,9 @@ def projection(edge, axis):
         if p1 < pmax:
             return p0, p1
         elif p0 < pmax:
-            v0 = edge.valueAt(p0) - edge.Curve.Center
+            v0 = edge.value_at(p0) - edge.Curve.Center
             d0 = v0.dot(axis)
-            vmax = edge.valueAt(pmax) - edge.Curve.Center
+            vmax = edge.value_at(pmax) - edge.Curve.Center
             dmax = vmax.dot(axis)
             if abs(d0 - dmin) < abs(d0 - dmax):
                 return p0, pmax
@@ -409,10 +404,11 @@ def projection(edge, axis):
     else:
         vx = edge.Curve.XAxis
         vy = edge.Curve.YAxis
-        a = edge.Curve.MajorAxis
-        b = edge.Curve.MinorAxis
+        a = edge.Curve.MajorRadius
+        b = edge.Curve.MinorRadius
         dx = vx.dot(axis)
         dy = vy.dot(axis)
+        dmin = (edge.value_at(pmin) - edge.Curve.Center).dot(axis)
         if dx == 0:
             p0 = 0.5 * math.pi + pmin
             p1 = p0 + math.pi
@@ -422,9 +418,9 @@ def projection(edge, axis):
         if p1 < pmax:
             return p0, p1
         elif p0 < pmax:
-            v0 = edge.valueAt(p0) - edge.Curve.Center
+            v0 = edge.value_at(p0) - edge.Curve.Center
             d0 = v0.dot(axis)
-            vmax = edge.valueAt(pmax) - edge.Curve.Center
+            vmax = edge.value_at(pmax) - edge.Curve.Center
             dmax = vmax.dot(axis)
             if abs(d0 - dmin) < abs(d0 - dmax):
                 return p0, pmax
