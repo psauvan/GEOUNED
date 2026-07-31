@@ -10,7 +10,7 @@ from ..utils.basic_functions_part1 import (
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
-from ...geo import GPlane, GCylinder, GCone, GSphere, GBoundBox, GVector, to_fc_vector, to_gvector
+from ...geo import GPlane, GCylinder, GCone, GSphere, GBoundBox, GVector
 
 logger = logging.getLogger("general_logger")
 
@@ -72,26 +72,26 @@ def cone_apex_plane(cone, tolerances):
 
 def V_torus_surfaces(face, v_params, Surfaces):
     if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(1, 0, 0))
+        axis = GVector(1, 0, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(0, 1, 0))
+        axis = GVector(0, 1, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(0, 0, 1))
+        axis = GVector(0, 0, 1)
 
-    torus_center = to_fc_vector(face.Surface.Center)
+    torus_center = face.Surface.Center
 
-    p1 = face.valueAt(0.0, v_params[0]) - torus_center
+    p1 = face.value_at(0.0, v_params[0]) - torus_center
     z1 = p1.dot(axis)
-    d1 = p1.cross(axis).Length
+    d1 = p1.cross(axis).length
 
-    p2 = face.valueAt(0.0, v_params[1]) - torus_center
+    p2 = face.value_at(0.0, v_params[1]) - torus_center
     z2 = p2.dot(axis)
-    d2 = p2.cross(axis).Length
+    d2 = p2.cross(axis).length
 
     if is_same_value(z1, z2, Surfaces.tolerances.distance):
         center = torus_center + z1 * axis
         v_mid = (v_params[0] + v_params[1]) * 0.5
-        p_mid = face.valueAt(0, v_mid) - torus_center
+        p_mid = face.value_at(0, v_mid) - torus_center
         if p_mid.dot(axis) < z1:
             axis = -axis
         return GeounedSurface(("Plane", (center, axis, 1, 1))), None
@@ -101,12 +101,12 @@ def V_torus_surfaces(face, v_params, Surfaces):
         center = torus_center
         if is_same_value(d1, face.Surface.MajorRadius, Surfaces.tolerances.distance):
             v_mid = (v_params[0] + v_params[1]) * 0.5
-            p_mid = face.valueAt(0, v_mid) - center
-            if p_mid.cross(axis).Length < face.Surface.MajorRadius:
+            p_mid = face.value_at(0, v_mid) - center
+            if p_mid.cross(axis).length < face.Surface.MajorRadius:
                 in_surf = True
             v_mid = (v_params[0] + v_params[1]) * 0.5
-            p_mid = face.valueAt(0, v_mid) - center
-            if p_mid.cross(axis).Length < face.Surface.MajorRadius:
+            p_mid = face.value_at(0, v_mid) - center
+            if p_mid.cross(axis).length < face.Surface.MajorRadius:
                 in_surf = True
                 radius = max(d1, d2)
             else:
@@ -132,9 +132,9 @@ def V_torus_surfaces(face, v_params, Surfaces):
         cone = GeounedSurface(("ConeOnly", (apex, cone_axis, semi_angle, 1, 1)))
 
         v_mid = (v_params[0] + v_params[1]) * 0.5
-        p_mid = face.valueAt(0, v_mid) - torus_center
+        p_mid = face.value_at(0, v_mid) - torus_center
         z_mid = p_mid.dot(axis)
-        d_mid = p_mid.cross(axis).Length
+        d_mid = p_mid.cross(axis).length
 
         d_cone = d1 * (z_mid - za) / (z1 - za)
         in_surf = True if d_mid < d_cone else False
@@ -151,28 +151,26 @@ def V_torus_surfaces(face, v_params, Surfaces):
 def U_torus_planes(face, u_params, Surfaces):
 
     if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(1, 0, 0))
+        axis = GVector(1, 0, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(0, 1, 0))
+        axis = GVector(0, 1, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
-        axis = to_fc_vector(GVector(0, 0, 1))
+        axis = GVector(0, 0, 1)
 
-    center = to_fc_vector(face.Surface.Center)
-    p1 = face.valueAt(u_params[0], 0.0)
-    p2 = face.valueAt(u_params[1], 0.0)
-    pmid = face.valueAt(0.5 * (u_params[0] + u_params[1]), 0.0)
+    center = face.Surface.Center
+    p1 = face.value_at(u_params[0], 0.0)
+    p2 = face.value_at(u_params[1], 0.0)
+    pmid = face.value_at(0.5 * (u_params[0] + u_params[1]), 0.0)
 
     if is_same_value(abs(u_params[1] - u_params[0]), math.pi, Surfaces.tolerances.value):
-        d = axis.cross(p2 - p1)
-        d.normalize()
+        d = axis.cross(p2 - p1).normalized()
         if d.dot(pmid - center) < 0:
             d = -d
 
         return (GeounedSurface(("Plane", (center, d, 1, 1))),)
 
     elif u_params[1] - u_params[0] < math.pi:
-        d = axis.cross(p2 - p1)
-        d.normalize()
+        d = axis.cross(p2 - p1).normalized()
         if d.dot(pmid - center) < 0:
             d = -d
 
@@ -205,14 +203,14 @@ def gen_plane_sphere(face, solidFaces):
         if f.Surface.Center == face.Surface.Center and f.Surface.Radius == face.Surface.Radius:
             # print 'Warning: coincident sphere faces are the same'
             for f2 in same_faces:
-                if shapes_in_contact(f.__face__, f2.__face__):
+                if shapes_in_contact(f.__native__, f2.__native__):
                     same_faces.append(f)
                     break
 
     # print same_faces
     normal = GVector(0, 0, 0)
     for f in same_faces:
-        normal = normal + f.Area * (to_gvector(f.CenterOfMass) - center)
+        normal = normal + f.Area * (f.CenterOfMass - center)
     normal = normal.normalized()
 
     # A plane clipped to a box centered on the sphere (side = 2*radius, +1%
@@ -225,11 +223,11 @@ def gen_plane_sphere(face, solidFaces):
         center.x - half_side, center.y - half_side, center.z - half_side,
         center.x + half_side, center.y + half_side, center.z + half_side,
     )
-    tmp_plane = plane_polygon_from_box(normal, normal.dot(center), box).__native__
+    tmp_plane = plane_polygon_from_box(normal, normal.dot(center), box)
 
     dmin = 2 * face.Surface.Radius
     for f in same_faces:
-        dist = tmp_plane.distToShape(f.__face__)[0]
+        dist = tmp_plane.__native__.distToShape(f.__native__)[0]
         dmin = min(dmin, dist)
 
     if dmin > 1e-6:
@@ -276,15 +274,14 @@ def gen_plane_cylinder(face, solidFaces, tolerances):
     v_1 = solidFaces[i1].ParameterRange[2]
     v_2 = solidFaces[i2].ParameterRange[2]
 
-    p1 = solidFaces[i1].valueAt(u_1, v_1)
-    p2 = solidFaces[i2].valueAt(u_2, v_2)
+    p1 = solidFaces[i1].value_at(u_1, v_1)
+    p2 = solidFaces[i2].value_at(u_2, v_2)
 
-    if p1.isEqual(p2, 1e-5):
+    if p1.is_qual(p2, 1e-5):
         logger.error("Error in the additional place definition")
         return None
 
-    normal = p2.sub(p1).cross(to_fc_vector(face.Surface.Axis))
-    normal.normalize()
+    normal = p2.sub(p1).cross(face.Surface.Axis).normalized()
     if normal.dot(face.CenterOfMass - p1) < 0:
         normal = -normal
 
@@ -297,7 +294,7 @@ def gen_plane_cone(face, solidFaces, tolerances):
     if type(Surf) is not GCone:
         return None
 
-    cone_apex = to_fc_vector(face.Surface.Apex)
+    cone_apex = face.Surface.Apex
 
     myIndex = solidFaces.index(face)
     face_index = [myIndex]
@@ -326,17 +323,16 @@ def gen_plane_cone(face, solidFaces, tolerances):
     v_1 = solidFaces[i1].ParameterRange[2]
     v_2 = solidFaces[i2].ParameterRange[2]
 
-    p1 = solidFaces[i1].valueAt(u_1, v_1)
-    p2 = solidFaces[i2].valueAt(u_2, v_2)
+    p1 = solidFaces[i1].value_at(u_1, v_1)
+    p2 = solidFaces[i2].value_at(u_2, v_2)
 
-    if p1.isEqual(p2, 1e-5):
+    if p1.is_qual(p2, 1e-5):
         logger.error("in the additional place definition")
         return None
 
     v1 = p1 - cone_apex
     v2 = p2 - cone_apex
-    normal = v1.cross(v2)
-    normal.normalize()
+    normal = v1.cross(v2).normalized()
     if normal.dot(face.CenterOfMass - cone_apex) < 0:
         normal = -normal
 

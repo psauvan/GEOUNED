@@ -474,16 +474,6 @@ def test_tessellate(unit_box):
     assert all(isinstance(p, GVector) for p in points)
 
 
-def test_get_uv_nodes_matches_tessellate_point_count(unit_box):
-    face = unit_box.Faces[0]
-    points = face.tessellate(0.5)
-    uv_nodes = face.get_uv_nodes(0.5)
-    assert len(uv_nodes) == len(points)
-    for u, v in uv_nodes:
-        assert isinstance(u, float)
-        assert isinstance(v, float)
-
-
 def test_edge_length_of_unit_box_edge(unit_box):
     assert unit_box.Faces[0].Edges[0].Length == pytest.approx(10.0)
 

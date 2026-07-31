@@ -639,21 +639,21 @@ class CadToCsg:
 
         if self.settings.debug:
             if m.IsEnclosure:
-                m.Solids[0].exportStep(str(self.debug_output_folder / f"origEnclosure_{i}.stp"))
+                m.Solids[0].export_step(str(self.debug_output_folder / f"origEnclosure_{i}.stp"))
             else:
-                m.Solids[0].exportStep(str(self.debug_output_folder / f"origSolid_{i}.stp"))
+                m.Solids[0].export_step(str(self.debug_output_folder / f"origSolid_{i}.stp"))
 
         comsolid = main_split(
-            Gmake_compound([GSolid(s) for s in m.Solids]).__native__,
+            Gmake_compound(m.Solids),
             self.options,
             self.tolerances,
         )
 
         if self.settings.debug:
             if m.IsEnclosure:
-                comsolid.exportStep(str(self.debug_output_folder / f"compEnclosure_{i}.stp"))
+                comsolid.export_step(str(self.debug_output_folder / f"compEnclosure_{i}.stp"))
             else:
-                comsolid.exportStep(str(self.debug_output_folder / f"compSolid_{i}.stp"))
+                comsolid.export_step(str(self.debug_output_folder / f"compSolid_{i}.stp"))
 
         m.set_cad_solid()
         m.update_solids(comsolid.Solids)

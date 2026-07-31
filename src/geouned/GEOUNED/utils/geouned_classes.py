@@ -60,23 +60,23 @@ class GeounedSolid:
             bbox = _empty_boundbox()
             for s in comsolid:
                 vol += s.Volume
-                bbox = bbox.union(to_gboundbox(s.BoundBox))
+                bbox = bbox.union(s.BoundBox)
             self.BoundBox = bbox
             self.Volume = vol
         else:
             if refine:
                 try:
-                    self.Solids = GSolid(comsolid).refine().__shapes__
+                    self.Solids = comsolid.refine().Solids
                 except Exception:
                     self.Solids = comsolid.Solids
 
                 for i, s in enumerate(self.Solids):
                     if s.Volume < 0:
-                        self.Solids[i] = GSolid(s).reverse().__native__
+                        self.Solids[i] = s.reverse()
             else:
                 self.Solids = comsolid.Solids
             self.Volume = comsolid.Volume
-            self.BoundBox = to_gboundbox(comsolid.BoundBox)
+            self.BoundBox = comsolid.BoundBox
 
         self.__id__ = id
         self.label = None
@@ -108,12 +108,12 @@ class GeounedSolid:
         bbox = _empty_boundbox()
         for s in solidList:
             vol += s.Volume
-            bbox = bbox.union(to_gboundbox(s.BoundBox))
+            bbox = bbox.union(s.BoundBox)
         self.BoundBox = bbox
 
     def set_cad_solid(self):
         if self.Solids is not None:
-            gcompound = Gmake_compound([GSolid(s) for s in self.Solids])
+            gcompound = Gmake_compound(self.Solids)
             self.CADSolid = gcompound.__native__
             self.Volume = gcompound.Volume
             self.BoundBox = gcompound.BoundBox

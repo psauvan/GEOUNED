@@ -1,7 +1,8 @@
-import Part
 import math
 
 from collections import OrderedDict
+
+from geouned.geo._freecad_impl import GEdge, GFace
 
 from .geometry_gu import ShellGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
@@ -10,6 +11,7 @@ from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 from ...geo import (
+    GVector,
     GPlane,
     GCylinder,
     GCone,
@@ -21,7 +23,6 @@ from ...geo import (
     GBSpline,
     Gclassify_curve,
     to_fc_vector,
-    to_gvector,
     vector_geometry,
 )
 
@@ -324,7 +325,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
     du = twoPi
     umin = twoPimod(Umin)
     for e in GUFaces[ifacemin].OuterWire.Edges:
-        pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
+        pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemin].parameter(pnt)
         if abs(umin - u) < du:
             du = abs(umin - u)
@@ -333,7 +334,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
     du = twoPi
     umax = twoPimod(Umax)
     for e in GUFaces[ifacemax].OuterWire.Edges:
-        pnt = 0.5 * (e.Vertexes[0].Point + e.Vertexes[-1].Point)
+        pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemax].parameter(pnt)
         if abs(umax - u) < du:
             du = abs(umax - u)
@@ -735,7 +736,7 @@ def eligible_plane(plane):
         if type(Gclassify_curve(e)) is not GLine:
             # continue
             return False  # for now only plane with line for all outer edges are eligible
-        Vertexes.append((e.Vertexes[0].Point, e.Vertexes[1].Point))
+        Vertexes.append((e.Vertexes[0], e.Vertexes[1]))
 
     if len(Vertexes) == 0:
         return False
@@ -748,13 +749,13 @@ def eligible_plane(plane):
         for i, e12 in enumerate(Vertexes):
             e1, e2 = e12
             found = False
-            if (e1 - ei).Length < 1e-6:
+            if (e1 - ei).length < 1e-6:
                 ei = e2
                 Ordered.append((e1, e2))
                 del Vertexes[i]
                 found = True
                 break
-            elif (e2 - ei).Length < 1e-6:
+            elif (e2 - ei).length < 1e-6:
                 ei = e1
                 Ordered.append((e2, e1))
                 del Vertexes[i]
@@ -798,19 +799,19 @@ def commonVertex(e1, e2):
     """Returns the GVector point(s) (not native Vertex objects -- nothing
     downstream needs vertex identity, only the coordinate) shared by e1
     and e2."""
-    if not shapes_in_contact(e1, e2):
+    if not shapes_in_contact(e1.__native__, e2.__native__):
         return []
 
     common = []
-    if e1.Vertexes[0].Point == e2.Vertexes[0].Point:
-        common.append(to_gvector(e1.Vertexes[0].Point))
-    elif e1.Vertexes[0].Point == e2.Vertexes[1].Point:
-        common.append(to_gvector(e1.Vertexes[0].Point))
+    if e1.Vertexes[0] == e2.Vertexes[0]:
+        common.append(e1.Vertexes[0])
+    elif e1.Vertexes[0] == e2.Vertexes[1]:
+        common.append(e1.Vertexes[0])
 
-    if e1.Vertexes[1].Point == e2.Vertexes[0].Point:
-        common.append(to_gvector(e1.Vertexes[1].Point))
-    elif e1.Vertexes[1].Point == e2.Vertexes[1].Point:
-        common.append(to_gvector(e1.Vertexes[1].Point))
+    if e1.Vertexes[1] == e2.Vertexes[0]:
+        common.append(e1.Vertexes[1])
+    elif e1.Vertexes[1] == e2.Vertexes[1]:
+        common.append(e1.Vertexes[1])
 
     return common
 
@@ -836,7 +837,7 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     Edges2 = face2.OuterWire.Edges if outer2_only else face2.Edges
     for e1 in Edges1:
         for e2 in Edges2:
-            if e1.isSame(e2):
+            if e1.is_same(e2):
                 edges.append(e1)
     return edges
 
@@ -850,11 +851,11 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     cyl_center = to_fc_vector(cylinder.Surface.Center)
 
     u1, u2, v1, v2 = cylinder.ParameterRange
-    r1 = cylinder.__face__.valueAt(u1, 0.5 * (v1 + v2))
-    r2 = cylinder.__face__.valueAt(u2, 0.5 * (v1 + v2))
+    r1 = cylinder.__native__.valueAt(u1, 0.5 * (v1 + v2))
+    r2 = cylinder.__native__.valueAt(u2, 0.5 * (v1 + v2))
     nt1 = cylinder.tangentAt(u1, v1)[0]
-    nc1 = -cylinder.__face__.normalAt(u1, v1)
-    nc2 = -cylinder.__face__.normalAt(u2, v2)
+    nc1 = -cylinder.__native__.normalAt(u1, v1)
+    nc2 = -cylinder.__native__.normalAt(u2, v2)
 
     if nc1.dot(r1 - cyl_center) < 0:
         nc1 = -nc1
@@ -865,25 +866,25 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     nd = ac1.cross(r2 - r1)
     nd.normalize()
 
-    u1 = r1 - e1.Vertexes[0].Point
-    u2 = r2 - e1.Vertexes[0].Point
+    u1 = r1 - to_fc_vector(e1.Vertexes[0])
+    u2 = r2 - to_fc_vector(e1.Vertexes[0])
     u1.normalize()
     u2.normalize()
-    d1 = abs(u1.dot(e1.Curve.Direction))
-    d2 = abs(u2.dot(e1.Curve.Direction))
+    d1 = abs(u1.dot(to_fc_vector(e1.Curve.Direction)))
+    d2 = abs(u2.dot(to_fc_vector(e1.Curve.Direction)))
     if d2 > d1:  # change semicircle orientation
         ac1 = -ac1
         r1, r2 = r2, r1
         nc1, nc2 = nc2, nc1
 
     pr1 = ac1.cross(p1_axis)
-    if pr1.dot(p1.CenterOfMass - r1) < 0:
+    if pr1.dot(to_fc_vector(p1.CenterOfMass) - r1) < 0:
         n1 = -p1_axis
     else:
         n1 = p1_axis
 
     pr2 = -ac1.cross(p2_axis)
-    if pr2.dot(p2.CenterOfMass - r2) < 0:
+    if pr2.dot(to_fc_vector(p2.CenterOfMass) - r2) < 0:
         n2 = -p2_axis
     else:
         n2 = p2_axis
@@ -922,20 +923,14 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     return configuration
 
 
-def material_direction(pos, face_in, edge):
-    if isinstance(face_in, FaceGu):
-        face = face_in.__face__
-    else:
-        face = face_in
+def material_direction(pos: GVector, face: GFace | FaceGu, edge: GEdge):
 
     pe = edge.Curve.parameter(pos)
-    dir = edge.derivative1At(pe)
-    dir.normalize()
+    dir = edge.derivative1_at(pe).normalized()
     if edge.Orientation == "Reversed":
         dir = -dir
     u, v = face.Surface.parameter(pos)
-    normalf = face.normalAt(u, v)
-    normalf.normalize()
+    normalf = face.normal_at(u, v).normalized()
     matvec = normalf.cross(dir)
 
     return matvec, normalf
@@ -956,7 +951,7 @@ def region_sign(s1_in, s2, outAngle=False):
     vect, normal1 = material_direction(pos, s1, e1)
 
     u, v = s2.parameter(pos)
-    normal2 = s2.__face__.normalAt(u, v)
+    normal2 = s2.normal_at(u, v)
 
     if type(Gclassify_curve(e1)) is GLine and not isinstance(s2.Surface, GPlane):
         umin, umax, vmin, vmax = s2.ParameterRange
@@ -1042,24 +1037,29 @@ def planar_edges(edges):
     e0 = edges[0]
     if e0.Length < 1e-5:
         return False
-    if type(Gclassify_curve(e0)) is GBSpline:
-        d0 = e0.derivative1At(0)
-        if d0.Length < 1e-5:
-            dir0 = e0.Vertexes[1].Point - e0.Vertexes[0].Point
-            dir0.normalize()
-            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+    # e0.Curve is already the classified curve (GLine/GCircle/GEllipse/
+    # GBSpline/None), set once by GEdge.__init__ -- re-running
+    # Gclassify_curve(e0) here would misclassify everything as None
+    # (it expects a native edge, and GEdge.Curve is not one).
+    curve0 = e0.Curve
+    if type(curve0) is GBSpline:
+        d0 = e0.derivative1_at(0)
+        if d0.length < 1e-5:
+            dir0 = (e0.Vertexes[1] - e0.Vertexes[0]).normalized()
+            center0 = 0.5 * (e0.Vertexes[1] + e0.Vertexes[0])
         elif spline_2D(e0):
-            dir0 = e0.derivative1At(0).cross(e0.normalAt(0))
-            dir0.normalize()
-            center0 = 0.5 * (e0.Vertexes[1].Point + e0.Vertexes[0].Point)
+            dir0 = e0.derivative1_at(0).cross(e0.normal_at(0)).normalized()
+            center0 = 0.5 * (e0.Vertexes[1] + e0.Vertexes[0])
         else:
             return False
-    elif isinstance(e0.Curve, (Part.Circle, Part.Ellipse, Part.Hyperbola, Part.Parabola)):
-        dir0 = e0.Curve.Axis
-        center0 = e0.Curve.Center
+    elif type(curve0) in (GCircle, GEllipse):
+        dir0 = curve0.Axis
+        center0 = curve0.Center
+    elif curve0 is None:  # unsupported curve type (e.g. Hyperbola/Parabola)
+        return False
     else:  # should be a line
-        dir0 = e0.Curve.Direction
-        center0 = e0.Curve.Location
+        dir0 = curve0.Direction
+        center0 = curve0.Position
 
     if len(edges) == 1:
         if edge_1D(edges[0]):
@@ -1070,25 +1070,25 @@ def planar_edges(edges):
     oneD = edge_1D(edges[0])
 
     for ei in edges[1:]:
-        curve_i = Gclassify_curve(ei)
+        curve_i = ei.Curve
         if type(curve_i) is GBSpline:
-            di = ei.derivative1At(0)
-            if di.Length < 1e-5:
-                dir = ei.Vertexes[1].Point - ei.Vertexes[0].Point
-                dir.normalize()
-                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+            di = ei.derivative1_at(0)
+            if di.length < 1e-5:
+                dir = (ei.Vertexes[1] - ei.Vertexes[0]).normalized()
+                center = 0.5 * (ei.Vertexes[1] + ei.Vertexes[0])
             elif spline_2D(ei):
-                dir = ei.derivative1At(0).cross(ei.normalAt(0))
-                dir.normalize()
-                center = 0.5 * (ei.Vertexes[1].Point + ei.Vertexes[0].Point)
+                dir = ei.derivative1_at(0).cross(ei.normal_at(0)).normalized()
+                center = 0.5 * (ei.Vertexes[1] + ei.Vertexes[0])
             else:
                 return False
         elif type(curve_i) in (GCircle, GEllipse):
-            dir = ei.Curve.Axis
-            center = ei.Curve.Center
+            dir = curve_i.Axis
+            center = curve_i.Center
+        elif curve_i is None:  # unsupported curve type (e.g. Hyperbola/Parabola)
+            return False
         else:  # should be a line
-            dir = ei.Curve.Direction
-            center = ei.Curve.Location
+            dir = curve_i.Direction
+            center = curve_i.Position
 
         if not is_parallel(dir0, dir, Tolerances().angle):
             return False
@@ -1109,27 +1109,28 @@ def edge_1D(edge):
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
-    return edge.Curve.curvature(pe) < 1e-6
+    # .curvature()/.getKnots() (here and in spline_2D) have no `geo`
+    # equivalent -- native-only curve query, unwrap explicitly.
+    return edge.__native__.Curve.curvature(pe) < 1e-6
 
 
 def spline_2D(edge):
-    knots = edge.Curve.getKnots()
+    native_curve = edge.__native__.Curve
+    knots = native_curve.getKnots()
 
-    if edge.Curve.curvature(knots[0]) < 1e-6:
+    if native_curve.curvature(knots[0]) < 1e-6:
         return False  # straight line
 
-    d0 = edge.derivative1At(knots[0])
-    if d0.Length < 1e-5:
+    d0 = edge.derivative1_at(knots[0])
+    if d0.length < 1e-5:
         return False
 
-    norm_0 = d0.cross(edge.normalAt(knots[0]))
-    norm_0.normalize()
+    norm_0 = d0.cross(edge.normal_at(knots[0])).normalized()
 
     for k in knots[1:]:
         # check if derivative orthogonal to curve normal vector
-        dk = edge.derivative1At(k)
-        normal_k = dk.cross(edge.normalAt(k))
-        normal_k.normalize()
+        dk = edge.derivative1_at(k)
+        normal_k = dk.cross(edge.normal_at(k)).normalized()
         if abs(normal_k.dot(norm_0)) > Tolerances().value:
             return False
     return True

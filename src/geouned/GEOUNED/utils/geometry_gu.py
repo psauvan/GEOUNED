@@ -18,6 +18,7 @@ from ...geo import (
     GFace,
     GLine,
     GPlane,
+    GSolid,
     GSphere,
     GTorus,
     Gclassify_curve,
@@ -52,20 +53,21 @@ class face_index:
         self.orientation = orientation
 
 
-class SolidGu:
-    """GEOUNED Solid Class"""
+class SolidGu(GSolid):
+    """GEOUNED Solid Class -- adds decomposition-specific torus-face-merge
+    bookkeeping (TorusVParams/TorusUParams) and tolerances on top of
+    GSolid, and exposes .Faces as FaceGu (native-typed) instead of GFace.
+    GSolid's own .Faces/.Edges/.Vertexes/.BoundBox/.Solids/etc are built by
+    super().__init__() but otherwise unused here -- SolidGu is only ever
+    constructed twice in the whole pipeline (once per solid being
+    decomposed), so the extra construction cost is negligible."""
 
     def __init__(self, solid, tolerances):
-        self.solid = solid
-        faces = define_list_face_gu(solid.Faces)
-        self.Faces = faces
+        super().__init__(solid.__native__)
+        self.Faces = define_list_face_gu(solid.Faces)
         self.tolerances = tolerances
-        self.Solids = solid.Solids
-        self.BoundBox = solid.BoundBox
-        self.Edges = solid.Edges
         self.TorusVParams = {}
         self.TorusUParams = {}
-        self.inverted = is_inverted(solid)
 
         for i, face in enumerate(self.Faces):
             face.set_index(i)
@@ -193,21 +195,24 @@ class SolidGu:
 
 
 # FACES
-class FaceGu(object):
-    """GEOUNED Face Class"""
+class FaceGu(GFace):
+    """GEOUNED Face Class -- a thin, native-typed compatibility layer over
+    GFace, used by the decomposition-side face-analysis code (SolidGu/
+    ShellGu and everything downstream of them), which still consumes
+    native FreeCAD types (chained .sub/.cross/.dot/.normalize/.isEqual,
+    tessellate(val, reset), etc.) rather than GVector. Reuses GFace's
+    classification/edge/vertex/boundbox construction instead of
+    duplicating it a second time; overrides Edges/Vertexes back to native
+    (FaceGu always exposed those as native, not GEdge/GVector)."""
 
     def __init__(self, face):
+        super().__init__(face.__native__)
+
         # GEOUNED based atributes
-
-        self.__face__ = face
         self.Index = None
-        self.Surface = define_surface(face)  # Define the appropiate GU Surface of the face
-
+    
         # FreeCAD based Atributes
-        self.Area = face.Area
         self.CenterOfMass = face.CenterOfMass
-        self.ParameterRange = face.ParameterRange
-        self.Orientation = face.Orientation
         self.Edges = face.Edges
         self.Vertexes = face.Vertexes
         self.OuterWire = None
@@ -217,40 +222,27 @@ class FaceGu(object):
         self.Index = index
 
     def set_outerWire(self):
-        self.OuterWire = pick_outer_wire(self.__face__)
-
-    def tessellate(self, val, reset=False):
-        res = self.__face__.tessellate(val, reset)
-        return res
-
-    def getUVNodes(self):
-        return self.__face__.getUVNodes()
-
-    def isEqual(self, face):
-        return self.__face__.isEqual(face.__face__)
-
-    def isSame(self, face):
-        return self.__face__.isSame(face.__face__)
+        self.OuterWire = pick_outer_wire(self.wires())
 
     def valueAt(self, u, v):
-        return self.__face__.valueAt(u, v)
+        return self.__native__.valueAt(u, v)
 
     def tangentAt(self, u, v):
-        return self.__face__.tangentAt(u, v)
+        return self.__native__.tangentAt(u, v)
 
     def parameter(self, point):
-        return self.__face__.Surface.parameter(point)
+        return self.Surface.parameter(point)
 
     def distToShape(self, shape):
-        shape1 = self.__face__
+        shape1 = self.__native__
         if isinstance(shape, ShellGu):
             distmin = 1
             for f in shape.Faces:
                 d = self.distToShape(f)
                 distmin = min(distmin, d[0])
             return (distmin,)
-        elif hasattr(shape, "__face__"):
-            shape2 = shape.__face__
+        elif hasattr(shape, "__native__"):
+            shape2 = shape.__native__
             return shape1.distToShape(shape2)
         else:
             shape2 = shape
@@ -302,7 +294,7 @@ class ShellGu:
 
     def makeShell(self):
         if type(self.Faces[0]) is FaceGu:
-            native_faces = [f.__face__ for f in self.Faces]
+            native_faces = [f.__native__ for f in self.Faces]
         else:
             native_faces = self.Faces
         # GFace's eager construction tolerates edges with a curve type it
@@ -320,67 +312,18 @@ def define_list_face_gu(face_list):
     return tuple(FaceGu(face) for face in face_list)
 
 
-def define_surface(face):
+def define_surface(face, surface=None):
     # Gclassify_surface itself returns None for a surface type GEOUNED can't
     # model (a genuine BSplineSurface, SurfaceOfRevolution/Extrusion, ...) --
-    # see its docstring in geo/_freecad_impl.py.
-    surface = Gclassify_surface(face)
+    # see its docstring in geo/_freecad_impl.py. `surface`, if given, is an
+    # already-classified result (e.g. GFace.__init__'s, reused by FaceGu to
+    # avoid classifying the same face twice) -- only the "log if unclassifiable"
+    # check runs again, not the classification itself.
+    if surface is None:
+        surface = Gclassify_surface(face)
     if surface is None:
         logger.info(f"bad Surface type {type(face.Surface)}")
     return surface
-
-
-def is_inverted(solid):
-
-    face = solid.Faces[0]
-
-    # u=(face.Surface.bounds()[0]+face.Surface.bounds()[1])/2.0 # entre 0 y 2pi si es completo
-    # v=face.Surface.bounds()[0]+(face.Surface.bounds()[3]-face.Surface.bounds()[2])/3.0 # a lo largo del eje
-    parameter_range = face.ParameterRange
-    u = (parameter_range[1] + parameter_range[0]) / 2.0
-    v = (parameter_range[3] + parameter_range[2]) / 2.0
-
-    surf_type = Gclassify_surface(face)
-
-    if type(surf_type) is GCylinder:
-        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Center, face.Surface.Axis)
-        dist2 = (
-            face.Surface.value(u, v)
-            .add(face.Surface.normal(u, v).multiply(1.0e-6))
-            .distanceToLine(face.Surface.Center, face.Surface.Axis)
-        )
-        if (dist2 - dist1) < 0.0:
-            # The normal of the cylinder is going inside
-            return True
-
-    elif type(surf_type) is GCone:
-        dist1 = face.Surface.value(u, v).distanceToLine(face.Surface.Apex, face.Surface.Axis)
-        dist2 = (
-            face.Surface.value(u, v)
-            .add(face.Surface.normal(u, v).multiply(1.0e-6))
-            .distanceToLine(face.Surface.Apex, face.Surface.Axis)
-        )
-        if (dist2 - dist1) < 0.0:
-            # The normal of the cylinder is going inside
-            return True
-    # MIO
-    elif type(surf_type) is GSphere:
-        # radii = point - center
-        radii = face.Surface.value(u, v).add(face.Surface.Center.multiply(-1))
-        radii_b = face.Surface.value(u, v).add(face.Surface.normal(u, v).multiply(1.0e-6)).add(face.Surface.Center.multiply(-1))
-        # radii_b  = radii.add( face.Surface.normal(u,v).multiply(1.0e-6) )
-        if (radii_b.Length - radii.Length) < 0.0:
-            # An increasing of the radii vector in the normal direction decreases the radii: oposite normal direction
-            return True
-
-    elif type(surf_type) is GPlane:
-        dist1 = face.CenterOfMass.distanceToPoint(solid.BoundBox.Center)
-        dist2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6)).distanceToPoint(solid.BoundBox.Center)
-        point2 = face.CenterOfMass.add(face.normalAt(u, v).multiply(1.0e-6))
-        if solid.isInside(point2, 1e-7, False):
-            return True
-
-    return False
 
 
 def innerWires(wire, face):
@@ -396,7 +339,7 @@ def innerWires(wire, face):
     length = 0
     u_sum = 0
     v_sum = 0
-    umin, umax, vmin, vmax = face.__face__.ParameterRange
+    umin, umax, vmin, vmax = face.__native__.ParameterRange
     for edge in wire.Edges:
         pmin, pmax = edge.ParameterRange
         pe = 0.5 * (pmin + pmax)
@@ -411,7 +354,7 @@ def innerWires(wire, face):
         elif v > vmax:
             v -= twoPi
 
-        normal = face.__face__.Surface.normal(u, v)
+        normal = face.__native__.Surface.normal(u, v)
         u_sum += u * edge.Length
         v_sum += v * edge.Length
         length += edge.Length
@@ -433,7 +376,7 @@ def innerWires(wire, face):
     else:
         umean = u_sum / length
         vmean = v_sum / length
-        center = face.__face__.Surface.value(umean, vmean)
+        center = face.__native__.Surface.value(umean, vmean)
 
     ssum = 0
     i = 0
@@ -458,7 +401,7 @@ def innerWires_org(wire, face, Faces):
         adjface = other_face_edge(edge, face, Faces)
         pos = edge.Vertexes[0].Point
         u, v = face.parameter(pos)
-        normal = face.__face__.normalAt(u, v)
+        normal = face.__native__.normalAt(u, v)
 
         pe = edge.Curve.parameter(pos)
 
@@ -472,7 +415,7 @@ def innerWires_org(wire, face, Faces):
 
         vect = direction.cross(normal)
         u, v = adjface.parameter(pos)
-        vect2 = adjface.__face__.normalAt(u, v)
+        vect2 = adjface.__native__.normalAt(u, v)
         scalar = vect.dot(vect2)
         if abs(scalar) < 1e-5:
             continue
@@ -489,7 +432,7 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
 
         Edges = face.OuterWire.Edges if outer_only else face.Edges
         for edge in Edges:
-            if current_edge.isSame(edge):
+            if current_edge.is_same(edge):
                 return face
     return None
 

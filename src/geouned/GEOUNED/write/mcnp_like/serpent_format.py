@@ -142,6 +142,10 @@ class SerpentInput(CommonInputWriter):
             self.inpfile.write(comment)
             return
 
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
+            return
+
         if self.Options["Universe"] is not None:
             if cell.Material == 0:
                 cellHeader = (

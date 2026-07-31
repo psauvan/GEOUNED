@@ -39,7 +39,7 @@ def load_cad(filename, spline_surf, settings, options):
     else:
         m_dict = {}
 
-    Solids = [g.__native__ for g in Gload_step(filename)]
+    Solids = Gload_step(filename)
     meta_list = []
     spline_solids = []
     loop = spline_surf.lower() in ("remove", "stop")

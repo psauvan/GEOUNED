@@ -585,10 +585,10 @@ def get_additional_corner_plane(cyl, p1, p2):
     Edges2 = commonEdge(cyl, p2)
     e1 = Edges1[0]
     e2 = Edges2[0]
-    p1 = e1.Vertexes[0].Point
-    p2 = e2.Vertexes[0].Point
-    v1, n1 = material_direction(e1.Vertexes[0].Point, cyl.__face__, e1)
-    v2, n2 = material_direction(e2.Vertexes[0].Point, cyl.__face__, e2)
+    p1 = e1.Vertexes[0]
+    p2 = e2.Vertexes[0]
+    v1, n1 = material_direction(to_fc_vector(e1.Vertexes[0]), cyl.__native__, e1.__native__)
+    v2, n2 = material_direction(to_fc_vector(e2.Vertexes[0]), cyl.__native__, e2.__native__)
     point = 0.5 * (p1 + p2)
     paxis = v1 + v2
     paxis.normalize()

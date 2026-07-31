@@ -215,6 +215,10 @@ $ **************************************************************
             self.inpfile.write(comment)
             return
 
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
+            return
+
         if cell.Material == 0:
             if cell.MatInfo == "Graveyard":
                 cell.MatInfo = "Outer void"
@@ -262,6 +266,10 @@ $ **************************************************************
         if cell.__id__ is None:
             comment = self.comment_line(cell.Comments)
             self.inpfile.write(comment)
+            return
+
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
             return
         """
         # Graveyard_in and Graveyard is changed.

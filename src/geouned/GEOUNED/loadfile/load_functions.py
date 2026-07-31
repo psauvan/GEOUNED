@@ -1,7 +1,6 @@
 import logging
 import re
 
-from ...geo import Gclassify_surface
 from ..utils.geouned_classes import GeounedSolid
 
 logger = logging.getLogger("general_logger")
@@ -336,7 +335,7 @@ def next_index(docList, lastIndex=None):
 
 def spline(solid):
     for f in solid.Faces:
-        if Gclassify_surface(f) is None:
+        if f.Surface is None:
             return True
     return False
 

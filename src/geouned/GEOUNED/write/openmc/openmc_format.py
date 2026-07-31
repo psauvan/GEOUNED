@@ -65,6 +65,10 @@ class OpenmcInput:
         if cell.__id__ is None:
             return
 
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
+            return
+
         if cell.Material == 0:
             matName = "void"
         else:
@@ -192,6 +196,10 @@ import openmc
         index = cell.label
         cellName = ". ".join(cell.Comments.splitlines())
         if cell.__id__ is None:
+            return
+
+        if type(cell.Definition.elements) is bool:
+            logger.info(f"Cell {cell.__id__}: {cell.Comments}\n Has boolean value {cell.Definition} omited from input cells.")
             return
 
         if cell.Material == 0:

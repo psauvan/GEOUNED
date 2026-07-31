@@ -83,6 +83,32 @@ def to_gvector(vector) -> GVector:
 
 
 # ---------------------------------------------------------------------------
+# Neutral 4x4 affine matrix
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class GMatrix:
+    """Neutral 4x4 affine matrix. Field names match FreeCAD's own `Base.Matrix`
+    attribute names (A11..A44). Used e.g. for `GEdge`/`GWire.MatrixOfInertia`
+    (only the A11..A33 rotation/inertia sub-block is meaningful there, but the
+    full 4x4 is stored for fidelity with the native type)."""
+    A11: float; A12: float; A13: float; A14: float
+    A21: float; A22: float; A23: float; A24: float
+    A31: float; A32: float; A33: float; A34: float
+    A41: float; A42: float; A43: float; A44: float
+
+
+def to_gmatrix(matrix) -> GMatrix:
+    """Convert a native FreeCAD.Matrix (or anything exposing the same A11..A44 attributes) into a neutral GMatrix."""
+    return GMatrix(
+        matrix.A11, matrix.A12, matrix.A13, matrix.A14,
+        matrix.A21, matrix.A22, matrix.A23, matrix.A24,
+        matrix.A31, matrix.A32, matrix.A33, matrix.A34,
+        matrix.A41, matrix.A42, matrix.A43, matrix.A44,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Neutral axis-aligned bounding box
 # ---------------------------------------------------------------------------
 

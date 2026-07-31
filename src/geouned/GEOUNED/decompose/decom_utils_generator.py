@@ -6,6 +6,8 @@ import logging
 import math
 import numpy
 
+from geouned.geo.vector_geometry import GMatrix
+
 from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
 from ..utils.geometry_gu import other_face_edge, is_same_surface
@@ -149,7 +151,7 @@ def cks_edge_plane(face, edges, pc=None):
             pos = edge.Curve.value(0)
             center = curve.Center
             dir = curve.Axis
-            vect, normalf = material_direction(pos, face.__face__, edge)
+            vect, normalf = material_direction(to_gvector(pos), face, edge)
             if dir.dot(vect) < 0:
                 dir = -dir
             planeParams = [center, dir, 1, 1, False]
@@ -161,22 +163,20 @@ def cks_edge_plane(face, edges, pc=None):
 def spline_wires(edges, face, pc=None):
 
     zaxis = face.Surface.Axis
-    if type(face.Surface) in (GCylinder, GCone, GTorus):
-        zaxis = to_fc_vector(zaxis)
     try:
-        W = Gmake_wire([GEdge(e) for e in edges]).__native__
+        W = Gmake_wire(list(edges))
         majoraxis = get_axis_inertia(W.MatrixOfInertia)
     except:
-        majoraxis = to_fc_vector(GVector(0, 0, 0))
+        majoraxis = GVector(0, 0, 0)
         for e in edges:
             majoraxis = majoraxis + get_axis_inertia(e.MatrixOfInertia)
-        majoraxis.normalize()
+        majoraxis = majoraxis.normalized()
 
     edge = edges[0]
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p0 + p1)
     pos = edge.Curve.value(pe)
-    vect, normalf = material_direction(pos, face.__face__, edge)
+    vect, normalf = material_direction(pos, face, edge)
 
     lowSide = zaxis.dot(vect) > 0
 
@@ -187,7 +187,8 @@ def spline_wires(edges, face, pc=None):
         curve = Gclassify_curve(edge)
 
         if type(curve) is GBSpline:
-            for p in edge.Curve.getPoles():
+            for p in edge.Curve.Poles:
+                p = to_fc_vector(p)
                 r = majoraxis.dot(p)
                 if rmin[0] > r:
                     rmin = (r, p)
@@ -195,15 +196,16 @@ def spline_wires(edges, face, pc=None):
                     rmax = (r, p)
         elif type(curve) is GLine:
             for v in edge.Vertexes:
-                r = majoraxis.dot(v.Point)
+                v = to_fc_vector(v)
+                r = majoraxis.dot(v)
                 if rmin[0] > r:
-                    rmin = (r, v.Point)
+                    rmin = (r, v)
                 if rmax[0] < r:
-                    rmax = (r, v.Point)
+                    rmax = (r, v)
         else:
-            p0, p1 = projection(edge, majoraxis)
+            p0, p1 = projection(edge.__native__, majoraxis)
             for pi in (p0, p1):
-                p = edge.valueAt(pi)
+                p = edge.__native__.valueAt(pi)
                 r = majoraxis.dot(p)
                 if rmin[0] > r:
                     rmin = (r, p)
@@ -239,12 +241,12 @@ def spline_wires(edges, face, pc=None):
         return [point, vec, 1, 1, False]  # positive plane directiontoward the center of the cylinder
 
 
-def get_axis_inertia(mat):
+def get_axis_inertia(mat: GMatrix):
     inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
     eigval, evect = numpy.linalg.eig(inertialMat)
     principal = evect.T[numpy.argmax(eigval)]
 
-    return to_fc_vector(GVector(principal[0], principal[1], principal[2]))
+    return GVector(principal[0], principal[1], principal[2])
 
 
 def valid_solid(solid, Volume):
@@ -337,7 +339,7 @@ def cutting_face_number(f, Faces, omitfaces):
         if isinstance(adjacent_face.Surface, GPlane):
             ncut += 1
         elif adjacent_face.Surface is None:
-            adjacent_face.__face__.exportStep("Spline_surface.stp")
+            adjacent_face.__native__.exportStep("Spline_surface.stp")
             raise ("Spline surface detectected")
         elif region_sign(f, adjacent_face) == "OR":
             ncut += 1

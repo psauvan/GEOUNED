@@ -14,7 +14,7 @@ logger = logging.getLogger("general_logger")
 def split_surfaces(solid, options, tolerances):
 
     solid_components = generic_split(solid, options, tolerances)
-    comp = Gmake_compound([GSolid(s) for s in solid_components]).__native__
+    comp = Gmake_compound(solid_components)
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > 0.001:
         logger.info("Lost {volratio*100:6.2f}% of the original volume")
@@ -23,7 +23,7 @@ def split_surfaces(solid, options, tolerances):
 
 def generic_split(solid, options, tolerances, loop=0):
     bbox = solid.BoundBox
-    bbox.enlarge(10)
+    bbox = bbox.enlarged(10)
 
     cleaned = [solid]
     omitfaces = set()
@@ -73,4 +73,4 @@ def main_split(solidShape, options, tolerances):
         piece = split_surfaces(solid, options, tolerances)
         solid_parts.append(piece)
 
-    return Gmake_compound([GSolid(s) for s in solid_parts]).__native__
+    return Gmake_compound(solid_parts)

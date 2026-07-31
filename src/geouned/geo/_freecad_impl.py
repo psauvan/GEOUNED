@@ -39,12 +39,14 @@ from FreeCAD import Import
 from .vector_geometry import (
     GBoundBox,
     GLabelNode,
+    GMatrix,
     GVector,
     cylinder_tangent_at,
     cylinder_value_at,
     plane_tangent_at,
     plane_value_at,
     to_gboundbox,
+    to_gmatrix,
     to_gvector,
 )
 
@@ -98,6 +100,10 @@ class GPlane:
         plane.XDir = xdir
         plane.__native__ = None
         return plane
+
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        """Parametric coordinates (u, v) of the nearest point on the plane to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
 
     def value_at(self, u: float, v: float) -> GVector:
         return plane_value_at(self, u, v)
@@ -192,6 +198,10 @@ class GCylinder:
         cylinder.__native__ = None
         return cylinder
 
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        """Parametric coordinates (u, v) of the nearest point on the cylinder to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
+    
     def value_at(self, u: float, v: float) -> GVector:
         return cylinder_value_at(self, u, v)
 
@@ -237,6 +247,10 @@ class GCone:
         cone.__native__ = None
         return cone
 
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        """Parametric coordinates (u, v) of the nearest point on the cone to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
+
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the (infinite, single-sheet) cone.
         Pure GVector math; see GPlane.is_inside for the shared-formula
@@ -271,6 +285,10 @@ class GSphere:
         sphere.Radius = radius
         sphere.__native__ = None
         return sphere
+    
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        """Parametric coordinates (u, v) of the nearest point on the sphere to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
 
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the sphere. Pure GVector math; see
@@ -304,7 +322,10 @@ class GTorus:
         torus.__native__ = None
         return torus
 
-
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        """Parametric coordinates (u, v) of the nearest point on the torus to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
+    
 def Gclassify_surface(native_face):
     """
     Determine the underlying surface type of a face (plane/cylinder/cone/
@@ -399,6 +420,13 @@ class GLine:
         t = (w.cross(d2)).dot(cr) / (crl * crl)
         return self.Position + d1 * t
 
+    def value(self, u: float) -> GVector:
+        """Point on the line at parametric coordinate `u` (distance along the line from `Position`)."""
+        return to_gvector(self.__native__.value(u))
+
+    def parameter(self, point: GVector) -> float:
+        """Parametric coordinate `u` (distance along the line from `Position`) of the nearest point on the line to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
 
 class GCircle:
     def __init__(self, native):
@@ -407,6 +435,13 @@ class GCircle:
         self.Radius = native.Radius
         self.__native__ = native
 
+    def value(self, u: float) -> GVector:
+        """Point on the circle at parametric coordinate `u` (radians)."""
+        return to_gvector(self.__native__.value(u))
+
+    def parameter(self, point: GVector) -> float:
+        """Parametric coordinate `u` (radians) of the nearest point on the circle to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
 
 class GEllipse:
     def __init__(self, native):
@@ -417,11 +452,27 @@ class GEllipse:
         self.MinorRadius = native.MinorRadius
         self.__native__ = native
 
+    def value(self, u: float) -> GVector:
+        """Point on the ellipse at parametric coordinate `u` (radians)."""
+        return to_gvector(self.__native__.value(u))
+
+    def parameter(self, point: GVector) -> float:
+        """Parametric coordinate `u` (radians) of the nearest point on the ellipse to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
+
 
 class GBSpline:
     def __init__(self, native):
         self.Poles = [to_gvector(pole) for pole in native.getPoles()]
         self.__native__ = native
+
+    def value(self, u: float) -> GVector:
+        """Point on the B-spline at parametric coordinate `u` (radians)."""
+        return to_gvector(self.__native__.value(u))
+
+    def parameter(self, point: GVector) -> float:
+        """Parametric coordinate `u` of the nearest point on the B-spline to `point`."""
+        return self.__native__.parameter(to_fc_vector(point))
 
 
 def Gclassify_curve(native_edge):
@@ -437,7 +488,17 @@ def Gclassify_curve(native_edge):
     GEOUNED can't model must not abort building the *solid* just because
     that one edge was walked -- only classifying a face's Surface (the
     thing that actually becomes an MCNP/OpenMC surface) is a hard failure.
+
+    Tolerates being called with an already-wrapped GEdge (e.g. from a
+    GWire's `.Edges`, itself built by `pick_outer_wire`) instead of a
+    native edge -- GEdge.Curve is already the classified result from its
+    own construction, so it's returned directly rather than misclassified
+    a second time (a native `.Curve` lookup on a GEdge would find GEdge's
+    own `.Curve` attribute, whose type never matches any `Part.*` check
+    below, silently returning None regardless of the real curve type).
     """
+    if isinstance(native_edge, GEdge):
+        return native_edge.Curve
     try:
         curve = native_edge.Curve
     except TypeError:
@@ -467,6 +528,7 @@ class GEdge:
         self.ParameterRange = native.ParameterRange
         self.Orientation = native.Orientation
         self.Length = native.Length
+        self.MatrixOfInertia = to_gmatrix(native.MatrixOfInertia)
 
     def value_at(self, u: float) -> GVector:
         return to_gvector(self.__native__.valueAt(u))
@@ -510,10 +572,13 @@ class GWire:
     def __init__(self, native):
         self.__native__ = native
         # in wire traversal order (edge[i] and edge[i+1] share a vertex)
+        self.CenterOfMass = native.CenterOfMass
+        self.OrderedVertexes = [to_gvector(v.Point) for v in native.OrderedVertexes]
         self.Edges = [GEdge(e) for e in native.OrderedEdges]
+        self.MatrixOfInertia = to_gmatrix(native.MatrixOfInertia)
 
 
-def pick_outer_wire(native_face) -> "Part.Wire":
+def pick_outer_wire(wires : list[GWire]) -> "GWire":
     """
     GEOUNED's own heuristic (largest mean vertex-to-centroid distance
     among the face's wires), not FreeCAD's native `Face.OuterWire` --
@@ -523,7 +588,7 @@ def pick_outer_wire(native_face) -> "Part.Wire":
     wire natively -- no reason for that file to reimplement the same
     algorithm a second time).
     """
-    wires = native_face.Wires
+
     if len(wires) == 1:
         return wires[0]
     best_wire = None
@@ -531,7 +596,7 @@ def pick_outer_wire(native_face) -> "Part.Wire":
     for wire in wires:
         vertices = wire.OrderedVertexes
         center = wire.CenterOfMass
-        extension = sum((v.Point - center).Length for v in vertices) / len(vertices)
+        extension = sum((v - center).length for v in vertices) / len(vertices)
         if extension > best_extension:
             best_extension = extension
             best_wire = wire
@@ -548,6 +613,8 @@ class GFace:
         self.ParameterRange = native.ParameterRange
         self.Orientation = native.Orientation
         self.Area = native.Area
+        self.CenterOfMass = to_gvector(native.CenterOfMass)
+
         # assigned later by whoever built the face list this face came
         # from (its position within the parent solid's face list, e.g.
         # for "is this the same face" adjacency checks); no meaningful
@@ -576,8 +643,14 @@ class GFace:
         Computed lazily and cached.
         """
         if self.__outer_wire__ is None:
-            self.__outer_wire__ = GWire(pick_outer_wire(self.__native__))
+            self.__outer_wire__ = pick_outer_wire(self.wires())
         return self.__outer_wire__
+
+    def isEqual(self, face: "GFace") -> bool:
+        return self.__native__.isEqual(face.__native__)
+
+    def isSame(self, face: "GFace") -> bool:
+        return self.__native__.isSame(face.__native__)
 
     def value_at(self, u: float, v: float) -> GVector:
         return to_gvector(self.__native__.valueAt(u, v))
@@ -597,17 +670,11 @@ class GFace:
         """True if (u, v) lies within the face's actual trimmed boundary, not just its parameter-range rectangle."""
         return self.__native__.isPartOfDomain(u, v)
 
-    def tessellate(self, tolerance: float) -> list[GVector]:
-        vertices, _facets = self.__native__.tessellate(tolerance)
+    def tessellate(self, tolerance: float, reset: bool = False) -> list[GVector]:
+        vertices, _facets = self.__native__.tessellate(tolerance, reset)
         return [to_gvector(v) for v in vertices]
 
-    def get_uv_nodes(self, tolerance: float) -> list[tuple[float, float]]:
-        """
-        (u, v) parametric coordinates of each tessellation vertex, in the
-        same order as `tessellate(tolerance)`. Re-tessellates internally;
-        does not require `tessellate` to have been called first.
-        """
-        self.__native__.tessellate(tolerance)
+    def getUVNodes(self):
         return self.__native__.getUVNodes()
 
     def orientation_outward(self, solid: "GSolid") -> bool:
@@ -644,10 +711,7 @@ class GShell:
 
 class GSolid:
     def __init__(self, native):
-        self.__native__ = native
-        # individual native solid pieces of (possibly compound) `native`
-        # -- e.g. find_interior_point/export need to iterate these
-        self.__shapes__ = native.Solids
+        self.Solids = []
         self.Faces = [GFace(f) for f in native.Faces]
         for index, face in enumerate(self.Faces):
             face.index = index
@@ -657,6 +721,19 @@ class GSolid:
         self.Orientation = native.Orientation
         self.Area = native.Area
         self.Volume = native.Volume
+
+        if len(native.Solids) > 1:
+            for s in native.Solids:
+                solid = GSolid(s)
+                self.Solids.append(solid)
+        else:
+            self.Solids.append(self)        
+
+        self.__native__ = native
+        # individual native solid pieces of (possibly compound) `native`
+        # -- e.g. find_interior_point/export need to iterate these
+        self.__shapes__ = native.Solids
+
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         """True if `point` lies inside the solid (equivalent to Part.Shape.isInside())."""

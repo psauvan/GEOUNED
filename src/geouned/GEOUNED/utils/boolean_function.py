@@ -538,6 +538,8 @@ class BoolSequence:
             return "AND"
 
     def expand_regions_to_integer(self):
+        if type(self.elements) is bool:
+            return
         for i, e in enumerate(self.elements):
             if type(e) is BoolSurface:
                 if type(e.region) is BoolVariable:
