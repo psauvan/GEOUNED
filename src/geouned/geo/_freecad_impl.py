@@ -43,6 +43,11 @@ from .vector_geometry import (
     GVector,
     cylinder_tangent_at,
     cylinder_value_at,
+    is_inside_cone,
+    is_inside_cylinder,
+    is_inside_plane,
+    is_inside_sphere,
+    is_inside_torus,
     plane_tangent_at,
     plane_value_at,
     to_gboundbox,
@@ -113,11 +118,11 @@ class GPlane:
 
     def is_inside(self, point: GVector) -> bool:
         """Which side of the (infinite) plane `point` is on -- True on the
-        side `Axis` points toward. Pure GVector math; same formula as
-        `boolean_solids.check_sign_primitive`'s Plane branch and
-        `splitFunction.surface_side`'s (formerly native) plane branch,
-        which both now delegate here instead of duplicating it."""
-        return self.Axis.dot(point - self.Position) > 0
+        side `Axis` points toward. Delegates to `vector_geometry.is_inside_plane`,
+        shared with `boolean_solids.check_sign_primitive`'s Plane branch
+        (which calls it directly on a PlaneParams, not a GPlane -- both
+        store the same fields, so the same formula works on either)."""
+        return is_inside_plane(point, self)
 
     def transform(self, matrix) -> "GPlane":
         """Apply a native FreeCAD.Matrix affine transform, returning a new
@@ -209,12 +214,9 @@ class GCylinder:
         return cylinder_tangent_at(self, u, v)
 
     def is_inside(self, point: GVector) -> bool:
-        """True if `point` is outside the (infinite) cylinder. Pure
-        GVector math; see GPlane.is_inside for the shared-formula
-        rationale."""
-        r = point - self.Center
-        z = self.Axis.dot(r)
-        return (r.length * r.length - z * z) > self.Radius * self.Radius
+        """True if `point` is outside the (infinite) cylinder. See
+        GPlane.is_inside for the shared-formula rationale."""
+        return is_inside_cylinder(point, self)
 
     def transform(self, matrix) -> "GCylinder":
         """Apply a native FreeCAD.Matrix affine transform, returning a new
@@ -253,14 +255,8 @@ class GCone:
 
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the (infinite, single-sheet) cone.
-        Pure GVector math; see GPlane.is_inside for the shared-formula
-        rationale. Rounds the dot product to 15 decimals before acos,
-        matching check_sign_primitive's original guard against a
-        just-past-1.0 float rounding error."""
-        r = (point - self.Apex).normalized()
-        z = round(self.Axis.dot(r), 15)
-        alpha = math.acos(z)
-        return alpha > self.SemiAngle
+        See GPlane.is_inside for the shared-formula rationale."""
+        return is_inside_cone(point, self)
 
     def transform(self, matrix) -> "GCone":
         """Apply a native FreeCAD.Matrix affine transform, returning a new
@@ -291,9 +287,9 @@ class GSphere:
         return self.__native__.parameter(to_fc_vector(point))
 
     def is_inside(self, point: GVector) -> bool:
-        """True if `point` is outside the sphere. Pure GVector math; see
-        GPlane.is_inside for the shared-formula rationale."""
-        return (point - self.Center).length > self.Radius
+        """True if `point` is outside the sphere. See GPlane.is_inside
+        for the shared-formula rationale."""
+        return is_inside_sphere(point, self)
 
     def transform(self, matrix) -> "GSphere":
         """Apply a native FreeCAD.Matrix affine transform, returning a new
@@ -325,7 +321,13 @@ class GTorus:
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the torus to `point`."""
         return self.__native__.parameter(to_fc_vector(point))
-    
+
+    def is_inside(self, point: GVector) -> bool:
+        """True if `point` is outside the torus. See GPlane.is_inside
+        for the shared-formula rationale."""
+        return is_inside_torus(point, self)
+
+
 def Gclassify_surface(native_face):
     """
     Determine the underlying surface type of a face (plane/cylinder/cone/

@@ -809,10 +809,12 @@ class MetaSurfacesDict(dict):
         kneCan = TCone.Surf.Cone
         cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
 
-        configuration = "AND" if TCone.Orientation == "Forward" else "OR"
         components = {abs(cid): kneCan.Surf.Cone}
         surf_list = []
-        for pi in (TCone.Surf.p1, TCone.Surf.p2):
+        for pi, configuration in (
+            (TCone.Surf.p1, TCone.Surf.p1_configuration),
+            (TCone.Surf.p2, TCone.Surf.p2_configuration),
+        ):
             pid = self._resolve_plane_id(pi)
             components[abs(pid)] = pi
             surf_list.append((pid, configuration))

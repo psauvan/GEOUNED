@@ -3,11 +3,10 @@
 #   Only one solid and planar surfaces
 #
 import logging
-import math
 
 from .boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
-from ...geo import GSolid, GVector, Gdistance, Gsplit
+from ...geo import GSolid, GVector, Gdistance, Gsplit, vector_geometry
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -545,7 +544,7 @@ def check_sign(solid_or_point, surf):
         return check_sign(point, surf.Surf.Sphere)
 
     elif surf.Type == "Torus":
-        return check_sign(point, tor=surf.Surf.Torus)
+        return check_sign(point, surf.Surf.Torus)
 
     elif surf.Type == "MultiPlane":
         for plane in surf.Surf.Planes:
@@ -589,54 +588,23 @@ def check_sign(solid_or_point, surf):
                 return 1 if multiDef else -1
 
 
+_IS_INSIDE_PRIMITIVE = {
+    "Plane": vector_geometry.is_inside_plane,
+    "CylinderOnly": vector_geometry.is_inside_cylinder,
+    "SphereOnly": vector_geometry.is_inside_sphere,
+    "ConeOnly": vector_geometry.is_inside_cone,
+    "TorusOnly": vector_geometry.is_inside_torus,
+}
+
+
 def check_sign_primitive(point, surf):
-
-    if surf.Type == "Plane":
-        r = point - surf.Surf.Position
-        if surf.Surf.Axis.dot(r) > 0:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "CylinderOnly":
-        r = point - surf.Surf.Center
-        L2 = r.length * r.length
-        z = surf.Surf.Axis.dot(r)
-        z2 = z * z
-        R2 = surf.Surf.Radius * surf.Surf.Radius
-        if L2 - z2 > R2:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "SphereOnly":
-        r = point - surf.Surf.Center
-        if r.length > surf.Surf.Radius:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "ConeOnly":
-        r = (point - surf.Surf.Apex).normalized()
-        z = round(surf.Surf.Axis.dot(r), 15)
-        alpha = math.acos(z)
-
-        if alpha > surf.Surf.SemiAngle:
-            return 1
-        else:
-            return -1
-
-    elif surf.Type == "TorusOnly":
-        axis = surf.Surf.Axis
-        r = point - surf.Surf.Center
-        h = r.dot(axis)
-        rho = r - h * axis
-
-        rp = math.sqrt((rho.length - surf.Surf.MajorRadius) ** 2 + h**2)
-        if rp > surf.Surf.MinorRadius:
-            return 1
-        else:
-            return -1
+    # surf.Surf is a *OnlyParams (PlaneParams/CylinderOnlyParams/...), not
+    # a geo descriptor (GPlane/GCylinder/...) -- but both store the same
+    # fields under the same names since the Tier-1 GVector-storage
+    # migration, so the same duck-typed vector_geometry.is_inside_*
+    # formula GPlane.is_inside/etc themselves call works directly here,
+    # with no transient GPlane/etc construction on this hot path.
+    return 1 if _IS_INSIDE_PRIMITIVE[surf.Type](point, surf.Surf) else -1
 
 
 def get_kne_planes(Surfaces):

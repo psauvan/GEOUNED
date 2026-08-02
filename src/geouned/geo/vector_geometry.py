@@ -327,6 +327,51 @@ def is_same_torus_surface(torus_1, torus_2) -> bool:
     return abs(torus_1.Axis.dot(torus_2.Axis)) >= 0.99999
 
 
+# ---------------------------------------------------------------------------
+# Point-classification predicates ("is `point` outside this analytic
+# surface"). Free functions, duck-typed on .Axis/.Position/.Center/etc,
+# so they work identically whether called on a `geo` descriptor (GPlane,
+# GCylinder, ...) or on GEOUNED's own Tier-1 *OnlyParams (PlaneParams,
+# CylinderOnlyParams, ...) -- both store the same fields under the same
+# names since the Tier-1 GVector-storage migration. This is what lets
+# `boolean_solids.check_sign_primitive` (a decomposition-time hot path,
+# operating on *OnlyParams) share these formulas with `GPlane.is_inside`
+# etc instead of duplicating them, with no transient object construction
+# on either side.
+# ---------------------------------------------------------------------------
+
+def is_inside_plane(point: GVector, plane) -> bool:
+    return plane.Axis.dot(point - plane.Position) > 0
+
+
+def is_inside_cylinder(point: GVector, cylinder) -> bool:
+    r = point - cylinder.Center
+    z = cylinder.Axis.dot(r)
+    return (r.length * r.length - z * z) > cylinder.Radius * cylinder.Radius
+
+
+def is_inside_cone(point: GVector, cone) -> bool:
+    r = (point - cone.Apex).normalized()
+    # rounded to 15 decimals before acos: guards against a just-past-1.0
+    # float rounding error (acos would otherwise raise on a point exactly
+    # on the axis).
+    z = round(cone.Axis.dot(r), 15)
+    alpha = math.acos(z)
+    return alpha > cone.SemiAngle
+
+
+def is_inside_sphere(point: GVector, sphere) -> bool:
+    return (point - sphere.Center).length > sphere.Radius
+
+
+def is_inside_torus(point: GVector, torus) -> bool:
+    r = point - torus.Center
+    h = r.dot(torus.Axis)
+    rho = r - h * torus.Axis
+    rp = math.sqrt((rho.length - torus.MajorRadius) ** 2 + h**2)
+    return rp > torus.MinorRadius
+
+
 def _require_x_dir(surface) -> GVector:
     if surface.XDir is None:
         raise ValueError(

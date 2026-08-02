@@ -738,20 +738,56 @@ second, independent copy of the same math -- a candidate for the
 broader `components`/`definition` redesign below to close later, not
 this pass.
 
-- `check_sign_primitive` (`boolean_solids.py`) still duplicates
-  `GPlane`/`GCylinder`/`GCone`/`GSphere.is_inside()`'s formulas natively
-  in `GeounedSurface`/`*OnlyParams` space rather than reusing them (see
-  above for why it was left alone this pass).
-- `check_sign`'s dispatch for Tier-2 Cylinder/Cone/Sphere/Torus
-  (`elif surf.Type == "Cylinder": return check_sign(point,
-  surf.Surf.Cylinder)`) recurses straight into the bare open primitive,
-  ignoring the bounding plane(s) `.components` now tracks for these
-  types too -- not touched, since it doesn't read `.region`/
-  `.components` at all today and this looked like an existing design
-  choice (the plane matters for the CSG boolean expression and for CAD
-  construction, apparently not for this particular point-classification
-  path) rather than an oversight. Worth confirming with the user before
-  ever touching it.
+**Update, later pass**: `check_sign_primitive`'s formula duplication above
+was in fact closed out -- see "`check_sign_primitive` unified with `geo`'s
+`is_inside` formulas, and a real Tier-2 dispatch bug fixed" below. The
+Tier-2 dispatch design question (ignoring `.components`/the bounding
+plane for Cylinder/Cone/Sphere/Torus) was confirmed with the user to be
+intentional, not a bug -- these represent a single infinite analytic
+surface, and the bounding plane is a CAD-reconstruction detail, not part
+of the surface's own sign. What *was* a real bug in that same dispatch
+(the Torus branch) is fixed, also described below.
+
+### `check_sign_primitive` unified with `geo`'s `is_inside` formulas, and a real Tier-2 dispatch bug fixed
+
+Closes the deferred item above. `check_sign_primitive` (`boolean_solids.py`)
+duplicated `GPlane`/`GCylinder`/`GCone`/`GSphere.is_inside()`'s formulas
+natively in `GeounedSurface`/`*OnlyParams` space. Since the Tier-1
+`*OnlyParams` native `FreeCAD.Vector` -> `GVector` storage migration (see
+above), `PlaneParams`/`CylinderOnlyParams`/`ConeOnlyParams`/`SphereOnlyParams`/
+`TorusOnlyParams` are storage-identical to `geo`'s `GPlane`/`GCylinder`/
+`GCone`/`GSphere`/`GTorus` (same field names, same `GVector` types) -- so
+the formulas can be shared as free, duck-typed functions instead of
+methods on either class family, avoiding the "Option B, no wrapping"
+concern (no transient `GPlane`/etc construction on this hot path).
+
+Added `is_inside_plane`/`is_inside_cylinder`/`is_inside_cone`/
+`is_inside_sphere`/`is_inside_torus` to `geo/vector_geometry.py` (pure
+functions, duck-typed on `.Axis`/`.Position`/`.Center`/`.Radius`/etc --
+work identically on a `geo` descriptor or a Tier-1 `*OnlyParams`).
+`GPlane.is_inside`/`GCylinder.is_inside`/`GCone.is_inside`/
+`GSphere.is_inside` (`geo/_freecad_impl.py`) became one-line delegates to
+these; `GTorus` gained `.is_inside()` too (didn't exist before).
+`check_sign_primitive` collapsed to a dict dispatch:
+```python
+_IS_INSIDE_PRIMITIVE = {
+    "Plane": vector_geometry.is_inside_plane,
+    "CylinderOnly": vector_geometry.is_inside_cylinder,
+    "SphereOnly": vector_geometry.is_inside_sphere,
+    "ConeOnly": vector_geometry.is_inside_cone,
+    "TorusOnly": vector_geometry.is_inside_torus,
+}
+
+def check_sign_primitive(point, surf):
+    return 1 if _IS_INSIDE_PRIMITIVE[surf.Type](point, surf.Surf) else -1
+```
+
+While reviewing `check_sign`'s Tier-2 dispatch alongside this, found a
+real, reachable bug in the Torus branch: `return check_sign(point,
+tor=surf.Surf.Torus)` -- `tor=` is not a valid keyword argument of
+`check_sign(solid_or_point, surf)`, so this raised `TypeError` on every
+call. Fixed to `return check_sign(point, surf.Surf.Torus)`, matching the
+sibling Cylinder/Cone/Sphere branches' own unkeyworded form.
 
 ### `.components` for every registered surface, not just the 4 composite types
 
@@ -1328,6 +1364,193 @@ Confirmed via grep after the fix: zero files anywhere in `GEOUNED`
 (`geo/` and `GEOReverse/` excluded, as always) import `Part`/`FreeCAD`/
 `BOPTools` directly anymore. This closes out, in full, the architectural
 goal stated at the top of this file's "Current architecture" section.
+
+### `check_sign` end-to-end verification, part 1: real scope corrected, one test artifact found (no real bug), `MultiRoundCorner`/`TCone` still unexercised
+
+User request: build a real test/model to verify `check_sign` against
+`MultiRoundCorner`, and more broadly think about verifying every complex
+surface type this way.
+
+**First, the scope of `check_sign` itself needed correcting** -- an
+earlier pass of this file (see "RoundCorner/MultiRoundCorner: `.components`..."
+above) described `check_sign` as a rare fallback "when `Gsplit`'s normal
+CAD-based split path" fails. That's imprecise and the user pushed back on
+it directly. The corrected picture, confirmed by reading the actual call
+sites:
+- **The real decomposition engine, with zero exceptions, is `Gsplit`** --
+  used twice: (1) `decom_one_generators.py::generic_split` (lines ~31-34),
+  splitting the main CAD solid by each identified candidate surface in
+  turn; (2) one level below, inside composite-surface construction itself
+  (`build_surface`'s complex-surface branch), since the only way found to
+  build a Can/RoundCorner/etc.'s CAD shape is via boolean operations on
+  simple surfaces -- also `Gsplit`, and the +/- side of its resulting
+  fragments decides which piece becomes part of the reconstructed
+  composite surface. If `Gsplit` fails or cuts wrong at either level, the
+  whole conversion is compromised -- there is no fallback that saves it.
+- **`check_sign` lives entirely outside both of those.** Its only caller
+  is `build_c_table_from_solids` (`boolean_solids.py:240`), which builds
+  a "Constraint Table" used purely to *simplify* an already-correctly-built
+  cell's boolean expression after the fact (`conversion/cell_definition.py`'s
+  `process_overlap`, itself only invoked from `noOverlapCell` when
+  `options.forceNoOverlap` is set and two cells' CAD solids actually touch;
+  also used by `void_box_class.py` for void-cell simplification). This is
+  optional: the pipeline runs and produces a geometrically correct
+  decomposition without it. Within it, `check_sign` covers three cases,
+  in descending frequency: (1) a solid/fragment and a candidate surface
+  that don't intersect at all -- by far the most common, since most
+  surface pairs in a real model don't touch, so a full `Gsplit` isn't
+  worth attempting, just "which side is the whole thing on"; (2) after a
+  real, successful `Gsplit`, classifying each resulting fragment against
+  the *next* surface being considered for the constraint table; (3) the
+  literal fallback when `Gsplit` returns a degenerate 1-piece result.
+  A wrong sign here degrades simplification (larger-than-necessary
+  boolean expression) or, worse, an incorrect simplification when
+  `forceNoOverlap`/void generation are active -- but never corrupts the
+  base decomposition itself.
+
+**Verification methodology**: for each composite surface (`RoundC`/
+`FwdCan`/`RevCan`/`MultiRoundC`/`FwdTCone`/`RevTCone`) found in a model
+after `build_solid_definition()`, build an independent CAD ground-truth
+solid via the exact function `Gsplit`'s own composite-construction path
+uses (`makeRoundCorner`/`makeCan`/`makeTCone`/`makeMultiRoundCorner` ->
+`build_complex_shape` -> `get_cell_object`/`BuildDepth`/`SplitSolid` --
+real boolean CAD surgery, sharing nothing computationally with
+`check_sign`'s point-algebra except the surface's own analytic
+parameters and, importantly, the *same* `can_region`/`tcone_region`/
+`round_corner_region` pure-function AND/OR rule that `check_sign`
+evaluates via `.region`/`.components` -- see "Can and TCone did not [share
+the AND/OR rule]" above), then sample random points and compare
+`check_sign(point, surf)` against the CAD solid's own `gsolid.is_inside(point)`.
+
+**Real finding: a test-methodology bug, not a `check_sign` bug.** First
+pass sampled points in `gsolid.BoundBox` (the *resulting* solid's own
+bounding box) padded by an extra 20%. `RoundC`/`FwdCan` came back
+~99-100% matching; `RevCan` came back only ~68-76% under either sign
+calibration, looking like a real, reproducible orientation-specific bug.
+Root cause, confirmed by instrumenting one case (`p1.stp`'s `RevCan`)
+component-by-component: `cylinder_from_box`/`plane_polygon_from_box`
+each already pad their own shape a bit past the construction `box`
+(see "Cylinder margin" above), so `gsolid.BoundBox` can already exceed
+`box`; adding another 20% on top pushed sample points **outside the box
+the CAD reference solid was actually built from**. `check_sign` evaluates
+the true, unbounded analytic surface (correctly -- it has no concept of
+`box` at all); the CAD solid, clipped to `box`, simply has nothing built
+out there, so `is_inside` returns `False` for reasons unrelated to
+whether `check_sign`'s answer is right. `RevCan`'s region happens to be
+geometrically "open" in some directions (confirmed against the user's
+own description: material = outside-the-cylinder OR same-side-of-both-planes,
+an inherently wide/sprawling combination, vs. `FwdCan`'s compact
+AND-inside-cylinder-and-between-planes), so it was the type most exposed
+by this padding artifact; `RoundC`'s two weakest-looking instances
+(`part1.stp`, `part2.stp`) turned out to be the identical artifact.
+Fixed by sampling strictly inside `box` (the same box passed to the
+`make*` builder) instead of `gsolid.BoundBox` + padding -- confirmed
+100/100 clean (`p1.stp` RevCan 300/300, `part1.stp`'s two `RoundC`
+300/300 each) before re-running the full scan.
+
+**Final, corrected results across all 52 STEP files in
+`Test RoundCorners`**: every composite surface found matches its
+independent CAD ground truth 300/300 -- 7 `RoundC` instances, 4 `RevCan`,
+2 `FwdCan`, across 11 files. Convention confirmed: `check_sign(point,
+surf) == 1` <-> `point` is on the material side.
+
+**Still not achieved**: no `MultiRoundC` or `TCone` (Fwd or Rev) surface
+appeared in any of the 52 files with this pipeline configuration
+(`voidGen=False`, `simplify="no"`, `forceNoOverlap=False`, default
+`skip_solids`) -- the original, explicit target of this verification was
+never actually exercised. 21 of the 52 files additionally failed with
+`core.py`'s `"no solid selected for translation"` (`self.meta_list`
+empty after loading) -- investigated and confirmed **not a bug**:
+`geo.Gload_step` genuinely returns 0 solids for every one of them, and
+direct inspection of the raw STEP content confirms why -- each file has
+exactly one `OPEN_SHELL` wrapping a single `ADVANCED_FACE`, zero
+`MANIFOLD_SOLID_BREP`/`CLOSED_SHELL` entities. These are isolated
+single-face exports (matching their names: `face0`-`face4`, `surf_0/1/3`,
+`edge0`, `plane`, `ss`, `t`, `cc`, and, less obviously from the name
+alone but confirmed identical in content, `piece2`/`bad_piece_1`/
+`bad_rtn_1_1_0`/`bad_src_1`/`good_piece_2`/`good_rtn_1_1_0`/`good_src_1`)
+-- almost certainly saved off during earlier debugging of one specific
+problem face, not full-model fixtures. They cannot produce a
+`MultiRoundCorner` under any settings, since there is no solid to
+decompose. Verifying `check_sign` on `MultiRoundCorner`/`TCone` remains
+open -- would need either a different STEP file set known to produce
+one (an earlier, differently-configured scan of a 39-file version of
+this same directory reportedly found 13 that did, per an earlier note in
+this file -- not reproduced this session) or different `CadToCsg`
+settings against the current 52-file set.
+
+Diagnostic scripts (scratchpad only, not part of the repo):
+`check_one_file.py`/`run_all_subprocess.py` (per-file subprocess scan,
+crash-resilient against the project's still-unsolved native tangency
+crash -- see "Motivating problem" at the top of this file), `diag_revcan.py`/
+`diag_revcan2.py`/`diag_roundc_part1.py` (single-case component-by-component
+instrumentation), `diag_no_solid.py`/`run_diag_no_solid.py` (the
+zero-solids investigation).
+
+### `check_sign` end-to-end verification, part 2: a wider fixture set, `MultiRoundCorner` finally validated, and a real `TCone_region` bug found and fixed
+
+The 52-file `Test RoundCorners` set (part 1, above) turned out to be a
+narrow/legacy fixture set -- the user pointed at a second, much richer
+one: every subfolder of `Solidos/` except `Big_model_reserved` (large
+models, slow to translate, deliberately excluded). 60 STEP files across
+`Cans/`, `Enclosures/`, `Hollow_plates/`, `Multiplanes/`,
+`Reversed_Cyl_Cones/`, `RoundCorners/` (41 files, `rc*`/`rrc*` naming),
+`Torus/`, `trier/`. Re-ran the same `check_one_file.py`/
+`run_all_subprocess.py` scan (already fixed to sample strictly inside the
+construction `box`, per part 1) against this set.
+
+**`MultiRoundCorner` validated for the first time this migration**: 17
+instances across 13 files (`rc6/9/10/11/12/13/21/22/24`x2,
+`rrc6/9/10/11/12/21/22/13`, `placathin.stp`) -- all 300/300. This closes
+the original target of this whole verification effort. `RoundC`/`FwdCan`/
+`RevCan` also came back clean across dozens more instances, consistent
+with part 1's results, with 2 unrelated builder-side exceptions left
+uninvestigated (`fwd_can_1.stp`/`rev_can_1.stp`, one `FwdCan` instance
+each: `makeCan` raises `TypeError: 'bool' object is not iterable` --
+noted, not yet root-caused).
+
+**`RevTCone`: consistently and reproducibly wrong** in every file it
+appeared in -- `placa.stp` (4 instances, 27-41/300), `placathin.stp` (4
+instances, 31-42/300), `cyl_cone.stp` (1 instance, 157/300). Unlike
+part 1's `RevCan` false alarm, this was **not** the box-padding artifact
+(already fixed by this point) -- a real, reproducible discrepancy.
+`FwdTCone` never appeared in any file, so it had no independent
+cross-check at this point.
+
+**Root cause, found by direct analogy with `Can`** (per the user's own
+suggestion -- TCone's boolean logic "should be very similar or identical"
+to Can's): `MetaSurfacesDict.TCone_region` (`geouned_classes.py:808`)
+computed a single `configuration` value for *both* bounding planes purely
+from the cone's orientation --
+`configuration = "AND" if TCone.Orientation == "Forward" else "OR"` --
+completely ignoring `TConeParams.p1_configuration`/`.p2_configuration`,
+real per-plane data that has existed on the class since its definition.
+`Can_region` never had this problem: it always read the real
+`s1_configuration`/`s2_configuration`. Worse, `get_cell_object`'s
+`"TCone"` branch (`build_region.py:97`, the function that builds the CAD
+solid used as this verification's ground truth) *did* use the real
+per-plane data (`geoObj.Surf.p1_configuration`/`.p2_configuration`) --
+so `check_sign` (reading `.region`, built from `TCone_region`'s
+fabricated value) and the CAD reference solid (built from the real data)
+were silently evaluating two *different* boolean expressions for the
+same physical surface. Confirmed empirically on `cyl_cone.stp`: real data
+is `p1_configuration=p2_configuration="AND"`, but `TCone_region` was
+substituting `"OR"` (cone `Orientation` is `"Reversed"`) -- matching
+exactly the observed symptom (the CAD solid was a narrow AND-bounded
+pocket along the cone's own axis, while `check_sign`'s wrongly-OR region
+predicted material almost everywhere).
+
+**Fix**: `TCone_region` now zips `(TCone.Surf.p1, TCone.Surf.p1_configuration)`/
+`(TCone.Surf.p2, TCone.Surf.p2_configuration)` instead of computing a
+single blanket value, mirroring `Can_region`'s existing pattern exactly.
+Verified 300/300 on all 3 previously-failing files (`cyl_cone.stp`,
+`placa.stp` x4, `placathin.stp` x4) and no regressions: `tests/geo` +
+`tests/test_cadtocsg.py`, 156/156.
+
+New diagnostic scripts (scratchpad only): `diag_revtcone.py` (component-
+by-component instrumentation, same pattern as `diag_revcan.py`),
+`diag_tcone_config.py` (the real-vs-hardcoded `p1_configuration` check
+that pinpointed the bug).
 
 ## Code style preference
 
