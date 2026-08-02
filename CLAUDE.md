@@ -1552,6 +1552,82 @@ by-component instrumentation, same pattern as `diag_revcan.py`),
 `diag_tcone_config.py` (the real-vs-hardcoded `p1_configuration` check
 that pinpointed the bug).
 
+### `check_sign` end-to-end verification, part 4: a real `can_region` sign bug for cone-plus-apex-plane Can components
+
+Two `FwdCan` builder crashes noted in part 2 (`fwd_can_1.stp`/`rev_can_1.stp`,
+one instance each: `makeCan` -> `get_cell_object` -> `region.to_integer()`
+-> `TypeError: 'bool' object is not iterable`) turned out to be a real,
+deeper bug, not the shallow missing-bool-guard issue it first looked like.
+
+**First hypothesis, rejected**: `BoolSequence.to_integer()` lacks the
+`isinstance(self.elements, bool)` guard its siblings (`copy()`,
+`get_complementary()`) already have -- true, and it does crash on a
+constant-`False` region. Patching just that was tried and reverted: the
+user correctly pushed back that a `False` region here likely meant a
+real sign bug upstream (the planes bounding a Can/cone probably wrong),
+not a legitimately-empty region -- masking it with a guard would have
+hidden a real geometry bug behind a silently-skipped surface.
+
+**Root cause, confirmed against real geometry**: `fwd_can_1.stp`'s raw
+solid is exactly 3 faces -- a cylinder and two cones sharing the same
+axis and direction, one apex pointing into the material (protruding
+cone, matches "FwdCan" naming) and one pointing out of it (recessing
+cone) -- confirmed with a direct face dump. `decompose_solids()` splits
+this into two sub-solids, cutting exactly at the first cone's apex
+point; the small sub-solid (Volume ~7069, a real, non-negligible piece,
+not a degenerate sliver) ends up bounded by the cylinder, that cone, and
+the synthetic cut-plane -- which is geometrically the *same* plane the
+Can-detection code (`build_can_params`, `utils/functions.py`) separately
+computes as the cone's own `ApexPlane` (`cone_apex_plane()`, since the
+apex lies on-axis). Taking a real interior point of that sub-solid
+(`GSolid.find_interior_point()`, ground truth) and evaluating
+`check_sign` against each individual component showed the contradiction
+directly: `can_region`'s Cone-with-apex-plane-only branch, for a
+*Reversed* cone (`basic_functions_part1.py`, was line 281), combined the
+apex plane with the cone via **AND** (`BoolSurface(0,apid) *
+BoolSurface(0,sid)`) -- but a real point known to be inside the physical
+solid failed that AND's `apid` requirement outright, an unconditional,
+point-independent contradiction (the expression reduces to `X AND NOT X`
+purely from the signed ids involved, regardless of any point). Compared
+against `MetaSurfacesDict.add_cone` (`geouned_classes.py:516-534`, the
+already-validated Tier-2 standalone-Cone path, which handles the
+identical "cone + its own ApexPlane" case): Forward combines via `*`
+(AND) -- matches `can_region`'s Forward branch, no bug -- but **Reversed
+combines via `+` (OR)**, not AND. `can_region`'s Reversed branch was
+using AND where it needed OR.
+
+Physical rule, confirmed directly by the user: for a cone + apex plane,
+it's always (1) *inside* the cone -- AND with the apex plane, normal
+along the cone's own axis direction, or (2) *outside* the cone -- OR
+with the apex plane, normal opposite the axis. Forward orientation is
+case (1), Reversed is case (2) -- so Reversed always combines with `+`,
+never `*`, regardless of anything else going on in the expression.
+
+**A second instance of the identical mistake was found by systematically
+re-checking every branch of `can_region` that touches `apid`** (the
+user's explicit ask, after the first fix, before accepting it: "verifica
+si error de este tipo no se ha colado en otra rama de la logica"). Of
+the 4 branches combining `apid`: `pid is None`/Forward (`*`, correct),
+`pid is None`/Reversed (`*`, **the confirmed bug**, now `+`), both-present/
+Forward (`*` in both AND and OR sub-cases, correct), both-present/Reversed/
+AND (`+`, already correct) and both-present/Reversed/**OR** (was `*` --
+inconsistent with its own AND-configured sibling one line above, which
+already used `+`). Per the physical rule above (Reversed always uses OR
+for `apid`, unconditionally), the OR-configured sub-case was fixed the
+same way, from `BoolSurface(0, apid) * (BoolSurface(0, sid) *
+BoolSurface(0, -pid))` to `BoolSurface(0, apid) + (BoolSurface(0, sid) *
+BoolSurface(0, -pid))` (`basic_functions_part1.py`, was line 303) -- this
+second one had no test data exercising it directly, fixed by the same
+confirmed physical rule rather than by independent point-level
+verification.
+
+Verified: `fwd_can_1.stp`/`rev_can_1.stp` both 300/300 after the fix (no
+`to_integer()` guard needed at all -- the region is a real, correctly-signed
+`BoolSequence` now, never collapses to a bare bool for these cases); full
+`tests/geo` + `tests/test_cadtocsg.py`, 156/156; full 60-file re-scan of
+`Solidos/` (part 2/3's set), every composite surface still 300/300,
+including the previously-crashing files.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
