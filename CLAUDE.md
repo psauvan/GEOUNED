@@ -111,11 +111,13 @@ all of this, per the Project section above). Structure:
 - `geo/__init__.py` — the single import point for the rest of GEOUNED:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
-As of the "push GSolid/GFace wrapping to the origin" pass (see below),
-only 1 file in `GEOUNED` still carries a direct `import Part`/
-`import FreeCAD` (`core.py`, itemized below — a native uses with no
-faithful `geo` equivalent, consumed well outside this migration's scope).
-`utils/meta_surfaces_utils.py`'s `import Part` — the last other holdout,
+**As of the `core.py::_set_geometry_bounding_box` fix (see "`core.py`'s
+last native import closed out" below), zero files in `GEOUNED` carry a
+direct `import Part`/`import FreeCAD` anymore** — `geo/_freecad_impl.py`
+is now, in practice and not just by convention, the only file in the
+whole codebase allowed to. `core.py` was the last holdout; before it,
+`utils/meta_surfaces_utils.py`'s `import Part` was the previous-to-last
+holdout,
 previously documented here as deliberately deferred because narrowing its
 `isinstance(e0.Curve, (Part.Circle, Part.Ellipse, Part.Hyperbola,
 Part.Parabola))` check would silently change Hyperbola/Parabola behavior
@@ -159,11 +161,11 @@ been closed out completely:
 - `utils/build_shape_functions.py`: fully closed out — see "convert at
   the origin: build_shape_functions.py's GVector-only rewrite" below.
 
-The one remaining holdout:
-- `core.py`: `self.geometry_bounding_box = FreeCAD.BoundBox(...)` in
-  `_set_geometry_bounding_box` — consumed natively well outside this
-  migration's scope (`void.py`, `write_files.py`,
-  `geouned_classes.py`'s `self.UniverseBox`).
+`core.py`'s `self.geometry_bounding_box = FreeCAD.BoundBox(...)` in
+`_set_geometry_bounding_box` — the very last holdout, previously kept
+native because it's consumed well outside this migration's original
+scope (`void.py`, `write_files.py`) — has since been closed out too; see
+"`core.py`'s last native import closed out" below.
 
 ### Plane/Cylinder/Cone unification (`build_region/Objects.py`)
 
@@ -1245,6 +1247,87 @@ established this cost as negligible (`SolidGu` is constructed twice in the
 whole pipeline), and the `__dict__` trick trades an explicit, obvious
 re-parse for an implicit dependency on `GSolid`/`GFace`'s internal field
 layout — not worth it for a cost that's already known to not matter.
+
+### `FaceGu.distToShape`'s native distance query moved into `geo`
+
+Point 1 of a `.__native__`-audit punch list (every remaining `.__native__`
+use in `GEOUNED` outside `geo/`, categorized): `FaceGu.distToShape`
+(`geometry_gu.py`) turned out to have ~35 lines of dead manual
+BoundBox/`.common()`/`e1.isSame(e2)` fallback logic — reached only if a
+caller passed a shape with no `__native__` attribute, which, confirmed by
+grep across all 5 live call sites, never happens (every caller passes a
+`FaceGu`/`GFace`/`ShellGu`). That dead branch was deleted first, leaving
+just the `ShellGu` recursion and a one-line native delegation. That
+one line was then moved into `geo` proper: `GFace.distance_to(other) ->
+float` (`_freecad_impl.py`, wrapping `self.__native__.distToShape(other.__native__)[0]`
+— a real native boolean/distance query with no `GVector` equivalent, so
+it belongs in the backend, not reimplemented). `FaceGu.distToShape` now
+just calls `self.distance_to(shape)` for the non-`ShellGu` case; the
+`ShellGu` recursion itself stays in `geometry_gu.py` since `ShellGu`
+isn't a `geo` type. `cell_definition_functions.py`'s `gen_plane_sphere`,
+which used to call `tmp_plane.__native__.distToShape(f.__native__)[0]`
+(bypassing `FaceGu.distToShape` entirely, calling native directly since
+neither operand needed `ShellGu`-awareness), was simplified to
+`tmp_plane.distance_to(f)` the same way.
+
+While the dead branch was still present, the user prototyped an
+alternative implementation alongside it (`GFace.my_distToshape` — the
+same BoundBox/`.common()`/`isSame` approach, revived as a real,
+switched-in implementation rather than dead code) and wired
+`FaceGu.distToShape` to call it instead of `distance_to`. It shipped
+with a real bug: `if shape1 is shape1:` (comparing `shape1` to itself,
+always `True`) instead of `if shape1 is shape2:` — meaning every
+`distToShape` call anywhere in `GEOUNED` returned `0.0` unconditionally,
+regardless of the actual two shapes involved. Caught before commit,
+confirmed with the user as a typo, fixed to `is shape2`. Both
+`distance_to` (native `distToShape`, now the one every live call site
+actually uses) and `my_distToshape` (the BoundBox/common alternative)
+exist side by side in `GFace` — the latter is not currently called from
+anywhere in `GEOUNED` (kept as the user's own comparison/testing tool,
+not wired back in).
+
+### `core.py`'s last native import closed out
+
+The very last direct `import Part`/`import FreeCAD` anywhere in
+`GEOUNED` (`core.py::_set_geometry_bounding_box`'s `self.geometry_bounding_box
+= FreeCAD.BoundBox(FreeCAD.Vector(...), FreeCAD.Vector(...))`) is gone —
+replaced with `GBoundBox(xmin - padding, ..., zmax + padding)` (the
+6-scalar constructor, matching what `xmin`/`xmax`/etc already were:
+plain floats read off `GeounedSolid.optimalBoundingBox()`, itself
+already `GBoundBox`-returning). `import FreeCAD` deleted from `core.py`
+entirely — confirmed via grep it was the file's only use of `FreeCAD.*`.
+
+This was deferred for a long time specifically because `UniverseBox`
+(the parameter name `self.geometry_bounding_box` travels under once
+passed to `void_generation`/`write_geometry`) is consumed in several
+places outside this migration's original scope, so all of them were
+traced before touching the source:
+- `write_files.py` — only ever reads `.XMin`/`.XMax`/etc as plain
+  scalars into output tuples. No change needed, works identically with
+  either type.
+- `void_box_class.py::VoidBox.__init__` — already tolerant (`box = Box
+  if type(Box) is GBoundBox else to_gboundbox(Box)`), from earlier work
+  this migration. No change needed.
+- `void_functions.py::select_solids` — has a `"BoundBox" in str(Enclosure)`
+  string-sniffing type check (distinguishing "this is the outer universe
+  box" from "this is a real Enclosure object"). Fragile-looking but
+  turns out to still work with `GBoundBox`: Python's default dataclass
+  `__repr__`/`__str__` is `ClassName(field=value, ...)`, and `"GBoundBox"`
+  itself contains the substring `"BoundBox"` — not touched, still correct.
+- `void.py::set_graveyard_cell` — the `to_gvector(UniverseBox.Center)`
+  conversion added earlier this session (back when `UniverseBox` was
+  still native and this was a real native-leak fix) is now a redundant
+  no-op, since `GBoundBox.Center` already returns `GVector` directly.
+  Simplified back to `UniverseBox.Center`, and the now-unused
+  `to_gvector` import dropped.
+- `geouned_classes.py`'s `GeounedSolid.UniverseBox` field: unrelated
+  despite the similar name — always `None`, confirmed dead (never
+  assigned or read anywhere else) while tracing this.
+
+Confirmed via grep after the fix: zero files anywhere in `GEOUNED`
+(`geo/` and `GEOReverse/` excluded, as always) import `Part`/`FreeCAD`/
+`BOPTools` directly anymore. This closes out, in full, the architectural
+goal stated at the top of this file's "Current architecture" section.
 
 ## Code style preference
 

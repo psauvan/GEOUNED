@@ -227,7 +227,7 @@ def gen_plane_sphere(face, solidFaces):
 
     dmin = 2 * face.Surface.Radius
     for f in same_faces:
-        dist = tmp_plane.__native__.distToShape(f.__native__)[0]
+        dist = tmp_plane.distance_to(f)
         dmin = min(dmin, dist)
 
     if dmin > 1e-6:

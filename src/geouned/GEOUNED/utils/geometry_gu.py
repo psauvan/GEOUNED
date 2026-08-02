@@ -224,55 +224,20 @@ class FaceGu(GFace):
         return self.Surface.parameter(point)
 
     def distToShape(self, shape):
-        shape1 = self.__native__
+        # every caller passes a ShellGu or something wrapping a native
+        # shape (FaceGu/GFace/GSolid) -- confirmed via grep, no live call
+        # site ever passes a raw native shape here. The actual native
+        # distance query lives in geo (GFace.distance_to) -- ShellGu
+        # itself isn't a geo type, so the recursion over its Faces stays
+        # here.
         if isinstance(shape, ShellGu):
             distmin = 1
             for f in shape.Faces:
                 d = self.distToShape(f)
                 distmin = min(distmin, d[0])
             return (distmin,)
-        elif hasattr(shape, "__native__"):
-            shape2 = shape.__native__
-            return shape1.distToShape(shape2)
         else:
-            shape2 = shape
-
-        if shape1 is shape2:
-            return (0,)
-        else:
-            Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
-            intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
-            if intersect:
-                try:
-                    # dist2Shape = shape1.distToShape(shape2)
-                    inter = shape1.common(shape2)
-                except:
-                    # dist2Shape = shape2.distToShape(shape1)
-                    inter = shape2.common(shape1)
-
-                if abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0:
-                    dist2Shape = (0.0,)
-                else:
-                    same = False
-                    for e1 in shape1.Edges:
-                        if same:
-                            break
-                        for e2 in shape2.Edges:
-                            if e1.isSame(e2):
-                                dist2Shape = (0,)
-                                same = True
-                                break
-                    if not same:
-                        dist2Shape = (1.0,)
-            else:
-                c1 = shape1.BoundBox.Center
-                c2 = shape2.BoundBox.Center
-                d = c2 - c1
-                dist2Shape = (d.Length,)
-            #            dts = shape1.distToShape(shape2)[0]
-            #            if (dist2Shape[0] == 0 and dts > 1e-8) or (dts < 1e-8 and dist2Shape[0] > 0 ):
-            #                print ('vamos a ver')
-            return dist2Shape
+            return (self.my_distToshape(shape),)
 
 
 class ShellGu:

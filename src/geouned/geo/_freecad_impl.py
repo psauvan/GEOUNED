@@ -703,6 +703,47 @@ class GFace:
     def export_step(self, filename: str) -> None:
         Part.makeCompound([self.__native__]).exportStep(filename)
 
+    def distance_to(self, other: "GFace") -> float:
+        """Minimum distance between this face and `other` (0 if they touch or overlap). Native boolean/distance query, no GVector equivalent."""
+        return self.__native__.distToShape(other.__native__)[0]
+
+    def my_distToshape(self, other: "GFace") -> float:
+        """alternative to distance_to, for testing -- same as distance_to. Doesn't call native distToShape but use boundbox distances and Common object of to check if solids touch eah other"""
+      
+        shape1 = self.__native__
+        shape2 = other.__native__
+		
+        if shape1 is shape2:
+            return 0.0
+        else:
+            Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
+            intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
+            if intersect:
+                try:
+                    inter = shape1.common(shape2)
+                except:
+                    inter = shape2.common(shape1)
+
+                if abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0:
+                    dist2Shape = 0.0
+                else:
+                    same = False
+                    for e1 in shape1.Edges:
+                        if same:
+                            break
+                        for e2 in shape2.Edges:
+                            if e1.isSame(e2):
+                                dist2Shape = 0.0
+                                same = True
+                                break
+                    if not same:
+                        dist2Shape = 1.0
+            else:
+                c1 = shape1.BoundBox.Center
+                c2 = shape2.BoundBox.Center
+                d = c2 - c1
+                dist2Shape = d.Length
+            return dist2Shape
 
 class GShell:
     """

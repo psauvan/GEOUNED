@@ -7,7 +7,6 @@ from typing import get_type_hints
 from importlib.metadata import version
 import time
 
-import FreeCAD
 from tqdm import tqdm
 
 from .code_version import *
@@ -24,7 +23,7 @@ from .threading.geouned_threads import ThreadPoolExecutor
 from .void import void as void
 from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
-from ..geo import Gmake_compound, kernel_version
+from ..geo import GBoundBox, Gmake_compound, kernel_version
 
 logger = logging.getLogger("general_logger")
 logger.info(f"GEOUNED version {version('geouned')}")
@@ -583,7 +582,7 @@ class CadToCsg:
             padding (float): The padding value to add to the bounding box dimensions.
 
         Returns:
-            FreeCAD.BoundBox: The universe bounding box.
+            GBoundBox: The universe bounding box.
         """
         # set up Universe
         meta_list = self.meta_list
@@ -606,9 +605,9 @@ class CadToCsg:
             zmin = min(optBox.ZMin, zmin)
             zmax = max(optBox.ZMax, zmax)
 
-        self.geometry_bounding_box = FreeCAD.BoundBox(
-            FreeCAD.Vector(xmin - padding, ymin - padding, zmin - padding),
-            FreeCAD.Vector(xmax + padding, ymax + padding, zmax + padding),
+        self.geometry_bounding_box = GBoundBox(
+            xmin - padding, ymin - padding, zmin - padding,
+            xmax + padding, ymax + padding, zmax + padding,
         )
 
     def _decompose_solids(self, meta: bool):

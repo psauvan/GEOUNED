@@ -7,7 +7,7 @@ from ..utils.boolean_function import BoolSequence
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from . import void_functions as VF
 from .void_box_class import VoidBox
-from ...geo import GSolid, Gmake_box, to_gvector
+from ...geo import GSolid, Gmake_box
 
 logger = logging.getLogger("general_logger")
 
@@ -175,10 +175,7 @@ def set_graveyard_cell(Surfaces, UniverseBox, options, tolerances, numeric_forma
     Universe = VoidBox([], UniverseBox)
 
     externalBox = get_universe_complementary(Universe, Surfaces, options, tolerances, numeric_format)
-    # UniverseBox is a native FreeCAD.BoundBox (core.py's last remaining
-    # native holdout) -- convert its native Vector .Center to GVector at
-    # this boundary before it flows into SphereOnlyParams.
-    center = to_gvector(UniverseBox.Center)
+    center = UniverseBox.Center
     radius = 0.51 * UniverseBox.DiagonalLength
     sphere = GeounedSurface(("Sphere", (GeounedSurface(("SphereOnly", (center, radius))), None), "Forward"))
     sph_region = Surfaces.add_sphere(sphere)
