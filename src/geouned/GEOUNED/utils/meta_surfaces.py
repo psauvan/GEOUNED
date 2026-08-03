@@ -40,7 +40,7 @@ def multiplane(master_plane, planes, plane_index):
     addplane = []
     for e in Edges:
         type_curve = Gclassify_curve(e)
-        if type_curve is not GLine:
+        if type(type_curve) is not GLine:
             continue
 
         adjacent_plane = other_face_edge(e, master_plane, planes, outer_only=True)

@@ -1628,6 +1628,73 @@ Verified: `fwd_can_1.stp`/`rev_can_1.stp` both 300/300 after the fix (no
 `Solidos/` (part 2/3's set), every composite surface still 300/300,
 including the previously-crashing files.
 
+### `check_sign` end-to-end verification, part 5: `MultiPlane` was never actually reachable -- `meta_surfaces.py::multiplane()` class-vs-instance bug
+
+User request: verify `check_sign` for `MultiPlane`, the one tracked
+composite type never seen in any of the 112 files scanned across parts
+1-4. `Solidos/Multiplanes/multiplane_hollow.stp` -- named and foldered
+specifically for this -- produced zero `MultiP` surfaces too (only 15
+bare `Planes`), which the user immediately recognized as a familiar
+symptom from developing this code: *"muchos planos se añaden al set
+omit_solid... no detecta los multiplanes."*
+
+Traced `generators.py::get_surfaces`'s exact call order (`next_Can` ->
+`next_truncCone` -> `next_roundCorner` -> `exclude_no_cutting_planes` ->
+`next_multiplanes` -> ...), instrumenting `omitfaces` after each stage
+for `multiplane_hollow.stp`: Can/TCone/RoundCorner contributed nothing
+(no cylinder/cone in this file), but `exclude_no_cutting_planes` ->
+`external_plane()` marked 6 of the 15 planes as "external" before
+`next_multiplanes` ever ran. That part matched the user's intuition
+(planes getting excluded before multiplane detection sees them) but
+turned out to be a red herring for *this* file: `external_plane()`'s own
+`region_sign`-based AND/OR logic was working correctly on inspection.
+
+**Real root cause, found by re-reading `meta_surfaces.py::multiplane()`
+(the function `next_multiplanes` actually calls) line by line**: `Gclassify_curve(e)`
+returns an *instance* (`GLine(curve)`, `_freecad_impl.py:513`), never the
+bare class -- confirmed by grep, every other call site in the codebase
+(`decom_utils_generator.py`, `meta_surfaces_utils.py`, ~10 sites) already
+uses `type(Gclassify_curve(e)) is GLine`. `multiplane()` alone was still
+using the bare `Gclassify_curve(e) is GLine` -- comparing an instance
+against a class, which is *never* true. Every edge of every plane, in
+every solid, ever passed through `multiplane()`, therefore hit `if
+type_curve is not GLine: continue` unconditionally, so `multiplane()`
+could never find an adjacent plane through any edge -- it always
+returned just `[master_plane]` alone, and `next_multiplanes`'s own `if
+len(mplanes) != 1: ...` guard then always skipped it. **This function
+has been unable to produce a `MultiPlane` surface for any input at all**,
+not just for this one file -- consistent with zero occurrences across
+all 112 files scanned in parts 1-4, before this fix.
+
+Fixed (`meta_surfaces.py:43`): `if type_curve is not GLine:` ->
+`if type(type_curve) is not GLine:`, matching the established convention
+everywhere else. (`multiplane_old`/`multiplane_loop`, two dead functions
+in the same file with the identical bug and zero callers anywhere,
+confirmed via grep -- left alone, out of scope, not wired into anything.)
+
+Verified: `multiplane_hollow.stp` now produces `MultiP x2`, both 300/300.
+Full `tests/geo` + `tests/test_cadtocsg.py`, 156/156, no regressions.
+Re-ran the full 60-file `Solidos/` scan: **every result still 300/300**,
+and `MultiP` now appears in 9 files that previously showed none --
+including `combi_MP_RC.stp` and `RC_MP.stp`, whose names make clear they
+were built specifically to exercise a MultiPlane+RoundCorner combination
+that, before this fix, only ever showed the RoundCorner half. Several
+files' `RoundC`/`RevCan`/`RevTCone` counts also shifted (e.g. `placa2.stp`:
+`RoundC` 3->1, `RevCan` 4->6, `RevTCone` 0->2; `double_RC.stp`: `RoundC`
+6->5, gained `MultiP` x3) -- expected fallout, not a regression: faces
+that used to be swept into the wrong composite type (or left as bare
+planes) for lack of a working MultiPlane path now group correctly, and
+every resulting classification still validates 300/300 against
+independently-built CAD ground truth. This is a materially more
+significant fix than the sign bugs in parts 3-4 -- it affects real-model
+face classification broadly, not just one meta-surface type's boolean
+convention.
+
+New diagnostic scripts (scratchpad only): `diag_multiplane_omit.py`
+(the `omitfaces`-per-stage trace), `diag_multiplane_geom.py` (raw face
+dump + `region_sign` check that ruled out `external_plane()` as the
+cause for this file).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
