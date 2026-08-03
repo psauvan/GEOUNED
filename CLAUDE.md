@@ -1717,6 +1717,187 @@ regardless of the STEP fixture set used. Verifying `check_sign` for
 side rather than the decomposition side -- not attempted yet, picked up
 next session.
 
+## MCNP stochastic volume check: does the CSG translation match the CAD volume?
+
+Different question from the `check_sign` verification above: that
+verified the *algebra* GEOUNED writes for composite surfaces is
+internally consistent with an independently-built CAD solid. This
+verifies something more end-to-end -- that a *fully converted* MCNP
+model, run for real, reproduces the *same volumes* as the original CAD
+solids. GEOUNED finishing without raising an exception does not by
+itself mean the CSG geometry equals the CAD geometry (e.g. a wrong
+surface sign can silently produce a cell with the wrong shape but a
+valid boolean expression).
+
+**Mechanism** (already existed in the codebase, not new this session):
+`CadToCsg.export_csg(..., volSDEF=True, volCARD=False)` writes an extra
+MCNP block -- a photon source emitted isotropically inward from a
+sphere enclosing the whole model, plus an F4 track-length tally on every
+solid cell, each normalized (`SD4`) by that cell's CAD-computed volume.
+Run in `MODE P` + `VOID` (no real physics), this is the standard MCNP
+chord-length volume-estimation technique: **the expected tally result is
+exactly 1.0** if the CSG cell's real volume matches CAD; a significant
+deviation means the surfaces/signs written don't reconstruct the same
+solid. Requires `settings.voidGen=True` (the sphere is built by void
+generation) and the full `geo.run()` pipeline (decompose + build +
+**void** -- `write_files.py`'s `Surfaces["Sph"][-1]` lookup raises
+`IndexError` if `build_void()` was skipped).
+
+**This session's run**: 110 STEP files converted to MCNP-only output
+(mirroring the user's own `Test RoundCorners/myrun.py` settings --
+`voidMat`/`dummyMat` for a placeholder void material, `minVoidSize=20`),
+across `testing/inputSTEP` (repo's own pytest fixtures, excluding the
+slow/pre-existing-failure `large/` subfolder) and `Solidos/` (excluding
+`Big_model_reserved`), each run through the user's own `d1suned`
+(an in-house MCNP variant) via WSL. Full pipeline, scripts, environment
+gotchas, and results archived at
+`\\wsl.localhost\Ubuntu-22.04\home\patrick\work\taller\SolidTestMCNP\scripts\`
+(`README.md` there has the complete writeup) -- summarized here:
+
+- **Environment gotchas worth remembering** (all specific to *automating*
+  WSL from Windows, none of them problems with the user's own setup):
+  `wsl.exe` invoked from Git Bash mangles `/home/...`-looking paths
+  unless prefixed with `MSYS_NO_PATHCONV=1`; `.bashrc`'s standard "if not
+  interactive, don't do anything" guard silently skips the user's `~/bin`
+  PATH addition and `source /opt/intel/oneapi/setvars.sh` line whenever
+  reached non-interactively (i.e. always, for automation) -- worked
+  around by hardcoding the resulting `PATH`/`LD_LIBRARY_PATH` values
+  directly rather than sourcing the vendor script; multi-line `wsl.exe
+  -- bash -c '...'` inline strings silently lost variable expansion
+  (`$i` came out empty) in a way a real script *file* did not, and
+  sourcing `setvars.sh` *from within* a script file silently terminated
+  the whole shell at that line for reasons not fully root-caused --
+  worked around by always using a real `.sh` file, never sourcing the
+  vendor script, and using plain `( cmd ) &` + periodic `wait` instead of
+  `xargs -I{}` (which also silently processed zero directories through
+  the same multi-layer quoting).
+- **Results**: 261 solid-cell tally results across 111 run directories
+  (110 real + 1 manual test). 92.3% within 2 sigma of 1.0; 5.7% between
+  2-3 sigma (statistically expected noise at this sample size, ~4.3%
+  predicted by chance alone -- not evidence of a problem); **5 real
+  failures beyond 3 sigma**: `solidos_Reversed_Cyl_Cones_cyl_cone` (tally
+  exactly 0.0 -- the same file used earlier this session to find the
+  `TCone_region` bug, so worth re-checking carefully as recently-touched
+  code), `repo_DoubleCylinder_placa3` (0.254, 535 sigma -- volume ~1/4 of
+  CAD), `repo_Misc_PiezaDavid` (1.085, 39 sigma), `repo_SCDR_90` (0.919,
+  38 sigma -- already marked `# fails (pre-existing)` in
+  `tests/test_cadtocsg.py`'s own skip list, a known issue, not new), and
+  `repo_Torus_solid1` (0.971, 3.84 sigma, borderline but real). One file
+  (`solidos_Torus_2_degen_torii`) produced no tally section at all
+  (d1suned exit 152) -- not yet investigated.
+
+**Update, next session**: `cyl_cone`'s zero-tally failure investigated and
+fixed -- see "`ReversedConeCylinder`'s AND/OR grouping..." below.
+`placa3`/`PiezaDavid`/`Torus_solid1`/`2_degen_torii`'s exit-152 case
+remain open. `SCDR_90` still lowest priority (known, pre-existing).
+
+### `ReversedConeCylinder`'s AND/OR grouping was decided from an arbitrary, non-invariant direction -- found and fixed via the MCNP volume check
+
+`cyl_cone.stp`'s zero-tally failure (above) traced to a real bug, found
+by working entirely from the *.mcnp file's own surface/cell-definition
+text (per the user's explicit request -- verify from the GEOUNED output
+alone before touching Python internals). Parsing the raw MCNP surface
+cards and cell-definition string directly (implementing the standard
+P/PX/PY/PZ/C/Y/K/Y sense conventions by hand) and cross-checking against
+`check_sign` at a real interior point of the actual CAD solid (found via
+`GSolid.find_interior_point()`) surfaced a **unit mismatch** first --
+GEOUNED writes MCNP surfaces in cm, but that interior point is in mm
+(STEP/FreeCAD's native unit); comparing them directly gave nonsense
+signs for several surfaces. Fixed the test methodology (scale the point
+by 0.1) before drawing any conclusion -- after which `check_sign` and
+the hand-rolled MCNP-file parser agreed on every surface but one.
+
+**Real finding**: at that known-real point, exactly one surface (a
+plane, part of the third of three `ReversedConeCylinder` groups in this
+model) evaluates to the wrong sense. The model has 3 such groups (each a
+cylinder+cone+cylinder chain with nearly-parallel axes, per how
+`ReversedConeCylinder` gets identified in the first place -- see
+`get_reversed_cone_cylinder`/`get_join_cone_cyl`); two of the three
+correctly combine their 3 junction planes via OR (`OR[10,11,12]`,
+`OR[16,17,15]`), the third combines the same shape of triple via a flat
+AND (`AND[20,21,22]`) instead -- confirmed via the user's own domain
+knowledge that all 3 groups should be OR, matching a real physical
+feature. A quick numeric check (`convex_planes` applied to the actual
+plane data of all 3 groups) confirmed all 9 planes individually satisfy
+the intended physical invariant the user described (each plane's own
+normal points away from its cylinder's axis) -- ruling out
+`gen_plane_cylinder`/`gen_plane_cone` as the cause, contrary to the
+user's own first guess.
+
+**Root cause, found by instrumenting `get_join_cone_cyl` directly**
+(`meta_surfaces_utils.py`): the AND/OR operator between adjacent
+cylinder/cone pieces was decided *incrementally, per connection*, via
+`operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"`, where `d` is
+derived from the *seed face's own UV-parameter traversal direction*
+(`(pmax - pmin).normalized()` over that face's `ParameterRange`). This
+is not a geometrically invariant reference: a STEP/CAD kernel's face
+parametrization direction is implementation-defined, not guaranteed
+consistent between multiple physical instances of "the same" feature.
+Traced (via temporary debug prints, reverted after use) that the two
+correct groups' seed faces both had `d` pointing roughly along -X, while
+the broken group's `d` pointed roughly along -Z -- a real, confirmed
+inconsistency, not a coincidence.
+
+**The user's own stated design intent, once asked directly**: for a
+group of planes whose normals lie roughly in a common plane (because the
+cylinders/cones they bound have nearly-parallel axes), first confirm
+their intersection/union forms a convex arrangement, then classify by a
+single, group-wide test -- normals pointing outward from the group's own
+centroid means OR, inward means AND. This is *exactly* what
+`convex_planes` (`functions.py:525`) already computes and already uses
+for `RoundCorner`/`MultiRoundCorner` (`build_roundC_params`) -- it just
+wasn't being reused for `ReversedConeCylinder`. Verified numerically
+before touching any code: calling `convex_planes` on the real plane data
+of all 3 groups in `cyl_cone.stp` returns `convex=True,
+orientation="Forward"` for **all three**, including the currently-broken
+one -- i.e. all 3 groups get the *same* classification from
+`convex_planes`, matching the user's confirmation that all 3 should be
+OR. This fixed the `Forward`->`OR`, `Reversed`->`AND` calibration with
+certainty before writing the fix.
+
+**Fix**: `build_RCC_params` (`functions.py:259`) no longer walks
+`.Connections` incrementally to build `PlaneSeq` -- it collects every
+piece's own junction plane into one flat list and calls
+`convex_planes(group_planes, cylcones[0].Surf.Axis)` once for the whole
+group, building `PlaneSeq` as one OR-bracket (`orientation=="Forward"`)
+or a flat AND list (`"Reversed"`) accordingly. Confirmed via direct
+inspection (`len(rc)` is actually 3 per group here, not 2 as first
+assumed from the plane count alone -- each of the 3 pieces contributes
+its own junction plane, `AddPlanes` is empty for all 3 groups in this
+file, so `PlaneSeq`'s own grouping is the *entire* determinant of the
+observed AND/OR difference, not a confound from a separate always-OR
+`AddPlanes` set as first suspected). `get_join_cone_cyl`
+(`meta_surfaces_utils.py:275`) no longer computes the now-unused `d`/
+`operator` at all -- the whole block computing it (previously lines
+387-415) is deleted, along with the now-fully-unused `.Connections`
+field on `reversedCCP` and the `parent_id` parameter it existed to
+support (removed from `get_join_cone_cyl`'s signature and both call
+sites, confirmed via grep to have zero other consumers).
+
+Verified: `cyl_cone.stp`'s cell 1 F4 tally went from exactly `0.0` to
+`0.996547 +/- 0.29%` (matching 1.0 within ~1.2 sigma). Full `tests/geo` +
+`tests/test_cadtocsg.py`, 156/156, no regressions. Re-ran the entire
+110-file MCNP volume-check batch: `cyl_cone` no longer appears among the
+failures (5 -> 4), every other result unchanged (still 92.7%/5.7%/1.5%
+in the 2-sigma/marginal/fail buckets) -- confirms the fix is both
+correct and has no wider blast radius, despite touching shared
+(`meta_surfaces_utils.py`, `functions.py`) code.
+
+**Lost-particle check added to the analysis** (per explicit request,
+`scripts/analyze_results.py`): scanned all 111 `outp` files for MCNP's
+"N particles got lost" summary line (a *different* class of geometry
+error than the volume-tally check -- a real gap in the CSG where no
+cell is defined at all, `"no cell found in subroutine newcel"`,
+independent of whether any given cell's own volume is correct). Only
+one file has any: `solidos_Enclosures_w_encl` (`w_encl.stp`), 10 lost
+particles (MCNP's default abort threshold, terminating that run early
+at nps=884 of the requested 1e6 -- its own cell 1 tally still happened
+to fall within 2 sigma despite the much-reduced statistics, so it
+wasn't otherwise flagged). Not yet investigated -- a real, distinct
+finding for next session, likely related to this file's `Enclosure`-
+type solids specifically (the one folder in this fixture set built
+around that feature).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

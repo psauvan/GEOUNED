@@ -249,4 +249,4 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
 
 
 def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
-    return get_join_cone_cyl(face, -1, Faces, multifaces, omitFaces, Tolerances())
+    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, Tolerances())

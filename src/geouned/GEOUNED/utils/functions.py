@@ -258,9 +258,8 @@ def build_roundC_params(rc_list):
 
 def build_RCC_params(rc):
     cylcones = []
-    plane_dict = dict()
+    group_planes = []
     add_planes = []
-    init = None
     for cc in rc:
         if cc.Type == "Cylinder":
             gcylcone, plane, addP = cc.Params
@@ -269,61 +268,30 @@ def build_RCC_params(rc):
             gcylcone = GeounedSurface(("Cone", (cone, apexPlane, None), "Reversed"))
 
         add_planes.extend(addP)
-        if len(cc.Connections) == 1:
-            init = cc.Index
-        plane_dict[cc.Index] = (cc.Connections, plane)
+        group_planes.append(plane)
         cylcones.append(gcylcone)
 
-    if len(rc) == 1:
-        loop = False
-        init = tuple(plane_dict.keys())[0]
-        planeSeq = [plane_dict[init][1]]
+    # The group's own boundary/junction planes all lie roughly in a common
+    # plane (the joined cylinders/cones have nearly-parallel axes, by
+    # construction -- see get_reversed_cone_cylinder). Whether they combine
+    # via AND or OR is decided once for the whole group: material is a
+    # concave (OR) or convex (AND) corner depending on whether the planes'
+    # own normals point outward from, or inward toward, the group's own
+    # centroid -- exactly what convex_planes already computes for
+    # RoundCorner/MultiRoundCorner. Previously this was decided
+    # incrementally per connection, comparing each face's own UV-parameter
+    # traversal direction against the neighboring plane's axis -- not a
+    # geometrically invariant reference, so otherwise-identical instances
+    # of the same feature (e.g. repeated at different angular positions
+    # around the same model) could get inconsistent operators.
+    if len(group_planes) == 1:
+        planeSeq = group_planes
     else:
-        loop = True
-        if init is None:
-            init = tuple(plane_dict.keys())[0]
-        nextip, operator = plane_dict[init][0][0]
-        ip = init
-        if operator == "OR":
-            gp = plane_dict[init][1]
-            ORPlanes = [gp]
-            planeSeq = []
-        else:
-            ORPlanes = []
-            gp = plane_dict[init][1]
-            planeSeq = [gp]
+        convex, orientation = convex_planes(group_planes, cylcones[0].Surf.Axis)
+        if not convex:
+            logger.info("ReversedConeCylinder: plane group is not convex/concave as expected")
+        planeSeq = [group_planes] if orientation == "Forward" else group_planes
 
-    while loop:
-        connect = plane_dict[nextip][0]
-        if len(connect) == 1:
-            ip = nextip
-            nextip, nextop = connect[0]
-            loop = False
-        else:
-            next1, op1 = connect[0]
-            next2, op2 = connect[1]
-            if ip != next1:
-                ip = nextip
-                nextip = next1
-                nextop = op1
-            else:
-                ip = nextip
-                nextip = next2
-                nextop = op2
-            if nextip == init:
-                loop = False
-
-        gp = plane_dict[ip][1]
-        if operator == "OR":
-            ORPlanes.append(gp)
-            if not loop:
-                planeSeq.append(ORPlanes)
-        else:
-            if ORPlanes:
-                planeSeq.append(ORPlanes)
-                ORPlanes = []
-            planeSeq.append(gp)
-        operator = nextop
     params = (cylcones, planeSeq, add_planes)
     return params
 

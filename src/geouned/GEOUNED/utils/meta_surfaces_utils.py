@@ -31,7 +31,6 @@ class reversedCCP:
         self.Type = surfType
         self.Surf_index = set()
         self.Params = params
-        self.Connections = []
         self.Index = None
 
 
@@ -272,7 +271,7 @@ def convex_face_cyl(cyl, edge, otherface):
     return v1.dot(v2) < 0
 
 
-def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, tolerances):
+def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     face_index = [face.Index]
     faces = [face]
     joined_faces = []
@@ -350,7 +349,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface, (GCone, GCylinder)):
             if adjacent1.Index not in omitFaces and adjacent1.Orientation == "Reversed":
-                new_adjacent1 = get_join_cone_cyl(adjacent1, face.Index, GUFaces, multiplanes, omitFaces, tolerances)
+                new_adjacent1 = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent1.Surface, GPlane):
                 normal1 = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
@@ -358,7 +357,7 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
             if adjacent2.Index not in omitFaces and adjacent2.Orientation == "Reversed":
-                new_adjacent2 = get_join_cone_cyl(adjacent2, face.Index, GUFaces, multiplanes, omitFaces, tolerances)
+                new_adjacent2 = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent2.Surface, GPlane):
                 normal2 = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
@@ -370,8 +369,6 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
         facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, add_planes))
         facein.Surf_index.update(sameface_index)
         facein.Index = face.Index
-        if parent_id >= 0:
-            facein.Connections.append([parent_id, None])
 
     else:
         coneOnly = gen_cone(face)
@@ -381,39 +378,9 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))
         facein.Surf_index.update(sameface_index)
         facein.Index = face.Index
-        if parent_id >= 0:
-            facein.Connections.append([parent_id, None])
 
-    if new_adjacent1 or new_adjacent2:
-        umin, umax, vmin, vmax = face.ParameterRange
-        v = 0.5 * (vmin + vmax)
-        pmin = face.value_at(umin, v)
-        pmax = face.value_at(umax, v)
-        d = (pmax - pmin).normalized()
-
-        for adj in new_adjacent1:
-            parents = [x[0] for x in adj.Connections]
-            plane_param_index = 2 if adj.Type == "Cone" else 1
-            if face.Index in parents:
-                i = parents.index(face.Index)
-                adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
-                adj.Connections[i][1] = operator
-                facein.Connections.append([adj.Index, operator])
-        joined_faces.extend(new_adjacent1)
-
-        d = -d
-        for adj in new_adjacent2:
-            parents = [x[0] for x in adj.Connections]
-            plane_param_index = 2 if adj.Type == "Cone" else 1
-            if face.Index in parents:
-                i = parents.index(face.Index)
-                adjPlane = adj.Params[plane_param_index].Surf
-                operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
-                adj.Connections[i][1] = operator
-                facein.Connections.append([adj.Index, operator])
-        joined_faces.extend(new_adjacent2)
-
+    joined_faces.extend(new_adjacent1)
+    joined_faces.extend(new_adjacent2)
     joined_faces.append(facein)
     return joined_faces
 
