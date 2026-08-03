@@ -1695,6 +1695,28 @@ New diagnostic scripts (scratchpad only): `diag_multiplane_omit.py`
 dump + `region_sign` check that ruled out `external_plane()` as the
 cause for this file).
 
+**`RevCC` (`ReversedConeCyl`) remains unverified -- and, per the user,
+this scan methodology can never reach it.** Explicit clarification from
+the user before stopping this session: a `ReversedConeCyl` is defined as
+the *exterior* of several cylinders whose axes are nearly (not
+necessarily exactly) parallel and which overlap each other. Unlike
+`Can`/`TCone`/`RoundCorner`/`MultiRoundCorner`/`MultiPlane` -- all of
+which get identified in `decompose/generators.py::get_surfaces` and used
+to *cut* the main solid via `Gsplit` (the first-level decomposition this
+whole verification effort scans for) -- a `RevCC` surface never cuts
+anything. It only ever gets identified in the **conversion** module
+(walking the faces of an *already-decomposed* solid element to
+reconstruct its CSG expression -- see `add_reversedCC`,
+`geouned_classes.py:1000`), describing an external bounding surface of a
+cell after the fact. So scanning STEP files through
+`decompose_solids()`/`build_solid_definition()` and looking for `RevCC`
+in `geo.Surfaces` (the same method used for every other type in this
+session) is structurally the wrong approach -- it will always show zero,
+regardless of the STEP fixture set used. Verifying `check_sign` for
+`RevCC` would need a different methodology, entered from the conversion
+side rather than the decomposition side -- not attempted yet, picked up
+next session.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
