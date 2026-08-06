@@ -197,7 +197,247 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
     return adjfaces
 
 
+_WINDING_N_SAMPLES = 16
+_WINDING_ANGLE_TOL = 2e-3  # rad
+
+
+def _oriented_angle_sweep(angle_of, edge, v_from, v_to):
+    """Cumulative unwrapped angle swept by `edge`, sampled and oriented so
+    it runs from `v_from` to `v_to` (the wire's own traversal direction)."""
+    p0, p1 = edge.ParameterRange
+    e0 = edge.value_at(p0)
+    e1 = edge.value_at(p1)
+    forward = (e0 - v_from).length + (e1 - v_to).length <= (e0 - v_to).length + (e1 - v_from).length
+    params = [p0 + (p1 - p0) * k / _WINDING_N_SAMPLES for k in range(_WINDING_N_SAMPLES + 1)]
+    if not forward:
+        params.reverse()
+    angles = [angle_of(edge.value_at(p)) for p in params]
+    cumulative = 0.0
+    for a0, a1 in zip(angles, angles[1:]):
+        d = a1 - a0
+        while d > math.pi:
+            d -= twoPi
+        while d < -math.pi:
+            d += twoPi
+        cumulative += d
+    return cumulative
+
+
+def _closes_full_turn(total_angle):
+    k = round(total_angle / twoPi)
+    return k != 0 and abs(total_angle - k * twoPi) <= _WINDING_ANGLE_TOL
+
+
+def _perpendicular_axis(axis):
+    """An arbitrary, stable unit vector perpendicular to `axis`. Only
+    relative angle *changes* around `axis` are ever measured (never an
+    absolute reference angle), so any fixed choice works -- this avoids
+    depending on a surface's own XDir, which GCone doesn't carry at all
+    and GCylinder only has when built from a real native face."""
+    ref = GVector(1, 0, 0) if abs(axis.dot(GVector(1, 0, 0))) < 0.9 else GVector(0, 1, 0)
+    return axis.cross(ref).normalized()
+
+
+def _surface_axis_origin_e1(surf):
+    """(axis, a point on that axis, a reference direction perpendicular to
+    axis) for the two surface types this closure check supports, or None
+    for anything else. GCylinder uses its own real XDir when it has one
+    (matching the exact frame this check was validated against -- the
+    winding math is rotation-invariant in theory, but the discretized,
+    tolerance-bounded implementation isn't perfectly so in practice, so
+    the validated frame is kept rather than swapped for a generic one);
+    GCone has no XDir at all, so it always gets an arbitrary (but stable)
+    perpendicular vector instead."""
+    if type(surf) is GCylinder:
+        e1 = surf.XDir if surf.XDir is not None else _perpendicular_axis(surf.Axis)
+        return surf.Axis, surf.Center, e1
+    if type(surf) is GCone:
+        return surf.Axis, surf.Apex, _perpendicular_axis(surf.Axis)
+    return None
+
+
+def _angle_function(axis, origin, e1):
+    e2 = axis.cross(e1)
+
+    def angle_of(point):
+        rel = point - origin
+        rel = rel - rel.dot(axis) * axis
+        return math.atan2(rel.dot(e2), rel.dot(e1))
+
+    return angle_of
+
+
+def _wire_oriented_edges(wire):
+    """(edge, v_from, v_to) triples for every edge of `wire`, in traversal order."""
+    verts = wire.OrderedVertexes
+    return [(e, verts[i], verts[(i + 1) % len(verts)]) for i, e in enumerate(wire.Edges)]
+
+
+def _boundary_edges_of_merged_faces(faces):
+    """The edges that bound the *union* of several faces known to lie on
+    the same analytic surface (a ShellGu's merged pieces): an edge shared
+    between two of these faces is an internal seam where they join, not
+    part of the union's outer boundary, and is excluded. Detected purely
+    by how many times each edge occurs across all the faces' own wires --
+    once (odd) means it's on the boundary, twice (even) means it's an
+    internal join."""
+    all_edges = [e for face in faces for wire in face.wires() for e in wire.Edges]
+    counts = [1] * len(all_edges)
+    for i in range(len(all_edges)):
+        for j in range(i + 1, len(all_edges)):
+            if all_edges[i].is_same(all_edges[j]):
+                counts[i] += 1
+                counts[j] += 1
+    return [e for e, c in zip(all_edges, counts) if c % 2 == 1]
+
+
+def _assemble_boundary_loops(edges):
+    """Group an unordered set of boundary edges into one or more ordered
+    closed loops by chaining shared endpoints, each as a list of
+    (edge, v_from, v_to) triples -- the same shape `_wire_oriented_edges`
+    produces for a real wire, so both can feed `_loop_closes_full_turn`."""
+    remaining = list(edges)
+    loops = []
+    while remaining:
+        e0 = remaining.pop(0)
+        v_start = e0.Vertexes[0]
+        current = e0.Vertexes[-1]
+        loop = [(e0, v_start, current)]
+        while (current - v_start).length > 1e-6 and remaining:
+            for i, e in enumerate(remaining):
+                v0, v1 = e.Vertexes[0], e.Vertexes[-1]
+                if (v0 - current).length < 1e-6:
+                    loop.append((e, v0, v1))
+                    current = v1
+                    remaining.pop(i)
+                    break
+                elif (v1 - current).length < 1e-6:
+                    loop.append((e, v1, v0))
+                    current = v0
+                    remaining.pop(i)
+                    break
+            else:
+                break  # dangling/malformed boundary -- stop this loop here
+        loops.append(loop)
+    return loops
+
+
+def _loop_sample_points(oriented_edges):
+    """Flatten a loop's (edge, v_from, v_to) triples into one ordered list
+    of sampled 3D points around the whole loop -- fine per-edge sampling,
+    not just each edge's own net sweep, so a direction reversal is caught
+    even when it happens partway through a single curved (e.g. BSpline)
+    edge rather than only at edge boundaries."""
+    pts = []
+    for edge, v_from, v_to in oriented_edges:
+        p0, p1 = edge.ParameterRange
+        e0 = edge.value_at(p0)
+        e1 = edge.value_at(p1)
+        forward = (e0 - v_from).length + (e1 - v_to).length <= (e0 - v_to).length + (e1 - v_from).length
+        params = [p0 + (p1 - p0) * k / _WINDING_N_SAMPLES for k in range(_WINDING_N_SAMPLES + 1)]
+        if not forward:
+            params.reverse()
+        pts.extend(edge.value_at(p) for p in params[:-1])  # drop last -- it's the next edge's first sample
+    return pts
+
+
+def _loop_closes_full_turn(angle_of, oriented_edges):
+    """True if walking `oriented_edges` (a closed loop, as (edge, v_from,
+    v_to) triples in traversal order) genuinely wraps the axis behind
+    `angle_of` a full 360deg -- unlike checking a face's raw UV bounding
+    box (which a jagged, irregular trim can satisfy without actually
+    being closed, e.g. a bad cut whose boundary drifts to a different
+    height instead of closing cleanly), this requires that every maximal
+    run of consistent angular direction close to an exact multiple of
+    2*pi before it's allowed to reverse sense. A genuine annulus-shaped
+    boundary (top rim + bottom rim + seam) legitimately reverses sense
+    between the two rims -- that alone is not a sign of a broken face --
+    but each rim must complete a full lap, not a partial arc. Since the
+    loop is a cycle, a run can straddle the arbitrary start/end of the
+    sample sequence (e.g. a rim split into two arcs that happen to be the
+    list's first and last entries) -- handled by rotating to start right
+    after a genuine direction change before partitioning into runs. Works
+    on individually sampled points around the whole loop, not per-edge
+    net sweeps, so a reversal partway through one curved edge is caught
+    too, not just reversals that happen to fall on an edge boundary."""
+    # fast path: a single edge that already closes on itself (start ==
+    # end vertex) and genuinely sweeps a full turn on its own proves the
+    # loop wraps the axis completely, regardless of anything else in it.
+    if any(
+        (e.Vertexes[0] - e.Vertexes[-1]).length < 1e-6
+        and e.Length > 1e-3
+        and _closes_full_turn(_oriented_angle_sweep(angle_of, e, v_from, v_to))
+        for e, v_from, v_to in oriented_edges
+    ):
+        return True
+
+    points = _loop_sample_points(oriented_edges)
+    if len(points) < 3:
+        return False
+    angles = [angle_of(p) for p in points]
+
+    n = len(angles)
+    deltas = []
+    for i in range(n):
+        d = angles[(i + 1) % n] - angles[i]
+        while d > math.pi:
+            d -= twoPi
+        while d < -math.pi:
+            d += twoPi
+        deltas.append(d)
+
+    nonzero = [d for d in deltas if abs(d) >= 1e-4]
+    if not nonzero:
+        return False
+
+    split_idx = next(
+        (i for i in range(len(nonzero)) if (nonzero[i] > 0) != (nonzero[i - 1] > 0)),
+        None,
+    )
+    rotated = nonzero if split_idx is None else nonzero[split_idx:] + nonzero[:split_idx]
+
+    run_total = 0.0
+    run_dir = 0
+    for d in rotated:
+        this_dir = 1 if d > 0 else -1
+        if run_dir == 0:
+            run_dir = this_dir
+            run_total = d
+        elif this_dir == run_dir:
+            run_total += d
+        else:
+            if not _closes_full_turn(run_total):
+                return False
+            run_dir = this_dir
+            run_total = d
+    return _closes_full_turn(run_total)
+
+
+def _is_closed_by_winding(shape):
+    """True/False if `shape` (a single face, or a ShellGu of several faces
+    known to share the same analytic surface) genuinely closes a full
+    360deg around its cylinder/cone's own axis; None if the surface type
+    isn't one this check supports (caller should fall back)."""
+    if type(shape) is ShellGu:
+        params = _surface_axis_origin_e1(shape.Faces[0].Surface)
+        if params is None:
+            return None
+        angle_of = _angle_function(*params)
+        boundary = _boundary_edges_of_merged_faces(shape.Faces)
+        return any(_loop_closes_full_turn(angle_of, loop) for loop in _assemble_boundary_loops(boundary))
+
+    params = _surface_axis_origin_e1(shape.Surface)
+    if params is None:
+        return None
+    angle_of = _angle_function(*params)
+    return any(_loop_closes_full_turn(angle_of, _wire_oriented_edges(wire)) for wire in shape.wires())
+
+
 def is_closed_cylinder_cone(shape):
+    result = _is_closed_by_winding(shape)
+    if result is not None:
+        return result
+
     if type(shape) is not ShellGu:
         umin, umax, vmin, vmax = shape.ParameterRange
         return umax - umin > twoPi - 1e-5
@@ -1038,6 +1278,87 @@ def planar_edges(edges):
         return False
     else:
         return True
+
+
+def same_curve(edges):
+    """
+    True if every edge in `edges` lies on the SAME single underlying
+    curve -- unlike planar_edges, this does not require the curve to be
+    planar, since a legitimate boundary between two surfaces can be a
+    genuinely non-planar curve (e.g. the intersection of two
+    perpendicular cylinders). Used to tell a clean single-surface
+    boundary from a jumble of edges left by an irregular/messy cut.
+    """
+    if len(edges) == 0:
+        return False
+    e0 = edges[0]
+    if e0.Length < 1e-5:
+        return False
+    curve0 = e0.Curve
+    if curve0 is None:  # unsupported curve type (e.g. Hyperbola/Parabola)
+        return False
+    if len(edges) == 1:
+        return True
+
+    if type(curve0) is GLine:
+        for ei in edges[1:]:
+            curve_i = ei.Curve
+            if type(curve_i) is not GLine:
+                return False
+            if not is_parallel(curve0.Direction, curve_i.Direction, Tolerances().angle):
+                return False
+            if curve0.Direction.cross(curve_i.Position - curve0.Position).length > 1e-5:
+                return False
+        return True
+
+    if type(curve0) in (GCircle, GEllipse):
+        for ei in edges[1:]:
+            curve_i = ei.Curve
+            if type(curve_i) is not type(curve0):
+                return False
+            if not is_parallel(curve0.Axis, curve_i.Axis, Tolerances().angle):
+                return False
+            if (curve_i.Center - curve0.Center).length > 1e-5:
+                return False
+            if type(curve0) is GCircle:
+                if abs(curve_i.Radius - curve0.Radius) > 1e-5:
+                    return False
+            else:
+                if abs(curve_i.MajorRadius - curve0.MajorRadius) > 1e-5:
+                    return False
+                if abs(curve_i.MinorRadius - curve0.MinorRadius) > 1e-5:
+                    return False
+        return True
+
+    if type(curve0) is GBSpline:
+        # No cheap analytic identity test for a BSpline curve -- fall
+        # back to a weaker but meaningful check instead: the edges must
+        # chain into a single connected loop (each shares a vertex with
+        # the next) with a continuous tangent direction at every shared
+        # vertex. A single intersection curve split into several edges
+        # by the CAD kernel always has this property; an arbitrary
+        # jumble of unrelated edges from a messy cut does not.
+        remaining = list(edges)
+        chain = [remaining.pop(0)]
+        while remaining:
+            tail = chain[-1].Vertexes[-1]
+            for i, ei in enumerate(remaining):
+                if (ei.Vertexes[0] - tail).length < 1e-5 or (ei.Vertexes[-1] - tail).length < 1e-5:
+                    chain.append(remaining.pop(i))
+                    break
+            else:
+                return False  # no remaining edge continues the chain
+
+        for i in range(len(chain) - 1):
+            t1 = chain[i].derivative1_at(chain[i].ParameterRange[1])
+            t2 = chain[i + 1].derivative1_at(chain[i + 1].ParameterRange[0])
+            if t1.length < 1e-5 or t2.length < 1e-5:
+                continue
+            if not is_parallel(t1.normalized(), t2.normalized(), Tolerances().angle):
+                return False
+        return True
+
+    return False  # unsupported curve type
 
 
 def edge_1D(edge):

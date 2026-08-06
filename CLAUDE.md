@@ -1791,6 +1791,12 @@ fixed -- see "`ReversedConeCylinder`'s AND/OR grouping..." below.
 `placa3`/`PiezaDavid`/`Torus_solid1`/`2_degen_torii`'s exit-152 case
 remain open. `SCDR_90` still lowest priority (known, pre-existing).
 
+**Correction, later same session**: `placa3`'s "535 sigma" figure above
+was a stale-output-file artifact of this pipeline, not a real failure --
+see "`placa3`'s ... volume failure was a stale-output-file artifact"
+below for the full account. `PiezaDavid`/`Torus_solid1`/`2_degen_torii`
+were independently re-checked and are confirmed real.
+
 ### `ReversedConeCylinder`'s AND/OR grouping was decided from an arbitrary, non-invariant direction -- found and fixed via the MCNP volume check
 
 `cyl_cone.stp`'s zero-tally failure (above) traced to a real bug, found
@@ -1897,6 +1903,347 @@ wasn't otherwise flagged). Not yet investigated -- a real, distinct
 finding for next session, likely related to this file's `Enclosure`-
 type solids specifically (the one folder in this fixture set built
 around that feature).
+
+### `placa3`'s "535 sigma" volume failure was a stale-output-file artifact, not a real bug -- a d1suned/MCNP gotcha for this whole verification pipeline
+
+Investigated `repo_DoubleCylinder_placa3` (0.254, 535 sigma from the
+original batch) as the next-worst failure after the `cyl_cone` fix above.
+Several controlled experiments were run first, each comparing a real,
+GEOUNED-native transform of the solid (`GSolid.translate()`/`.rotate()`,
+both thin wrappers around native `Part.Shape.translate()`/`.rotate()` --
+a rigid `gp_Trsf` move, not a re-tessellation) followed by
+`.export_step()` and a full reconversion:
+- Rotating `placa3.step`'s cylinder/cone axis to align with `+Y` (moving
+  it off the `GQ` quadric form onto an axis-aligned `K/Y` cone, same
+  distance from origin, ~9487): tally went from the reported 0.254 to
+  0.996.
+- Translating `placa3.step`'s center of mass to the exact origin, no
+  rotation (keeping the `GQ` form): tally went to 0.9998.
+- A direct structural diff of the two resulting `.mcnp` files against the
+  original confirmed the cell's boolean expression text and surface-type
+  sequence were byte-identical -- only numeric surface parameters
+  differed -- ruling out a decomposition/classification difference as
+  the explanation.
+
+This looked like a real distance-dependent `GQ`-precision bug (this
+project's own `q_form_cone`/`q_form_cyl` compute far-from-origin
+position-dependent coefficients that could plausibly suffer catastrophic
+cancellation). **It wasn't.** Every attempt to reproduce it synthetically
+failed: rotating/translating the already-verified-clean `cyl_cone.stp`
+to placa3's *exact* axis, *exact* absolute center (not just matching
+distance), and confirmed-identical radius (50.0) and semiangle (7.0000
+deg) always gave a perfect tally (0.999-1.000), at every distance tested
+from 50 to 50000 units. Checking placa3's own real axis/semiangle values
+to full float precision (`0.6427876096867989`, `-0.7660444431187603`,
+`SemiAngle=7.000000000022743`deg, `|Axis|` deviation from 1.0 exactly
+`0.0`) showed no meaningful numerical noise either -- ruling out a
+"Fusion-360-sourced imprecision" hypothesis too.
+
+**The actual cause, found by diffing the two `.mcnp` files directly**:
+`repo_DoubleCylinder_placa3/model.mcnp` (the original, "failing" run)
+and a version reloaded/re-exported through a bare, transform-free STEP
+round-trip (`solid = Gload_step(...)[0]; solid.export_step(...)`, then
+reconverted) were **byte-identical** apart from two comment lines
+(source filename, creation date) -- an impossible result if a
+deterministic solver produced 0.254 for one and 0.9998 for the other.
+The real explanation: `d1suned`/MCNP **refuses to overwrite an existing
+`outp`/`mctal`/`runtpe`** -- if those files already exist when a run
+starts, it silently writes to `outq`/`mctam`/`runtpf` instead. The "Re-ran
+the entire 110-file MCNP volume-check batch" step mentioned above (after
+the `cyl_cone`/`ReversedConeCylinder` fix) did exactly this for several
+run directories, including `placa3` -- it produced a fresh, correct
+`outq` (13:29, tally `0.999842 +/- 0.30%`) sitting right next to the
+stale pre-fix `outp` (09:51, tally `0.254`) -- but `scripts/analyze_results.py`
+only ever scans files literally named `outp`, so it kept silently
+reporting the stale number, and every "confirmed" observation made this
+session about `placa3` (round-trip healing, distance sensitivity, GQ
+precision) was actually chasing a phantom -- **`placa3` was already
+correct with the current code before any of this session's investigation
+started.** A forced clean rerun (`rm -f outp runtpe mctal`, then
+`d1suned` fresh) on the untouched original `model.mcnp` confirms this:
+`0.999842 +/- 0.30%`, matching `outq` exactly.
+
+**The other 3 previously-reported failures were checked for the same
+stale-`outp`/live-`outq` split and are confirmed real, not artifacts**:
+`repo_Misc_PiezaDavid`, `repo_SCDR_90`, `repo_Torus_solid1` each also
+have an `outq` sibling from the same later batch rerun, but in all 3
+cases `outq`'s tally is byte-identical to `outp`'s (`1.08460`, `0.91941`,
+`0.97055` respectively, matching the original report) -- these files'
+`model.mcnp` wasn't touched by the `ReversedConeCylinder` fix, so the
+"rerun" reproduced the same (still genuinely wrong) result under a
+different filename. `solidos_Torus_2_degen_torii` also still hits the
+same `fatal error. f card cell 1 of bin 1 tally 4 not found` in both
+`outp` and `outq` -- also confirmed real, unrelated to this artifact.
+
+**Open follow-up, not yet done**: `scripts/analyze_results.py` needs to
+either always force-clean (`rm -f outp mctal runtpe outq outr mctam mctan
+runtpf runtpg`) before each rerun, or scan for and warn about `outq`/`outr`-style
+siblings so a skipped cleanup step is never silently invisible again.
+The corrected failure list going into next session is just **3 real
+issues**: `PiezaDavid` (39 sigma), `Torus_solid1` (3.7 sigma, borderline),
+and `2_degen_torii`'s fatal tally error -- `SCDR_90` remains the known,
+pre-existing, lowest-priority one already marked in `tests/test_cadtocsg.py`.
+
+**Genuine topological findings on `placa3.step`, kept on record as a
+concrete pyOCC test case per explicit user request** -- these are real
+properties of the file (confirmed present identically in both the
+original and the STEP-round-tripped copy, so not an artifact of any
+transform), independent of the stale-output confusion above, and exactly
+the kind of silent-error category this project's eventual pyOCC
+migration (face-adjacency graph, non-manifold-edge handling -- see
+"Motivating problem" at the top of this file) is meant to address:
+- **Two multi-wire planar faces**: face index 3 (3 wires, 27 edges) and
+  face index 20 (3 wires, 25 edges) out of 24 total faces -- a plane
+  with holes/islands rather than a single simple outer boundary. Not
+  necessarily a defect on its own, but exactly the shape `GFace.wires()`/
+  `.outer_wire()`'s heuristic (`pick_outer_wire`) has to disambiguate
+  correctly.
+- **One non-manifold edge, shared by only 1 face instead of 2**: a
+  `BSplineCurve` of length 20.0, tolerance `1e-7`. `native.isValid()`
+  still reports `True` for the whole solid despite this -- OCC tolerates
+  it, but it is precisely the kind of signal `GSolid.faces_sharing_edge()`
+  (added earlier this migration, currently uncalled anywhere in GEOUNED)
+  exists to detect.
+- **The `ReversedConeCylinder` chain's 9 segments use two slightly
+  different axis vectors instead of one consistent axis**: 5 segments
+  use `(0.6427876096867989, -0.7660444431187603, ~0)`, the other 4 use
+  `(0.6427839377443012, -0.766047524229359, 0.0)` -- differing at the
+  5th significant digit (~1e-5 relative), the same order of magnitude as
+  this file's elevated BRep edge/vertex tolerance (up to `5.21e-05`,
+  vs. a flat `1e-07` after STEP re-export). A real example of "near-but-
+  not-exactly-parallel" axes as actually authored by upstream CAD
+  tooling (this file's STEP header identifies it as from Autodesk Fusion
+  360, `FILE_NAME('Open CASCADE Shape Model',...,'Fusion001',...)`, in a
+  richer AP214 representation -- `PCURVE`/`SURFACE_CURVE`/
+  `DEFINITIONAL_REPRESENTATION` entities that `cyl_cone.stp`'s simpler
+  legacy-style export has none of) that any future is-this-the-same-axis
+  comparison (`is_same_cylinder`, `get_join_cone_cyl`'s adjacency walk,
+  `convex_planes`) must tolerate correctly, rather than silently treating
+  as two different features.
+
+Diagnostic scripts (scratchpad only): `diag_placa3_topology.py` (face/
+edge/vertex counts, multi-wire faces, non-manifold-edge detection via
+`GSolid.faces_sharing_edge`-equivalent hashing, tolerance ranges),
+`diag_placa3_surface_params.py` (per-segment RCC axis/center/apex/radius/
+semiangle dump and pairwise diff, original vs. round-tripped),
+`make_placa3_roundtrip.py` (the decisive zero-transform STEP round-trip
+test), `rerun_placa3_original.sh` (forced clean rerun proving the
+original was never actually broken).
+
+### `PiezaDavid.stp`'s real volume failure: `is_closed_cylinder_cone` accepted a face that wasn't actually a closed 360° cylinder
+
+Follow-up to the `PiezaDavid` deep-dive in the previous session (traced to
+`build_can_params`'s Cylinder-branch plane-fitting on a non-planar BSpline
+boundary, left unresolved -- see the paused investigation above). Picking
+that back up surfaced a *different*, more fundamental bug one level
+upstream: `get_can_surfaces` was identifying a Can on a cylinder face
+(radius 15, axis Z, piece 0 of the decomposed solid) that visual
+inspection confirmed **isn't a closed cylinder at all** -- "para que haya
+una superficie can tiene que haber un cilindro cerrado (360º) y aqui no
+hay" (user's own diagnosis, confirmed correct).
+
+**Root cause**: `is_closed_cylinder_cone` (`meta_surfaces_utils.py`), for
+the single-face (non-`ShellGu`) case, only checked whether the face's raw
+UV bounding box (`face.ParameterRange`) spans a full `2*pi` in U. This is
+necessary but not sufficient: a face whose boundary is a genuine, clean
+closed loop always satisfies it, but so does a face whose boundary is
+*jagged and irregular* over part of its circumference, as long as that
+irregular part's U-projection still happens to span the missing angular
+range. Confirmed exactly this for the offending face: its wire has a
+clean half-circle at one Z level (2 `GCircle` arcs, U 90°→270°) closed by
+2 seam-like `GLine` edges, but the *other* half (U 270°→90°, wrapping
+through 0°) is not a matching circle at the same height -- it's 2
+irregular `GBSpline` edges that drop to a completely different Z, left
+over from a bad prior cut. The face's overall `ParameterRange` still
+spans the full `2*pi` (each half contributes non-overlapping U), so the
+old check passed it as "closed" even though it plainly isn't one.
+
+**Fix, found after two rejected simpler ideas** (both discussed with and
+rejected by the user first, per this project's established discipline
+around `can_region`/`get_can_surfaces`-adjacent shared logic):
+- *Rejected idea 1*: require the closing surface at each end to be a
+  `GPlane`. Wrong -- a Can's end can legitimately be closed by a sphere,
+  cylinder, or cone, not just a plane; only the *whole* end needs to be a
+  single coherent surface.
+- *Rejected idea 2*: require the shared boundary edges to be planar
+  (`planar_edges`). Wrong -- a cylinder closed by a *perpendicular*
+  cylinder of a different radius produces a genuinely non-planar (but
+  still legitimate) intersection curve.
+- *The actual fix*: replace the UV-bounding-box check with a real
+  topological invariant, suggested by the user directly -- walk the
+  face's outer wire in traversal order, and track the *unwrapped*
+  cumulative angle swept around the cylinder's own axis (derived from
+  `tangent x axis`'s radial component, `-r*(dtheta/ds)` -- see the
+  derivation this was built from). Two refinements were needed before
+  this was safe, both found by testing against real cases beyond the
+  original bug, not just trusting the math:
+  - *First attempt (monotonic-only)*: require the angle to never reverse
+    sense while walking the wire. Wrong -- a completely normal closed
+    cylinder capped at both ends (e.g. `ConeSphere.stp`, `drillsphere.stp`
+    in the wider `Solidos/` corpus) legitimately reverses sense between
+    its top and bottom rims, the same way a washer's outer and inner
+    boundary wind oppositely in Green's theorem. Rejecting any reversal
+    at all produced false negatives on real, valid Cans.
+  - *Second attempt (each run must close before reversing, non-cyclic)*:
+    partition the wire into maximal same-sense runs and require each to
+    independently sum to a clean multiple of `2*pi` before the next
+    reversal. Still wrong on one further real case (`tank.stp`, in the
+    corpus above): a rim's `2*pi` sweep can be split across the *start*
+    and *end* of the edge list (e.g. a rim represented as 2 arcs that
+    happen to be the wire's first and last edges, with the opposite rim's
+    edges in between) -- since the wire is a cycle, this is one
+    continuous run, not two incomplete ones, but naive linear indexing
+    treats them as separate and wrongly rejects. Fixed by rotating the
+    sequence of edge sweeps to start right after a genuine direction
+    change before partitioning into runs, so no run ever needs to be
+    merged across the artificial start/end boundary.
+  - The final, verified algorithm: `_is_closed_by_winding`
+    (`meta_surfaces_utils.py`) samples each wire edge, computes its
+    oriented angular sweep, and requires every maximal same-sense run
+    (cyclically partitioned) to close to a clean multiple of `2*pi`. A
+    single edge that's already a closed loop on its own (start==end
+    vertex) is fast-pathed, but *only* after confirming its own sweep
+    also closes cleanly -- an earlier version trusted vertex coincidence
+    alone and was fooled by a genuinely degenerate face in
+    `Cans/rev_can_1.stp` (a `GEllipse` edge that happens to close on
+    itself, sitting in a wire that *also* contains an obviously-garbage
+    `GBSpline` edge of length ~282030 with coordinates in the hundreds of
+    thousands -- unrelated to this fix, and plausibly the actual cause of
+    the long-unresolved `fwd_can_1.stp`/`rev_can_1.stp` "`makeCan` raises
+    `TypeError`" bug noted in an earlier session).
+  - **Extended to `GCone` and `ShellGu`** in the same session, per
+    explicit user request ("hay que extenderlo a conos, y sobre todo a
+    los shell"). Cone support was direct (`GCone` has no `XDir` the way
+    `GCylinder` does, but the winding math never needed an absolute
+    reference direction to begin with -- only *changes* in angle are
+    ever measured -- so an arbitrary stable perpendicular to the axis,
+    `_perpendicular_axis`, works for any surface type; `GCylinder` still
+    prefers its own real `XDir` when it has one, purely to stay byte-for-
+    byte on the exact frame this was validated against). `ShellGu`
+    (several faces merged because they're the same analytic surface, e.g.
+    a cylinder split into pieces by an earlier cut) generalizes the same
+    invariant from "circulation around one face's wire" to "circulation
+    around the union's outer boundary": `_boundary_edges_of_merged_faces`
+    collects every edge from every merged face's own wires and keeps only
+    the ones occurring an odd number of times (an edge shared between two
+    of the merged faces, an internal seam where they join, occurs twice
+    and is excluded); `_assemble_boundary_loops` chains the surviving
+    edges into ordered closed loops by shared endpoints (there is no
+    single native "wire" for a merged, non-contiguous boundary); the same
+    `_loop_closes_full_turn` check then runs on each assembled loop,
+    unchanged.
+  - **A real granularity bug found while re-validating after the Cone/
+    Shell extension**: sweeping the whole 60-file `Solidos/` corpus after
+    the extension showed 6 files regressing (`FwdRevCan.stp`,
+    `rev_can_1.stp`, `placa.stp`, `placathin.stp`, `rc20.stp`,
+    `drillsphere.stp`) -- but isolating Cone vs. Shell (toggling each
+    independently via monkeypatch) showed the *same* regression persisted
+    even with both disabled, proving neither was the actual cause. Root
+    cause, found by diffing against the original standalone validation
+    script line by line: that script sampled and computed direction
+    *within* each edge at fine granularity (many points per edge, deltas
+    between consecutive sample points) before partitioning into
+    same-sense runs; the ported source version had been simplified to
+    compute one net sweep *per edge* first, then partition runs between
+    edges -- losing sensitivity to a direction reversal that happens
+    *partway through* a single curved (BSpline) edge rather than exactly
+    at an edge boundary. Fixed by adding `_loop_sample_points` (flattens
+    a loop's edges into one ordered list of individual sample points) and
+    running the run-partition logic on that flat list, matching the
+    validated script's granularity exactly. **Lesson**: a standalone
+    validation script and its "ported" source version are only actually
+    equivalent if verified to be -- re-run the full corpus regression
+    after every refactor of already-validated logic, not just after
+    genuinely new logic; a "faithful" port can silently change behavior
+    through a granularity/aggregation-order difference that looks
+    equivalent on paper.
+
+**Verification**: tested against 4 hand-picked real cases (the broken
+`PiezaDavid` face; `drillsphere.stp`'s sphere-closed cylinder; `ConeSphere.
+stp`'s opposite-sense double rim; `rev_can_1.stp`'s degenerate face) at
+each iteration, then a full differential regression across all 60 files
+of the `Solidos/` corpus (Can/TCone/RoundCorner/MultiRoundCorner/
+MultiPlane counts, baseline vs. patched, via `git stash`) after every
+candidate change -- caught several wrong "improvements" before they were
+ever considered final (see the granularity bug above, and the
+`outer2_only` investigation below). Final state (`_is_closed_by_winding`
+alone, before the `outer2_only` fix below): 0 diffs across the whole
+corpus, `PiezaDavid.stp`'s false `RevCan` gone (`RoundC` unchanged at 4),
+and the full `tests/geo` + `tests/test_cadtocsg.py` suite green (156/156).
+
+### The washer-plane gap in `get_can_surfaces`: investigated, reverted twice, fixed on the third attempt
+
+A separate, pre-existing issue surfaced while chasing the above: with the
+winding fix in place, `tank.stp` (`testing/inputSTEP/Torus/`) crashed in
+`isSameInterface` ("same Boolean Surface defined with oposition name").
+Traced to `get_can_surfaces` silently rejecting a legitimate concentric
+cylinder (radius 325) closed by *washer-shaped* (annular, 2-wire) planes,
+because `commonEdge`'s `outer2_only=True` only searches the closing
+plane's *outer* wire, missing the shared boundary when it's actually the
+plane's *inner* wire (the hole). This specific crash turned out to be a
+red herring -- fixing the cyclic-partition bug (above) independently made
+it disappear -- but the underlying washer-plane gap was real and affected
+more than just `tank.stp`.
+
+**First attempt**: relax `outer2_only` to `False` unconditionally in
+`get_can_surfaces`'s two `commonEdge` calls. Broke `drillsphere.stp`
+(a previously-correct `RevCan`, lost). Reverted.
+
+**Second attempt**: relax `outer2_only` only as a *fallback*, when the
+strict (outer-wire-only) search finds nothing at all -- reasoning that
+this narrows the change to exactly the previously-empty-result cases and
+should leave every already-working case untouched. **Still broke
+`drillsphere.stp`, identically.** This showed the mental model was wrong:
+`get_Can` is called during *decomposition* itself, not just at
+conversion-phase classification, and since `generic_split` stops at the
+first candidate surface that actually splits the solid, *any* change to
+which surfaces `get_Can` accepts -- even one that looks purely additive
+-- can steer the whole decomposition down a different path for an
+unrelated face elsewhere in the same solid. A local-looking, seemingly
+safe fallback is not actually local. Reverted again.
+
+**Third attempt, this time correct**: full 60-file differential
+regression (Can/TCone/RoundCorner/MultiRoundCorner/MultiPlane counts) run
+against *both* choices side by side -- `outer2_only=True` (strict) vs.
+`outer2_only=False` (unconditional) -- rather than reasoning about it in
+the abstract. Result: strict breaks 5 files (`FwdRevCan.stp`,
+`rev_can_1.stp`, `placa.stp`, `placathin.stp`, `rc20.stp` -- all losing
+real Cans/RoundCorners to the same washer-plane gap `tank.stp` had) while
+relaxed breaks only 1 (`drillsphere.stp`). Net, relaxed is strictly
+better across the corpus, and critically: **zero `MultiPlane` differences
+either way** -- the exact regression class the user had warned about from
+a past attempt at this same kind of change ("cuando lo cambie, despues
+fueron los multiplane que no funcionaban como queria") did not recur here.
+Applied `outer2_only=False` unconditionally at both `commonEdge` call
+sites in `get_can_surfaces`. Final verified state: full `tests/geo` +
+`tests/test_cadtocsg.py` suite green (156/156), and only 1 file
+(`drillsphere.stp`) differs from the pre-session baseline across the full
+60-file `Solidos/` corpus.
+
+`drillsphere.stp`'s regression (one `RevCan` lost) is a known, accepted
+trade-off, not yet root-caused to the same depth as everything else in
+this section -- confirmed to be a genuine change (not a fluke: reproduced
+identically across every algorithm variant tried), but *why* accepting
+the washer-plane's inner-wire boundary elsewhere in the same solid steers
+`generic_split` away from the surface that used to produce this Can was
+not traced step by step the way the `PiezaDavid`/`get_can_surfaces`
+investigation earlier in this file was. Whether it's a real geometric
+regression or just a different, equally-valid decomposition (the kind of
+"expected fallout, not a regression" outcome documented for the
+`MultiPlane` fix earlier in this file, where several files' `RoundC`/
+`RevCan` counts shifted but still validated 300/300 against independent
+CAD ground truth) has not been checked via `check_sign`-style
+verification -- flagged as the natural next step if this file's specific
+behavior ever needs to be trusted further.
+
+**Any future change in this area must re-run the full 60-file `Solidos/`
+differential regression (Can/TCone/RoundCorner/MultiRoundCorner *and*
+MultiPlane counts, all of them, compared both ways, not reasoned about
+abstractly) before trusting any local-looking fix** -- a change that
+looks correct, or even looks like a strict narrowing, for one target face
+can silently steer decomposition elsewhere in ways no single-file check
+will catch, and intuition about which direction (stricter vs. looser) is
+"safer" has now been wrong twice in a row in this exact function.
 
 ## Code style preference
 

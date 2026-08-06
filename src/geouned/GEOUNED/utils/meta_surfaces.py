@@ -13,6 +13,7 @@ from .meta_surfaces_utils import (
     most_outer_faces,
     commonEdge,
     planar_edges,
+    same_curve,
     eligible_plane,
 )
 
@@ -126,13 +127,27 @@ def get_can_surfaces(cylinder, solidFaces):
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
-            if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
-                edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=True)
+            if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6 and is_parallel(
+                s.Surface.Axis, cylinder.Surface.Axis, Tolerances().angle
+            ):
+                edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
                 if edges is not None:
                     if planar_edges(edges):
                         surfaces.append((s, None))
                         continue
         elif type(s.Surface) is GTorus:
+            return None, None
+
+        # A Can's end can legitimately be closed by any surface type
+        # (plane, sphere, cylinder, cone -- even a non-planar boundary,
+        # e.g. a cylinder perpendicular to this one), but the whole end
+        # must be one clean boundary with that single surface, not
+        # several edges left over from an irregular cut. same_curve
+        # checks curve identity rather than planarity, so it accepts a
+        # genuinely non-planar intersection while still rejecting a
+        # jumble of unrelated edges.
+        edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
+        if edges is None or not same_curve(edges):
             return None, None
 
         r = region_sign(cylinder_shell, s)
@@ -146,11 +161,18 @@ def get_can_surfaces(cylinder, solidFaces):
 
     if len(ext_faces) > 2:
         ext_faces, remove_index = most_outer_faces(cylinder, ext_faces)
+        if remove_index:
+            # remove_index is non-empty when one end has faces belonging
+            # to neither extreme face's own surface -- i.e. that end is
+            # not a clean single-surface closure (e.g. an irregular cut
+            # leaving several unrelated small faces), so this cylinder
+            # isn't a real Can. Without this check, most_outer_faces'
+            # pruning silently discards those mismatched faces and picks
+            # one of the remaining ones as if it cleanly closed the end.
+            return None, None
         for s in reversed(surfaces[1:]):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
-                if s[0].Index in remove_index:
-                    faceindex.remove(s[0].Index)
 
     return surfaces, faceindex
 
