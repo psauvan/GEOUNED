@@ -880,9 +880,26 @@ class GSolid:
         """
         Remove redundant edges/faces left by a boolean operation between
         coplanar/tangent surfaces (equivalent to `Part.Shape.removeSplitter()`).
-        Purely cosmetic simplification -- never changes the enclosed volume.
+        Meant to be a purely cosmetic simplification that never changes the
+        enclosed volume -- but on some tangent/cavity topologies OCC's
+        `removeSplitter()` silently corrupts the shape instead (confirmed on
+        a solid-with-cavity boolean-cut result, where it inflated the volume
+        by ~3.4% and flipped face orientations on the cavity's boundary).
+        Falls back to the un-refined solid whenever the volume moved by more
+        than floating-point noise, since a real simplification is supposed
+        to be volume-invariant by definition. `removeSplitter()` mutates the
+        shape it's called on as a side effect (confirmed empirically: even
+        though it returns a distinct object, the *receiver*'s own `.Volume`
+        changes too, to a third, still-wrong value) -- so it's called on a
+        copy, never on `self.__native__` directly, keeping the fallback
+        genuinely pristine.
         """
-        return GSolid(self.__native__.removeSplitter())
+        native = self.__native__
+        original_volume = native.Volume
+        refined = native.copy().removeSplitter()
+        if abs(refined.Volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
+            return GSolid(native)
+        return GSolid(refined)
 
     def translate(self, vector: GVector) -> "GSolid":
         shape = self.__native__.copy()

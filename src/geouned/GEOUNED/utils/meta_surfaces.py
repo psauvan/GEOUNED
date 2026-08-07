@@ -133,7 +133,7 @@ def get_can_surfaces(cylinder, solidFaces):
                 edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
                 if edges is not None:
                     if planar_edges(edges):
-                        surfaces.append((s, None))
+                        surfaces.append((s, None)) # adjacent cylinder has same radius and is parallel to cylinder.
                         continue
         elif type(s.Surface) is GTorus:
             return None, None
@@ -151,13 +151,17 @@ def get_can_surfaces(cylinder, solidFaces):
             return None, None
 
         r = region_sign(cylinder_shell, s)
-        surfaces.append((s, r))
+        omit = True
+        if r == "OR" and cylinder.Orientation == "Forward":
+            omit = False
+            r = "AND"   
+        elif r == "AND" and cylinder.Orientation == "Reversed":
+            omit = False    
+            r = "OR"
+        surfaces.append((s, r, omit))
 
-        # s_value = 1 if r == "AND" else -1
-        # if s_value != cyl_value:
-        #    faceindex.add(s.Index)  # will not split with adjacent surface
-        # check if it works like that
-        faceindex.add(s.Index)
+        if omit:
+            faceindex.add(s.Index)
 
     if len(ext_faces) > 2:
         ext_faces, remove_index = most_outer_faces(cylinder, ext_faces)
@@ -193,7 +197,7 @@ def get_tcone_surfaces(cone, solidFaces):
             return None, None
 
         r = region_sign(cone_shell, s)
-        surfaces.append((s, r))
+        surfaces.append((s, r, True))
         # s_value = 1 if r == "AND" else -1
         # if s_value != kne_value:
         #    faceindex.add(s.Index)  # will not split with adjacent surface

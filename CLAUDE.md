@@ -2245,6 +2245,163 @@ can silently steer decomposition elsewhere in ways no single-file check
 will catch, and intuition about which direction (stricter vs. looser) is
 "safer" has now been wrong twice in a row in this exact function.
 
+### `drillsphere.stp`'s `outer2_only=False` regression: confirmed harmless via the MCNP volume check
+
+Closes the "not yet root-caused" open question from the section above.
+Ran `drillsphere.stp` through the full GEOUNED -> MCNP -> d1suned
+stochastic volume check (the same `volSDEF=True` technique documented
+under "MCNP stochastic volume check" earlier in this file): tally =
+1.00055 +/- 0.20% (0.3 sigma from 1.0), SD4 matches the true CAD volume
+exactly, zero lost particles. Confirms directly what was only inferred
+before: losing this file's `RevCan` classification under
+`outer2_only=False` does not corrupt the actual decomposed geometry --
+the solid still gets built correctly through a different path, exactly
+the kind of "different, equally-valid decomposition" outcome already
+seen for the `MultiPlane` fix. No further action needed on this file.
+
+### `GSolid.refine()` silently corrupting solids with an internal cavity -- `removeSplitter()` mutates its own receiver as a side effect
+
+Found while building a small reusable test-fixture series (3 solids +
+their complements, saved under `Solidos/trier/series_solid*`, per
+explicit user request to keep them as regression fixtures): the
+`solid2` complement (`universe - (half-cylinder fused with an inclined
+cylinder stub)` -- a solid with a genuine internal cavity, the hole left
+by the subtracted stub) reliably gave a d1suned volume tally of 0.981
+(9.4 sigma off), and its `SD4` reference volume (the decomposed-piece
+sum) didn't even match the true CAD volume (65075.3460 vs 62924.6537 mm^3).
+
+Traced to `GeounedSolid.__init__`'s `comsolid.refine().Solids` call
+(`geouned_classes.py:69`) -- `GSolid.refine()`
+(`geo/_freecad_impl.py`) wraps native `Part.Shape.removeSplitter()`,
+documented (both in GEOUNED and generally) as a purely cosmetic
+simplification that never changes the enclosed volume. For this
+cavity topology, that's false: `removeSplitter()`'s own return value has
+volume 65075.3460 instead of the correct 62924.6537 -- a real ~3.4%
+corruption, not float noise (confirmed deterministic across repeated
+calls). The 3 cylindrical faces bounding the cavity also flip from the
+correct `Reversed` to `Forward` as a direct consequence of this
+corrupted topology -- not a separate orientation-reading bug, as first
+suspected when the user asked why these faces read `Forward`.
+
+**A second, nastier layer under this**: `removeSplitter()` also mutates
+the shape it's called *on* as a side effect, not just the shape it
+returns. Confirmed directly: `native.Volume` read immediately before and
+after calling `native.removeSplitter()` differs (62924.6537 ->
+62173.6484, a *third*, still-wrong value), even though the returned
+object is provably distinct (`native is refined` -> `False`). This
+invalidated the first attempted fix (compare `native.removeSplitter().Volume`
+against `native.Volume`, fall back to `native` if they differ) -- by the
+time the fallback path reads `native.Volume` again, `native` has already
+been silently corrupted by the very `removeSplitter()` call being used
+to decide whether to trust it.
+
+**Fix**: `GSolid.refine()` now calls `removeSplitter()` on `native.copy()`,
+never on `self.__native__` directly, so the pristine original is never at
+risk regardless of which branch is taken; falls back to the untouched
+original whenever the refined volume differs by more than float noise
+(`1e-6` relative). Verified: `solid2_complement` (with the user's
+independently-corrected CAD, saved over `Solidos/trier/series_solid2_complement.stp`)
+now gives a d1suned tally of 0.996 (1.7 sigma), `SD4` matches true volume
+exactly, and the 3 cavity faces correctly read `Reversed`. Full
+`tests/geo` + `tests/test_cadtocsg.py` suite green after the fix (this
+was checked in isolation, before the unrelated Can/TCone regressions
+below existed).
+
+### Can/TCone secondary-surface orientation rework -- in progress, 2 known regressions, committed as WIP
+
+User-driven change (via debugger, iterated live in this session) to
+`get_can_surfaces` (`meta_surfaces.py`) and `build_can_params`
+(`functions.py`): `region_sign`'s AND/OR result is now normalized
+against the main cylinder/cone's own orientation (`Forward` always paired
+with `AND`, `Reversed` always paired with `OR` -- flipping `r` and
+tracking whether a flip happened via a new `omit` flag threaded through
+as a 3rd tuple element, `(s, r, omit)`, replacing the old `(s, r)` pairs).
+`build_can_params` mirrors this: when `omit` is `False`, the secondary
+surface's own plane normal (or, for Cylinder/Cone/Sphere secondaries, its
+effective `Orientation`) gets flipped too, compensating so the physical
+region stays the same while the *representation* becomes uniform.
+
+Motivated directly by the `solid2`/`solid2_complement` investigation in
+this session (`get_can_surfaces` picking a distant, unrelated real face
+-- the half-cylinder's own symmetry-cut plane -- as if it were a local
+Can end cap, then combining it via a plain `OR` that engulfed the whole
+model) -- though that specific bug's root cause turned out to be
+`refine()`'s corruption above, not this. This orientation-normalization
+change is a separate, broader change to the same area, not yet fully
+verified.
+
+**2 known regressions, not yet fixed**: `tank.stp`
+(`testing/inputSTEP/Torus/tank.stp`, now also copied to the new
+`Solidos/no_convierte/` -- see below) and `Solidos/Cans/rev_can_1.stp`
+both now crash with `RuntimeError: same Boolean Surface defined with
+oposition name` (`isSameInterface`, `boolean_function.py:273`) during
+conversion -- `add_forwardCan`/`add_cone` respectively. A separate,
+already-identified-but-reverted issue in the same area (`get_tcone_surfaces`
+producing the new 3-tuple while `build_tcone_params` still expected the
+old 2-tuple, `ValueError: too many values to unpack`) was fixed and then
+explicitly reverted at the user's request ("el erratum del tcone no es
+la fuente del fallo") to keep investigating the real regression instead
+-- that unpacking fix is *not* in this commit, `build_tcone_params` is
+currently broken again the same way if a TCone's `get_tcone_surfaces`
+path is ever exercised.
+
+Committed as-is at explicit user instruction ("has el commit. veremos
+los bugs despues") -- **this is a known-broken checkpoint, not a
+verified fix**. Next session should resume by root-causing the
+`isSameInterface` opposition-name error on `tank.stp`/`rev_can_1.stp`
+before touching anything else in this area.
+
+### Full-corpus MCNP volume re-check after this session's fixes, and 3 new `Solidos/` triage folders
+
+Re-ran the full GEOUNED -> MCNP -> d1suned stochastic volume check (per
+"MCNP stochastic volume check" above) against the *current* code state
+(refine() fix in place; the in-progress, still-broken Can/TCone rework
+also in place) across `testing/inputSTEP` + `Solidos/` (150 STEP files
+found, 147 converted successfully). Result: 335 solid-cell tallies,
+94.3% within 2 sigma (up from 92.3-92.7% in the prior full-corpus runs
+documented earlier in this file), 4.5% marginal (2-3 sigma, consistent
+with expected statistical noise at this sample size), 1.2% (4 cells)
+real failures beyond 3 sigma:
+- `repo_SCDR_90` (38.1 sigma) -- known, pre-existing, already marked
+  `# fails (pre-existing)` in `tests/test_cadtocsg.py`.
+- `repo_Torus_solid1` (3.84 sigma) -- known, already documented above as
+  borderline-but-real.
+- `solidos_PiezaDavid_pieces_piece_0` (9.8 sigma) -- **new**, not
+  previously seen in any corpus scan this project has run. Not yet
+  investigated.
+- `claude_solid2_complement` (9.6 sigma) -- a stale leftover run
+  directory from this session's own debugging, using the CAD *before*
+  the user's fix; not a real corpus finding (the corrected file, run
+  under its proper name `claude_series_solid2_complement`, gives 0.996 /
+  1.7 sigma and does not appear in the failing list).
+
+`solidos_Torus_2_degen_torii` (no tally section at all) and
+`solidos_Enclosures_w_encl` (10 lost particles) remain open exactly as
+before -- unchanged by this session's fixes, not investigated.
+
+3 of the 150 files failed to convert at all (crashed, not a volume
+issue): `repo_Torus_tank`, `solidos_Cans_rev_can_1` (both regressions
+from the in-progress Can/TCone rework above) and
+`solidos_BadCADModel_series_solid2_complement` (the deliberately-archived
+bad CAD, expected to fail).
+
+**New corpus-organization convention, per explicit user instruction**:
+`Solidos/` now has 3 new triage subfolders, populated as this kind of
+investigation finds new cases (going forward, save any newly-identified
+case into the matching folder rather than leaving it loose):
+- `Solidos/BadCADModel/` -- STEP files with a genuine CAD-level
+  structural defect (not a GEOUNED bug) -- e.g. the original,
+  user-corrected `series_solid2_complement.stp` cavity-topology case
+  above.
+- `Solidos/no_convierte/` -- STEP files where GEOUNED itself crashes
+  during conversion. Currently: `tank.stp`, `series_solid2_complement.stp`
+  (the archived bad-CAD copy), `rev_can_1.stp`.
+- `Solidos/convierte_bad_volume/` -- STEP files that convert without
+  crashing but whose d1suned volume tally comes back wrong (>3 sigma).
+  Currently: `SCDR_90.stp`, `PiezaDavid_pieces_piece_0.stp`,
+  `Torus_solid1.stp` (the 3 real, non-stale failures from the corpus
+  re-check above).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

@@ -306,12 +306,13 @@ def build_can_params(cs):
 
     bsurf = []
     sid = 0
-    for s, r in (sr1, sr2):
-
+    for s, r, omit in (sr1, sr2):
         if type(s.Surface) is GPlane:
             normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
             if r == "OR":
                 normal = -normal  # plane axis toward cylinder center
+            if not omit:
+                normal = -normal  # virtual can surface
             gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
             sid += 1
             gs.bVar = BoolVariable(sid)
@@ -328,6 +329,7 @@ def build_can_params(cs):
                 pa.bVar = BoolVariable(sid)
 
             if r is None:
+                # adjacent cylinder has same radius and is parallel to cylinder.
                 r = "AND" if s.Orientation == "Forward" else "OR"
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
                 gs.bVar = pa.bVar
@@ -340,7 +342,13 @@ def build_can_params(cs):
                     cr = cylOnly.Surf.Center - pa.Surf.Position
                     d = cr - cr.dot(cylOnly.Surf.Axis) * cylOnly.Surf.Axis
                     pa.Surf.Position = pa.Surf.Position + 0.01 * d
-                gs = GeounedSurface(("Cylinder", (cylOnly, pa), s.Orientation))
+
+                if omit:
+                    orientation = s.Orientation
+                else:   
+                    orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
+
+                gs = GeounedSurface(("Cylinder", (cylOnly, pa), orientation))
 
         elif type(s.Surface) is GCone:
             if shell:
@@ -380,7 +388,12 @@ def build_can_params(cs):
                     d = cr - cr.dot(coneOnly.Surf.Axis) * coneOnly.Surf.Axis
                     pa.Surf.Position = pa.Surf.Position + 0.01 * d
 
-            gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa), s.Orientation))
+            if omit:
+                orientation = s.Orientation
+            else:   
+                orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
+
+            gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa), orientation))
 
         elif type(s.Surface) is GSphere:
             if shell:
@@ -403,7 +416,11 @@ def build_can_params(cs):
                 d = sphOnly.Surf.Center - pa.Surf.Position
                 pa.Surf.Position = pa.Surf.Position + 0.01 * d
 
-            gs = GeounedSurface(("Sphere", (sphOnly, pa), s.Orientation))
+            if omit:
+                orientation = s.Orientation
+            else:   
+                orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
+            gs = GeounedSurface(("Sphere", (sphOnly, pa), orientation))
 
         bsurf.append((gs, r))
 
@@ -425,10 +442,12 @@ def build_tcone_params(ks):
 
     bsurf = []
     sid = 0
-    for s, r in (p1, p2):
+    for s, r, omit in (p1, p2):
         normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
         if r == "OR":
             normal = -normal  # plane axis toward cone center
+        if not omit:
+            normal = -normal  # virtual can surface
         gs = GeounedSurface(("Plane", (s.Surface.Position, normal, 1.0, 1.0)))
         sid += 1
         gs.bVar = BoolVariable(sid)
