@@ -248,4 +248,3 @@ class SerpentInput(CommonInputWriter):
     #    option += '\n'
 
     #    return option
-

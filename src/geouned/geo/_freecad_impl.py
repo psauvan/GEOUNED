@@ -79,6 +79,7 @@ def kernel_version() -> str:
 # GEOUNED itself out of these via Gcut/Gcommon/Gfuse, not modeled here)
 # ---------------------------------------------------------------------------
 
+
 class GPlane:
     """Field names match FreeCAD's own `Part.Plane` attribute names."""
 
@@ -206,7 +207,7 @@ class GCylinder:
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the cylinder to `point`."""
         return self.__native__.parameter(to_fc_vector(point))
-    
+
     def value_at(self, u: float, v: float) -> GVector:
         return cylinder_value_at(self, u, v)
 
@@ -281,7 +282,7 @@ class GSphere:
         sphere.Radius = radius
         sphere.__native__ = None
         return sphere
-    
+
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the sphere to `point`."""
         return self.__native__.parameter(to_fc_vector(point))
@@ -370,6 +371,7 @@ def Gclassify_surface(native_face):
 # Analytic curve descriptors (wrap a native edge's Curve geometry)
 # ---------------------------------------------------------------------------
 
+
 class GLine:
     def __init__(self, native):
         self.Position = to_gvector(native.Location)
@@ -430,6 +432,7 @@ class GLine:
         """Parametric coordinate `u` (distance along the line from `Position`) of the nearest point on the line to `point`."""
         return self.__native__.parameter(to_fc_vector(point))
 
+
 class GCircle:
     def __init__(self, native):
         self.Center = to_gvector(native.Center)
@@ -444,6 +447,7 @@ class GCircle:
     def parameter(self, point: GVector) -> float:
         """Parametric coordinate `u` (radians) of the nearest point on the circle to `point`."""
         return self.__native__.parameter(to_fc_vector(point))
+
 
 class GEllipse:
     """Field names match FreeCAD's own `Part.Ellipse` attribute names."""
@@ -525,6 +529,7 @@ def Gclassify_curve(native_edge):
 # whether read from a STEP file or constructed internally by GEOUNED.
 # ---------------------------------------------------------------------------
 
+
 class GEdge:
     def __init__(self, native):
         self.__native__ = native
@@ -593,7 +598,7 @@ class GWire:
         self.MatrixOfInertia = to_gmatrix(native.MatrixOfInertia)
 
 
-def pick_outer_wire(wires : list[GWire]) -> "GWire":
+def pick_outer_wire(wires: list[GWire]) -> "GWire":
     """
     GEOUNED's own heuristic (largest mean vertex-to-centroid distance
     among the face's wires), not FreeCAD's native `Face.OuterWire` --
@@ -711,10 +716,10 @@ class GFace:
 
     def my_distToshape(self, other: "GFace") -> float:
         """alternative to distance_to, for testing -- same as distance_to. Doesn't call native distToShape but use boundbox distances and Common object of to check if solids touch eah other"""
-      
+
         shape1 = self.__native__
         shape2 = other.__native__
-		
+
         if shape1 is shape2:
             return 0.0
         else:
@@ -746,6 +751,7 @@ class GFace:
                 d = c2 - c1
                 dist2Shape = d.Length
             return dist2Shape
+
 
 class GShell:
     """
@@ -783,13 +789,12 @@ class GSolid:
                 solid = GSolid(s)
                 self.Solids.append(solid)
         else:
-            self.Solids.append(self)        
+            self.Solids.append(self)
 
         self.__native__ = native
         # individual native solid pieces of (possibly compound) `native`
         # -- e.g. find_interior_point/export need to iterate these
         self.__shapes__ = native.Solids
-
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         """True if `point` lies inside the solid (equivalent to Part.Shape.isInside())."""
@@ -924,6 +929,7 @@ GShape = GSolid | GFace | GEdge | GShell
 # Result of operations that can fail/degenerate
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SplitResult:
     """
@@ -935,6 +941,7 @@ class SplitResult:
     unchanged solid, etc.) and report it via `degenerate_case_handled=True`,
     NEVER silently return nothing.
     """
+
     solids: list[GSolid]
     degenerate_case_handled: bool = False
     notes: str = ""
@@ -943,6 +950,7 @@ class SplitResult:
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
+
 
 def Gload_step(filename: str) -> list[GSolid]:
     """
@@ -986,10 +994,7 @@ def Gload_step_labels(filename: str) -> list[GLabelNode]:
             nodes[elem.Name] = node
             return node
 
-        return [
-            build_node(elem) for elem in doc.Objects
-            if elem.TypeId == "Part::Feature" and elem.Shape.Solids
-        ]
+        return [build_node(elem) for elem in doc.Objects if elem.TypeId == "Part::Feature" and elem.Shape.Solids]
     finally:
         FreeCAD.closeDocument(doc.Name)
 
@@ -1006,6 +1011,7 @@ def Gexport_step(shapes: list[GShape], filename: str) -> None:
 # assembly, which builds RoundCorner/Can/TCone/MultiPlane/... by
 # cutting/fusing these analytic primitives itself)
 # ---------------------------------------------------------------------------
+
 
 def Gmake_box(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, zmax: float) -> GSolid:
     box = Part.makeBox(xmax - xmin, ymax - ymin, zmax - zmin, FreeCAD.Vector(xmin, ymin, zmin))
@@ -1089,6 +1095,7 @@ def Gmake_compound(shapes: list[GSolid]) -> GSolid:
 # independent shapes -- there is no single natural "self")
 # ---------------------------------------------------------------------------
 
+
 def Gcut(solid: GSolid, tools: list[GSolid]) -> list[GSolid]:
     """Subtract `tools` from `solid`. May return >1 solid if fragmented."""
     result = solid.__native__.cut([tool.__native__ for tool in tools])
@@ -1109,8 +1116,11 @@ def Gfuse(solids: list[GSolid]) -> GSolid:
 
 
 def Gsplit(
-    base: GSolid, tool: GShape, tolerance: float,
-    scale: float = 0.1, scale_up_floor: float | None = None,
+    base: GSolid,
+    tool: GShape,
+    tolerance: float,
+    scale: float = 0.1,
+    scale_up_floor: float | None = None,
 ) -> SplitResult:
     """
     Cut `base` with a surface/solid `tool` (typically a plane) and return
@@ -1155,7 +1165,8 @@ def Gsplit(
         # fall back to the solid unchanged instead of reporting "no
         # solids".
         return SplitResult(
-            solids=[base], degenerate_case_handled=True,
+            solids=[base],
+            degenerate_case_handled=True,
             notes="tool did not intersect solid; returning it unchanged",
         )
     return SplitResult(solids=[GSolid(s) for s in compound.Solids])
@@ -1164,6 +1175,7 @@ def Gsplit(
 # ---------------------------------------------------------------------------
 # Spatial queries between two independent shapes
 # ---------------------------------------------------------------------------
+
 
 def Gin_contact(shape_a: GShape, shape_b: GShape, tolerance: float) -> bool:
     """

@@ -146,8 +146,12 @@ class VoidBox:
 
     def refine(self):
         Cube = Gmake_box(
-            self.BoundBox.XMin, self.BoundBox.YMin, self.BoundBox.ZMin,
-            self.BoundBox.XMax, self.BoundBox.YMax, self.BoundBox.ZMax,
+            self.BoundBox.XMin,
+            self.BoundBox.YMin,
+            self.BoundBox.ZMin,
+            self.BoundBox.XMax,
+            self.BoundBox.YMax,
+            self.BoundBox.ZMax,
         )
 
         for m in self.Objects:
@@ -179,8 +183,12 @@ class VoidBox:
                 boxDef.append(plane_region)
 
         Box = Gmake_box(
-            bBox.XMin - d, bBox.YMin - d, bBox.ZMin - d,
-            bBox.XMax + d, bBox.YMax + d, bBox.ZMax + d,
+            bBox.XMin - d,
+            bBox.YMin - d,
+            bBox.ZMin - d,
+            bBox.XMax + d,
+            bBox.YMax + d,
+            bBox.ZMax + d,
         )
 
         voidSolidDef = BoolSequence(operator="OR")

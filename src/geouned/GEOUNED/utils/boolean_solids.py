@@ -447,7 +447,9 @@ def split_solid_fast(solid, surf, box, options):
     if box:
         if surf.shape:
             result = Gsplit(
-                GSolid(solid), GSolid(surf.shape), options.splitTolerance,
+                GSolid(solid),
+                GSolid(surf.shape),
+                options.splitTolerance,
                 scale_up_floor=options.splitTolerance if options.scaleUp else None,
             )
             comsolid_solids = [s.__native__ for s in result.solids]

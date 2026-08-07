@@ -55,6 +55,7 @@ def _bbox_tuple(bbox):
 
 # -- Primitive construction -------------------------------------------------
 
+
 def test_make_box():
     box = Gmake_box(0, 0, 0, 10, 10, 10)
     assert box.Volume == pytest.approx(1000.0)
@@ -149,6 +150,7 @@ def test_make_shell_supports_in_contact_and_distance(unit_box):
 
 # -- Boolean operations -------------------------------------------------------
 
+
 def test_cut_full_containment_returns_no_solids(unit_box):
     containing_tool = Gmake_half_space(GPlane.from_values(GVector(0, 0, 5), GVector(0, 0, 1)))
     result = Gcut(unit_box, [containing_tool])
@@ -208,10 +210,14 @@ def test_split_scale_up_floor_bootstraps_from_tiny_tolerance(unit_box):
 
 
 def test_split_tool_not_intersecting_solid_returns_solid_unchanged(unit_box):
-    far_face = Gmake_polygon_face([
-        GVector(1000, -500, -500), GVector(1000, 500, -500),
-        GVector(1000, 500, 500), GVector(1000, -500, 500),
-    ])
+    far_face = Gmake_polygon_face(
+        [
+            GVector(1000, -500, -500),
+            GVector(1000, 500, -500),
+            GVector(1000, 500, 500),
+            GVector(1000, -500, 500),
+        ]
+    )
     result = Gsplit(unit_box, far_face, 1e-6)
     assert len(result.solids) == 1
     assert result.degenerate_case_handled is True
@@ -237,6 +243,7 @@ def test_split_plane_coincident_with_existing_face_is_a_known_limitation(unit_bo
 
 
 # -- Topological traversal --------------------------------------------------
+
 
 def test_get_faces_edges_vertices(unit_box):
     faces = unit_box.Faces
@@ -294,10 +301,7 @@ def test_outer_wire_picks_outer_boundary_not_a_hole():
     drilled = box.cut(hole)
     solid = GSolid(drilled)
 
-    top_face = next(
-        f for f in solid.Faces
-        if type(f.Surface) is GPlane and f.Surface.Position.z == pytest.approx(20)
-    )
+    top_face = next(f for f in solid.Faces if type(f.Surface) is GPlane and f.Surface.Position.z == pytest.approx(20))
     assert len(top_face.__native__.Wires) == 2
     assert len(top_face.Edges) == 5  # 4 outer + 1 circular hole
     assert len(top_face.outer_wire().Edges) == 4
@@ -319,6 +323,7 @@ def test_edge_is_same(unit_box):
 
 # -- Surface and curve classification (happens eagerly at construction) ------
 
+
 def test_face_surface_is_classified_as_plane(unit_box):
     assert type(unit_box.Faces[0].Surface) is GPlane
 
@@ -339,6 +344,7 @@ def test_gsolid_does_not_crash_on_a_genuine_bspline_surface():
     `loadfile.load_functions.spline()` relies on exactly this to detect
     such solids gracefully rather than crashing on load.
     """
+
     def wavy_wire(z):
         n = 12
         pts = [
@@ -429,6 +435,7 @@ def test_face_orientation_outward_is_true_for_all_box_faces(unit_box):
 
 # -- Face and edge parametric queries -----------------------------------------
 
+
 def test_parameter_range_and_face_value_at(unit_box):
     face = unit_box.Faces[0]
     u_min, u_max, v_min, v_max = face.ParameterRange
@@ -498,6 +505,7 @@ def test_edge_normal_at_on_a_circle():
 
 # -- Spatial queries -----------------------------------------------------------
 
+
 def test_is_inside(unit_box):
     assert unit_box.is_inside(GVector(0, 0, 0), 1e-7) is True
     assert unit_box.is_inside(GVector(100, 100, 100), 1e-7) is False
@@ -564,6 +572,7 @@ def test_is_part_of_domain_at_face_center(unit_box):
 
 # -- Validation / diagnostics --------------------------------------------------
 
+
 def test_is_valid(unit_box):
     assert unit_box.is_valid() is True
 
@@ -574,6 +583,7 @@ def test_fix_preserves_volume_of_a_valid_solid(unit_box):
 
 
 # -- Transformations ------------------------------------------------------------
+
 
 def test_translate():
     box = Gmake_box(0, 0, 0, 10, 10, 10)
@@ -587,6 +597,7 @@ def test_rotate_quarter_turn_around_z(unit_box):
 
 
 # -- I/O ------------------------------------------------------------------------
+
 
 def test_kernel_version_returns_a_dotted_string():
     version = kernel_version()

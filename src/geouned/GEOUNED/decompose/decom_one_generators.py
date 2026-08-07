@@ -32,7 +32,9 @@ def generic_split(solid, options, tolerances, loop=0):
         surf.build_surface(bbox)
         try:
             result = Gsplit(
-                solid, GSolid(surf.shape), options.splitTolerance,
+                solid,
+                GSolid(surf.shape),
+                options.splitTolerance,
                 scale_up_floor=options.splitTolerance if options.scaleUp else None,
             )
             comsolid_solids = [s.__native__ for s in result.solids]

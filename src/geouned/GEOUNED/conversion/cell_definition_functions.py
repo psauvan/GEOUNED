@@ -220,8 +220,12 @@ def gen_plane_sphere(face, solidFaces):
     # a true infinite Part.Plane.
     half_side = face.Surface.Radius * 1.01
     box = GBoundBox(
-        center.x - half_side, center.y - half_side, center.z - half_side,
-        center.x + half_side, center.y + half_side, center.z + half_side,
+        center.x - half_side,
+        center.y - half_side,
+        center.z - half_side,
+        center.x + half_side,
+        center.y + half_side,
+        center.z + half_side,
     )
     tmp_plane = plane_polygon_from_box(normal, normal.dot(center), box)
 

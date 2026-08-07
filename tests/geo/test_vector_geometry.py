@@ -120,7 +120,12 @@ def test_gboundbox_enlarged():
     box = GBoundBox(0, 0, 0, 10, 10, 10)
     enlarged = box.enlarged(2)
     assert (enlarged.XMin, enlarged.YMin, enlarged.ZMin, enlarged.XMax, enlarged.YMax, enlarged.ZMax) == (
-        -2, -2, -2, 12, 12, 12,
+        -2,
+        -2,
+        -2,
+        12,
+        12,
+        12,
     )
 
 
@@ -150,8 +155,14 @@ def test_gboundbox_get_point_matches_freecad_numbering():
     # probe -- get_point/get_edge must match its corner/edge numbering
     box = GBoundBox(0, 0, 0, 1, 2, 3)
     expected = [
-        (0, 0, 3), (1, 0, 3), (1, 2, 3), (0, 2, 3),
-        (0, 0, 0), (1, 0, 0), (1, 2, 0), (0, 2, 0),
+        (0, 0, 3),
+        (1, 0, 3),
+        (1, 2, 3),
+        (0, 2, 3),
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 2, 0),
+        (0, 2, 0),
     ]
     for i, xyz in enumerate(expected):
         assert tuple(box.get_point(i)) == pytest.approx(xyz)
@@ -160,9 +171,18 @@ def test_gboundbox_get_point_matches_freecad_numbering():
 def test_gboundbox_get_edge_matches_freecad_numbering():
     box = GBoundBox(0, 0, 0, 1, 2, 3)
     expected = [
-        ((0, 0, 3), (1, 0, 3)), ((1, 0, 3), (1, 2, 3)), ((1, 2, 3), (0, 2, 3)), ((0, 2, 3), (0, 0, 3)),
-        ((0, 0, 0), (1, 0, 0)), ((1, 0, 0), (1, 2, 0)), ((1, 2, 0), (0, 2, 0)), ((0, 2, 0), (0, 0, 0)),
-        ((0, 0, 3), (0, 0, 0)), ((1, 0, 3), (1, 0, 0)), ((1, 2, 3), (1, 2, 0)), ((0, 2, 3), (0, 2, 0)),
+        ((0, 0, 3), (1, 0, 3)),
+        ((1, 0, 3), (1, 2, 3)),
+        ((1, 2, 3), (0, 2, 3)),
+        ((0, 2, 3), (0, 0, 3)),
+        ((0, 0, 0), (1, 0, 0)),
+        ((1, 0, 0), (1, 2, 0)),
+        ((1, 2, 0), (0, 2, 0)),
+        ((0, 2, 0), (0, 0, 0)),
+        ((0, 0, 3), (0, 0, 0)),
+        ((1, 0, 3), (1, 0, 0)),
+        ((1, 2, 3), (1, 2, 0)),
+        ((0, 2, 3), (0, 2, 0)),
     ]
     for i, (p1, p2) in enumerate(expected):
         e1, e2 = box.get_edge(i)

@@ -345,7 +345,7 @@ def build_can_params(cs):
 
                 if omit:
                     orientation = s.Orientation
-                else:   
+                else:
                     orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
 
                 gs = GeounedSurface(("Cylinder", (cylOnly, pa), orientation))
@@ -390,7 +390,7 @@ def build_can_params(cs):
 
             if omit:
                 orientation = s.Orientation
-            else:   
+            else:
                 orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
 
             gs = GeounedSurface(("Cone", (coneOnly, apexPlane, pa), orientation))
@@ -418,7 +418,7 @@ def build_can_params(cs):
 
             if omit:
                 orientation = s.Orientation
-            else:   
+            else:
                 orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
             gs = GeounedSurface(("Sphere", (sphOnly, pa), orientation))
 

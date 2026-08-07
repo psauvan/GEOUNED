@@ -206,7 +206,7 @@ class FaceGu(GFace):
 
         # GEOUNED based atributes
         self.Index = None
-    
+
         # FreeCAD based Atributes
         self.CenterOfMass = face.CenterOfMass
         self.Edges = face.Edges

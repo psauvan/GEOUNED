@@ -8,7 +8,6 @@ from .boolean_function import BoolSurface
 from ...geo import vector_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
 
-
 # The functions below are thin adapters over `vector_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
 # expected to already pass GVector.

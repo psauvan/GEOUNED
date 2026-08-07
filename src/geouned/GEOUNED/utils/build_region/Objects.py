@@ -40,8 +40,12 @@ class CellObj:
             return None
         else:
             return Gmake_box(
-                boundBox.XMin, boundBox.YMin, boundBox.ZMin,
-                boundBox.XMax, boundBox.YMax, boundBox.ZMax,
+                boundBox.XMin,
+                boundBox.YMin,
+                boundBox.ZMin,
+                boundBox.XMax,
+                boundBox.YMax,
+                boundBox.ZMax,
             ).__native__
 
     def getSubCell(self, seq):

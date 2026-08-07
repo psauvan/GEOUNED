@@ -14,14 +14,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Neutral vector type
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class GVector:
     """Neutral vector/point. Avoids passing FreeCAD.Vector or gp_Pnt directly."""
+
     x: float
     y: float
     z: float
@@ -86,25 +87,51 @@ def to_gvector(vector) -> GVector:
 # Neutral 4x4 affine matrix
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class GMatrix:
     """Neutral 4x4 affine matrix. Field names match FreeCAD's own `Base.Matrix`
     attribute names (A11..A44). Used e.g. for `GEdge`/`GWire.MatrixOfInertia`
     (only the A11..A33 rotation/inertia sub-block is meaningful there, but the
     full 4x4 is stored for fidelity with the native type)."""
-    A11: float; A12: float; A13: float; A14: float
-    A21: float; A22: float; A23: float; A24: float
-    A31: float; A32: float; A33: float; A34: float
-    A41: float; A42: float; A43: float; A44: float
+
+    A11: float
+    A12: float
+    A13: float
+    A14: float
+    A21: float
+    A22: float
+    A23: float
+    A24: float
+    A31: float
+    A32: float
+    A33: float
+    A34: float
+    A41: float
+    A42: float
+    A43: float
+    A44: float
 
 
 def to_gmatrix(matrix) -> GMatrix:
     """Convert a native FreeCAD.Matrix (or anything exposing the same A11..A44 attributes) into a neutral GMatrix."""
     return GMatrix(
-        matrix.A11, matrix.A12, matrix.A13, matrix.A14,
-        matrix.A21, matrix.A22, matrix.A23, matrix.A24,
-        matrix.A31, matrix.A32, matrix.A33, matrix.A34,
-        matrix.A41, matrix.A42, matrix.A43, matrix.A44,
+        matrix.A11,
+        matrix.A12,
+        matrix.A13,
+        matrix.A14,
+        matrix.A21,
+        matrix.A22,
+        matrix.A23,
+        matrix.A24,
+        matrix.A31,
+        matrix.A32,
+        matrix.A33,
+        matrix.A34,
+        matrix.A41,
+        matrix.A42,
+        matrix.A43,
+        matrix.A44,
     )
 
 
@@ -112,9 +139,11 @@ def to_gmatrix(matrix) -> GMatrix:
 # Neutral axis-aligned bounding box
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class GBoundBox:
     """Field names match FreeCAD's own `Base.BoundBox` attribute names."""
+
     XMin: float
     YMin: float
     ZMin: float
@@ -152,23 +181,34 @@ class GBoundBox:
     def intersects(self, other: "GBoundBox") -> bool:
         """True if the two boxes overlap or touch (inclusive at the boundary), matching FreeCAD's own `BoundBox.intersect`."""
         return (
-            self.XMin <= other.XMax and self.XMax >= other.XMin
-            and self.YMin <= other.YMax and self.YMax >= other.YMin
-            and self.ZMin <= other.ZMax and self.ZMax >= other.ZMin
+            self.XMin <= other.XMax
+            and self.XMax >= other.XMin
+            and self.YMin <= other.YMax
+            and self.YMax >= other.YMin
+            and self.ZMin <= other.ZMax
+            and self.ZMax >= other.ZMin
         )
 
     def enlarged(self, d: float) -> "GBoundBox":
         """A new box expanded by `d` on every side (matches FreeCAD's `BoundBox.enlarge`, but non-mutating)."""
         return GBoundBox(
-            self.XMin - d, self.YMin - d, self.ZMin - d,
-            self.XMax + d, self.YMax + d, self.ZMax + d,
+            self.XMin - d,
+            self.YMin - d,
+            self.ZMin - d,
+            self.XMax + d,
+            self.YMax + d,
+            self.ZMax + d,
         )
 
     def union(self, other: "GBoundBox") -> "GBoundBox":
         """Smallest box containing both `self` and `other` (matches FreeCAD's `BoundBox.add`, but non-mutating)."""
         return GBoundBox(
-            min(self.XMin, other.XMin), min(self.YMin, other.YMin), min(self.ZMin, other.ZMin),
-            max(self.XMax, other.XMax), max(self.YMax, other.YMax), max(self.ZMax, other.ZMax),
+            min(self.XMin, other.XMin),
+            min(self.YMin, other.YMin),
+            min(self.ZMin, other.ZMin),
+            max(self.XMax, other.XMax),
+            max(self.YMax, other.YMax),
+            max(self.ZMax, other.ZMax),
         )
 
     def intersected(self, other: "GBoundBox") -> "GBoundBox":
@@ -179,8 +219,12 @@ class GBoundBox:
         axis; this is not an error, callers are expected to check.
         """
         return GBoundBox(
-            max(self.XMin, other.XMin), max(self.YMin, other.YMin), max(self.ZMin, other.ZMin),
-            min(self.XMax, other.XMax), min(self.YMax, other.YMax), min(self.ZMax, other.ZMax),
+            max(self.XMin, other.XMin),
+            max(self.YMin, other.YMin),
+            max(self.ZMin, other.ZMin),
+            min(self.XMax, other.XMax),
+            min(self.YMax, other.YMax),
+            min(self.ZMax, other.ZMax),
         )
 
     def get_point(self, i: int) -> GVector:
@@ -221,6 +265,7 @@ def to_gboundbox(box) -> GBoundBox:
 # STEP assembly-tree label node (pure data, no native reference)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class GLabelNode:
     """
@@ -235,6 +280,7 @@ class GLabelNode:
     are `Gload_step(...)`'s next `n_solids` entries, in order, once all
     nodes up to `i` have been consumed.
     """
+
     label: str
     parent: "GLabelNode | None"
     n_solids: int
@@ -243,6 +289,7 @@ class GLabelNode:
 # ---------------------------------------------------------------------------
 # Geometric predicates on GVector / surface descriptors (GPlane, GCylinder...)
 # ---------------------------------------------------------------------------
+
 
 def is_same_value(v1: float, v2: float, tolerance: float = 1e-6) -> bool:
     return abs(v1 - v2) < tolerance
@@ -339,6 +386,7 @@ def is_same_torus_surface(torus_1, torus_2) -> bool:
 # etc instead of duplicating them, with no transient object construction
 # on either side.
 # ---------------------------------------------------------------------------
+
 
 def is_inside_plane(point: GVector, plane) -> bool:
     return plane.Axis.dot(point - plane.Position) > 0

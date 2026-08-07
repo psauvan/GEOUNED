@@ -133,7 +133,7 @@ def get_can_surfaces(cylinder, solidFaces):
                 edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
                 if edges is not None:
                     if planar_edges(edges):
-                        surfaces.append((s, None)) # adjacent cylinder has same radius and is parallel to cylinder.
+                        surfaces.append((s, None))  # adjacent cylinder has same radius and is parallel to cylinder.
                         continue
         elif type(s.Surface) is GTorus:
             return None, None
@@ -154,9 +154,9 @@ def get_can_surfaces(cylinder, solidFaces):
         omit = True
         if r == "OR" and cylinder.Orientation == "Forward":
             omit = False
-            r = "AND"   
+            r = "AND"
         elif r == "AND" and cylinder.Orientation == "Reversed":
-            omit = False    
+            omit = False
             r = "OR"
         surfaces.append((s, r, omit))
 

@@ -606,8 +606,12 @@ class CadToCsg:
             zmax = max(optBox.ZMax, zmax)
 
         self.geometry_bounding_box = GBoundBox(
-            xmin - padding, ymin - padding, zmin - padding,
-            xmax + padding, ymax + padding, zmax + padding,
+            xmin - padding,
+            ymin - padding,
+            zmin - padding,
+            xmax + padding,
+            ymax + padding,
+            zmax + padding,
         )
 
     def _decompose_solids(self, meta: bool):

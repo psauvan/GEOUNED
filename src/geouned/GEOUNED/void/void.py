@@ -36,8 +36,12 @@ def void_generation(
         NestedEnclosure = []
 
     Box = Gmake_box(
-        UniverseBox.XMin, UniverseBox.YMin, UniverseBox.ZMin,
-        UniverseBox.XMax, UniverseBox.YMax, UniverseBox.ZMax,
+        UniverseBox.XMin,
+        UniverseBox.YMin,
+        UniverseBox.ZMin,
+        UniverseBox.XMax,
+        UniverseBox.YMax,
+        UniverseBox.ZMax,
     )
 
     EnclosureBox = GeounedSolid(None, Box)
