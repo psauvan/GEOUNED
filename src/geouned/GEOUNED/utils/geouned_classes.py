@@ -27,7 +27,7 @@ from .basic_functions_part1 import round_corner_region, multi_round_corner_regio
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
-from .boolean_function import BoolSurface, BoolVariable
+from .boolean_function import BoolSurface, BoolVariable, literal_sign
 from .build_shape_functions import (
     makePlane,
     makeCylinder,
@@ -374,6 +374,24 @@ class MetaSurfIndex:
         self.index = index
         self.surfaces = surfaces
         self.single_surface = isinstance(surfaces, int)
+
+
+def validate_characteristic_sign(region, surf_id, orientation, label):
+    """Self-consistency check shared by every composite/Tier-2 region (Can,
+    TCone, Cylinder, Cone, ...): the characteristic (main) surface's own id
+    must appear negative in `region` when its real Orientation is Forward,
+    positive when Reversed -- the canonical rule confirmed empirically
+    across can_region/add_cone/add_cylinder. Called right where a region is
+    finalized, so a violation here is a genuine construction bug, never a
+    legitimate cross-region relationship (that's what isSameInterface's
+    on_conflict="ignore" mode exists for instead)."""
+    sign = literal_sign(region, surf_id)
+    expected = -1 if orientation == "Forward" else 1
+    if sign != expected:
+        raise RuntimeError(
+            f"{label}: characteristic surface {surf_id} (Orientation={orientation}) "
+            f"has sign {sign} in region {region}, expected {expected}"
+        )
 
 
 class MetaSurfacesDict(dict):
@@ -755,7 +773,9 @@ class MetaSurfacesDict(dict):
                 components[abs(apid)] = aplane
             surf_list.append((si.Type, sid, pid, apid, si.Orientation, configuration))
 
-        return can_region(cid, cylCan.Orientation, surf_list), components
+        region = can_region(cid, cylCan.Orientation, surf_list)
+        validate_characteristic_sign(region.region, int(cid), cylCan.Orientation, "Can_region")
+        return region, components
 
     def add_forwardCan(self, forwardCan):
         fwd_region, components = self.Can_region(forwardCan)
@@ -765,7 +785,12 @@ class MetaSurfacesDict(dict):
             if not add_can:
                 break
             for cs_surf in self[kind]:
-                boundary = fwd_region.isSameInterface(cs_surf.region)
+                # Both fwd_region and cs_surf.region were already validated
+                # self-consistent at Can_region time, so a .reverse conflict
+                # here is never a bug -- it's two distinct, adjacent Cans
+                # legitimately sharing the same real surface with opposite
+                # sense. Trust the structural match either way.
+                boundary = fwd_region.isSameInterface(cs_surf.region, on_conflict="ignore")
                 if abs(boundary) == 1:
                     add_can = False
                     break
@@ -789,7 +814,10 @@ class MetaSurfacesDict(dict):
             if not add_can:
                 break
             for cs_surf in self[kind]:
-                boundary = rev_region.isSameInterface(cs_surf.region)
+                # See add_forwardCan: both regions are already known
+                # self-consistent, so a .reverse conflict here is never a
+                # bug -- trust the structural match either way.
+                boundary = rev_region.isSameInterface(cs_surf.region, on_conflict="ignore")
                 if abs(boundary) == 1:
                     add_can = False
                     break

@@ -2594,6 +2594,117 @@ their place instead), `DoubleCylinder/pieza.stp` runs cleanly end to end
 already included this file passing. No guard needed in
 `get_can_surfaces()`; the exported repro file can be discarded.
 
+### `tank.stp` root-caused and fixed: `isSameInterface`'s `.reverse`-agreement assertion was a false-positive guard, not a real invariant
+
+Followed up on the "separate, torus-related failure" note above by
+isolating `tank.stp`'s actual failing component via bisection over its
+12 separate top-level solids (`skip_solids`, halving the set each time):
+solids `[0-5]` and `[6-11]` each convert fine as a group; only `[6,7]`
+together reproduce the crash; every one of the 12 solids converts fine
+*individually*. So the failure is a genuine cross-solid interaction, not
+a defect in any single component (and not actually torus-related after
+all -- the torus mention in the earlier note was a red herring from
+looking at the wrong part of the file).
+
+Dumping both solids' faces showed why: solid[6] (a hollow tube) and
+solid[7] (a solid cylinder it fits around) are two separate, physically
+*adjacent* cells sharing the exact same cylindrical interface (radius
+325, same axis/center) -- solid[6]'s material is outside that cylinder,
+solid[7]'s is inside, both bounded by the *same* two axial planes. Both
+independently get classified as a Can (cylinder + 2 end planes). Traced
+into `MetaSurfacesDict.Can_region`/`add_forwardCan` and confirmed via
+instrumentation: both Cans' own regions are individually correct and
+self-consistent with the canonical characteristic-surface sign rule
+(established earlier this file: a Forward main surface's id is negative
+in its own region, Reversed is positive) --
+```
+Can_region(solid[6]): Orientation=Reversed cid=4  region=OR[4,-3,-2]   -> sign of 4 = +1  (consistent)
+Can_region(solid[7]): Orientation=Forward  cid=4  region=AND[2,3,-4]   -> sign of 4 = -1  (consistent)
+```
+`OR[4,-3,-2]` and `AND[2,3,-4]` are exact structural complements of each
+other (as they should be -- the two cells' Cans really are the same
+physical cylindrical interface viewed from opposite sides) -- but both
+have `.reverse=False` (neither was built via negation), which is exactly
+the case `isSameInterface` treats as a contradiction and raises on:
+```python
+elif self.region == region2.region.get_complementary():
+    if self.reverse == region2.reverse:
+        raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {region2.__int__()}")
+```
+
+**Root cause, confirmed by design discussion with the user**: `.reverse`
+is per-object *construction-history* bookkeeping (was this particular
+`BoolSurface` built by negating a label at some point) -- it is not, and
+was never meant to be, a property of the *relationship* between two
+independently-built regions. Two genuinely different, physically
+adjacent cells sharing a boundary with naturally opposite outward sense
+will legitimately produce two independently-constructed, structurally
+complementary regions that both happen to have `.reverse=False`, since
+neither was built via negation. `isSameInterface`'s `.reverse`-agreement
+check was using this bookkeeping as an invariant it never actually was.
+
+**Design options considered and rejected before landing on the fix** (all
+per direct exchange with the user): dropping the `.reverse` check
+entirely -- rejected, the user didn't want to lose the real bug-catching
+value it has in the common case; tracking each region's originating
+solid to disambiguate -- rejected, since a solid that gets cut by a
+later surface loses its connection to the original solid entirely, so
+there's nothing stable to track; tagging `BoolSurface`/`BoolRegion`
+objects with a "type" (Can/RoundCorner/...) -- rejected as unnecessary
+once traced through: the type information the check would need
+(`GeounedSurface.Type`, the characteristic surface, its real
+`Orientation`) already exists one level up, on the `GeounedSurface` that
+owns the region, at exactly the point each region gets finalized
+(`Can_region`) -- no new type needs to live on the region itself, and
+intermediate regions built while chaining `*`/`+` to construct a final
+composite never need typing either, since nothing ever validates them
+independently.
+
+**Fix ("opcion A", the user's explicit choice)**: `isSameInterface`
+doesn't decide anything itself anymore for the ambiguous case -- it gets
+an `on_conflict="raise"` (default, preserves every existing call site's
+behavior byte-for-byte) vs `"ignore"` parameter; a new free function,
+`validate_characteristic_sign(region, surf_id, orientation, label)`
+(`geouned_classes.py`, using a new `literal_sign(region, surf_id)`
+utility in `boolean_function.py` that reuses
+`BoolSequence.get_surfaces_numbers(negatives=True)`'s existing
+signed-literal recursion rather than re-walking the tree), is called
+once, right where `Can_region` finalizes a region -- if a region ever
+fails its own canonical sign rule at construction time, that's a real
+bug and raises immediately, before the region is ever compared against
+anything else. Because every region reaching `add_forwardCan`/
+`add_reverseCan`'s dedup loop -- both the newly-built one and every
+already-registered one in `self["FwdCan"]`/`self["RevCan"]` -- has
+already passed this check by construction, a `.reverse` conflict
+encountered *there* can never be a real bug; both call sites now pass
+`on_conflict="ignore"`, trusting the structural (same/complementary)
+comparison result unconditionally.
+
+**Verification**: a direct unit test confirms `validate_characteristic_sign`
+still raises on a genuinely wrong sign (regression-guard intact, not just
+silenced); `tank.stp`'s isolated `[6,7]` pair and the full 12-solid file
+both convert cleanly now; the d1suned stochastic volume check (same
+methodology as the "MCNP stochastic volume check" section above) gives
+`tank.stp` a cell-1 tally of 0.988 +/- 0.78% (1.5 sigma from 1.0, SD4
+matches true CAD volume exactly) -- correct, not just crash-free; full
+`tests/geo` + `tests/test_cadtocsg.py`, 156/156; and a differential
+regression across all 85 STEP files in `Solidos/` (Can/TCone/RoundCorner/
+MultiRoundCorner/MultiPlane counts, git-stash before/after, same
+methodology as the washer-plane fix earlier in this file) shows **zero
+diffs** -- confirming the fix changes behavior only for the previously-
+crashing ambiguous case and nothing else. `tank.stp` (and the earlier
+`rev_can_1.stp`/`series_solid2_complement.stp`, resolved separately) are
+removed from `Solidos/no_convierte/`, which is now empty.
+
+Only `Can_region`/`add_forwardCan`/`add_reverseCan` were wired to the new
+`on_conflict="ignore"` path -- `add_cylinder`/`add_cone` (Tier-2) already
+build their region with the sign baked in correctly at construction
+(`if cylinder.Orientation == "Forward": cid = -cid`, so
+`validate_characteristic_sign` would be a no-op there) and `TCone_region`
+has the identical structure to `Can_region` but wasn't touched this
+pass -- both are natural, low-risk candidates to extend the same way if
+a similar false-positive is ever hit for them.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

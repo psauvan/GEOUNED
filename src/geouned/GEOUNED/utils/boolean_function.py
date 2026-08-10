@@ -257,7 +257,17 @@ class BoolSurface(int):
     def to_integer(self):
         return self.region.to_integer()
 
-    def isSameInterface(self, region2):
+    def isSameInterface(self, region2, on_conflict="raise"):
+        # on_conflict="raise" (default) preserves the original behavior for
+        # every existing caller. A caller that has already independently
+        # confirmed both `self` and `region2` are self-consistent (e.g. via
+        # validate_characteristic_sign at the point each was built) can pass
+        # on_conflict="ignore" to trust the structural match even when the
+        # .reverse construction-history flags disagree -- which happens
+        # legitimately for two distinct, physically-adjacent cells that
+        # share the same real surface with naturally opposite sense (.reverse
+        # tracks how each region was individually built, not the
+        # relationship between two independently-built regions).
 
         if self.region.level != region2.region.level:
             return 0
@@ -265,11 +275,11 @@ class BoolSurface(int):
             return 0
 
         if self.region == region2.region:
-            if self.reverse != region2.reverse:
+            if self.reverse != region2.reverse and on_conflict == "raise":
                 raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {region2.__int__()}")
             return 1
         elif self.region == region2.region.get_complementary():
-            if self.reverse == region2.reverse:
+            if self.reverse == region2.reverse and on_conflict == "raise":
                 raise RuntimeError(f"same Boolean Surface defined with oposition name : BooleanSurface {region2.__int__()}")
             return -1
         else:
@@ -302,6 +312,19 @@ class BoolSurface(int):
         newdef.level_update()
 
         return BoolSurface(label, newdef)
+
+
+def literal_sign(region, surf_id):
+    """Sign of `surf_id`'s occurrence inside a finalized BoolSequence, or
+    None if `surf_id` doesn't appear at all. Reuses get_surfaces_numbers's
+    own signed-literal recursion (negatives=True) rather than re-walking
+    the tree a second time."""
+    numbers = region.get_surfaces_numbers(negatives=True)
+    if surf_id in numbers:
+        return 1
+    if -surf_id in numbers:
+        return -1
+    return None
 
 
 class BoolSequence:
