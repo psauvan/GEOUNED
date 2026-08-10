@@ -2705,6 +2705,19 @@ has the identical structure to `Can_region` but wasn't touched this
 pass -- both are natural, low-risk candidates to extend the same way if
 a similar false-positive is ever hit for them.
 
+### `PiezaDavid_pieces_piece_0.stp` removed from `convierte_bad_volume/`: corrupt solid, not a GEOUNED bug
+
+The one previously-open item in `Solidos/convierte_bad_volume/`
+(`solidos_PiezaDavid_pieces_piece_0`, 9.8-10 sigma, SD4 differing from
+true CAD volume -- flagged "not yet investigated" in the corpus-recheck
+notes above) is closed: per explicit user confirmation, this file is a
+corrupt solid that doesn't represent a real solid, not a genuine GEOUNED
+decomposition/volume bug. Deleted from `Solidos/convierte_bad_volume/`
+outright (not moved to `BadCADModel/`, per the user's own instruction).
+`convierte_bad_volume/` now contains only `SCDR_90.stp` (known,
+pre-existing, already marked in `tests/test_cadtocsg.py`) and
+`Torus_solid1.stp` (3.7-3.84 sigma, borderline-but-real, still open).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
