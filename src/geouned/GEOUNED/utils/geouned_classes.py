@@ -531,7 +531,7 @@ class MetaSurfacesDict(dict):
             if cone.Orientation == "Forward":
                 cone_region = cone_region * BoolSurface(0, pid)
             else:
-                cone_region = cone_region + BoolSurface(0, pid)
+                cone_region = cone_region + BoolSurface(0, -pid)
             components[abs(pid)] = cone.Surf.ApexPlane
 
         if cone.Surf.Plane:

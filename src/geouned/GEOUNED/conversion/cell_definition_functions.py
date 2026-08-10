@@ -66,8 +66,7 @@ def cone_apex_plane(cone, tolerances):
     ):
         return None
 
-    normal = cone.Surface.Axis if cone.Orientation == "Forward" else -cone.Surface.Axis
-    return GeounedSurface(("Plane", (cone.Surface.Apex, normal, 1, 1)))
+    return GeounedSurface(("Plane", (cone.Surface.Apex, cone.Surface.Axis, 1, 1)))
 
 
 def V_torus_surfaces(face, v_params, Surfaces):

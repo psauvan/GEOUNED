@@ -2402,6 +2402,200 @@ case into the matching folder rather than leaving it loose):
   `Torus_solid1.stp` (the 3 real, non-stale failures from the corpus
   re-check above).
 
+### Can/cone sign fixes, following a new user-written spec (`configuracion_cans.txt`)
+
+The user wrote a complete, from-scratch specification of the intended
+Can AND/OR boolean rules (`C:\Users\Patrick\Work\Taller\GEOUNED_workshop\configuracion_cans.txt`)
+-- a 2x2 grid of (main cylinder orientation) x (secondary surface `si`
+AND/OR configuration): Fwd+AND and Rev+OR are the two "normal" matched
+pairings (Sections 1/2 of the doc); Rev+AND is a real but special "open
+mouth" case (Section 3, `si`'s own natural extension substitutes for a
+missing closing surface, via a formula built from the *opposite*
+orientation's normal formula); Fwd+OR is not a valid Can at all (Section
+4, must reject and let `si` be tried as an ordinary simple cutting
+surface instead). Comparing this spec line-by-line against the actual
+code (`can_region()`, `get_can_surfaces()`, `build_can_params()`,
+`MetaSurfacesDict.add_cone()`, `cone_apex_plane()`) surfaced 4 real,
+independent bugs, all confirmed via real geometry (point-sampling against
+`isInside()`, not just reasoning) before being applied:
+
+1. **`can_region()`'s coaxial-cone-without-plane branch, Reversed case**
+   used `+apid` (`OR[s, ap]`); the user confirmed the canonical rule for
+   a cone + its own apex plane is *always* `AND[-s, ap]` or `OR[s, -ap]`
+   -- never the other two sign combinations -- so this was a plain sign
+   error, fixed to `-apid`.
+2. **`get_can_surfaces()`'s Fwd+OR case** used to be silently force-
+   normalized into the Rev+AND "open mouth" shape (flipping `r` and the
+   secondary's reported orientation) instead of being rejected -- i.e.
+   the code treated *both* mismatched pairings the same way, but per the
+   spec only Rev+AND has a valid continuity formula; Fwd+OR must return
+   `None, None` (this is almost certainly what silently built a
+   nonsensical Can region and caused the `isSameInterface` "same Boolean
+   Surface defined with oposition name" crashes on `tank.stp`/
+   `Solidos/Cans/rev_can_1.stp` from the previous session's WIP
+   checkpoint -- confirmed fixed for `rev_can_1.stp` specifically,
+   `tank.stp` turned out to be a separate, unrelated torus issue, see
+   below).
+3. **`cone_apex_plane()`** used to flip its returned plane's normal based
+   on `cone.Orientation` (`cone.Surface.Axis if Forward else
+   -cone.Surface.Axis`) -- but the canonical convention (point 1 above)
+   is unconditional: the apex plane's stored normal must always just be
+   `cone.Surface.Axis`, full stop, with *all* orientation-dependent sign
+   handling living in the formulas that consume it (`can_region()`,
+   `add_cone()`). This function was double-applying the Reversed-case
+   compensation on top of what the formulas already do, corrupting only
+   the Reversed-cone case (verified: on `Solidos/Cans/rev_can_1.stp`'s
+   two-cone Can, cone1 (Forward) had the two apex-plane sign conventions
+   coincidentally agree, cone2 (Reversed) did not -- a 1.2% material
+   "leak" between the two cones' regions, found and root-caused via 1000-
+   point sampling against `isInside()`, precisely localized to the zone
+   between the two cone apexes). Fixed to unconditionally return
+   `cone.Surface.Axis`. Verified 1000/1000 after the fix (was 988/1000).
+4. **`MetaSurfacesDict.add_cone()`'s Reversed branch** (the Tier-2
+   standalone-cone conversion path, independent of `can_region()`) had
+   its own copy of this same bug, structurally: `cone_region + pid`
+   (missing the negation) instead of `cone_region + (-pid)`, discovered
+   because fixing point 3 alone made this path's own Reversed-cone
+   registration disagree with the Can's registration of the *same*
+   physical cone (an `isSameInterface` opposition-name crash, since
+   `rev_can_1.stp`'s Can literally reuses one of its own cone components
+   independently elsewhere in the same solid). Fixed to match the same
+   canonical convention.
+
+All 4 fixes verified together: `tests/geo` + `tests/test_cadtocsg.py`
+green (155/156, only the already-known-separate `tank.stp` failing).
+
+**Two riskier, related ideas were tried and explicitly reverted** at the
+user's direction, kept here as a record so they aren't retried blindly:
+building the Can's CAD cutting surface (`get_cell_object`'s Can branch)
+from the *complementary* region instead of the direct one (motivated by
+`rev_can_1.stp`'s box-splitting construction leaking material outside
+its intended box at most box sizes) and a companion change in
+`generic_split` (`decom_one_generators.py`) to accept a single-piece
+`Gsplit` result as a real, useful split when its volume measurably
+differs from the input (distinguishing "carved an internal cavity" from
+"tool didn't touch the solid"). Together these *did* make `rev_can_1.stp`
+decompose into a clean 1-piece result with exact volume -- but chasing a
+resulting regression (`DoubleCylinder/pieza.stp`, a Can that
+`build_can_params` couldn't unpack: `get_can_surfaces` found only 1
+secondary end instead of 2) traced back to an intermediate decomposition
+piece where the *same* face is legitimately adjacent to *both* of a
+cylinder's rim edges (`get_adjacent_cylknesurfFace`'s dedup-by-face-index
+then collapses 2 real ends into 1) -- exported as
+`Solidos/.../pieza_intermediate_piece.stp` (also sent to the user
+directly) for inspection, and the user identified "a big problem" with
+that piece on sight. Given that, both changes were reverted rather than
+risk building on a piece that's suspect for reasons not yet understood --
+this is *not* closed out, just deliberately shelved. Whether `rev_can_1.stp`
+still needs one of these approaches, once the `pieza_intermediate_piece.stp`
+concern is understood, is open for a future session.
+
+### `SplitBase.base`: `Part.Solid` -> `GSolid`
+
+Continuing the `.__native__`-audit theme from earlier in this file:
+`build_region/splitFunction.py`'s `SplitBase.base` (the CAD shape a
+cell-construction fragment carries through `BuildDepth`/`SplitSolid`/
+`filterparts`/`joinBase`) used to be a raw native `Part.Solid`, with
+`GSolid(...)`/`.__native__` wrap/unwrap dances scattered at nearly every
+call site (`Gsplit(GSolid(base.base), ...)`, `GSolid(c).find_interior_point()`,
+`FuseSolid`'s own internal `[GSolid(p) for p in parts]`, etc.). Converted
+to carry `GSolid` throughout instead:
+- `Objects.py::CellObj.makeBox()` returns `GSolid` directly (drops its
+  own `.__native__`) -- its only caller (`BuildSolidParts`) seeds the
+  very first `SplitBase` from it.
+- `splitFunction.py::SplitSolid` no longer wraps/unwraps around `Gsplit`
+  (`base.base` is already `GSolid`; `result.solids` is already
+  `list[GSolid]`, no `[s.__native__ for s in ...]` conversion needed).
+- `space_decomposition` operates on `list[GSolid]` directly -- including
+  `c = c.reverse()` instead of the old native in-place `c.reverse()`,
+  since `GSolid.reverse()` is copy-based, not in-place (a real semantic
+  difference that had to be handled by reassignment, not just a
+  mechanical type swap).
+- `FuseSolid` takes and returns `GSolid` (see below for what else changed
+  in it); `joinBase` and `build_shape_functions.py::build_complex_shape`
+  (its only two callers) both already had `GSolid`-typed parts to feed it
+  once `SplitBase.base` itself was converted.
+- `build_complex_shape` -- the one place this migration meets code that
+  *must* stay native (every downstream consumer of `makeCan`/`makeTCone`/
+  etc: `GeounedSurface.shape`/`.shell`, `.exportStep()`, `Gsplit(...)`
+  callers elsewhere in `GEOUNED`) -- now uses `gsolid.BoundBox`/
+  `gsolid.Volume` (already `GBoundBox`/float, no conversion) for its own
+  "did the surface actually cut the box" check, and converts to native
+  (`gsolid.__native__`) only once, at the very end, right before
+  returning. `myBox`/`to_gboundbox` needed no changes at all -- both
+  already duck-type-accept a `GBoundBox` exactly like a native
+  `FreeCAD.BoundBox` (same attribute names), confirmed rather than
+  assumed.
+
+Verified via `tests/geo` + `tests/test_cadtocsg.py`, 155/156 (same
+`tank.stp` failure as before, unrelated).
+
+### `FuseSolid` wasn't trying `ShapeFix_Shape` (`GSolid.fix()`) before giving up on a real fused solid
+
+Found while the user was independently inspecting `build_complex_shape`
+after the `SplitBase.base` migration above, having just manually fused
+the same components in the FreeCAD GUI and gotten a real, valid fused
+solid where GEOUNED's own pipeline was silently falling back to an
+unfused `Gmake_compound` (a container of the original, possibly-
+overlapping parts -- not a true union, and part of why `rev_can_1.stp`'s
+decomposed-piece volumes didn't sum cleanly in earlier investigation
+this session). Traced with a monkeypatched, instrumented `FuseSolid`
+across `Solidos/RoundCorners/*.stp` + `Solidos/Cans/*.stp`: 3 real
+compound-fallback occurrences, all on `rev_can_1.stp`, all with
+`Gfuse()` raising nothing and `.refine()` raising nothing, but *both*
+the raw fused shape and its `.refine()`'d version failing
+`BRepCheck_Analyzer` (`.is_valid()` -> `False`) -- `removeSplitter()`
+alone doesn't always repair a genuinely invalid boolean-fuse result.
+Confirmed directly (captured the actual 4 real, individually-valid input
+parts and replayed the fuse standalone) that `GSolid.fix()`
+(`ShapeFix_Shape`, already existed in `geo` for a different purpose, just
+never tried here) *does* repair it, at every tolerance tried, without
+changing the volume at all. `FuseSolid` now tries `.fix(1e-6)` as a third
+repair step (after `.refine()`, before giving up to `Gmake_compound`).
+Confirmed this alone -- with none of the reverted complement-region/
+`generic_split` changes from the section above -- already makes
+`rev_can_1.stp` decompose into a clean 1-piece result with exact volume
+(diff 0.0000 from the true CAD volume). Verified via `tests/geo` +
+`tests/test_cadtocsg.py`, 155/156 (same `tank.stp` failure, unrelated).
+
+Also found, alongside this (not yet fully written up, a companion fix
+present in the working tree): `Gfuse()` itself now flattens a `Part.Compound`
+input (one of `solids` being a compound rather than a single solid,
+which can happen when `Gmake_compound` was itself the fallback for an
+*earlier* unfusable group) into its constituent `Solids` before calling
+native `.fuse()`, rather than passing the compound through as one opaque
+shape.
+
+### `tank.stp` is a separate, torus-related failure -- not a Can issue
+
+Explicit user clarification after the Can rejection fix (Section 4
+above) didn't make `tank.stp` pass: "el error debe venir de otra parte
+puesto que mezcla toro y cilindros" -- confirmed this file mixes Torus
+and Cylinder surfaces, and the `isSameInterface` crash on it is
+unrelated to any of the Can fixes in this session. Not yet investigated;
+`Solidos/Cans/rev_can_1.stp` (pure Can, no torus) was used as the
+reproduction case for all 4 sign fixes above instead, specifically
+*because* it doesn't have this confound.
+
+### Open: a Can with a single closable end (`DoubleCylinder/pieza.stp`, intermediate decomposition piece)
+
+`get_can_surfaces()` currently has no guard against `get_adjacent_cylknesurfFace`
+deduplicating two genuinely distinct cylinder-rim edges down to one
+unique adjacent face (see the reverted-changes writeup above for how
+this was found) -- `build_can_params()` still unconditionally does
+`cyl_in, sr1, sr2 = cs`, so this crashes with `ValueError: not enough
+values to unpack` whenever it happens. A `len(surfaces) != 3: return
+None, None` guard was drafted and is a plausible fix (a Can needs 2
+*distinct* closing surfaces, and there's no way to build 2 from 1), but
+was explicitly not (re-)applied after the user, on inspecting the
+exported repro piece (`pieza_intermediate_piece.stp`, volume 1004.4597,
+15 faces, seed cylinder face[12] radius 2.4689), said it "has a big
+problem" without yet specifying what. Pick this up by understanding the
+user's concern with that specific piece first, before deciding whether
+the guard (or a different fix entirely, possibly upstream of
+`get_can_surfaces` in how this piece itself got constructed during
+decomposition) is the right move.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

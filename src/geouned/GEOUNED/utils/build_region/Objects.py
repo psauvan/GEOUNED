@@ -46,7 +46,7 @@ class CellObj:
                 boundBox.XMax,
                 boundBox.YMax,
                 boundBox.ZMax,
-            ).__native__
+            )
 
     def getSubCell(self, seq):
 

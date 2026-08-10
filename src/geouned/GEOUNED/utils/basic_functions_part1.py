@@ -277,7 +277,7 @@ def can_region(cid, cyl_orientation, surf_list):
             elif orientation == "Forward":
                 si_region = BoolSurface(0, apid) * BoolSurface(0, -sid)
             else:
-                si_region = BoolSurface(0, apid) + BoolSurface(0, sid)
+                si_region = BoolSurface(0, -apid) + BoolSurface(0, sid)
         elif apid is None:
             if orientation == "Forward":
                 if configuration == "AND":

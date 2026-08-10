@@ -151,11 +151,25 @@ def get_can_surfaces(cylinder, solidFaces):
             return None, None
 
         r = region_sign(cylinder_shell, s)
-        omit = True
         if r == "OR" and cylinder.Orientation == "Forward":
-            omit = False
-            r = "AND"
-        elif r == "AND" and cylinder.Orientation == "Reversed":
+            # Forward cylinder + OR is not a valid Can configuration at
+            # all (no combination of AND/OR-with-continuity can represent
+            # it) -- reject the whole Can. The caller (next_Can) still
+            # needs `s` to be tried as an ordinary simple cutting surface
+            # before the main cylinder itself, since region_sign's OR
+            # result means `s` cuts more cleanly here than `cylinder`
+            # does.
+            return None, None
+
+        omit = True
+        if r == "AND" and cylinder.Orientation == "Reversed":
+            # the Can's "mouth" is open on this end (no real closing
+            # surface AND-bounds the main cylinder here) -- `s`'s own
+            # natural extension stands in for the missing closure, using
+            # the opposite-orientation continuity formula (can_region()
+            # reproduces it automatically once `r`/orientation are
+            # swapped like this, reusing the same Forward/AND-Reversed/OR
+            # formulas already validated for a real closing surface).
             omit = False
             r = "OR"
         surfaces.append((s, r, omit))

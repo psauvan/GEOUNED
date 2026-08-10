@@ -1110,7 +1110,12 @@ def Gcommon(solid: GSolid, tools: list[GSolid]) -> list[GSolid]:
 
 def Gfuse(solids: list[GSolid]) -> GSolid:
     """Boolean union."""
-    shapes = [solid.__native__ for solid in solids]
+    shapes = []
+    for gsolid in solids:
+        if type(gsolid.__native__) is Part.Compound:
+            shapes.extend(gsolid.__native__.Solids)
+        else:
+            shapes.append(gsolid.__native__)
     fused = shapes[0].fuse(shapes[1:]) if len(shapes) > 1 else shapes[0]
     return GSolid(fused)
 

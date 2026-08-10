@@ -90,11 +90,17 @@ def build_complex_shape(surface, Box):
     for i, s in enumerate(celparts):
         shapeParts.append(s.base)
 
-    solid = FuseSolid(shapeParts)
-    if rc.boundBox.sameBox(myBox(solid.BoundBox)) and rc.boundBox.Volume == solid.Volume:
+    gsolid = FuseSolid(shapeParts)
+    if rc.boundBox.sameBox(myBox(gsolid.BoundBox)) and rc.boundBox.Volume == gsolid.Volume:
         # surface shape doesn't cut box
         return (None, None)
 
+    # build_complex_shape's own callers (makeCan/makeTCone/makeRoundCorner/
+    # makeMultiRoundCorner, and everything downstream of them:
+    # GeounedSurface.shape/.shell, .exportStep(), Gsplit(...) callers) all
+    # expect native Part shapes, so convert here, at the boundary, rather
+    # than pushing this change any further out.
+    solid = gsolid.__native__
     if len(solid.Shells) == 0:
         shell = solid.Shells[0]
     else:
