@@ -2577,24 +2577,22 @@ unrelated to any of the Can fixes in this session. Not yet investigated;
 reproduction case for all 4 sign fixes above instead, specifically
 *because* it doesn't have this confound.
 
-### Open: a Can with a single closable end (`DoubleCylinder/pieza.stp`, intermediate decomposition piece)
+### Closed: `pieza_intermediate_piece.stp` was a symptom of the reverted complement/generic_split changes, not a real bug
 
-`get_can_surfaces()` currently has no guard against `get_adjacent_cylknesurfFace`
-deduplicating two genuinely distinct cylinder-rim edges down to one
-unique adjacent face (see the reverted-changes writeup above for how
-this was found) -- `build_can_params()` still unconditionally does
-`cyl_in, sr1, sr2 = cs`, so this crashes with `ValueError: not enough
-values to unpack` whenever it happens. A `len(surfaces) != 3: return
-None, None` guard was drafted and is a plausible fix (a Can needs 2
-*distinct* closing surfaces, and there's no way to build 2 from 1), but
-was explicitly not (re-)applied after the user, on inspecting the
-exported repro piece (`pieza_intermediate_piece.stp`, volume 1004.4597,
-15 faces, seed cylinder face[12] radius 2.4689), said it "has a big
-problem" without yet specifying what. Pick this up by understanding the
-user's concern with that specific piece first, before deciding whether
-the guard (or a different fix entirely, possibly upstream of
-`get_can_surfaces` in how this piece itself got constructed during
-decomposition) is the right move.
+Resolved, not open after all. The `DoubleCylinder/pieza.stp` regression
+above (`get_can_surfaces` finding only 1 secondary end instead of 2,
+crashing `build_can_params`'s `cyl_in, sr1, sr2 = cs` unpack) only
+happened while the (since-reverted) complement-region + `generic_split`
+single-piece-real-change changes were active. Per the user directly:
+the exported repro piece (`pieza_intermediate_piece.stp`) was itself an
+*invalid* solid, produced only because those two changes together drove
+decomposition into an incoherent state -- not a real, valid piece
+exposing a genuine gap in `get_can_surfaces`. Confirmed: with those two
+changes reverted (current committed state, `FuseSolid.fix()` fix in
+their place instead), `DoubleCylinder/pieza.stp` runs cleanly end to end
+(`geo.run()`, no crash) -- matches the 155/156 suite result, which
+already included this file passing. No guard needed in
+`get_can_surfaces()`; the exported repro file can be discarded.
 
 ## Code style preference
 
