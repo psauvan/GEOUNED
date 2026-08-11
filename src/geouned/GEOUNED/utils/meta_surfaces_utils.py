@@ -110,7 +110,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is not GLine:
                 continue
-            otherface = other_face_edge(e, cyl, Faces, outer_only=True)
+            otherface = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True)
             if otherface is None:
                 continue
             if isinstance(otherface.Surface, GPlane):
@@ -121,7 +121,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is GLine:
                 continue
-            otherface = other_face_edge(e, cyl, Faces, outer_only=False)
+            otherface = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True)
             if otherface is None:
                 continue
             if isinstance(otherface.Surface, GPlane):
@@ -173,7 +173,7 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
             continue
         if type(Gclassify_curve(e)) is GLine:
             continue
-        otherface = other_face_edge(e, cylkne, Faces, outer_only=False)
+        otherface = other_face_edge(e, cylkne, Faces, outer_only=False, skip_slivers=True)
         if otherface is None:
             continue
         if otherface.Index in other_index:

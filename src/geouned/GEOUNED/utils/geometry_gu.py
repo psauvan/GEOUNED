@@ -10,6 +10,7 @@ import math
 
 from .basic_functions_part1 import is_same_value
 from .basic_functions_part2 import is_same_torus
+from .data_classes import Tolerances
 from ...geo import vector_geometry
 from ...geo import (
     GCone,
@@ -274,7 +275,15 @@ def define_surface(face, surface=None):
     return surface
 
 
-def other_face_edge(current_edge, current_face, Faces, outer_only=False):
+def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _visited=None):
+    # skip_slivers=False preserves the original behavior for every existing
+    # caller. A caller that's walking adjacency to find a real neighboring
+    # feature (get_adjacent_cylplane, get_adjacent_cylknesurfFace) can pass
+    # skip_slivers=True to treat a residual sliver face (area below
+    # tolerances.min_area -- a degenerate near-zero-area patch left over
+    # from a boolean cut that grazed tangentially instead of terminating
+    # cleanly) as transparent: instead of stopping there, keep walking
+    # across the sliver's own other edges to find the real face beyond it.
     for face in Faces:
         if face.Index == current_face.Index:
             continue
@@ -282,5 +291,20 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
         Edges = face.OuterWire.Edges if outer_only else face.Edges
         for edge in Edges:
             if current_edge.is_same(edge):
+                if skip_slivers:
+                    threshold = _min_area if _min_area is not None else Tolerances().min_area
+                    if face.Area < threshold:
+                        visited = set(_visited) if _visited else set()
+                        visited.add(current_face.Index)
+                        if face.Index in visited:
+                            return None  # already visited -- avoid a sliver cycle
+                        visited.add(face.Index)
+                        for e2 in face.OuterWire.Edges if outer_only else face.Edges:
+                            if e2.is_same(current_edge):
+                                continue
+                            found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, threshold, visited)
+                            if found is not None:
+                                return found
+                        return None
                 return face
     return None
