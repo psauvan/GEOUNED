@@ -2967,6 +2967,79 @@ removed from `Solidos/convierte_bad_volume/` (now correct);
 `SCDR_90_piece3_boolean_neg0_badvolume.stp` (also exported from
 `SCDR_90.stp`, same investigation) is still there, not yet root-caused.
 
+### `SCDR_90_piece3_boolean_neg0_badvolume.stp`: root-caused down to two false leads, GEOUNED confirmed correct as-is
+
+Closes out the investigation started above. The user manually inspected
+this file's real geometry (STEP faces exported per-index with normals --
+see the diagnostic scripts noted below) and worked out, independently,
+that GEOUNED's output for this solid -- `RoundCorner` (`{0,3,15}` in the
+original 19-face numbering) plus `ReversedConeCylinder` (`{10,11}`) plus
+two bare `Cone` registrations (`{1,2}`, `{4,5}`) -- is already correct,
+even though it doesn't match the single, clean 6-surface `AND`
+expression (`-15 -3 -0 +10 -2 -4`) the user first derived and verified
+300/300 against real points. Two false leads were chased and abandoned
+before landing here, both reverted (working tree confirmed clean, no
+diff against the last commit):
+
+- **A "cone-bounded RoundCorner" extension to `get_roundcorner_surfaces`**
+  (let the corner-plane chain walk pass through a real, non-sliver cone
+  to reach a second cylinder of a different radius) -- built, verified to
+  correctly find the cylinder beyond the cone, but explicitly rejected by
+  the user: `RoundCorner`'s definition is strictly cylinder + two
+  *planes* (normals perpendicular to the axis), chained cylinder->plane->
+  cylinder only. "Cone bounded corner has no meaning" for this type.
+  Reverted in full.
+- **A "cone and cylinder must both be Reversed" gate on `get_join_cone_cyl`**
+  -- motivated by the user's claim that `ReversedConeCylinder` (RevCC)
+  requires a *pair* of Reversed cone+cylinder faces, and since this
+  file's real cones are Forward-oriented, RevCC "cannot" legitimately
+  appear here. Traced with the user's own explicit request to see it
+  live under a debugger rather than through more scripted tracing.
+  Turned out to be based on two independent misunderstandings, both
+  resolved by the user directly: (1) `get_join_cone_cyl`'s `adjacent1`/
+  `adjacent2` check is about the seed cylinder's own *angular* boundary
+  (does it span a full 2*pi, and if not, what closes the gap) -- not an
+  *axial* cone connection at all, so this whole file's `RevCC` trigger
+  never actually touches the real cones in the first place; and (2) more
+  fundamentally, RevCC's design only ever required *one* Reversed
+  cylinder-or-cone face to trigger, not a matched pair -- the user's own
+  prior assumption about the composite type's requirements was wrong,
+  not GEOUNED's implementation. Reverted in full.
+
+**Root cause of the whole "why doesn't this look like my clean formula"
+puzzle, per the user's own final diagnosis**: two small, genuinely real
+planes (not artifacts, contrary to an earlier read of this same
+investigation) sit close enough to the main cylinder to look, on casual
+visual inspection, like they could be the cylinder's own tangent
+continuation -- but one of them is the actual surface GEOUNED's own
+decomposition cuts along, splitting the solid into the two pieces
+(`sub[0]`/`sub[1]`) that this whole investigation kept running into. The
+CAD model itself is genuinely awkward here (small-but-real faces sitting
+right at the boundary of what a human would call "the same surface,"
+by design or by poor original authoring) -- not a defect GEOUNED
+mis-handles, just one it represents through a more roundabout, but
+verified-correct, combination of composites than the single clean
+formula a human deriving it by eye would write down.
+
+**User's own closing assessment**, worth preserving verbatim in spirit:
+this version of GEOUNED is "quite robust" on this particular solid
+despite its CAD representation being genuinely deficient -- the
+conversion still produces a valid result even though the underlying
+model is poorly built. Matching a human's simplified, single-expression
+mental model of "what this shape obviously is" is explicitly named as a
+longer-term aspiration ("un geouned ideal"), not a near-term gap to
+close -- the current, more roundabout-but-correct composite combination
+is accepted as-is for this file.
+
+Diagnostic assets from this investigation (kept for reference, not
+committed): `Solidos/RoundCorners/piece3_faces/` and
+`piece3_faces_original/` (every face of the decomposed vs. original
+solid, exported individually as STEP files, index-named, plus
+`face_report.txt` with area/Axis/CenterOfMass/Apex/SemiAngle per face --
+the tool this whole investigation was actually resolved with, once the
+user could see the real geometry directly rather than only through
+traced adjacency reports).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
