@@ -2021,6 +2021,180 @@ migration (face-adjacency graph, non-manifold-edge handling -- see
   `convex_planes`) must tolerate correctly, rather than silently treating
   as two different features.
 
+### Hidden-surface decomposition experiment on SCDR_90.stp: manually reconstructing a RoundCorner, a real `Gsplit` under-separation bug, a `my_distToshape` crash fix, and a closing MCNP/d1suned verification that is NOT yet clean
+
+Follow-up to the abandoned "cut-order optimization" idea floated in an
+earlier claude.ai-chat-authored note (previously left in this exact spot
+in the file, referencing a since-deleted experimental script
+`src/geouned/tools/optimize_split.py` — removed, along with a stray
+`opt_out.txt` debug-output file at the repo root, neither ever
+integrated or committed). That script was reviewed and smoke-tested
+(quick-mode heuristics showed no order-sensitivity for `SCDR_90.stp`),
+but the user's actual direction turned out to be different: not
+permuting `get_surfaces`'s own candidates, but *manually identifying
+analytic surfaces that aren't present as real faces* in the STEP file
+and using them as cutting tools — worked through end-to-end as a single
+concrete example on `SCDR_90.stp` (`Solidos/convierte_bad_volume/`).
+
+**The hidden surface, found by inspection**: two semicircular edges
+(R=37mm) on `SCDR_90.stp`'s two flat end caps (Y=32.4997 and Y=67.4997),
+same axis (Y), centers aligned along that axis (X=400.7668, Z=6.8842 for
+both). The solid's actual wall there is a wider R=40 cylinder necking
+down to R=37 via two short cone frustums right at each end — so the R=37
+surface is genuinely hidden, implied only by the two end-cap rims, not
+present as any real face.
+
+**Building the RoundCorner shape — two wrong constructions before the
+right one, each ruled out by direct volume/geometry checks, not
+guessed**:
+1. Cylinder (R=37, axis Y) trimmed by the 2 tangent planes at the arc's
+   endpoints (`p1`/`p2`) ANDed with the cylinder alone — mathematically
+   incapable of trimming anything: the 2 tangent points are *exactly*
+   antipodal (combined arc length 116.2389mm = pi*37 to 5 significant
+   figures), so the 2 tangent planes are parallel and tangent to a
+   convex shape removes zero volume from it. Confirmed numerically
+   (every sign combination reproduced either the full cylinder or
+   nothing) before abandoning it.
+2. `p1 AND p2 AND (NOT-cylinder OR pc)` (`pc` = the plane through all 4
+   relevant vertices, i.e. through the axis and the tangent-point
+   chord) — built a real, valid half-cylinder wedge, but the *wrong*
+   shape entirely: far too small, missing essentially the whole
+   surrounding "corner block."
+3. **Correct, user-confirmed formula**:
+   `region = box AND (cylinder OR pc) AND p1 AND p2`, where `p1`/`p2`
+   are the tangent planes (each plane's material normal points toward
+   the *other* tangent point) and `pc`'s material normal has a negative
+   z component, using a box exactly the size of the working solid's own
+   BoundBox (no padding). Verified: `Volume=378926.0424`, `isValid()`
+   `True`, spans the full visible feature width — `Gsplit` against the
+   real solid then gives a clean 2-piece split with volume conserved to
+   0.003 out of 346082.
+
+**Reusable recipe** for this kind of hidden-cylinder-plus-tangent-planes
+feature, going forward: (1) find 2 same-axis, axis-aligned-center
+partial-circle edges of matching radius; (2) at each edge's 2 endpoints,
+the tangent plane there (material normal = radial direction, sign
+pointing toward the *other* tangent point) gives `p1`/`p2`; (3) the
+plane through all 4 relevant vertices (2 endpoints x 2 axial extremes)
+— containing the axis and the tangent-point chord — is the additional
+plane `pc`; get its sign from real data/the user, not from a
+"push-a-boundary-point-inward" heuristic (that heuristic gave the wrong
+sign the first time this was tried); (4)
+`box AND (cylinder OR pc) AND p1 AND p2`, box = the exact working
+BoundBox, no padding. Recall: `Gmake_half_space(plane)` keeps the
+**-axis** side, while GEOUNED's own convention is a plane's `.Axis`
+always points toward material — build cutting half-spaces with
+`GPlane.from_values(position, -material_normal)`, never
+`material_normal` directly.
+
+**A second decomposition step surfaced a fresh, minimal, reproducible
+instance of this whole migration's original motivating bug** (see
+"Motivating problem" at the top of this file): cutting one of the
+resulting pieces (`piece_0`, Vol=54556.92) by the `pc` plane alone
+should give 3 fragments (confirmed independently, see below) but
+`Gsplit`/`BOPTools.SplitAPI.slice` consistently returned only 2, across
+every box size (10 to 200 units) and even a genuinely unbounded
+half-space tool, and across every tolerance from 1e-4 to 1e-13 —
+ruling out both "plane too small" and the usual tolerance-retry remedy.
+Confirmed via direct point sampling that real material exists on both
+sides of `pc` near the under-separated region, and that the specific
+vertex involved (near X=363, Y=35.5, Z=-6, an R40-circle vertex on the
+cone-transition faces) sits at signed distance **-0.0020mm** from `pc`
+— i.e. essentially exactly on it. **Root cause, confirmed by bypassing
+`Gsplit` entirely**: plain native boolean `.common()` on the identical
+two half-spaces of `pc`, run separately per side, correctly returns 3
+solids (2 on one side, 1 on the other) that sum to the same total volume
+— `BOPTools.SplitAPI.slice` silently merges 2 of those into a single
+output solid at the near-tangent vertex, something plain `.common()`/
+`.cut()` on the same inputs does not do. **Not yet fixed in `Gsplit`
+itself** (its docstring already promises `solids` is never silently
+missing pieces — this is a concrete counterexample for the
+`BOPTools.SplitAPI.slice` path specifically, distinct from the
+tiny-tolerance-exception retry it already handles). A first proposed
+fix ("fall back when `Gsplit` returns fewer solids than expected") was
+rejected by the user for a correct reason: in normal GEOUNED operation
+there is no ground truth for how many fragments a cut *should* produce
+to compare against — only in this investigation was the right answer
+(3) independently knowable. **Reframed goal**: detect the *precondition*
+instead — recognize near-degenerate/"thin" planes or edges in the
+source CAD that are themselves modeling artifacts and are exactly the
+kind of near-exact tangency this bug needs to trigger — not started.
+Regression fixture saved:
+`Solidos/BadCADModel/SCDR_90_piece0_gsplit_tangent_bug.stp` (feed it
+plus the `pc` plane, both fully characterized above, into `Gsplit` to
+reproduce).
+
+**A real, previously-undiscovered bug in `Gcommon`'s multi-tool
+behavior** was also found while building the RoundCorner wedge:
+`Gcommon(solid, [tool1, tool2])` (wraps native `shape.common(list)`)
+does **not** compute `solid AND tool1 AND tool2` — it returned an empty
+result for a case where an inclusion-exclusion bound
+(`|A∩B| >= |A|+|B|-|U|`) proves the true intersection cannot be empty.
+Fixed by chaining pairwise `Gcommon` calls instead of passing multiple
+tools at once — not yet fixed inside `Gcommon` itself. Only 1 production
+call site (`void_box_class.py:133`) and it already passes a single-
+element list, so this bug is currently dormant in production, not live;
+`Gfuse`/`Gcut` were not checked for the same pattern.
+
+**Closing this out**: per explicit request, took the 5 final pieces this
+manual decomposition produced (the RoundCorner wedge's 2 halves, the
+`pc`-plane split of `piece_0` — worked around the `Gsplit` bug above via
+per-side `.common()` — and the final split of one of those by a real
+existing face's plane, `face[14]`, `Axis=(-0.8973,0,0.4415)`, found by
+matching 3 given approximate vertex coordinates against the model's real
+vertex list) and fed them **directly into GEOUNED's conversion phase,
+skipping `decompose_solids()` entirely** (`meta_list = [GeounedSolid(0,
+[gsolid1, ..., gsolid5])]`, then `build_solid_definition()` +
+`build_void()` called directly — mirrors what `decompose_solids()`'s own
+output would look like, since each already-cut piece is itself a
+`GSolid`), then wrote MCNP with `volSDEF=True` and ran d1suned, per the
+"MCNP stochastic volume check" method documented earlier in this file.
+
+**A second real, blocking bug found and fixed en route**:
+`GFace.my_distToshape` (`geo/_freecad_impl.py`) does
+`try: shape1.common(shape2) except: shape2.common(shape1)` — but when 2
+faces genuinely don't intersect, native `.common()` can raise
+`ValueError: Null shape` on *both* orderings, and the bare `except` only
+tried the second ordering without catching *its* failure too, crashing
+`simple_solid_definition`'s multiplane detection outright the moment it
+was exercised on a face combination `decompose_solids()`'s own output
+never produces (this is live production code —
+`FaceGu.distToShape`/`geometry_gu.py` calls `my_distToshape` directly,
+not the more robust native `distance_to`). Fixed: wrapped the second
+`.common()` call in its own try/except too, treating a double-failure
+as "no intersection" (same outcome as an empty compound).
+
+**Result: not a clean pass.** The combined 5-piece cell's tally came
+back at 0.46524 (191 sigma from 1.0). Isolated by converting and running
+d1suned on each of the 5 pieces *individually*:
+
+| piece | true volume (mm^3) | tally | sigma | verdict |
+|---|---|---|---|---|
+| RoundCorner-wedge half (the bigger, "irreducible" one) | 291525.53 | 0.40156 | 187.0 | **wrong** |
+| `pc`-split half (smaller) | 9264.41 | 0.99720 | 0.7 | correct |
+| `pc`-split half (other) | 11597.17 | 0.08285 | 94.6 | **wrong** |
+| `face[14]`-split half | 5275.33 | 0.99585 | 1.1 | correct |
+| `face[14]`-split half (other) | 28420.01 | 0.99725 | 1.1 | correct |
+
+3 of 5 pieces translate correctly; 2 do not, both involving the R=37
+RoundCorner cylinder as a boundary face (the worse of the two also pulls
+in 2 real `K/Y` cone surfaces from the model's own R40->R37 transition
+faces). **Not yet root-caused** — working hypothesis, unconfirmed:
+GEOUNED's automatic Can/RoundCorner/TCone face classifier
+(`conversion/cell_definition.py`) expects a cylinder-to-bounding-plane
+relationship to be a genuine tangency throughout (as every *real*
+RoundCorner/Can feature is); this hand-built cut boundary has the R37
+cylinder tangent to `p1`/`p2` but genuinely cut through (not tangent) by
+`pc` — a combination the classifier may not have been designed for,
+possibly leading it to pick the wrong AND/OR combination or orientation
+when reconstructing these 2 pieces' own CSG definitions from their real
+faces. Fixture files saved for continuing this directly (each is a
+single already-decomposed solid — testing needs only a single-piece
+`meta_list`, skip `decompose_solids()`, no need to redo the whole manual
+chain):
+`Solidos/convierte_bad_volume/SCDR_90_piece1_roundcorner_badvolume.stp`
+and `.../SCDR_90_piece3_boolean_neg0_badvolume.stp`.
+
 Diagnostic scripts (scratchpad only): `diag_placa3_topology.py` (face/
 edge/vertex counts, multi-wire faces, non-manifold-edge detection via
 `GSolid.faces_sharing_edge`-equivalent hashing, tolerance ranges),

@@ -728,10 +728,15 @@ class GFace:
             if intersect:
                 try:
                     inter = shape1.common(shape2)
-                except:
-                    inter = shape2.common(shape1)
+                except Exception:
+                    try:
+                        inter = shape2.common(shape1)
+                    except Exception:
+                        inter = None
 
-                if abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0:
+                if inter is not None and (
+                    abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0
+                ):
                     dist2Shape = 0.0
                 else:
                     same = False
