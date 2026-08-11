@@ -252,7 +252,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
         return None, None
 
     ep1, ep2 = adjacent_planes
-    p1, p2 = ep1[1], ep2[1]
+    p1, p2 = ep1[4], ep2[4]
 
     # cyl_plane_region_conf still takes the single seed `cylinder` (not the
     # shell) -- same pattern get_can_surfaces uses for its own per-endpoint
@@ -280,7 +280,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     else:
         face_index.add(cylinder.Index)
     face_index.update({p1.Index, p2.Index})
-    rc_list.append((cylinder, p1, p2, (configuration, fwd_cyl), cyl_shell))
+    rc_list.append((cylinder, p1, p2, (configuration, fwd_cyl), ep1, ep2))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:

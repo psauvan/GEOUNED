@@ -115,7 +115,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         seen = set()
         for f in cyl.Faces:
             for item in get_adjacent_cylplane(f, Faces, cornerPlanes):
-                p = item[1] if cornerPlanes else item
+                p = item[4] if cornerPlanes else item
                 if p.Index in seen:
                     continue
                 seen.add(p.Index)
@@ -128,20 +128,30 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is not GLine:
                 continue
-            otherface = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True)
-            if otherface is None:
+            result = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True)
+            if result is None:
                 continue
+            touching_edge, near_face, otherface = result
             if isinstance(otherface.Surface, GPlane):
                 if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-5:
-                    planes.append((e, otherface))
+                    # cyl/e (cyl's own edge, always a GLine per the filter
+                    # above) anchor a validated reference point for
+                    # get_additional_corner_plane -- cyl_plane_region_conf's
+                    # orientation math also needs e specifically (a straight
+                    # edge). touching_edge/near_face (where otherface
+                    # actually touches -- possibly a sliver bridging them, of
+                    # any curve type) are what get_additional_corner_plane
+                    # evaluates at, since that's the real boundary.
+                    planes.append((cyl, e, touching_edge, near_face, otherface))
         return planes
     else:
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is GLine:
                 continue
-            otherface = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True)
-            if otherface is None:
+            result = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True)
+            if result is None:
                 continue
+            _, _, otherface = result
             if isinstance(otherface.Surface, GPlane):
                 planes.append(otherface)
 
@@ -191,9 +201,10 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
             continue
         if type(Gclassify_curve(e)) is GLine:
             continue
-        otherface = other_face_edge(e, cylkne, Faces, outer_only=False, skip_slivers=True)
-        if otherface is None:
+        result = other_face_edge(e, cylkne, Faces, outer_only=False, skip_slivers=True)
+        if result is None:
             continue
+        _, _, otherface = result
         if otherface.Index in other_index:
             continue
 
@@ -1037,8 +1048,8 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 def cyl_plane_region_conf(cylinder, ep1, ep2):
 
-    e1, p1 = ep1
-    e2, p2 = ep2
+    _, e1, _, _, p1 = ep1
+    _, e2, _, _, p2 = ep2
     p1_axis = p1.Surface.Axis
     p2_axis = p2.Surface.Axis
     cyl_center = cylinder.Surface.Center

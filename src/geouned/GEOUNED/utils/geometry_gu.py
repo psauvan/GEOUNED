@@ -277,13 +277,28 @@ def define_surface(face, surface=None):
 
 def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _visited=None):
     # skip_slivers=False preserves the original behavior for every existing
-    # caller. A caller that's walking adjacency to find a real neighboring
-    # feature (get_adjacent_cylplane, get_adjacent_cylknesurfFace) can pass
-    # skip_slivers=True to treat a residual sliver face (area below
-    # tolerances.min_area -- a degenerate near-zero-area patch left over
-    # from a boolean cut that grazed tangentially instead of terminating
-    # cleanly) as transparent: instead of stopping there, keep walking
-    # across the sliver's own other edges to find the real face beyond it.
+    # caller: returns just the found face. A caller that's walking adjacency
+    # to find a real neighboring feature (get_adjacent_cylplane,
+    # get_adjacent_cylknesurfFace) can pass skip_slivers=True to treat a
+    # residual sliver face (area below tolerances.min_area -- a degenerate
+    # near-zero-area patch left over from a boolean cut that grazed
+    # tangentially instead of terminating cleanly) as transparent: instead
+    # of stopping there, keep walking across the sliver's own other edges
+    # to find the real face beyond it.
+    #
+    # In skip_slivers mode the return shape changes to a 3-tuple
+    # (touching_edge, near_face, far_face): far_face is the real face found;
+    # touching_edge is the edge where far_face actually borders whatever's
+    # immediately next to it (near_face) -- which is current_face itself
+    # when found directly (touching_edge is then just current_edge, and
+    # near_face/touching_edge together are identical to the pre-skip_slivers
+    # behavior), or the sliver's own far edge/the sliver itself when found
+    # by walking through one or more slivers. A caller that only cares about
+    # far_face (get_adjacent_cylknesurfFace's plain face lists, or
+    # get_adjacent_cylplane's cornerPlanes=False branch) can just take the
+    # 3rd element; one that needs to evaluate something (e.g.
+    # material_direction) exactly at the real boundary -- rather than at
+    # current_face's own, possibly non-touching, edge -- needs all three.
     for face in Faces:
         if face.Index == current_face.Index:
             continue
@@ -291,20 +306,21 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_sl
         Edges = face.OuterWire.Edges if outer_only else face.Edges
         for edge in Edges:
             if current_edge.is_same(edge):
-                if skip_slivers:
-                    threshold = _min_area if _min_area is not None else Tolerances().min_area
-                    if face.Area < threshold:
-                        visited = set(_visited) if _visited else set()
-                        visited.add(current_face.Index)
-                        if face.Index in visited:
-                            return None  # already visited -- avoid a sliver cycle
-                        visited.add(face.Index)
-                        for e2 in face.OuterWire.Edges if outer_only else face.Edges:
-                            if e2.is_same(current_edge):
-                                continue
-                            found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, threshold, visited)
-                            if found is not None:
-                                return found
-                        return None
-                return face
+                if not skip_slivers:
+                    return face
+                threshold = _min_area if _min_area is not None else Tolerances().min_area
+                if face.Area >= threshold:
+                    return current_edge, current_face, face
+                visited = set(_visited) if _visited else set()
+                visited.add(current_face.Index)
+                if face.Index in visited:
+                    return None  # already visited -- avoid a sliver cycle
+                visited.add(face.Index)
+                for e2 in face.OuterWire.Edges if outer_only else face.Edges:
+                    if e2.is_same(current_edge):
+                        continue
+                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, threshold, visited)
+                    if found is not None:
+                        return found
+                return None
     return None

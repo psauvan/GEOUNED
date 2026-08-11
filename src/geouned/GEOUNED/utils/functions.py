@@ -177,7 +177,7 @@ def build_roundC_params(rc_list):
     plane_list = []
     var_id = 0
 
-    for cyl, p1, p2, config_orientation, cyl_shell in rc_list:
+    for cyl, p1, p2, config_orientation, ep1, ep2 in rc_list:
         config, fwd_corner = config_orientation
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
@@ -185,11 +185,13 @@ def build_roundC_params(rc_list):
         if is_same_surface(p1.Surface, p2.Surface):
             gpa = None
         else:
-            # cyl_shell (not cyl): if the round corner's own cylinder was
+            # ep1/ep2 (not cyl): if the round corner's own cylinder was
             # split into several contiguous pieces, p1/p2 may each only be
-            # reachable from a different piece -- get_additional_corner_plane
-            # needs the whole merged shell to find both.
-            gpa = get_additional_corner_plane(cyl_shell, p1, p2)
+            # reachable from a different piece, possibly through a residual
+            # sliver bridging them -- get_additional_corner_plane needs the
+            # exact touching edge/face get_adjacent_cylplane already found,
+            # not cyl's own (possibly non-touching) edge.
+            gpa = get_additional_corner_plane(ep1, ep2)
             if gpa in plane_list:
                 index = plane_list.index(gpa)
                 gpa.bVar = plane_list[index].bVar
@@ -554,26 +556,49 @@ def convex_planes(plane_list, zaxis):
     return convex, orientation
 
 
-def get_additional_corner_plane(cyl_in, p1, p2):
-    # cyl_in may be a ShellGu (the round corner's own cylinder was split
-    # into several contiguous pieces -- see get_roundcorner_surfaces) --
-    # p1/p2 can each be reachable from a different piece, so resolve the
-    # actual touching face separately for each, mirroring build_can_params'
-    # own shell/single-face dispatch.
-    if type(cyl_in) is ShellGu:
-        Edges1, cyl1 = commonEdge(cyl_in, p1)
-        Edges2, cyl2 = commonEdge(cyl_in, p2)
-    else:
-        Edges1 = commonEdge(cyl_in, p1)
-        Edges2 = commonEdge(cyl_in, p2)
-        cyl1 = cyl2 = cyl_in
+def _validated_material_direction(anchor, cyl_edge, near_face, edge, pos):
+    """material_direction at `pos`/`edge`, evaluated on `near_face` -- the
+    face get_adjacent_cylplane's skip_slivers walk found actually touching
+    the plane, which is the real cylinder piece `anchor` itself when found
+    directly, or a residual sliver bridging them otherwise. A sliver's own
+    geometry is near-degenerate and not fully trusted on its own: when
+    near_face isn't anchor, the sliver-computed direction is validated
+    against a reference computed on anchor (the real, adjacent face) at a
+    nearby point on its own edge cyl_edge -- the two must agree in sense
+    (positive dot product), since they're geometrically continuous across a
+    physically negligible gap. A disagreement means the sliver's geometry
+    can't be trusted here."""
+    vect, normal = material_direction(pos, near_face, edge)
+    if near_face.Index == anchor.Index:
+        return vect, normal
 
-    e1 = Edges1[0]
-    e2 = Edges2[0]
-    p1 = e1.Vertexes[0]
-    p2 = e2.Vertexes[0]
-    v1, n1 = material_direction(p1, cyl1, e1)
-    v2, n2 = material_direction(p2, cyl2, e2)
-    point = 0.5 * (p1 + p2)
+    e0, e1 = cyl_edge.ParameterRange
+    ref_pos = cyl_edge.value_at(0.5 * (e0 + e1))
+    ref_vect, _ = material_direction(ref_pos, anchor, cyl_edge)
+    if vect.dot(ref_vect) <= 0:
+        raise RuntimeError(
+            "get_additional_corner_plane: material direction computed on a residual "
+            "sliver face disagrees with the reference direction on the real adjacent "
+            f"cylinder face near {pos} -- sliver geometry cannot be trusted here."
+        )
+    return vect, normal
+
+
+def get_additional_corner_plane(ep1, ep2):
+    # ep1/ep2 come from get_adjacent_cylplane's cornerPlanes=True search:
+    # (anchor, cyl_edge, touching_edge, near_face, plane). touching_edge/
+    # near_face are where `plane` actually touches -- anchor itself when
+    # found directly, or a residual sliver bridging them (see
+    # get_roundcorner_surfaces' merge_same_surface_faces + skip_slivers)
+    # otherwise -- so evaluate exactly there instead of at anchor's own,
+    # possibly non-touching, cyl_edge.
+    anchor1, cyl_edge1, e1, near1, _ = ep1
+    anchor2, cyl_edge2, e2, near2, _ = ep2
+
+    pos1 = e1.Vertexes[0]
+    pos2 = e2.Vertexes[0]
+    v1, n1 = _validated_material_direction(anchor1, cyl_edge1, near1, e1, pos1)
+    v2, n2 = _validated_material_direction(anchor2, cyl_edge2, near2, e2, pos2)
+    point = 0.5 * (pos1 + pos2)
     paxis = (v1 + v2).normalized()
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))
