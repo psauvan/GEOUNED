@@ -284,7 +284,15 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
-            f = other_face_edge(edge, newplane, Faces)
+            # skip_slivers: the next round corner's own cylinder may be
+            # bridged to this plane by a residual sliver (same reasoning as
+            # the corner-plane search above) -- walk through it instead of
+            # stopping there and silently failing to chain into a
+            # MultiRoundCorner.
+            result = other_face_edge(edge, newplane, Faces, skip_slivers=True)
+            if result is None:
+                continue
+            _, _, f = result
             if type(f.Surface) != GCylinder:
                 continue
             if f.Index in cylinders_set:
