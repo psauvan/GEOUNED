@@ -177,7 +177,7 @@ def build_roundC_params(rc_list):
     plane_list = []
     var_id = 0
 
-    for cyl, p1, p2, config_orientation in rc_list:
+    for cyl, p1, p2, config_orientation, cyl_shell in rc_list:
         config, fwd_corner = config_orientation
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
@@ -185,7 +185,11 @@ def build_roundC_params(rc_list):
         if is_same_surface(p1.Surface, p2.Surface):
             gpa = None
         else:
-            gpa = get_additional_corner_plane(cyl, p1, p2)
+            # cyl_shell (not cyl): if the round corner's own cylinder was
+            # split into several contiguous pieces, p1/p2 may each only be
+            # reachable from a different piece -- get_additional_corner_plane
+            # needs the whole merged shell to find both.
+            gpa = get_additional_corner_plane(cyl_shell, p1, p2)
             if gpa in plane_list:
                 index = plane_list.index(gpa)
                 gpa.bVar = plane_list[index].bVar
@@ -550,15 +554,26 @@ def convex_planes(plane_list, zaxis):
     return convex, orientation
 
 
-def get_additional_corner_plane(cyl, p1, p2):
-    Edges1 = commonEdge(cyl, p1)
-    Edges2 = commonEdge(cyl, p2)
+def get_additional_corner_plane(cyl_in, p1, p2):
+    # cyl_in may be a ShellGu (the round corner's own cylinder was split
+    # into several contiguous pieces -- see get_roundcorner_surfaces) --
+    # p1/p2 can each be reachable from a different piece, so resolve the
+    # actual touching face separately for each, mirroring build_can_params'
+    # own shell/single-face dispatch.
+    if type(cyl_in) is ShellGu:
+        Edges1, cyl1 = commonEdge(cyl_in, p1)
+        Edges2, cyl2 = commonEdge(cyl_in, p2)
+    else:
+        Edges1 = commonEdge(cyl_in, p1)
+        Edges2 = commonEdge(cyl_in, p2)
+        cyl1 = cyl2 = cyl_in
+
     e1 = Edges1[0]
     e2 = Edges2[0]
     p1 = e1.Vertexes[0]
     p2 = e2.Vertexes[0]
-    v1, n1 = material_direction(p1, cyl, e1)
-    v2, n2 = material_direction(p2, cyl, e2)
+    v1, n1 = material_direction(p1, cyl1, e1)
+    v2, n2 = material_direction(p2, cyl2, e2)
     point = 0.5 * (p1 + p2)
     paxis = (v1 + v2).normalized()
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))

@@ -104,6 +104,24 @@ def convex_wire(p):
 
 
 def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
+    if type(cyl) is ShellGu:
+        # cyl is several contiguous pieces of the same analytic surface
+        # (see merge_same_surface_faces) -- a corner plane may only be
+        # reachable from one specific piece's own edges (e.g. the split
+        # left each piece touching a different one of the round corner's
+        # two bounding planes), so search every piece and pool the results,
+        # deduplicating by the found plane's own Index.
+        planes = []
+        seen = set()
+        for f in cyl.Faces:
+            for item in get_adjacent_cylplane(f, Faces, cornerPlanes):
+                p = item[1] if cornerPlanes else item
+                if p.Index in seen:
+                    continue
+                seen.add(p.Index)
+                planes.append(item)
+        return planes
+
     planes = []
 
     if cornerPlanes:
@@ -1180,7 +1198,17 @@ def angle(v1, v2, operator):
         return twoPi - a
 
 
-def closed_cylinder_cone(cylkne, solidFaces):
+def merge_same_surface_faces(cylkne, solidFaces):
+    """A boolean cut that splits a single analytic cylinder/cone into
+    several contiguous face pieces (e.g. a residual-cut artifact, or a
+    genuine multi-piece split) shouldn't be treated as several unrelated
+    features. Groups `cylkne` with every other face in `solidFaces` that
+    is both the same underlying surface (is_same_surface) and physically
+    connected to it, directly or via a chain of other same-surface pieces
+    (same_faces), and returns a ShellGu of the merged group -- or `cylkne`
+    itself, unchanged, if no such piece exists. Shared by closed_cylinder_cone
+    (Can/TCone closure) and get_roundcorner_surfaces (RoundCorner corner-plane
+    search)."""
     CylKne_faces = [cylkne]
     for ckface in solidFaces:
         if ckface.Index == cylkne.Index:
@@ -1195,15 +1223,14 @@ def closed_cylinder_cone(cylkne, solidFaces):
         sameIndex.insert(0, 0)
         sameSurf = [CylKne_faces[i] for i in sameIndex]
         if len(sameSurf) > 1:
-            ck_shell = ShellGu(sameSurf)
-            ck_index = set(ck_shell.Indexes)
-        else:
-            ck_shell = cylkne
-            ck_index = {cylkne.Index}
-    else:
-        ck_shell = cylkne
-        ck_index = {cylkne.Index}
+            return ShellGu(sameSurf)
 
+    return cylkne
+
+
+def closed_cylinder_cone(cylkne, solidFaces):
+    ck_shell = merge_same_surface_faces(cylkne, solidFaces)
+    ck_index = set(ck_shell.Indexes) if type(ck_shell) is ShellGu else {cylkne.Index}
     return ck_shell, ck_index, is_closed_cylinder_cone(ck_shell)
 
 

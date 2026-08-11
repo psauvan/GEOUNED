@@ -3,6 +3,7 @@ from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
 from .geometry_gu import other_face_edge
 from ...geo import GLine, GPlane, GCylinder, GTorus, Gclassify_curve
+from .geometry_gu import ShellGu
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
     region_sign,
@@ -10,6 +11,7 @@ from .meta_surfaces_utils import (
     get_adjacent_cylknesurf,
     get_join_cone_cyl,
     closed_cylinder_cone,
+    merge_same_surface_faces,
     most_outer_faces,
     commonEdge,
     planar_edges,
@@ -236,13 +238,26 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     rc_list = []
     face_index = set()
 
-    adjacent_planes = get_adjacent_cylplane(cylinder, Faces, cornerPlanes=True)
+    # A boolean cut can split the round corner's own cylinder into several
+    # contiguous pieces (e.g. a residual-cut artifact bridging two pieces,
+    # or a genuine multi-piece split) -- each piece's own edges may only
+    # reach one of the two bounding corner planes. Merge same-surface
+    # contiguous pieces into one ShellGu first (mirrors closed_cylinder_cone's
+    # treatment of Can/TCone) so the corner-plane search sees the whole
+    # feature's boundary, not just whichever piece `cylinder` happens to be.
+    cyl_shell = merge_same_surface_faces(cylinder, Faces)
+
+    adjacent_planes = get_adjacent_cylplane(cyl_shell, Faces, cornerPlanes=True)
     if len(adjacent_planes) != 2:
         return None, None
 
     ep1, ep2 = adjacent_planes
     p1, p2 = ep1[1], ep2[1]
 
+    # cyl_plane_region_conf still takes the single seed `cylinder` (not the
+    # shell) -- same pattern get_can_surfaces uses for its own per-endpoint
+    # computations (commonEdge/most_outer_faces against the original face,
+    # only the closure/adjacency search itself uses the merged shell).
     configuration = cyl_plane_region_conf(cylinder, ep1, ep2)
     # check if not degenerated round corner
     # if degenerated discard it
@@ -259,8 +274,13 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
 
     fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
 
-    face_index.update({cylinder.Index, p1.Index, p2.Index})
-    rc_list.append((cylinder, p1, p2, (configuration, fwd_cyl)))
+    if type(cyl_shell) is ShellGu:
+        face_index.update(cyl_shell.Indexes)
+        cylinders_set.update(cyl_shell.Indexes)
+    else:
+        face_index.add(cylinder.Index)
+    face_index.update({p1.Index, p2.Index})
+    rc_list.append((cylinder, p1, p2, (configuration, fwd_cyl), cyl_shell))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
