@@ -184,8 +184,16 @@ class SolidGu(GSolid):
                 v_min = params[i + 1][0] - two_pi
                 v_max = params[i][1]
             else:
+                # params is sorted by V0 ascending, so params[0][0] is always
+                # the true minimum V0 -- but sorting by V0 does not imply
+                # sorted V1, so params[-1][1] is only the true maximum V1
+                # when the pieces form a simple, non-nested chain. When one
+                # piece's own range is fully nested inside another's (e.g. a
+                # tiny residual sliver piece sitting within a larger piece's
+                # own V-span), params[-1][1] can under-report the real
+                # merged extent -- take the max explicitly instead.
                 v_min = params[0][0]
-                v_max = params[-1][1]
+                v_max = max(v1 for _, v1 in params)
             mergedParams = (False, (v_min, v_max))
 
         return mergedParams
