@@ -3056,6 +3056,16 @@ Root-causing `piece0` went through two false leads before landing on the real ca
 
 `SCDR_90.stp` and `SCDR_90_piece0_badvolume.stp` moved to `Solidos/BadCADModel/` (genuine CAD-topology tangency issue, not a GEOUNED classification bug -- matches the established convention for that folder). `SCDR_90_piece1_badvolume.stp` (the worse of the two bad pieces, 81.6 sigma) was visually confirmed by the user to show the same pattern and moved to `BadCADModel/` too, without a full independent trace -- `convierte_bad_volume/` now contains only the unrelated, still-open `Torus_solid1.stp`.
 
+### `Torus_solid1.stp` fixed: `merge_periodic_uv` under-reported the merged V-range when one piece nests inside another
+
+Closes the last open item in `convierte_bad_volume/`. Real, confirmed bug (per the user's own hunch going in: "seguramente sera una mal colocacion de superficies adicionales -- el toro tiene 2").
+
+The solid's torus is split into 2 face pieces (`is_same_surface` confirms same Center/Axis/MajorRadius/MinorRadius): a real piece (area 38.57) spanning V=[2.773, 5.112], and a tiny residual sliver (area 0.14) spanning V=[3.898, 4.346] -- entirely *nested inside* the real piece's own V-range, not a simple adjacent chain. `SolidGu.merge_periodic_uv` (`geometry_gu.py`), used to recombine a torus's split pieces into one true U/V extent before building the bounding planes for a non-closed torus, sorts the pieces by their own start value and then took `params[-1][1]` (the *last sorted-by-start* piece's own end value) as the merged maximum. That's only correct for a simple, non-overlapping chain of pieces -- when one piece is nested inside another, sorting by start doesn't imply sorted end, so the merged V-max silently came out as the *sliver's* own end (4.346) instead of the real piece's true end (5.112). The resulting V-bounding plane then cut off real material at the true end of the torus's own tube extent.
+
+Fix: take the max end value across all pieces explicitly (`max(v1 for _, v1 in params)`) instead of assuming it's whichever piece sorts last by its own start. The periodic-wrap branch (pieces spanning the 0/2*pi boundary) was already correct and untouched -- confirmed separately, by hand, that this same file's U-range merge *does* hit that branch and computes correctly.
+
+Verified: `Torus_solid1.stp`'s d1suned tally goes from `0.97055` (3.7 sigma) to `0.99672` (0.4 sigma) -- `SD4` matched the true CAD volume in both cases, confirming the bug was in the bounding surface geometry, not the reported volume. 156/156 tests/geo + test_cadtocsg.py; zero diffs across the `Solidos/` corpus regression. `convierte_bad_volume/` is now empty of real, unexplained failures -- every file that started this session's investigation there has been either fixed (`SCDR_90_piece1_roundcorner_badvolume.stp`, this file) or correctly re-filed as a genuine CAD defect (`BadCADModel/`).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
