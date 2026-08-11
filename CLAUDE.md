@@ -2892,6 +2892,81 @@ outright (not moved to `BadCADModel/`, per the user's own instruction).
 pre-existing, already marked in `tests/test_cadtocsg.py`) and
 `Torus_solid1.stp` (3.7-3.84 sigma, borderline-but-real, still open).
 
+### `SCDR_90_piece1_roundcorner_badvolume.stp`: residual sliver faces from a boolean cut, and RoundCorner's own split-cylinder gap
+
+Two related fixes, found while root-causing why this file (a piece the
+user exported from `SCDR_90.stp` specifically to isolate its bad-volume
+bug) converted without crashing but produced the wrong volume.
+
+**Root cause 1 -- residual sliver faces block adjacency walking.** The
+solid has 2 near-zero-area cone faces (`Area ~= 0.0024`, vs hundreds/
+thousands for every real face) bridging what should be one continuous
+radius-37 cylinder, split into 2 pieces by a boolean cut that grazed
+tangentially instead of terminating cleanly -- a variant of this
+project's original motivating tangency problem (see the top of this
+file), but manifesting as a degenerate face artifact rather than a
+non-manifold edge. Confirmed via real geometry: both slivers have edges
+up to ~60mm long but a cone V-parameter range spanning only ~0.0001 --
+a paper-thin strip, not a small patch.
+
+Tried to *repair the CAD topology itself* first, empirically, before
+touching GEOUNED: `Part.Shape.defeaturing(faces)` (wraps OCCT's
+`BRepAlgoAPI_Defeaturing`, the semantically correct tool) silently
+no-ops on singular/near-degenerate seed faces like these; `removeShape`
++`.fix()` collapses the whole solid to garbage; `removeShape`+`sewShape`
+(at every tolerance from `1e-6` to `1.0`) produces a "valid" but
+genuinely unclosed shell -- the gap needs real surface extension, not
+edge-sewing; `removeSplitter()`, `.fix()` at any tolerance, and a full
+STEP round-trip all leave the slivers untouched, since OCC's own
+`isValid()` doesn't flag them as defective. None of FreeCAD/OCC's
+available healing routes worked on this artifact class.
+
+**Fix**: handle it in GEOUNED's own adjacency walking instead of trying
+to heal the geometry. `other_face_edge` (`geometry_gu.py`) gained an
+opt-in `skip_slivers` mode: when the face found across an edge has
+`Area < Tolerances.min_area` (an existing tolerance, already used
+elsewhere in `cell_definition.py` for a related purpose), treat it as
+transparent and keep walking across its own other edges to find the
+real neighboring feature, instead of stopping there or misclassifying.
+Wired into `get_adjacent_cylplane`/`get_adjacent_cylknesurfFace`, the
+two adjacency walkers Can/RoundCorner/TCone detection depend on; every
+other caller of `other_face_edge` is unaffected (`skip_slivers=False`
+by default).
+
+**Root cause 2 -- RoundCorner never merged split cylinder pieces, unlike
+Can.** Even after root cause 1, this file's RoundCorner still wasn't
+detected: `get_roundcorner_surfaces` operated on whichever single
+cylinder face happened to be the seed, so if one bounding corner plane
+was only reachable from *the other* piece of the split cylinder, only 1
+of the 2 required planes was ever found. `closed_cylinder_cone` already
+solved exactly this problem for Can/TCone (merging same-surface
+contiguous pieces into a `ShellGu` before checking closure) -- extracted
+that merge step into a standalone `merge_same_surface_faces` helper and
+applied it to RoundCorner too: `get_adjacent_cylplane` gained `ShellGu`
+support (mirroring `get_adjacent_cylknesurf`'s existing shell/single-face
+dispatch, pooling corner planes found from any merged piece).
+`get_additional_corner_plane` and `build_roundC_params` needed the same
+shell-awareness downstream (p1/p2 can each be reachable from a different
+piece of the split cylinder) -- `get_roundcorner_surfaces` now carries
+the merged shell alongside the original seed face through `rc_list` (a
+5-tuple, was 4) specifically for this.
+
+**Verification**: the file now registers `RoundC: 1` (was a bare `Cyl: 1`
+-- an incorrect stand-in for the real fillet shape) and its d1suned
+volume tally is `0.99883 +/- 0.23%` (0.5 sigma, SD4 matches true CAD
+volume exactly) -- confirms the fix resolves the actual volume bug, not
+just the classification symptom. `tests/geo` + `tests/test_cadtocsg.py`,
+156/156 after each fix. An 87-file `Solidos/` corpus regression (Can/
+TCone/RoundCorner/MultiRoundCorner/MultiPlane counts, before/after) shows
+only 2 diffs across both fixes combined, both newly-detected composite
+surfaces that were previously silently missed (`BadCADModel/
+SCDR_90_piece0_gsplit_tangent_bug.stp` gains a `MultiRoundCorner`+
+`MultiPlane`; this file gains its `RoundCorner`) -- no file loses a
+detection, no new crashes. `SCDR_90_piece1_roundcorner_badvolume.stp`
+removed from `Solidos/convierte_bad_volume/` (now correct);
+`SCDR_90_piece3_boolean_neg0_badvolume.stp` (also exported from
+`SCDR_90.stp`, same investigation) is still there, not yet root-caused.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
