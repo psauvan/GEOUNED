@@ -898,6 +898,7 @@ class MetaSurfacesDict(dict):
         return newregion
 
     def add_multiRoundCorner(self, mRoundC):
+        resolved_planes = set()
         for plane in mRoundC.Surf.Planes:
             pid, exist = self.primitive_surfaces.add_plane(plane, True)
             if exist:
@@ -907,6 +908,7 @@ class MetaSurfacesDict(dict):
                     # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                     plane.Surf.Axis = -plane.Surf.Axis
                     plane.bVar = pid
+            resolved_planes.add(id(plane))
 
         components = {abs(plane.bVar): plane for plane in mRoundC.Surf.Planes}
 
@@ -919,8 +921,19 @@ class MetaSurfacesDict(dict):
                 pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Cylinder.Surf.Plane, True)
                 cylplane = rc.Surf.Cylinder.Surf.Plane
             else:
-                pcid, exist_p = self.primitive_surfaces.add_plane(rc.Surf.Planes[0], True)
                 cylplane = rc.Surf.Planes[0]
+                if id(cylplane) in resolved_planes:
+                    # cylplane is the same object already resolved in the
+                    # Planes-loop above (its own Surf.Axis was already
+                    # mutated to the correct, sign-corrected direction there
+                    # -- re-registering it here would compare that
+                    # already-corrected axis against the primitive a second
+                    # time, trivially finding it "not opposite" and silently
+                    # discarding the correction). Reuse the already-resolved
+                    # bVar instead of re-deriving the sign.
+                    pcid, exist_p = cylplane.bVar, False
+                else:
+                    pcid, exist_p = self.primitive_surfaces.add_plane(cylplane, True)
 
             if exist_p:
                 p = self.get_primitive_surface(abs(pcid))
