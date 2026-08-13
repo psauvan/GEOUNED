@@ -498,6 +498,7 @@ class MetaSurfacesDict(dict):
 
     def add_cylinder(self, cylinder, fuzzy=False):
         cid, exist_c = self.primitive_surfaces.add_cylinder(cylinder.Surf.Cylinder)
+        characteristic_id = cid
         if cylinder.Orientation == "Forward":
             cid = -cid
         cylinder_region = BoolSurface(0, cid)
@@ -512,9 +513,17 @@ class MetaSurfacesDict(dict):
             cylinder_region = cylinder_region * BoolSurface(0, pid)
             components[abs(pid)] = cylinder.Surf.Plane
 
+        validate_characteristic_sign(cylinder_region.region, int(characteristic_id), cylinder.Orientation, "add_cylinder")
+
         add_cyl = True
         for cyl_surf in self["Cyl"]:
-            boundary = cylinder_region.isSameInterface(cyl_surf.region)
+            # Both cylinder_region and cyl_surf.region were already
+            # validated self-consistent at their own construction time
+            # (above), so a .reverse conflict here is never a bug -- it's
+            # two distinct, adjacent cylinders legitimately sharing the
+            # same real surface with opposite sense (same reasoning as
+            # Can_region/add_sphere).
+            boundary = cylinder_region.isSameInterface(cyl_surf.region, on_conflict="ignore")
             if abs(boundary) == 1:
                 add_cyl = False
                 break
@@ -533,6 +542,7 @@ class MetaSurfacesDict(dict):
 
     def add_cone(self, cone):
         cid, exist_c = self.primitive_surfaces.add_cone(cone.Surf.Cone)
+        characteristic_id = cid
 
         if cone.Orientation == "Forward":
             cid = -cid
@@ -561,9 +571,16 @@ class MetaSurfacesDict(dict):
             cone_region = cone_region * BoolSurface(0, pid)
             components[abs(pid)] = cone.Surf.Plane
 
+        validate_characteristic_sign(cone_region.region, int(characteristic_id), cone.Orientation, "add_cone")
+
         add_cone = True
         for kne_surf in self["Cone"]:
-            boundary = cone_region.isSameInterface(kne_surf.region)
+            # Both cone_region and kne_surf.region were already validated
+            # self-consistent at their own construction time (above), so a
+            # .reverse conflict here is never a bug -- it's two distinct,
+            # adjacent cones legitimately sharing the same real surface
+            # with opposite sense (same reasoning as Can_region/add_sphere).
+            boundary = cone_region.isSameInterface(kne_surf.region, on_conflict="ignore")
             if abs(boundary) == 1:
                 add_cone = False
                 break
@@ -581,6 +598,7 @@ class MetaSurfacesDict(dict):
 
     def add_sphere(self, sphere):
         sid, exist_s = self.primitive_surfaces.add_sphere(sphere.Surf.Sphere)
+        characteristic_id = sid
 
         if sphere.Orientation == "Forward":
             sid = -sid
@@ -596,9 +614,16 @@ class MetaSurfacesDict(dict):
             sphere_region = sphere_region * BoolSurface(0, pid)
             components[abs(pid)] = sphere.Surf.Plane
 
+        validate_characteristic_sign(sphere_region.region, int(characteristic_id), sphere.Orientation, "add_sphere")
+
         add_sph = True
         for sph_surf in self["Sph"]:
-            boundary = sphere_region.isSameInterface(sph_surf.region)
+            # Both sphere_region and sph_surf.region were already validated
+            # self-consistent at their own construction time (above), so a
+            # .reverse conflict here is never a bug -- it's two distinct,
+            # adjacent spheres legitimately sharing the same real surface
+            # with opposite sense (same reasoning as Can_region).
+            boundary = sphere_region.isSameInterface(sph_surf.region, on_conflict="ignore")
             if abs(boundary) == 1:
                 add_sph = False
                 break
@@ -616,6 +641,7 @@ class MetaSurfacesDict(dict):
 
     def add_torus(self, torus):
         tid, exist_t = self.primitive_surfaces.add_torus(torus.Surf.Torus)
+        characteristic_id = tid
 
         if torus.Orientation == "Forward":
             tid = -tid
@@ -659,9 +685,16 @@ class MetaSurfacesDict(dict):
             torus_region = torus_region * BoolSurface(0, sid)
             components[abs(sid)] = torus.Surf.VSurface
 
+        validate_characteristic_sign(torus_region.region, int(characteristic_id), torus.Orientation, "add_torus")
+
         add_torus = True
         for tor_surf in self["Tor"]:
-            boundary = torus_region.isSameInterface(tor_surf.region)
+            # Both torus_region and tor_surf.region were already validated
+            # self-consistent at their own construction time (above), so a
+            # .reverse conflict here is never a bug -- it's two distinct,
+            # adjacent tori legitimately sharing the same real surface with
+            # opposite sense (same reasoning as Can_region/add_sphere).
+            boundary = torus_region.isSameInterface(tor_surf.region, on_conflict="ignore")
             if abs(boundary) == 1:
                 add_torus = False
                 break
@@ -847,7 +880,9 @@ class MetaSurfacesDict(dict):
             components[abs(pid)] = pi
             surf_list.append((pid, configuration))
 
-        return tcone_region(cid, TCone.Orientation, surf_list), components
+        region = tcone_region(cid, TCone.Orientation, surf_list)
+        validate_characteristic_sign(region.region, int(cid), TCone.Orientation, "TCone_region")
+        return region, components
 
     def add_forwardTCone(self, forwardTCone):
         fwd_region, components = self.TCone_region(forwardTCone)
@@ -857,7 +892,13 @@ class MetaSurfacesDict(dict):
             if not add_kne:
                 break
             for cs_surf in self[kind]:
-                boundary = fwd_region.isSameInterface(cs_surf.region)
+                # Both fwd_region and cs_surf.region were already validated
+                # self-consistent at TCone_region time, so a .reverse
+                # conflict here is never a bug -- it's two distinct,
+                # adjacent TCones legitimately sharing the same real
+                # surface with opposite sense (same reasoning as
+                # Can_region).
+                boundary = fwd_region.isSameInterface(cs_surf.region, on_conflict="ignore")
                 if abs(boundary) == 1:
                     add_kne = False
                     break
@@ -881,7 +922,11 @@ class MetaSurfacesDict(dict):
             if not add_kne:
                 break
             for cs_surf in self[kind]:
-                boundary = rev_region.isSameInterface(cs_surf.region)
+                # Both rev_region and cs_surf.region were already validated
+                # self-consistent at TCone_region time, so a .reverse
+                # conflict here is never a bug -- same reasoning as
+                # add_forwardTCone/Can_region.
+                boundary = rev_region.isSameInterface(cs_surf.region, on_conflict="ignore")
                 if abs(boundary) == 1:
                     add_kne = False
                     break

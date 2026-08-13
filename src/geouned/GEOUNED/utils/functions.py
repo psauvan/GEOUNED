@@ -242,22 +242,37 @@ def build_roundC_params(rc_list):
                     del plane_list[n - j]
             i += 1
 
-        multi_round, orientation = convex_planes(plane_list, cyl.Surface.Axis)
+        if len(plane_list) > 1:
+            multi_round, orientation = convex_planes(plane_list, cyl.Surface.Axis)
 
         if multi_round:
-            cylinder_list = []
-            # for rc in roundcorner_list:
-            #    cylinder_list.append(rc.Surf.Cylinder)
-            # roundcorner_list = cylinder_list
-            center = plane_list[0].Surf.Position
-            for p in plane_list[1:]:
-                center = center + p.Surf.Position
-            center = center / len(plane_list)
-            dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
-            if abs(dotvalue) < 1e-5:  # aligned planes
-                orientation = rc.Surf.Cylinder.Orientation
+            if len(plane_list) > 1:
+                cylinder_list = []
+                # for rc in roundcorner_list:
+                #    cylinder_list.append(rc.Surf.Cylinder)
+                # roundcorner_list = cylinder_list
+                center = plane_list[0].Surf.Position
+                for p in plane_list[1:]:
+                    center = center + p.Surf.Position
+                center = center / len(plane_list)
+                dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
+                if abs(dotvalue) < 1e-5:  # aligned planes
+                    orientation = rc.Surf.Cylinder.Orientation
+                else:
+                    orientation = "Reversed" if dotvalue > 0 else "Forward"
             else:
-                orientation = "Reversed" if dotvalue > 0 else "Forward"
+                # Deduplication above can collapse plane_list down to a
+                # single shared plane -- e.g. several independent,
+                # non-contiguous cylinders (not merge-able by
+                # merge_same_surface_faces, since they don't actually
+                # touch each other) that each individually bound against
+                # the same physical wall. There's no second plane to
+                # derive a group-relative orientation from (convex_planes
+                # itself needs >= 2 points), so fall back to the
+                # last-processed corner's own already-computed cylinder
+                # orientation, exactly like the "aligned planes" case
+                # above already does.
+                orientation = rc.Surf.Cylinder.Orientation
     params = (roundcorner_list, plane_list, multi_round, orientation)
     return params
 
