@@ -240,7 +240,7 @@ class FaceGu(GFace):
         # itself isn't a geo type, so the recursion over its Faces stays
         # here.
         if isinstance(shape, ShellGu):
-            distmin = 1
+            distmin = float("inf")
             for f in shape.Faces:
                 d = self.distToShape(f)
                 distmin = min(distmin, d[0])

@@ -715,7 +715,15 @@ class GFace:
         return self.__native__.distToShape(other.__native__)[0]
 
     def my_distToshape(self, other: "GFace") -> float:
-        """alternative to distance_to, for testing -- same as distance_to. Doesn't call native distToShape but use boundbox distances and Common object of to check if solids touch eah other"""
+        """Faster alternative to distance_to for the common cases: uses
+        BoundBox overlap plus a Common-object/edge-identity check to
+        decide touching (0.0) or clearly-separate (BoundBox-center
+        distance) without the cost of a real distToShape query. Falls
+        back to the native, reliable distance_to() only in the
+        remaining ambiguous case -- BoundBoxes overlap but neither
+        Common() nor edge isSame() can confirm contact -- where a wrong
+        guess (previously a hardcoded 1.0 sentinel) can silently reject
+        a real, touching pair."""
 
         shape1 = self.__native__
         shape2 = other.__native__
@@ -749,7 +757,7 @@ class GFace:
                                 same = True
                                 break
                     if not same:
-                        dist2Shape = 1.0
+                        dist2Shape = self.distance_to(other)
             else:
                 c1 = shape1.BoundBox.Center
                 c2 = shape2.BoundBox.Center

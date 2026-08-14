@@ -3490,13 +3490,116 @@ real void generation, `volSDEF=True`): before the fix, 10 lost particles,
 aborted at nps=18; after, **0 lost particles**, full 1,000,000-particle
 run, tally `0.9984 +/- 0.31%` (0.52 sigma).
 
-**Not yet re-checked**: cells 10 and 21 (the other two TVA cells that
-lose particles) were not directly re-verified against this specific fix
--- they may involve the *same* `round_corner_region` bug (plausible,
-since they're structurally similar "Barrel"-family corners) or a
-different, still-undiagnosed issue. `TVA_solid9_cell10.stp` and
-`TVA_solid20_cell21.stp` remain saved in `Solidos/lost_particles/` for
-that follow-up.
+**Update**: cells 10 and 21 were re-checked directly (isolated conversion
++ d1suned, same methodology) and are fixed by this same
+`round_corner_region` change -- cell 10 (`TVA_solid9_cell10.stp`): 10
+lost -> 0 lost, tally `0.9974 +/- 0.25%` (1.04 sigma); cell 21
+(`TVA_solid20_cell21.stp`): 10 lost -> 0 lost, tally `0.9961 +/- 0.27%`
+(1.44 sigma). All three originally-failing TVA cells shared this one
+root cause.
+
+### `TVA_final_allencl.stp`'s lost-particle problem, part 4: a *different*, still-unresolved leak in cells 1/2 (RPV upper right/left), and a real, separate `distToShape` bug found and fixed along the way
+
+With cells 10/17/21 confirmed fixed, converting the *full* TVA model
+(52/48 solids, not just the 3 isolated cells) surfaced a **new** failure,
+previously masked: cells 1/2 ("RPV upper right"/"RPV upper left") now
+lose particles (10 lost, aborts at nps~103202) -- these cells' own
+isolated conversions pass perfectly cleanly on their own (0 lost, tally
+~1.00/0.999), so this is a cross-solid interaction, not a defect in
+either cell alone.
+
+**Root cause, narrowed via a long dialogue with the user, working from
+real MCNP plotter screenshots and direct CAD queries** (not fixed this
+session -- still open):
+- The leaking clause is a `FwdCan` on "RPV upper left"'s own tiny
+  decomposed corner fragment (`Solidos/lost_particles/TVA_can45_piece0.stp`,
+  Volume~4.6e6mm^3): main cylinder cid=30 (R=395, small tilted corner
+  cylinder), secondaries `s1=Plane(40, real, shared with Shoulder0041)`
+  and `s2=Cylinder(2, R=2443.2 outer wall) + a synthetic edge-derived
+  plane` (`cks_edge_plane`/`spline_wires`, since the cylinder30/cylinder2
+  tangency curve is a genuine `GBSpline`, not a circle).
+- The *same* cylinder cid=30 is *also* the main cylinder of a **RevCan**
+  (found via `Shoulder0041`'s own Can detection), whose secondaries are
+  `s1=Plane(40, same real plane)` and `s2=Plane(171, a *different* real
+  plane, `Shoulder0041.face[5]`)` -- i.e. the Rev/Fwd pair does *not*
+  share the same `s1`/`s2` pairing the user expected; the Reversed side
+  correctly found a second *real* plane, the Forward side instead fell
+  back to the cylinder+synthetic-plane construction.
+- `Gin_contact`/`Gcommon`/`Gdistance` confirm piece0 and Pipe0041 are
+  CAD-perfect tangent (0 common volume, 0 distance) at the shared
+  R=2443.2 wall -- no real CAD gap or overlap anywhere. `piece0.face[3]`
+  and `Pipe0041.face[6]` are the *exact same* analytic cylinder,
+  bit-identical parameters.
+- The MCNP plotter (`ip` command), run by the user directly, visually
+  confirms a genuine geometric conflict (dashed/conflicting lines,
+  MCNP's own "problem plane coincident" diagnostic) exactly at the
+  piece0/Pipe0041 junction, involving the synthetic plane and the shared
+  cylinder -- matching the diagnosis above.
+- **Minimal reproduction confirmed**: `piece0` alone + `Pipe0041` alone
+  (no decomposition needed at all, both are already-finished solids)
+  reproduces the identical 10-lost-particle failure
+  (`Solidos/lost_particles/TVA_piece0_plus_pipe0041.stp`). Further
+  narrowed with the user's own `TVA_2_28.stp` (cells 2+28+34 together):
+  2+34 alone passes cleanly; 2+28+34 together reproduces the leak --
+  cell 28 (Pipe0041) is necessary but not sufficient, some 3-way
+  interaction is involved, not fully root-caused.
+- **Not yet fixed**: why `spline_wires`'s heuristic (BSpline-pole
+  projection along the principal inertia axis, `0.51*span` margin
+  offset) computes a position ~1600mm away from any real geometric
+  feature for piece0's specific tangency edge, when the *same* function
+  applied to Pipe0041's analogous edges lands correctly (either exactly
+  on a real face, or legitimately synthetic-but-close). Picked up next
+  session.
+
+**Separate, real bug found and fixed while investigating the above --
+unrelated to the actual leak, but a genuine correctness+performance
+issue in its own right**: while checking why `Pipe0041`'s *own* other
+R=395 corner (unrelated to piece0) failed to form a Can, traced
+`get_can_surfaces` -> `commonEdge` -> `commonEdgeFace` ->
+`FaceGu.distToShape` (`geometry_gu.py`) -> `GFace.my_distToshape`
+(`_freecad_impl.py`, the BoundBox/`Common()`/edge-`isSame()` fast-path
+alternative to the native `distToShape` query, documented earlier in
+this file as "kept as the user's own comparison/testing tool, not wired
+back in" -- that description was already stale, `FaceGu.distToShape`
+*does* call it live). Two real bugs in it:
+- `my_distToshape`'s final fallback (BoundBoxes overlap, but neither
+  `Common()` nor edge `isSame()` can confirm contact) returned a
+  **hardcoded `dist2Shape = 1.0`** instead of a real measurement --
+  confirmed via direct comparison (`GFace.distance_to`, the reliable
+  native query, gives `0.0` for the exact same pair) that this sentinel
+  was firing on a genuinely *touching* pair, wrongly reporting a 1mm gap
+  and causing `commonEdgeFace`'s `> 0` check to reject a real Can.
+- `FaceGu.distToShape`'s own `ShellGu` branch (recursing over a merged
+  shell's faces to find the minimum distance) initialized `distmin = 1`
+  instead of `float("inf")` -- the same sentinel-as-real-value mistake,
+  latent (would silently under-report a genuine gap larger than 1mm as
+  exactly 1mm, or over-report a real sub-1mm gap has never been
+  observed to matter in practice, but is a live correctness bug in
+  general).
+
+**Fix**: `my_distToshape`'s dead-end now calls `self.distance_to(other)`
+(the reliable native query) instead of guessing `1.0`; `distToShape`'s
+`ShellGu` branch now seeds `distmin` with `float("inf")`.
+`FaceGu.distToShape`'s own dispatch (call `my_distToshape`, not
+`distance_to`, in the non-`ShellGu` case) is otherwise unchanged --
+**explicit user call**: a blanket switch to always calling the reliable
+native `distance_to()` was tried first and confirmed correct, but caused
+a severe performance regression (a single 2-solid file's decomposition
+went from ~1.2s to ~483s) because far more Can candidates now succeed
+(previously silently, incorrectly rejected) and trigger real, expensive
+CAD construction. Falling back to the native query only in
+`my_distToshape`'s one genuinely ambiguous branch keeps the fast path
+for the overwhelming common case while fixing the correctness bug --
+verified back to ~1.2s decomposition on the same file.
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` 156/156 (twice,
+once per fallback strategy tried). Confirmed via `TVA_2_28.stp` that this
+fix is real and independent of the cells-1/2 leak above: it does fix
+`Pipe0041`'s other R=395 corner's Can detection (previously silently
+lost to the bogus 1mm gap), but the cells-2/28/34 d1suned result is
+byte-identical before and after this fix (same nps=81164 abort, same
+tallies to 5 significant figures) -- confirming these are two genuinely
+independent bugs, not the same root cause.
 
 ## Code style preference
 
