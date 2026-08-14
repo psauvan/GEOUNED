@@ -107,13 +107,24 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
     same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
 
+    p1id_raw = p1id
+
     if fwd_cyl:
         p1id = -p1id
         p2id = -p2id
 
     if p1id == p2id:
         if AND_p1_cyl:
-            rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
+            # Single-corner-plane AND case: the fwd_cyl pre-negation above
+            # combined with the final -rc_region complement below
+            # double-applies fwd_cyl to p1id here (verified wrong against
+            # real CAD ground truth: TVA_final_allencl.stp's "Barrel upper
+            # left" RoundCorner, 78.7% match with the pre-negated p1id vs
+            # 99.9% using the original, un-negated one). The sibling OR
+            # branch just below does NOT have this problem (verified 100%
+            # correct on Solidos/trier/series_solid2_complement.stp) so it
+            # deliberately keeps using the pre-negated p1id.
+            rc_region = BoolSurface(0, p1id_raw) * BoolSurface(0, cid)
         else:
             rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
     elif AND_p1_cyl and AND_p2_cyl:

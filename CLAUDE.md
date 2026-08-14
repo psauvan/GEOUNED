@@ -3386,6 +3386,118 @@ else:
 
 When `omit` is `False`, the secondary surface's *reported* orientation is deliberately flipped (part of the same-session-documented attempt to normalize `region_sign`'s AND/OR result against the main cylinder's own orientation so the representation is uniform) -- for this Barrel Can, that flip turns the real, correct `Forward` into a wrongly-reported `Reversed`, which `can_region` then takes at face value, producing the leaking formula. Not fixed this session -- consolidating with the 2 already-known regressions as the next concrete target: `build_can_params`'s `omit=False` branch (and/or whatever upstream `region_sign`-based logic decides `omit` and the paired orientation flip in the first place) needs to be re-derived against real CAD ground truth the same way the round-corner fix above was, ideally using this Barrel case (small `omit=False` reproduction: `TVA_final_allencl.stp` solid index 9, "Barrel upper left", `skip_solids=[j for j in range(52) if j != 9]`) alongside the pre-existing `tank.stp`/`rev_can_1.stp` cases, rather than another blanket formula guess.
 
+### `TVA_final_allencl.stp`'s lost-particle problem, part 3: `build_can_params`'s omit-flip was a red herring; the real bug was in `round_corner_region`
+
+Follow-up to part 2's "Barrel upper left" finding (`build_can_params`'s
+`omit=False` orientation-flip, `utils/functions.py` lines ~367-370,
+flagged as the suspected cause). Tested directly: removed the flip
+(Cylinder branch only, via monkeypatch first, then confirmed with a real
+source edit) and reconverted both the isolated solid (index 9) and the
+full 52-solid model. **The flip removal changed the written formula but
+did not fix the lost particles** -- same 3 cells (10, 17, 21) still lost
+particles identically before and after. Reverted the edit; `build_can_params`
+was not the cause after all. (First isolated-solid d1suned attempts also
+falsely looked "unaffected" by the patch -- traced to a stale-monkeypatch
+bug in the test script, not a real finding; the *full*-model byte-diff of
+the two variants' `.mcnp` output, done afterward, confirmed the patch
+genuinely does change cell 10's formula, just not in a way that fixes
+anything.)
+
+The user then spotted the real bug by inspecting `TVA_solid16_cell17.stp`
+(exported alongside solids 9/20, the other two failing cells, into the
+new `Solidos/lost_particles/` folder) directly: the round corner's
+`PX~0` plane sign looked wrong -- written `(-15:-2) 16 -17 4 -15`, should
+be `(15:-2) 16 -17 4 -15`. Isolated-conversion reproduction confirmed the
+exact same clause with small, readable surface numbers.
+
+**First hypothesis (chased, then disproven): `simplify_planes` (`write/
+functions.py`) breaks composite regions.** `simplify_planes` normalizes
+PX/PY/PZ planes to a canonical positive-axis direction, flipping the
+plane's shared `BoolVariable` reference (`bVar.change_ref()`) so every
+*live* reference to that id reinterprets consistently. Traced plane 15
+(here: `Axis=(-1,0,0)` pre-flip) through the full pipeline and confirmed
+this flip *does* fire for it. Naive comparison of `round_corner_region`'s
+raw, pre-flip return value (`OR[15,-2]`) against the post-flip *written*
+text (`OR[-15,-2]`) looked like exactly the kind of "flip doesn't
+propagate to an already-baked composite region" bug this session
+already knows the shape of (`simplify_planes`'s docstring section
+earlier in this file). **This was the wrong diagnosis** -- confirmed
+empirically: `BoolSurface(0, p1id)` (how `round_corner_region` builds
+its terms) actually stores the *live* `BoolVariable` object in the
+`BoolSequence` tree (`BoolSurface.set_definition`'s `isinstance(...,
+BoolVariable)` branch), not a frozen string/int -- so `change_ref()`
+*does* propagate correctly. A direct 3000-point Monte Carlo against the
+real decomposed solid (`GSolid.is_inside`, scaled mm->cm to match the
+written MCNP surfaces) confirmed the *written*, post-flip formula
+(`OR[-15,-2]`) is the one that's wrong (78.7% match) and the *pre-flip*
+raw value (`OR[15,-2]`, i.e. what the user proposed, unflipped) is
+correct (99.9% match) -- meaning the bug is upstream of `simplify_planes`
+entirely, inside `round_corner_region` itself.
+
+**Real root cause**: `round_corner_region`'s `if p1id == p2id:` fast path
+(`basic_functions_part1.py`, used when a round corner has only one
+distinct bounding plane instead of two) applies `fwd_cyl` *twice* for
+this specific sub-case:
+
+```python
+if fwd_cyl:
+    p1id = -p1id
+    p2id = -p2id
+if p1id == p2id:
+    if AND_p1_cyl:
+        rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
+    ...
+return -rc_region if fwd_cyl else rc_region
+```
+
+Once *before* building the region (the pre-negation) and once again *after*
+(the final `-rc_region` complement) -- for this branch specifically, the
+two applications don't cancel out correctly, leaving `p1id`'s sign wrong
+in the final result. Verified by hand (De Morgan expansion) and, more
+importantly, empirically: **the AND sub-branch (`if AND_p1_cyl:`) is
+broken -- 78.7% vs 99.9% on the TVA case -- but the sibling OR sub-branch
+(`else:`) is not.** Checked the OR sub-branch directly against 2 other
+real files that exercise the identical `p1id==p2id, fwd_cyl=True,
+AND_p1_cyl=False` combination (`Solidos/trier/series_solid2_complement.stp`,
+`series_solid2_halfcyl_plus_inclined.stp`, both pre-existing regression
+fixtures from an earlier session): the *current* code already matches
+CAD ground truth 100% (2000/2000) there, and the "candidate blanket fix"
+(un-negating `p1id` for the whole `p1id==p2id` block, both sub-branches)
+would have *broken* this already-correct OR case (only 21.4% match) --
+exactly the kind of false generalization this project's `get_can_surfaces`/
+`outer2_only` history already warned about (see "The washer-plane gap in
+`get_can_surfaces`" above): a fix that looks like a strict, uniform
+narrowing/widening of one condition can silently break an unrelated,
+already-correct sibling case, so *always* re-verify both branches
+independently rather than reasoning abstractly about symmetry.
+
+**Fix, scoped to exactly the broken sub-case**: capture `p1id`'s value
+*before* the `fwd_cyl` pre-negation (`p1id_raw`), and use that original,
+un-negated value only inside `if p1id == p2id: if AND_p1_cyl:`. The
+sibling `else` (OR) branch, and every other branch in the function
+(`elif AND_p1_cyl and AND_p2_cyl:` etc., covering the general two-plane
+case already validated extensively via `solid174`/`rc16`/the corpus's
+`MultiRoundCorner` scan earlier in this file), are untouched.
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` 156/156; a
+zero-transform-except-the-fix corpus diff (Can/TCone/RoundC/MultiRoundC/
+MultiP counts, `git stash` before/after) across 84 `Solidos/` files
+(excluding `Big_model_reserved`) -- **0 diffs**, same single pre-existing,
+unrelated `w_encl.stp` failure (`'list' object has no attribute 'level'`)
+both before and after; and the full d1suned stochastic volume check on
+the isolated, previously-failing cell (`TVA_solid16_cell17.stp`, with
+real void generation, `volSDEF=True`): before the fix, 10 lost particles,
+aborted at nps=18; after, **0 lost particles**, full 1,000,000-particle
+run, tally `0.9984 +/- 0.31%` (0.52 sigma).
+
+**Not yet re-checked**: cells 10 and 21 (the other two TVA cells that
+lose particles) were not directly re-verified against this specific fix
+-- they may involve the *same* `round_corner_region` bug (plausible,
+since they're structurally similar "Barrel"-family corners) or a
+different, still-undiagnosed issue. `TVA_solid9_cell10.stp` and
+`TVA_solid20_cell21.stp` remain saved in `Solidos/lost_particles/` for
+that follow-up.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
