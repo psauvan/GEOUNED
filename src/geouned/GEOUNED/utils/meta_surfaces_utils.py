@@ -1048,22 +1048,40 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 def cyl_plane_region_conf(cylinder, ep1, ep2):
 
-    _, e1, _, _, p1 = ep1
-    _, e2, _, _, p2 = ep2
+    # ep1[0]/ep2[0] (cyl1/cyl2) are each end's own real adjacent cylinder
+    # piece -- normally the same object as `cylinder` (the seed), but when
+    # `cylinder` is one contiguous piece of a same-surface cylinder split
+    # into several (see merge_same_surface_faces -- get_adjacent_cylplane's
+    # ShellGu branch searches every piece and tags each found plane with
+    # the specific piece that actually touches it), p1 and p2 can each
+    # border a *different* piece. r1/nc1/nt1 must come from p1's own piece
+    # and r2/nc2 from p2's own piece -- using the single seed `cylinder`
+    # for both (the original bug) evaluates the "far" end at that seed's
+    # own trim boundary instead of the real adjacent piece's, which can
+    # land far from the true corner geometry (confirmed concretely: for
+    # L1_S23.stp solid 174, whose round-corner cylinder is split into 2
+    # 90-degree pieces meeting at a shared seam, p2's real adjacent piece
+    # is tangent to p2's own plane at its own far boundary, while the
+    # seed piece's own far boundary -- what the old code evaluated r2/nc2
+    # at -- is just the seam between the two pieces, unrelated to p2).
+    cyl1, e1, _, _, p1 = ep1
+    cyl2, e2, _, _, p2 = ep2
     p1_axis = p1.Surface.Axis
     p2_axis = p2.Surface.Axis
-    cyl_center = cylinder.Surface.Center
+    cyl1_center = cyl1.Surface.Center
+    cyl2_center = cyl2.Surface.Center
 
-    u1, u2, v1, v2 = cylinder.ParameterRange
-    r1 = cylinder.value_at(u1, 0.5 * (v1 + v2))
-    r2 = cylinder.value_at(u2, 0.5 * (v1 + v2))
-    nt1 = cylinder.tangent_at(u1, v1)[0]
-    nc1 = -cylinder.normal_at(u1, v1)
-    nc2 = -cylinder.normal_at(u2, v2)
+    u1, u1b, v1, v1b = cyl1.ParameterRange
+    u2, u2b, v2, v2b = cyl2.ParameterRange
+    r1 = cyl1.value_at(u1, 0.5 * (v1 + v1b))
+    r2 = cyl2.value_at(u2b, 0.5 * (v2 + v2b))
+    nt1 = cyl1.tangent_at(u1, v1)[0]
+    nc1 = -cyl1.normal_at(u1, v1)
+    nc2 = -cyl2.normal_at(u2b, v2b)
 
-    if nc1.dot(r1 - cyl_center) < 0:
+    if nc1.dot(r1 - cyl1_center) < 0:
         nc1 = -nc1
-    if nc2.dot(r2 - cyl_center) < 0:
+    if nc2.dot(r2 - cyl2_center) < 0:
         nc2 = -nc2
 
     ac1 = nt1.cross(nc1)

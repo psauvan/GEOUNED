@@ -3066,6 +3066,299 @@ Fix: take the max end value across all pieces explicitly (`max(v1 for _, v1 in p
 
 Verified: `Torus_solid1.stp`'s d1suned tally goes from `0.97055` (3.7 sigma) to `0.99672` (0.4 sigma) -- `SD4` matched the true CAD volume in both cases, confirming the bug was in the bounding surface geometry, not the reported volume. 156/156 tests/geo + test_cadtocsg.py; zero diffs across the `Solidos/` corpus regression. `convierte_bad_volume/` is now empty of real, unexplained failures -- every file that started this session's investigation there has been either fixed (`SCDR_90_piece1_roundcorner_badvolume.stp`, this file) or correctly re-filed as a genuine CAD defect (`BadCADModel/`).
 
+### `round_corner_region`/`cyl_plane_region_conf` deep-dive on L1_S23.stp solid 174 — root cause narrowed to a rare near-tangent case, no fix landed, session ends with source fully reverted
+
+Started from the L1_S23.stp full-model lost-particle investigation (see the
+Big_model_reserved section preceding this one): isolating solid 174 alone
+reproduced the loss (10 lost particles, tally=3.75/sigma=14.83) and the user
+spotted, by eye, that its RoundCorner should be a flat AND `(1 2 3 -4)`, not
+the actual `(-4:1 2 3)` (`p1 OR (pd AND cid AND p2)`) written by
+`round_corner_region`'s `AND_p1_cyl and not AND_p2_cyl` / `AND_p1_pd and not
+AND_p2_pd` / `not OR_bracket` branch (`basic_functions_part1.py`).
+
+**First fix attempt (applied, then explicitly reverted by the user) --
+`p1only_AND_p1pd_only_no_bracket`: OR to AND.** Validated 500/500 against
+real CAD ground truth for solid 174 and via d1suned (0 lost particles,
+tally 0.99247/sigma=1.93, was 10 lost/tally=3.75). But a systematic sweep of
+every branch's formula against its `p1<->p2`-swap mirror (prompted by a
+branch-coverage-visited-vs-unvisited analysis -- see below) found this fix
+made `p1only_AND_p1pd_only_no_bracket`'s formula byte-identical to the
+already-existing, separately-validated `both_AND_p1pd_p2pd` branch
+(`p1*p2*pd*cid`) for a *different* flag combination. **The user rejected
+this on principle**: "cada rama esta pensada para una configuracion
+diferente. dos configuraciones distintas NO pueden dar lugar a la misma
+expresion booleana" -- two genuinely different `(AND_p1_cyl, AND_p2_cyl,
+AND_p1_pd, AND_p2_pd)` combinations collapsing to the identical formula is
+itself evidence the *classification* is wrong, not that the formula needed
+patching to match a different branch's answer. Reverted via
+`git checkout -- basic_functions_part1.py`; **`round_corner_region` itself
+is confirmed correct as originally written and was not touched further this
+session.**
+
+**Root cause, once redirected to classification**: `cyl_plane_region_conf`
+(`meta_surfaces_utils.py`) derives each corner plane's material-pointing
+normal (`n1`/`n2`) via a local heuristic (`pr1 = ac1.cross(p1_axis)`,
+`pr2 = -ac1.cross(p2_axis)` -- note the asymmetric extra unary minus on the
+p2 side, absent from p1's) rather than trusting the plane's own
+`Surface.Axis` directly. For solid 174's corner specifically: real-face
+export + direct `is_inside()` ground truth (`Solidos/solid/solid174_faces/`,
+built the same way as the earlier SCDR_90 piece3 face-dump) confirmed both
+p1 and p2's *raw, untouched* `Surface.Axis` already point toward material
+correctly (`p1: Axis=(0,0,+1)`, material at `z>-977`; `p2: Axis=(0,0,-1)`,
+material at `z<2439.95` -- both Orientation=`Reversed`) -- **`pr1`
+correctly leaves `n1` unflipped; `pr2` incorrectly flips `n2`** to
+`(0,0,+1)`, feeding wrong values into `AND_p2_cyl`/`AND_p2_pd` (both come
+out `False` when they should be `True`), landing on the buggy branch
+instead of the already-trusted `both_AND_p1pd_p2pd` (config=54, all 4
+`AND_p*` flags `True`, confirmed both algebraically and by re-deriving
+`AND_p1_cyl`/`AND_p2_cyl`/`AND_p1_pd`/`AND_p2_pd` from scratch with the
+confirmed-correct `n1`/`n2` -- `diag_solid174_configuration.py`,
+`compute_AND_cyl_with_correct_n.py`, scratchpad-only).
+
+**Three attempted general fixes, all independently confirmed correct for
+solid 174 (config -> 54, `both_AND_p1pd_p2pd`) and all independently
+confirmed to *break* `RoundCorners/rc16.stp`** (10 lost particles via
+d1suned, vs. baseline's clean 0 lost/tally=0.99423/sigma=1.15, in every
+case) -- **none were applied to source**:
+1. Remove the asymmetric negation directly in `AND_p2_pd`/`AND_p2_cyl`'s
+   own `>0` tests (leaving `pr2`/`n2` untouched).
+2. Remove `pr2`'s own extra unary minus (`pr2 = ac1.cross(p2_axis)`,
+   matching `pr1`'s unnegated form) -- the most surgical-looking option,
+   still broke `rc16.stp` identically.
+3. Replace the whole `pr1`/`pr2` heuristic with the pre-migration
+   convention the user recalled from when the FreeCAD interface lived
+   directly inside GEOUNED: material is `-face.Surface.Axis` if
+   `Orientation=="Forward"`, else `face.Surface.Axis` unchanged. This
+   convention **is already implemented correctly elsewhere in the
+   codebase** -- `conversion/cell_definition_functions.py::gen_plane`
+   (`normal = face.Surface.Axis; if face.Orientation == "Forward": normal
+   = -normal`) -- confirming `cyl_plane_region_conf` reinvented (and, for
+   this one plane, got wrong) something already established and trusted
+   everywhere else planes get classified. Algebraically identical to
+   `-face.normal_at(u,v)` (FreeCAD's own Orientation-corrected outward
+   normal).
+
+**Critical methodology correction, found only after the 3rd attempt kept
+failing `rc16.stp` despite being "obviously" the established convention**:
+naively comparing raw `n1`/`n2` (or `gen_plane`'s formula) against absolute
+`is_inside()` ground truth is only a valid test when `cylinder.Orientation
+== "Reversed"` (`fwd_cyl=False`) -- i.e. solid 174's own case, where
+`round_corner_region` applies no final complement. **All 7 of
+`rc16.stp`'s round-corner cylinders are `Orientation="Forward"`
+(`fwd_cyl=True`)** -- meaning `round_corner_region` takes the complement
+of the *entire* built expression at the end
+(`return -rc_region if fwd_cyl else rc_region`), so `n1`/`n2` are only
+ever required to be correct *up to that eventual global complement*, not
+in an absolute sense. Naive raw-normal ground-truth comparison (my first
+pass) wrongly favored the `gen_plane`/`normal_at()` convention 8/8 on
+`rc16.stp`; **redone properly** -- comparing the *final*, already-registered
+`round_corner_region` output (`.region`/`.components`, which already
+includes the complement) via `check_sign(point, roundC)` against real
+`is_inside()`, sampling in a cylindrical tube around each corner's own
+cylinder (`verify_rc16_final_expression.py`) -- the verdict flips
+completely: **baseline (`pr1`/`pr2`) 1088/1800 (60.4%) vs. the
+`gen_plane`-based fix 902/2400 (37.6%)**, i.e. the *existing* heuristic is
+actually the better match once the complement is accounted for correctly.
+This fully explains, retroactively, why the 3 general fixes broke
+`rc16.stp`: they were solving the wrong (complement-blind) formulation of
+the problem.
+
+**Ruled out as the discriminating factor**: `cylinder.Orientation`
+(Forward vs. Reversed) itself. `ac1`'s sign relative to the cylinder's own
+real `Surface.Axis` was checked across all of `rc16.stp`'s (all-Forward)
+corners and found to vary corner-by-corner (governed by the unrelated
+`d2 > d1` "which end of the arc comes first" edge-traversal flip, *not*
+by `Orientation`) while `pr1`/`pr2` still worked correctly every time
+(`check_ac1_vs_orientation.py`) -- so `ac1`'s own sign ambiguity isn't the
+cause either. A corpus-wide scan (excluding `Big_model_reserved`, per the
+user's own request to ask before including those 5 slow files) found 124
+round-corner calls with `cylinder.Orientation="Reversed"` across 50 files
+(`find_reversed_cyl_corner.py`) -- **`RoundCorners/rc0.stp`, picked as a
+small clean Reversed example, has `n1_old == n1_new` and `n2_old == n2_new`
+exactly (zero disagreement) and both confirmed correct against real
+`is_inside()` ground truth** (`check_rc0_reversed_corner.py`) -- i.e.
+`pr1`/`pr2` also works perfectly fine on a *different* Reversed-cylinder
+corner. **`fwd_cyl`/`Orientation` alone does not predict the bug.**
+
+**Current leading hypothesis, not yet confirmed**: the bug is tied to a
+genuinely near-degenerate/near-tangent geometric configuration specific to
+solid 174's own corner, not a general sign-convention error reachable by
+any blanket formula change. Concretely: `cross1 = n1.cross(nc1)` (used for
+`AND_p1_cyl`) has `length=8.56e-4` for solid 174's p1 -- `nt1`/`n1` sit only
+~0.049 deg from parallel, a genuine (not floating-point-noise) near-tangency
+between the corner plane and the cylinder at that end, four orders of
+magnitude above the existing `cross.length < 1e-8` degenerate-fallback
+guard (so the guard never fires, but the heuristic is apparently still
+fragile there) -- vs. `rc0.stp`/`rc16.stp`'s corners, which are all
+well-conditioned (no near-tangency) and where `pr1`/`pr2` works cleanly.
+Stability-tested directly: perturbing the *sampling point* used to
+evaluate `nc1` (`cylinder.normal_at(u,v)`) by tiny amounts confirmed the
+sign is fully stable throughout the entire *valid* domain of the cylinder
+face (`u` from the seed value out to the opposite end) -- an earlier
+apparent sign flip under negative perturbation was an artifact of
+evaluating *outside* the real trimmed face, not a genuine instability
+(`diag_robust_ac1.py`) -- so this isn't a simple "nudge the sampling point"
+fix either; the near-tangency itself (not the point of evaluation) is the
+suspect condition, not yet root-caused down to a specific formula term.
+
+**Also confirmed, a genuine and unrelated finding worth keeping**:
+`cyl_plane_region_conf(cylinder, ep1, ep2)` is **exactly swap-consistent**
+under `ep1<->ep2` reordering -- calling it with the two corner planes
+swapped reproduces precisely the naive `p1<->p2` relabeling of every flag,
+bit for bit, for solid 174's real geometry (`test_swap_invariance.py`).
+This confirms `p1only_*`/`p2only_*` branch pairs genuinely describe the
+same physical situation under relabeling (useful context for the earlier,
+separately-investigated-and-inconclusive `p2only_AND_p2pd_only_no_bracket`
+mirror-symmetry question below) -- it's specifically `pr2`'s *absolute*
+correctness against ground truth that's in question here, not any
+inconsistency between the two argument orders.
+
+**Branch-coverage side investigation** (before the above redirect):
+instrumented `round_corner_region` and ran it across the full pytest suite
++ a 95-file `Solidos/` corpus scan (including `Big_model_reserved`, this
+was *before* the user's ask-first request for that folder -- see
+`feedback_ask_before_big_models` memory) -- 12/22 branches visited, 10
+never hit (3 are the intentional `raise RuntimeError("should not
+exist")` guards, expected never to fire; 7 are real, unexercised gaps,
+most notably `p1only_AND_p1pd_only_OR_bracket` / its mirror
+`p2only_AND_p2pd_only_OR_bracket`, the `OR_bracket=True` siblings of the
+branch this whole investigation started from). A follow-up hypothesis that
+`p2only_AND_p2pd_only_no_bracket` (visited, e.g. by `rc16.stp`) carries the
+identical pre-fix OR-based bug as its mirror -- motivated by the same
+formula pattern recurring -- was tested via 3000-point sampling on
+`rc16.stp` and found genuinely **inconclusive** (buggy-formula 49.1%,
+mirror-fix 33.1% over the whole padded bbox; a tightened local box gave
+88.7% vs. 76.0%, i.e. the *current* code scored better, not worse) --
+**not fixed, left as-is**; this is a separate, lower-priority thread from
+the `pr1`/`pr2` investigation above and was not revisited once the
+near-tangency hypothesis took over.
+
+**State at end of session**: `git status` clean, zero diff against the
+last commit (`cece308`) -- every fix attempt this session was tested only
+via in-memory monkeypatching in scratchpad scripts, never landed in
+`basic_functions_part1.py` or `meta_surfaces_utils.py`. `Solidos/solid/`
+(new folder, created this session) holds `L1_S23_solid174.stp` and
+`solid174_faces/` (8 individually-exported faces + `face_report.txt`) for
+continuing the investigation without re-running the full L1_S23
+decomposition. Diagnostic scripts (scratchpad only, not committed --
+listed here since several encode non-obvious, reusable methodology):
+`diag_solid174_configuration.py`/`diag_stability_solid174.py`/
+`diag_robust_ac1.py` (per-vector instrumentation + perturbation stability
+tests), `test_swap_invariance.py` (the `ep1<->ep2` swap-consistency
+proof), `export_solid174_faces.py` (real-face dump, the methodology to
+reuse for any future "which plane is really p1/p2" question),
+`verify_p1_p2_material_side.py` (the `is_inside()`-based ground-truth
+check that must only be trusted when `fwd_cyl=False`), `test_pr2_fix.py`/
+`test_normalat_fix.py`/`convert_rc16_*_variants.py` (the 3 general-fix
+attempts, each paired with a d1suned run), `verify_rc16_final_expression.py`
+(the corrected, complement-aware final-expression ground-truth check --
+**the template to reuse for any future correctness question about this
+function**, since the naive raw-normal check is a proven trap),
+`check_ac1_vs_orientation.py`/`find_reversed_cyl_corner.py`/
+`check_rc0_reversed_corner.py` (ruling out `Orientation` as the
+discriminant), `branch_coverage_round_corner.py` (the branch-visitation
+instrumentation).
+
+**Next session should resume here**: narrow the near-tangency hypothesis
+down to a precise, testable condition (does `pr1`/`pr2` fail specifically
+when `cross1.length` or `cross2.length` falls in some intermediate band
+above the existing `1e-8` guard but below some larger threshold? does it
+depend on *which* of `cross1`/`cross2` is small, given the asymmetric
+`pr1`/`pr2` formulas?) using `rc16_pr2fix_variants`/`rc16_variants`/
+`rc16_normalat_variants`'s already-exported MCNP models plus
+`Solidos/solid/L1_S23_solid174.stp` as the two known reference points,
+before attempting any further fix.
+
+### Resolution: `cyl_plane_region_conf` used the single seed cylinder face for both ends' reference vectors, instead of each end's own real adjacent piece
+
+Follow-up session, continuing directly from the near-tangency hypothesis
+above. Root-caused and fixed; verified via pytest + full corpus diff +
+d1suned; committed.
+
+**How the near-tangency hypothesis resolved**: perturbation-testing
+`nc1`/`ac1` (as done in the previous session) only checks *stability*, not
+*correctness* -- and `ac1 = nt1 x nc1` is mathematically guaranteed equal
+to the cylinder's own axis (up to sign) at *any* point on a true cylinder,
+so it can never itself be corrupted by a nearby plane's tangency. The real
+question was where `nc2`/`r2` (used only for `pr2`) were being evaluated,
+not whether the near-tangent `cross1`/`AND_p1_cyl` computation was stable
+(it already was, confirmed independently).
+
+**Real root cause, found by inspecting solid 174's actual CAD (per the
+user's direct suggestion to look at where materially the plane and
+cylinder sides meet the shared edge, since a region whose only "material"
+is the tangent edge itself was a live clue)**: the round-corner cylinder
+is a true cylinder whose axis has zero Z-component, split (via
+`merge_same_surface_faces`) into 2 same-surface 90-degree face pieces,
+`face[0]` (u=[90,180] deg) and `face[3]` (u=[180,270] deg). At `face[0]`'s
+own u=90 boundary the cylinder's radial direction is exactly `(0,0,-1)` --
+genuinely, exactly tangent to p1 (a Z=const plane) by design, not by
+floating-point noise (confirmed: `cylinder.Surface.Center.z - Radius`
+equals p1's own z to full precision). Symmetrically, `cylinder.Center.z +
+Radius` equals p2's z *exactly* too -- but that second tangency point
+(radial direction `(0,0,+1)`) falls at u=270 deg, which is `face[3]`'s own
+far boundary, **not** `face[0]`'s. `get_adjacent_cylplane`'s `ShellGu`
+branch (`meta_surfaces_utils.py`) already searches every piece of a
+merged shell individually and tags each found corner plane with *the
+specific piece that actually touches it* -- confirmed directly:
+`ep1`'s own cylinder piece is `face[0]` (`Index=0`, matching the seed),
+but `ep2`'s is `face[3]` (`Index=3`, a *different* object) --
+`ep1[0]`/`ep2[0]` (previously always discarded via `_, e1, _, _, p1 =
+ep1`-style unpacking) already carried exactly the information needed.
+
+`cyl_plane_region_conf(cylinder, ep1, ep2)`, however, used the single seed
+`cylinder` argument's own `ParameterRange` for **both** ends: `r1`/`nc1`/
+`nt1` from its `u1` boundary (correct, since `cylinder` *is* `face[0]`,
+p1's real adjacent piece) and `r2`/`nc2` from its own `u2` boundary --
+`face[0]`'s far end, which is just the *seam* between the two split
+pieces (the u=180 deg point, an arbitrary trim boundary with no special
+relationship to p2) -- instead of from `face[3]`'s own far boundary
+(u=270 deg, the real second tangency point). `pr2`'s formula itself was
+never wrong; it was evaluating a geometrically real quantity, just at the
+wrong physical location on the wrong piece of a multi-piece cylinder.
+This also explains why every attempted uniform sign-formula fix (pr2's
+negation, `AND_p2_pd`/`AND_p2_cyl`'s negation, the full `gen_plane`/
+`normal_at()` replacement -- all 3 from the section above) broke
+`rc16.stp`: none of them addressed the actual bug (wrong reference point
+on a split cylinder), so on ordinary un-split round corners (the vast
+majority, including every one in `rc16.stp`/`rc0.stp`) they just
+substituted a different, *also* wrong sign convention for a heuristic
+that was already correct there.
+
+**Fix** (`cyl_plane_region_conf`, `meta_surfaces_utils.py`): unpack
+`cyl1`/`cyl2` from `ep1[0]`/`ep2[0]` (each end's own real adjacent
+cylinder piece -- normally identical to the seed `cylinder`, but not
+always) instead of discarding them; source `r1`/`nc1`/`nt1` from `cyl1`'s
+own `ParameterRange` and `r2`/`nc2` from `cyl2`'s own -- specifically
+`cyl2`'s **far** boundary (`u2b`, mirroring the original code's own
+`u2`-as-far-boundary convention, just sourced from the correct piece).
+`pr1`/`pr2`'s own formulas, `AND_p1_cyl`/`AND_p2_cyl`/`AND_p1_pd`/
+`AND_p2_pd`'s tests, and the final `fwd_cyl`-based complement are all
+completely untouched -- this is purely a "evaluate at the right point"
+fix, not a sign-convention change, which is exactly why it doesn't
+disturb any of the (many) already-correct ordinary cases.
+
+**Verified**: solid 174 now computes `AND_p1_cyl=AND_p2_cyl=AND_p1_pd=
+AND_p2_pd=True` (config 54, `both_AND_p1pd_p2pd` -- the same
+already-trusted flat-AND branch/formula the user predicted from the very
+start of this investigation, reached this time via a correctly-evaluated
+classification instead of a patched formula). d1suned on the isolated
+solid, end to end: `0` lost particles, tally `0.99247`/sigma `1.93` (was
+10 lost/tally `3.75`/sigma `14.83`) -- matching, to 5 significant figures,
+the result from the very first (later-reverted) direct-formula patch,
+confirming both routes converge on the same physically correct answer.
+Full `tests/geo` + `tests/test_cadtocsg.py`: 156/156. Full 95-file
+`Solidos/` corpus diff (`git stash` before/after, real source change, not
+monkeypatching): **exactly 1 file differs**,
+`Big_model_reserved/TVA_final_allencl.stp` (`RoundC` 19 -> 17, every other
+count and every other file byte-identical, zero new crashes) --
+confirmed via d1suned that TVA's own pre-existing lost-particle count
+(10, unrelated to this fix) is *unchanged* by the fix in either
+direction. `rc16.stp` (the canary that broke on all 3 previous fix
+attempts) is untouched by this one, confirmed both by the corpus diff
+(absent from the 1-file diff list) and directly via d1suned (`0` lost
+particles both before and after, identical tally).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
