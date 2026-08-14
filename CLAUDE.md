@@ -3601,6 +3601,71 @@ byte-identical before and after this fix (same nps=81164 abort, same
 tallies to 5 significant figures) -- confirming these are two genuinely
 independent bugs, not the same root cause.
 
+### `get_can_surfaces` was checking `commonEdge` against the raw seed face instead of its own merged `cylinder_shell` -- a second, independent bug found via the same R=395 corner
+
+Following up directly on the `distToShape` fix above -- the user kept
+digging into why `Pipe0041`'s *other* R=395 corner (unrelated to
+piece0/cid=30) still returned `None` from `get_can_surfaces` even after
+that fix. Traced with the same instrumentation used throughout this
+session (`closed_cylinder_cone`, `commonEdge`, phase-tagged prints):
+`closed_cylinder_cone` correctly merges this cylinder's 3 split pieces
+(Indexes 0, 4, 6, confirmed same Center/Axis/Radius -- a prior boolean
+cut split one analytic surface into 3 face pieces) into a `ShellGu`
+(`cylinder_shell`), and `region_sign(cylinder_shell, s)` already
+correctly uses that merged shell -- but the two `commonEdge(...)` calls
+right above it (`meta_surfaces.py`, checking whether each adjacent
+surface actually shares an edge with the cylinder) still passed the raw
+seed parameter `cylinder` (whichever single piece, e.g. Index=4,
+happened to be the one `next_Can`/`get_Can` were iterating on), not
+`cylinder_shell`. Confirmed directly: `commonEdgeFace(Index=4, the real
+adjacent plane)` reports `distToShape=0.0` (genuinely touching) but
+returns an **empty edge list** -- because the actual shared edge belongs
+to a *different* piece of the same merged cylinder (Index=0 or 6, not
+4), and `commonEdgeFace` only ever looks at the single face it's given,
+never the other pieces of the group.
+
+Before applying a fix, the user asked whether the caller (`get_Can`/
+`next_Can`, both in `functions.py`/`generators.py`) should instead
+pre-merge same-surface faces and pass a shell down to `get_can_surfaces`,
+rather than patching inside the function. Checked: both callers use the
+identical `for f in solidFaces: if isinstance(f.Surface, GCylinder): ...
+get_can_surfaces(f, solidFaces)` pattern, passing a single raw face --
+neither ever pre-merges. This confirms the intended design is "hand
+`get_can_surfaces` any one face of the cylinder, it merges internally" --
+matching what `closed_cylinder_cone` already does at the top of the
+function -- so the fix stays fully inside `get_can_surfaces`, no caller
+changes needed. Also confirmed the existing "omit every merged piece,
+not just the seed" bookkeeping (`ShellGu.Indexes`, `closed_cylinder_cone`'s
+`ck_index = set(ck_shell.Indexes)`, `get_Can`'s `canface_index.update(surfindex)`)
+was already correct and would work automatically once `get_can_surfaces`
+actually succeeds -- it just never got the chance to fire, since every
+one of the 3 seed attempts independently failed on the same bug.
+
+**Fix**: both `commonEdge(cylinder, s, ...)` calls now use `cylinder_shell`
+instead of `cylinder`. This surfaced a second, related bug while
+verifying: `commonEdge`'s own `ShellGu` branch returns a `(edges,
+matching_face)` *tuple* (unlike the plain-face branch, which returns
+just the edges list) -- `build_can_params` already knew to unpack this
+(`if shell: edges, cyl = commonEdge(...) else: edges = commonEdge(...)`),
+but the new `get_can_surfaces` call sites didn't, causing
+`planar_edges()` to receive the whole tuple as if it were an edge list
+(`AttributeError: 'list' object has no attribute 'Length'`, caught by
+`tests/test_cadtocsg.py`, 2 failures). Fixed with the same
+`is_shell = isinstance(cylinder_shell, ShellGu)` dispatch.
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` 156/156 (after
+fixing the tuple-unpacking regression); corpus diff across 84 `Solidos/`
+files (excluding `Big_model_reserved`, same methodology as every other
+fix this session) -- **0 diffs**, same single pre-existing `w_encl.stp`
+failure both before and after. Confirmed via `TVA_2_28.stp` that
+`Pipe0041`'s other R=395 corner now correctly forms its Can (previously
+silently dropped). **Also confirmed independent of the cells-1/2/28/34
+leak**: d1suned on the same file still loses 10 particles -- if
+anything aborts *earlier* now (nps 6529 vs 81164 before), consistent
+with the newly-recognized Can adding surface area to a model that still
+carries the separate, unfixed `spline_wires` bug from the section
+above. Real, verified, safe fix -- but does not move the open leak.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

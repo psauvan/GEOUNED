@@ -126,13 +126,20 @@ def get_can_surfaces(cylinder, solidFaces):
     ext_faces = get_adjacent_cylknesurf(cylinder_shell, solidFaces)
     surfaces = [cylinder_shell]
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
+    # commonEdge's own ShellGu branch returns (edges, matching_face)
+    # instead of a bare edges list -- account for that here (same
+    # shell/no-shell dispatch build_can_params already uses) since
+    # cylinder_shell can be either, depending on whether the seed's
+    # analytic surface is split into several same-surface pieces.
+    is_shell = isinstance(cylinder_shell, ShellGu)
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
             if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6 and is_parallel(
                 s.Surface.Axis, cylinder.Surface.Axis, Tolerances().angle
             ):
-                edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
+                result = commonEdge(cylinder_shell, s, outer1_only=True, outer2_only=False)
+                edges = result[0] if is_shell else result
                 if edges is not None:
                     if planar_edges(edges):
                         surfaces.append((s, None))  # adjacent cylinder has same radius and is parallel to cylinder.
@@ -147,8 +154,16 @@ def get_can_surfaces(cylinder, solidFaces):
         # several edges left over from an irregular cut. same_curve
         # checks curve identity rather than planarity, so it accepts a
         # genuinely non-planar intersection while still rejecting a
-        # jumble of unrelated edges.
-        edges = commonEdge(cylinder, s, outer1_only=True, outer2_only=False)
+        # jumble of unrelated edges. Uses cylinder_shell (the merged
+        # same-surface shell built above), not the raw seed `cylinder`
+        # -- a same-surface cylinder split into several pieces (e.g.
+        # Pipe0041's own R=395 corner, split into 3) can have its real
+        # closing edge belong to a *different* piece than the one that
+        # happened to be passed in as the seed; commonEdge's own ShellGu
+        # branch already searches every piece, it just wasn't being
+        # given the shell here.
+        result = commonEdge(cylinder_shell, s, outer1_only=True, outer2_only=False)
+        edges = result[0] if is_shell else result
         if edges is None or not same_curve(edges):
             return None, None
 
