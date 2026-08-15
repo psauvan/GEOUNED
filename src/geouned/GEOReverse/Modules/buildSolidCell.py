@@ -1,4 +1,3 @@
-import Part
 from .data_class import Options
 
 from .splitFunction import SplitBase, SplitSolid, joinBase
@@ -180,39 +179,6 @@ def BuildSolidParts(cell, base):
     #    cut = [joinBase(cut)]
 
     return full, cut
-
-
-def FuseSolid(parts):
-    if (len(parts)) <= 1:
-        if parts:
-            solid = parts[0]
-        else:
-            return None
-    else:
-        try:
-            fused = parts[0].fuse(parts[1:])
-        except:
-            fused = None
-
-        if fused is not None:
-            try:
-                refinedfused = fused.removeSplitter()
-            except:
-                refinedfused = fused
-
-            if refinedfused.isValid():
-                solid = refinedfused
-            else:
-                if fused.isValid():
-                    solid = fused
-                else:
-                    solid = Part.makeCompound(parts)
-        else:
-            solid = Part.makeCompound(parts)
-
-    if solid.Volume < 0:
-        solid.reverse()
-    return solid
 
 
 def filterparts(parts, cell):

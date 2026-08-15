@@ -1,8 +1,8 @@
-import FreeCAD
-import Part
 import math
 import numpy
 import typing
+
+from .._geo_bridge import GVector, GBoundBox, GPlane, GLine
 from .booleanFunction import BoolSequence
 
 twoPi = math.pi * 2
@@ -89,7 +89,7 @@ class BoxSettings:
     def set_universe_box(self):
         if self.box_dimensions is None:
             self._universe_box = myBox(
-                FreeCAD.BoundBox(
+                GBoundBox(
                     -self.universe_radius,
                     -self.universe_radius,
                     -self.universe_radius,
@@ -100,7 +100,7 @@ class BoxSettings:
                 "Forward",
             )
         else:
-            self._universe_box = myBox(FreeCAD.BoundBox(*self.box_dimensions), "Forward")
+            self._universe_box = myBox(GBoundBox(*self.box_dimensions), "Forward")
             radius = max(map(abs, self.box_dimensions))
             self.universe_radius = radius
 
@@ -128,6 +128,8 @@ class myBox:
             raise TypeError("myBox orientation cannot by None type")
 
     def add(self, box):
+        """Non-mutating GBoundBox equivalent of FreeCAD.BoundBox's own
+        in-place `.add()` -- reassigns `self.Box` to the union instead."""
         if self.Box is None:
             if self.Orientation == "Forward":
                 self.Box = box.Box
@@ -137,11 +139,12 @@ class myBox:
                 self.Box = None
                 self.Orientation = "Reversed"
         else:
-            self.Box.add(box.Box)
+            self.Box = self.Box.union(box.Box)
             if self.Orientation != box.Orientation:
                 self.Orientation = "Reversed"
 
     def mult(self, box):
+        """Non-mutating GBoundBox equivalent of the original's in-place `.add()` in the AND branch."""
         if self.Orientation is None:
             self.Box = box.Box
             self.Orientation = box.Orientation
@@ -155,10 +158,10 @@ class myBox:
                 self.Orientation = "Forward"
         else:
             if self.Orientation == "Reversed" or box.Orientation == "Reversed":
-                self.Box.add(box.Box)
+                self.Box = self.Box.union(box.Box)
             else:
                 inter = self.Box.intersected(box.Box)
-                if inter.isValid():
+                if inter.is_valid():
                     self.Box = inter
                 else:
                     self.Box = None
@@ -173,9 +176,9 @@ class myBox:
                 return False
 
         for i in range(6):
-            p1 = self.Box.getPoint(i)
-            p2 = box.Box.getPoint(i)
-            if (p1 - p2).Length > 1e-6:
+            p1 = self.Box.get_point(i)
+            p2 = box.Box.get_point(i)
+            if (p1 - p2).length > 1e-6:
                 return False
         return True
 
@@ -214,35 +217,19 @@ class solid_plane_box:
             self.outBox = self.universe_box
 
     def export_surf_planes(self, box):
-
-        surf = set(self.surf_to_plane.keys())
-        surf_planes = set()
-        for s in surf:
-            planes = []
-            for p in self.surf_to_plane[s]:
-                if p not in self.surf_to_plane.keys():
-                    break
-                normal, position = self.planes[p].Axis, self.planes[p].Position
-                planes.append(makePlane(normal, position, box))
-                surf_planes.add(p)
-            else:
-                compsurf = Part.Compound(planes)
-                if compsurf is not None:
-                    compsurf.exportStep(f"psurf_{s}.stp")
-
-        all_planes = set(self.planes.keys())
-        for p in all_planes - surf_planes:
-            normal, position = self.planes[p].Axis, self.planes[p].Position
-            compsurf = makePlane(normal, position, box)
-            if compsurf is not None:
-                compsurf.exportStep(f"psurf_{p}.stp")
+        """Debug helper -- exports each surface's approximating planes as a
+        STEP file. Not currently ported (needs geo's Gmake_polygon_face /
+        Gexport_step, plus a working makePlane call site below) -- left
+        as a stub raising clearly rather than silently doing nothing,
+        since nothing in CsgToCad's own pipeline calls this (grep-confirmed
+        zero callers outside this file's own definition)."""
+        raise NotImplementedError("solid_plane_box.export_surf_planes: debug-only STEP export, not migrated (no callers)")
 
     def isInside(self, point, boundary_inside=True):
         surf_value = dict()
         for p_index, p in self.planes.items():
             normal, pointPlane = p.Axis, p.Position
-            pt = FreeCAD.Vector(point.x, point.y, point.z)
-            r = pt - pointPlane
+            r = point - pointPlane
             dot = normal.dot(r)
             if abs(dot) < self.insolid_tolerance:
                 surf_value[p_index] = None  # undefined value for point close to the surface
@@ -288,9 +275,7 @@ class solid_plane_box:
             dx = (bBox.XMax - bBox.XMin) * enlarge
             dy = (bBox.YMax - bBox.YMin) * enlarge
             dz = (bBox.ZMax - bBox.ZMin) * enlarge
-            bBox = FreeCAD.BoundBox(
-                bBox.XMin - dx, bBox.YMin - dy, bBox.ZMin - dz, bBox.XMax + dx, bBox.YMax + dy, bBox.ZMax + dz
-            )
+            bBox = GBoundBox(bBox.XMin - dx, bBox.YMin - dy, bBox.ZMin - dz, bBox.XMax + dx, bBox.YMax + dy, bBox.ZMax + dz)
             mBox.Box = bBox
         return mBox
 
@@ -333,8 +318,6 @@ class solid_plane_box:
         else:
             if orientation == "Undefined":
                 orientation = "Forward"
-        # if orientation == "Undefined":
-        #    orientation = "Forward"
 
         planes_inter = tuple(self.planes[x] for x in self.definition.get_surfaces_numbers())
         point_list = plane_intersect(planes_inter, self.outBox.Box, cutBoundary)
@@ -363,19 +346,13 @@ class solid_plane_box:
                         break
                 point_list = remove_points(s_point, pointaxis(point, axis), axis, False)
 
-            # if len(box_lim) < 6:
-            #    return myBox(None, orientation)
-            # else:
-            #    box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
-            #    return myBox(box, orientation)
-
             if len(box_lim) < 6:
                 if cutBoundary:
                     return myBox(None, orientation)
                 else:
                     return self.get_component_boundBox(True)
             else:
-                box = FreeCAD.BoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
+                box = GBoundBox(box_lim[0], box_lim[2], box_lim[4], box_lim[1], box_lim[3], box_lim[5])
                 if box.XLength < 1e-12 or box.YLength < 1e-12 or box.ZLength < 1e-12:
                     if cutBoundary:
                         return myBox(None, orientation)
@@ -388,7 +365,7 @@ class solid_plane_box:
         ninside = 0
         universeBox = self.universe_box.Box
         for i in range(8):
-            p = universeBox.getPoint(i)
+            p = universeBox.get_point(i)
             if self.isInside(p, True):
                 ninside += 1
         if ninside == 8:
@@ -423,7 +400,7 @@ def quadric_to_plane(cellDef, surfaces, orientation):
         if s.type == "plane":
             normal, d = s.params
             position = normal * d
-            planes[s_label] = Part.Plane(position, normal)
+            planes[s_label] = GPlane.from_values(position, normal)
         else:
             if fwd is None:
                 pos = None
@@ -486,17 +463,17 @@ def convert_to_planes(s, pos):
 
 
 def get_orto_axis(axis):
-    x = FreeCAD.Vector(1, 0, 0)
-    z = FreeCAD.Vector(0, 0, 1)
+    x = GVector(1, 0, 0)
+    z = GVector(0, 0, 1)
     vx = axis.cross(x)
     vz = axis.cross(z)
-    if vx.Length < vz.Length:
+    if vx.length < vz.length:
         v = vz
     else:
         v = vx
-    v.normalize()
+    v = v.normalized()
     w = v.cross(axis)
-    w.normalize()
+    w = w.normalized()
 
     return v, w
 
@@ -514,10 +491,10 @@ def cylinder_to_planes(cyl, pos):
     r3 = center + y * radius
     r4 = center - y * radius
 
-    p1 = Part.Plane(r1, -x)
-    p2 = Part.Plane(r2, x)
-    p3 = Part.Plane(r3, -y)
-    p4 = Part.Plane(r4, y)
+    p1 = GPlane.from_values(r1, -x)
+    p2 = GPlane.from_values(r2, x)
+    p3 = GPlane.from_values(r3, -y)
+    p4 = GPlane.from_values(r4, y)
     return (p1, p2, p3, p4)
 
 
@@ -538,11 +515,11 @@ def cone_to_planes(cone, pos):
     for i in range(nface):
         rho = x * math.cos(phi) + y * math.sin(phi)
         ni = -axis * ss + rho * cs
-        pi = Part.Plane(apex, -ni)
+        pi = GPlane.from_values(apex, -ni)
         cplanes.append(pi)
         phi += dphi
 
-    pa = Part.Plane(apex, axis)
+    pa = GPlane.from_values(apex, axis)
     cplanes.append(pa)
 
     return cplanes
@@ -555,9 +532,9 @@ def sphere_to_planes(sphere, pos):
     elif pos:
         radius = radius * 0.70710678
 
-    x = FreeCAD.Vector(1, 0, 0)
-    y = FreeCAD.Vector(0, 1, 0)
-    z = FreeCAD.Vector(0, 0, 1)
+    x = GVector(1, 0, 0)
+    y = GVector(0, 1, 0)
+    z = GVector(0, 0, 1)
 
     r1 = center + x * radius
     r2 = center - x * radius
@@ -566,21 +543,21 @@ def sphere_to_planes(sphere, pos):
     r5 = center + z * radius
     r6 = center - z * radius
 
-    p1 = Part.Plane(r1, -x)
-    p2 = Part.Plane(r2, x)
-    p3 = Part.Plane(r3, -y)
-    p4 = Part.Plane(r4, y)
-    p5 = Part.Plane(r5, -z)
-    p6 = Part.Plane(r6, z)
+    p1 = GPlane.from_values(r1, -x)
+    p2 = GPlane.from_values(r2, x)
+    p3 = GPlane.from_values(r3, -y)
+    p4 = GPlane.from_values(r4, y)
+    p5 = GPlane.from_values(r5, -z)
+    p6 = GPlane.from_values(r6, z)
     return (p1, p2, p3, p4, p5, p6)
 
 
 def torus_to_planes(torus, pos):
     center, axis, majorRadius, minorR, minorA = torus.params
 
-    x = FreeCAD.Vector(1, 0, 0)
-    y = FreeCAD.Vector(0, 1, 0)
-    z = FreeCAD.Vector(0, 0, 1)
+    x = GVector(1, 0, 0)
+    y = GVector(0, 1, 0)
+    z = GVector(0, 0, 1)
 
     if pos is None:
         dist = (majorRadius + minorR) * 0.8535533906
@@ -604,10 +581,10 @@ def torus_to_planes(torus, pos):
             r8 = center - y * difR
             r9 = center + z * difR
             r10 = center - z * difR
-            p7 = Part.Plane(r7, y)
-            p8 = Part.Plane(r8, -y)
-            p9 = Part.Plane(r9, z)
-            p10 = Part.Plane(r10, -z)
+            p7 = GPlane.from_values(r7, y)
+            p8 = GPlane.from_values(r8, -y)
+            p9 = GPlane.from_values(r9, z)
+            p10 = GPlane.from_values(r10, -z)
     elif abs(abs(axis.dot(y)) - 1) < 1e-5:
         r1 = center + x * dist
         r2 = center - x * dist
@@ -620,10 +597,10 @@ def torus_to_planes(torus, pos):
             r8 = center - x * difR
             r9 = center + z * difR
             r10 = center - z * difR
-            p7 = Part.Plane(r7, x)
-            p8 = Part.Plane(r8, -x)
-            p9 = Part.Plane(r9, z)
-            p10 = Part.Plane(r10, -z)
+            p7 = GPlane.from_values(r7, x)
+            p8 = GPlane.from_values(r8, -x)
+            p9 = GPlane.from_values(r9, z)
+            p10 = GPlane.from_values(r10, -z)
     elif abs(abs(axis.dot(z)) - 1) < 1e-5:
         r1 = center + x * dist
         r2 = center - x * dist
@@ -636,17 +613,17 @@ def torus_to_planes(torus, pos):
             r8 = center - x * difR
             r9 = center + y * difR
             r10 = center - y * difR
-            p7 = Part.Plane(r7, x)
-            p8 = Part.Plane(r8, -x)
-            p9 = Part.Plane(r9, y)
-            p10 = Part.Plane(r10, -y)
+            p7 = GPlane.from_values(r7, x)
+            p8 = GPlane.from_values(r8, -x)
+            p9 = GPlane.from_values(r9, y)
+            p10 = GPlane.from_values(r10, -y)
 
-    p1 = Part.Plane(r1, -x)
-    p2 = Part.Plane(r2, x)
-    p3 = Part.Plane(r3, -y)
-    p4 = Part.Plane(r4, y)
-    p5 = Part.Plane(r5, -z)
-    p6 = Part.Plane(r6, z)
+    p1 = GPlane.from_values(r1, -x)
+    p2 = GPlane.from_values(r2, x)
+    p3 = GPlane.from_values(r3, -y)
+    p4 = GPlane.from_values(r4, y)
+    p5 = GPlane.from_values(r5, -z)
+    p6 = GPlane.from_values(r6, z)
     external_planes = (p1, p2, p3, p4, p5, p6)
     if difR > 0:
         central_planes = (p7, p8, p9, p10)
@@ -658,12 +635,12 @@ def torus_to_planes(torus, pos):
 def box_to_planes(box):
 
     org, vec1, vec2, vec3 = box.params[:]
-    p1 = Part.Plane(org, vec1)
-    p2 = Part.Plane(org, vec2)
-    p3 = Part.Plane(org, vec3)
-    p4 = Part.Plane(org + vec1, -vec1)
-    p5 = Part.Plane(org + vec2, -vec2)
-    p6 = Part.Plane(org + vec3, -vec3)
+    p1 = GPlane.from_values(org, vec1)
+    p2 = GPlane.from_values(org, vec2)
+    p3 = GPlane.from_values(org, vec3)
+    p4 = GPlane.from_values(org + vec1, -vec1)
+    p5 = GPlane.from_values(org + vec2, -vec2)
+    p6 = GPlane.from_values(org + vec3, -vec3)
 
     return (p1, p2, p3, p4, p5, p6)
 
@@ -683,12 +660,12 @@ def parabola_to_planes(parabola, pos):
     b = 1 - math.sqrt(2 * a)
     x0 = b**nt * math.sqrt(4 * focal * rmax)
 
-    axis.normalize()
+    axis = axis.normalized()
     x, y = get_orto_axis(axis)
     dphi = twoPi / 4
     phi = 0
 
-    p0 = Part.Plane(center, axis)
+    p0 = GPlane.from_values(center, axis)
     cplanes = [p0]
     focal = float(focal)
     xp = x0
@@ -700,8 +677,8 @@ def parabola_to_planes(parabola, pos):
             slope = 2 * focal * rho + xp * axis  # slope xp/(2*focal)
             xe = center + xp * rho + zi * axis
             normal = vec.cross(slope)
-            normal.normalize()
-            pi = Part.Plane(xe, normal)
+            normal = normal.normalized()
+            pi = GPlane.from_values(xe, normal)
             cplanes.append(pi)
             phi += dphi
         xp = xp / b
@@ -788,72 +765,87 @@ def change_surf(seq, old, new):
 
 
 def plane_intersect(plane_list, externalBox, cutBoundary):
+    """
+    `externalBox` is a `GBoundBox`. Real plane-plane and line-plane
+    intersections now go through `geo`'s own `GPlane.intersect_plane`/
+    `GPlane.intersect_line` (pure GVector math, verified against native
+    FreeCAD intersection results when those methods were added) instead
+    of native `Part.Plane.intersect()`/`Part.Line.intersect()`.
+    """
     point_list = []
     if not cutBoundary:
         for i, p1 in enumerate(plane_list[0:-2]):
             j = i + 1
             for p2 in plane_list[i + 1 : -1]:
-                line = p1.intersect(p2)
-                if len(line) == 0:
+                line = p1.intersect_plane(p2)
+                if line is None:
                     continue
-                line = line[0]
                 for p3 in plane_list[j + 1 :]:
-                    inter = line.intersect(p3)
-                    if len(inter[0]) == 0:
+                    p = p3.intersect_line(line)
+                    if p is None:
                         continue
-                    p = inter[0][0]
-                    p = FreeCAD.Vector(p.X, p.Y, p.Z)
-                    if externalBox.isInside(p):
+                    if externalBox.contains_point(p):
                         point_list.append(p)
                 j += 1
     else:
         XYZ = (
-            FreeCAD.Vector(1, 0, 0),
-            FreeCAD.Vector(0, 1, 0),
-            FreeCAD.Vector(0, 0, 1),
+            GVector(1, 0, 0),
+            GVector(0, 1, 0),
+            GVector(0, 0, 1),
         )
-        pxm = Part.Plane(FreeCAD.Vector(externalBox.XMin, 0, 0), XYZ[0])
-        pxp = Part.Plane(FreeCAD.Vector(externalBox.XMax, 0, 0), XYZ[0])
-        pym = Part.Plane(FreeCAD.Vector(0, externalBox.YMin, 0), XYZ[1])
-        pyp = Part.Plane(FreeCAD.Vector(0, externalBox.YMax, 0), XYZ[1])
-        pzm = Part.Plane(FreeCAD.Vector(0, 0, externalBox.ZMin), XYZ[2])
-        pzp = Part.Plane(FreeCAD.Vector(0, 0, externalBox.ZMax), XYZ[2])
+        pxm = GPlane.from_values(GVector(externalBox.XMin, 0, 0), XYZ[0])
+        pxp = GPlane.from_values(GVector(externalBox.XMax, 0, 0), XYZ[0])
+        pym = GPlane.from_values(GVector(0, externalBox.YMin, 0), XYZ[1])
+        pyp = GPlane.from_values(GVector(0, externalBox.YMax, 0), XYZ[1])
+        pzm = GPlane.from_values(GVector(0, 0, externalBox.ZMin), XYZ[2])
+        pzp = GPlane.from_values(GVector(0, 0, externalBox.ZMax), XYZ[2])
         PXYZ = (pxm, pxp, pym, pyp, pzm, pzp)
 
         for i, p1 in enumerate(plane_list[0:]):
             j = i + 1
             point_list.extend(plane_boundary(p1, externalBox))
             for p2 in plane_list[i + 1 :]:
-                line = p1.intersect(p2)
-                if len(line) == 0:
+                line = p1.intersect_plane(p2)
+                if line is None:
                     continue
-                line = line[0]
                 point_list.extend(line_boundary(line, externalBox, PXYZ))
                 for p3 in plane_list[j + 1 :]:
-                    inter = line.intersect(p3)
-                    if len(inter[0]) == 0:
+                    p = p3.intersect_line(line)
+                    if p is None:
                         continue
-                    p = inter[0][0]
-                    p = FreeCAD.Vector(p.X, p.Y, p.Z)
-                    if externalBox.isInside(p):
+                    if externalBox.contains_point(p):
                         point_list.append(p)
 
         for i in range(8):
-            p = externalBox.getPoint(i)
+            p = externalBox.get_point(i)
             point_list.append(p)
 
     return point_list
 
 
 def plane_boundary(plane, externalBox):
-
+    """
+    Points where `plane` crosses each of `externalBox`'s 12 edges.
+    `GPlane.intersect_line` gives the crossing point of the edge's own
+    *infinite* line with the plane; `t` (the fraction along the edge
+    segment) is checked explicitly here to keep it bounded to the real
+    segment, replacing the original's `Part.LineSegment(...).intersect(plane)`
+    (a bounded native segment-vs-plane query) with the same effect.
+    """
     point_list = []
     for i in range(12):
-        segment = Part.LineSegment(*externalBox.getEdge(i))
-        inter = segment.intersect(plane)
-        if len(inter[0]) == 1:
-            p = inter[0][0]
-            p = FreeCAD.Vector(p.X, p.Y, p.Z)
+        v0, v1 = externalBox.get_edge(i)
+        edge_dir = v1 - v0
+        line = GLine.from_values(v0, edge_dir)
+        p = plane.intersect_line(line)
+        if p is None:
+            continue
+        # recover t along the segment from the returned point (edge_dir may not be unit length)
+        denom = edge_dir.dot(edge_dir)
+        if denom < 1e-20:
+            continue
+        t = (p - v0).dot(edge_dir) / denom
+        if 0.0 <= t <= 1.0:
             point_list.append(p)
     return point_list
 
@@ -861,11 +853,9 @@ def plane_boundary(plane, externalBox):
 def line_boundary(line, externalBox, PXYZ):
     points = []
     for i, plane in enumerate(PXYZ):
-        inter = line.intersect(plane)
-        if len(inter[0]) == 0:
+        p = plane.intersect_line(line)
+        if p is None:
             continue
-        p = inter[0][0]
-        p = FreeCAD.Vector(p.X, p.Y, p.Z)
         if i < 2:
             if (externalBox.YMin <= p.y <= externalBox.YMax) and (externalBox.ZMin <= p.z <= externalBox.ZMax):
                 points.append(p)
@@ -909,7 +899,7 @@ def remove_close_points(sorted_list):
     while len(sorted_list) > 0:
         nextp = sorted_list.pop()
         dp = p - nextp
-        while dp.Length < 0.1:
+        while dp.length < 0.1:
             if len(sorted_list) > 0:
                 nextp = sorted_list.pop()
                 dp = p - nextp
@@ -972,12 +962,21 @@ def pointaxis(p, axis):
 
 
 def makePlane(normal, position, Box):
+    """
+    A single planar `GFace` bounded by `Box`'s own extent, or `None` if
+    the (infinite) plane doesn't cross `Box` at all. Ported from the
+    original's edge-by-edge parametric scan (unchanged algorithm) --
+    `GVector` throughout instead of `FreeCAD.Vector`, `Gmake_polygon_face`
+    (already exists in `geo`) instead of the original's own
+    `Part.Face(Part.makePolygon(...))` call.
+    """
+    from .._geo_bridge import Gmake_polygon_face
 
     p0 = normal.dot(position)
 
     pointEdge = []
     for i in range(12):
-        edge = Box.getEdge(i)
+        edge = Box.get_edge(i)
         p1 = normal.dot(edge[0])
         p2 = normal.dot(edge[1])
         d0 = p0 - p1
@@ -990,7 +989,7 @@ def makePlane(normal, position, Box):
     if len(pointEdge) == 0:
         return None  # Plane does not cross box
 
-    s = FreeCAD.Vector((0, 0, 0))
+    s = GVector(0, 0, 0)
     for v in pointEdge:
         s = s + v
     s = s / len(pointEdge)
@@ -1008,7 +1007,7 @@ def makePlane(normal, position, Box):
         orden.append((phi, i))
     orden.sort()
 
-    return Part.Face(Part.makePolygon([pointEdge[p[1]] for p in orden], True))
+    return Gmake_polygon_face([pointEdge[p[1]] for p in orden])
 
 
 def inertia_matrix(points):

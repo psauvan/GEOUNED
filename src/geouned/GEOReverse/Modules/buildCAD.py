@@ -1,8 +1,7 @@
-import BOPTools.SplitAPI
+import numpy as np
 from tqdm import tqdm
-import FreeCAD
 
-from .buildSolidCell import FuseSolid
+from ._geo_bridge import Gcommon, Gsplit, fuse_solids, to_gmatrix_from_np
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import myBox
 
@@ -10,21 +9,16 @@ from .Utils.boundBox import myBox
 def interferencia(container, cell, mode="slice"):
 
     if mode == "common":
-        return cell.shape.common(container.shape)
+        return fuse_solids(Gcommon(cell.shape, [container.shape]))
 
-    Base = cell.shape
-    Tool = (container.shape,)
+    solids = Gsplit(cell.shape, container.shape, tolerance=0).solids
 
-    solids = BOPTools.SplitAPI.slice(Base, Tool, "Split", tolerance=0).Solids
-    cellParts = []
-    for s in solids:
-        if container.shape.isInside(s.CenterOfMass, 0.0, False):
-            cellParts.append(s)
+    cellParts = [s for s in solids if container.shape.is_inside(s.center_of_mass())]
 
     if not cellParts:
         return cell.shape
     else:
-        return FuseSolid(cellParts)
+        return fuse_solids(cellParts)
 
 
 def AssignSurfaceToCell(UniverseCells, modelSurfaces):
@@ -61,7 +55,7 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
         if NTcell.shape:
             buildShape = False
-            if ContainerCell.CurrentTR:
+            if ContainerCell.CurrentTR is not None:
                 cell = NTcell.copy()
                 cell.transformSolid(ContainerCell.CurrentTR)
             else:
@@ -76,13 +70,13 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
 
             if ContainerCell.shape is not None:
                 external_box = myBox(ContainerCell.shape.BoundBox, "Forward")
-                if ContainerCell.CurrentTR:
-                    external_box.Box = external_box.Box.transformed(ContainerCell.CurrentTR.inverse())
+                if ContainerCell.CurrentTR is not None:
+                    inv = np.linalg.inv(ContainerCell.CurrentTR)
+                    external_box.Box = external_box.Box.transformed(to_gmatrix_from_np(inv))
             else:
                 external_box = ContainerCell.externalBox
 
-            debug = False
-            if debug:
+            try:
                 NTcell.build_BoundBox(external_box, enlarge=0.2)
                 if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
                     NTcell.shape = None
@@ -90,23 +84,15 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
                     if NTcell.boundBox.Orientation == "Forward":
                         NTcell.externalBox = NTcell.boundBox
                     NTcell.buildShape(simplify=False)
-            else:
-                try:
-                    NTcell.build_BoundBox(external_box, enlarge=0.2)
-                    if NTcell.boundBox.Orientation == "Forward" and NTcell.boundBox.Box is None:
-                        NTcell.shape = None
-                    else:
-                        if NTcell.boundBox.Orientation == "Forward":
-                            NTcell.externalBox = NTcell.boundBox
-                        NTcell.buildShape(simplify=False)
-                except:
-                    fails.append(NTcell.name)
+            except:
+                fails.append(NTcell.name)
+                continue
 
             if NTcell.shape is None:
                 continue
 
             cell = NTcell.copy()
-            if ContainerCell.CurrentTR:
+            if ContainerCell.CurrentTR is not None:
                 cell.transformSolid(ContainerCell.CurrentTR)
 
         if universeCut and ContainerCell.shape:
@@ -115,40 +101,11 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
         if not cell.FILL or ContainerCell.level + 1 > levelMax:
             CADUniverse.append(cell)
         else:
-            if ContainerCell.CurrentTR:
-                cell.CurrentTR = ContainerCell.CurrentTR.multiply(cell.TRFL)
+            if ContainerCell.CurrentTR is not None:
+                cell.CurrentTR = ContainerCell.CurrentTR @ cell.TRFL
             cell.level = ContainerCell.level + 1
             univ, ff = BuildUniverseCells((cell.FILL, levelMax), cell, AllUniverses, universeCut=universeCut)
             CADUniverse.append(univ)
             fails.extend(ff)
 
     return ((ContainerCell.name, Ustart), CADUniverse), fails
-
-
-def makeTree(CADdoc, CADCells):
-
-    label, universeCADCells = CADCells
-    groupObj = CADdoc.addObject("App::Part", "Materials")
-
-    groupObj.Label = f"Universe_{label[1]}_Container_{label[0]}"
-
-    CADObj = {}
-    for i, c in enumerate(universeCADCells):
-        if isinstance(c, (tuple, list)):
-            groupObj.addObject(makeTree(CADdoc, c))
-        else:
-            featObj = CADdoc.addObject("Part::FeaturePython", f"solid{i}")
-            featObj.Label = f"Cell_{c.name}_{c.MAT}"
-            featObj.Shape = c.shape
-            if c.MAT not in CADObj.keys():
-                CADObj[c.MAT] = [featObj]
-            else:
-                CADObj[c.MAT].append(featObj)
-
-    for mat, matGroup in CADObj.items():
-        groupMatObj = CADdoc.addObject("App::Part", "Materials")
-        groupMatObj.Label = f"Material_{mat}_{label[0]}{label[1]}"
-        groupMatObj.addObjects(matGroup)
-        groupObj.addObject(groupMatObj)
-
-    return groupObj

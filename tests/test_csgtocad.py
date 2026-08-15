@@ -31,7 +31,7 @@ def test_cylbox_convertion(csg_format):
     )
 
     geo.build_universe()
-    geo.export_cad(output_filename=f"tests_outputs/csgtocad/{csg_format}")
+    geo.export_cad(output_filename=f"tests_outputs/csgtocad/{csg_format}", format=["stp", "fcstd"])
 
     stp_path = Path(f"tests_outputs/csgtocad/{csg_format}.stp")
     assert stp_path.exists()

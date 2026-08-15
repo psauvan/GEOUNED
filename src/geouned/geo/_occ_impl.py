@@ -55,7 +55,16 @@ from OCC.Core.BRepPrimAPI import (
 )
 from OCC.Core.BRepTools import breptools
 from OCC.Core.BRepTopAdaptor import BRepTopAdaptor_FClass2d
-from OCC.Core.GeomAbs import GeomAbs_Circle, GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Ellipse, GeomAbs_Line, GeomAbs_Plane, GeomAbs_Sphere, GeomAbs_Torus
+from OCC.Core.GeomAbs import (
+    GeomAbs_Circle,
+    GeomAbs_Cone,
+    GeomAbs_Cylinder,
+    GeomAbs_Ellipse,
+    GeomAbs_Line,
+    GeomAbs_Plane,
+    GeomAbs_Sphere,
+    GeomAbs_Torus,
+)
 from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnCurve, GeomAPI_ProjectPointOnSurf
 from OCC.Core.GeomLProp import GeomLProp_CLProps, GeomLProp_SLProps
 from OCC.Core.GProp import GProp_GProps
@@ -100,10 +109,35 @@ def kernel_version() -> str:
     return OCC.VERSION
 
 
-def to_fc_vector(vector: GVector) -> gp_Pnt:
+def to_native_vector(vector: GVector) -> gp_Pnt:
     """Name kept for cross-backend API compatibility -- despite the
     name, this returns a pyOCC gp_Pnt, not a FreeCAD.Vector."""
     return gp_Pnt(vector.x, vector.y, vector.z)
+
+
+def to_native_matrix(matrix: GMatrix) -> gp_Trsf:
+    """Name kept for cross-backend API compatibility with
+    _freecad_impl.py's own to_native_matrix -- despite the name, this returns
+    a pyOCC gp_Trsf, not a FreeCAD.Matrix. Assumes `matrix` represents a
+    rigid transform (rotation + translation, no scale/shear): true for
+    every matrix GEOReverse ever builds (MCNP TRn cards), the only real
+    consumer of this function today."""
+    trsf = gp_Trsf()
+    trsf.SetValues(
+        matrix.A11,
+        matrix.A12,
+        matrix.A13,
+        matrix.A14,
+        matrix.A21,
+        matrix.A22,
+        matrix.A23,
+        matrix.A24,
+        matrix.A31,
+        matrix.A32,
+        matrix.A33,
+        matrix.A34,
+    )
+    return trsf
 
 
 def _to_gvector(pnt) -> GVector:
@@ -127,10 +161,22 @@ def _to_gmatrix_3x3(mat) -> GMatrix:
     own docstring) -- the rest of the 4x4 is filled with the
     translation-free identity convention (A44=1, all else 0)."""
     return GMatrix(
-        mat.Value(1, 1), mat.Value(1, 2), mat.Value(1, 3), 0.0,
-        mat.Value(2, 1), mat.Value(2, 2), mat.Value(2, 3), 0.0,
-        mat.Value(3, 1), mat.Value(3, 2), mat.Value(3, 3), 0.0,
-        0.0, 0.0, 0.0, 1.0,
+        mat.Value(1, 1),
+        mat.Value(1, 2),
+        mat.Value(1, 3),
+        0.0,
+        mat.Value(2, 1),
+        mat.Value(2, 2),
+        mat.Value(2, 3),
+        0.0,
+        mat.Value(3, 1),
+        mat.Value(3, 2),
+        mat.Value(3, 3),
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     )
 
 
@@ -167,10 +213,10 @@ def _project_point_on_surface(point: GVector, geom_surface) -> tuple[float, floa
     answer for what is an inherently undefined query at that exact point."""
     from OCC.Core.Extrema import Extrema_ExtAlgo_Tree
 
-    proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), geom_surface)
+    proj = GeomAPI_ProjectPointOnSurf(to_native_vector(point), geom_surface)
     if proj.IsDone():
         return proj.LowerDistanceParameters()
-    proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), geom_surface, Extrema_ExtAlgo_Tree)
+    proj = GeomAPI_ProjectPointOnSurf(to_native_vector(point), geom_surface, Extrema_ExtAlgo_Tree)
     if proj.IsDone():
         return proj.LowerDistanceParameters()
     return (0.0, 0.0)
@@ -223,7 +269,7 @@ class GPlane:
         return is_inside_plane(point, self)
 
     def transform(self, matrix: gp_Trsf) -> "GPlane":
-        position = _to_gvector(to_fc_vector(self.Position).Transformed(matrix))
+        position = _to_gvector(to_native_vector(self.Position).Transformed(matrix))
         axis_pnt = gp_Pnt(self.Axis.x, self.Axis.y, self.Axis.z).Transformed(matrix)
         origin = gp_Pnt(0, 0, 0).Transformed(matrix)
         axis = GVector(axis_pnt.X() - origin.X(), axis_pnt.Y() - origin.Y(), axis_pnt.Z() - origin.Z()).normalized()
@@ -274,6 +320,14 @@ class GPlane:
         point = GVector(point_c[0], point_c[1], point_c[2])
         return GLine.from_values(point, direction)
 
+    def intersect_line(self, line: "GLine") -> GVector | None:
+        """See _freecad_impl.py's own docstring -- pure GVector math, no native fallback needed."""
+        denom = self.Axis.dot(line.Direction)
+        if abs(denom) < 1e-12:
+            return None
+        t = self.Axis.dot(self.Position - line.Position) / denom
+        return line.Position + line.Direction * t
+
 
 class GCylinder:
     def __init__(self, gp_cyl, geom_surface=None):
@@ -307,7 +361,7 @@ class GCylinder:
         return is_inside_cylinder(point, self)
 
     def transform(self, matrix: gp_Trsf) -> "GCylinder":
-        center_pnt = to_fc_vector(self.Center).Transformed(matrix)
+        center_pnt = to_native_vector(self.Center).Transformed(matrix)
         axis_pnt = gp_Pnt(self.Axis.x, self.Axis.y, self.Axis.z).Transformed(matrix)
         origin = gp_Pnt(0, 0, 0).Transformed(matrix)
         axis = GVector(axis_pnt.X() - origin.X(), axis_pnt.Y() - origin.Y(), axis_pnt.Z() - origin.Z())
@@ -340,7 +394,7 @@ class GCone:
         return is_inside_cone(point, self)
 
     def transform(self, matrix: gp_Trsf) -> "GCone":
-        apex_pnt = to_fc_vector(self.Apex).Transformed(matrix)
+        apex_pnt = to_native_vector(self.Apex).Transformed(matrix)
         axis_pnt = gp_Pnt(self.Axis.x, self.Axis.y, self.Axis.z).Transformed(matrix)
         origin = gp_Pnt(0, 0, 0).Transformed(matrix)
         axis = GVector(axis_pnt.X() - origin.X(), axis_pnt.Y() - origin.Y(), axis_pnt.Z() - origin.Z())
@@ -368,7 +422,7 @@ class GSphere:
         return is_inside_sphere(point, self)
 
     def transform(self, matrix: gp_Trsf) -> "GSphere":
-        center_pnt = to_fc_vector(self.Center).Transformed(matrix)
+        center_pnt = to_native_vector(self.Center).Transformed(matrix)
         return GSphere.from_values(_to_gvector(center_pnt), self.Radius)
 
 
@@ -456,7 +510,7 @@ class GLine:
         if crl < 0.05:
             if self.__native__ is None or other.__native__ is None:
                 return None
-            proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(self.Position), other.__native__)
+            proj = GeomAPI_ProjectPointOnCurve(to_native_vector(self.Position), other.__native__)
             if proj.NbPoints() == 0:
                 return None
             return _to_gvector(proj.NearestPoint())
@@ -485,7 +539,7 @@ class GCircle:
         return _to_gvector(self.__native__.Value(u))
 
     def parameter(self, point: GVector) -> float:
-        proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), self.__native__)
+        proj = GeomAPI_ProjectPointOnCurve(to_native_vector(point), self.__native__)
         return proj.LowerDistanceParameter()
 
 
@@ -505,7 +559,7 @@ class GEllipse:
         return _to_gvector(self.__native__.Value(u))
 
     def parameter(self, point: GVector) -> float:
-        proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), self.__native__)
+        proj = GeomAPI_ProjectPointOnCurve(to_native_vector(point), self.__native__)
         return proj.LowerDistanceParameter()
 
 
@@ -521,7 +575,7 @@ class GBSpline:
         return _to_gvector(self.__native__.Value(u))
 
     def parameter(self, point: GVector) -> float:
-        proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), self.__native__)
+        proj = GeomAPI_ProjectPointOnCurve(to_native_vector(point), self.__native__)
         return proj.LowerDistanceParameter()
 
 
@@ -592,7 +646,7 @@ class GEdge:
 
     def parameter(self, point: GVector) -> float:
         curve_and_range = BRep_Tool.Curve(self.__native__)
-        proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), curve_and_range[0])
+        proj = GeomAPI_ProjectPointOnCurve(to_native_vector(point), curve_and_range[0])
         return proj.LowerDistanceParameter()
 
     def curvature(self, u: float) -> float:
@@ -617,7 +671,7 @@ class GEdge:
     def is_inside(self, point: GVector, tolerance: float) -> bool:
         curve_and_range = BRep_Tool.Curve(self.__native__)
         geom_curve, first, last = curve_and_range
-        proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), geom_curve)
+        proj = GeomAPI_ProjectPointOnCurve(to_native_vector(point), geom_curve)
         if proj.NbPoints() == 0:
             return False
         if proj.LowerDistance() > tolerance:
@@ -788,7 +842,7 @@ class GFace:
         normal = self.normal_at(u, v)
         probe = point + normal * 1e-6
         classifier = BRepClass3d_SolidClassifier(solid.__native__)
-        classifier.Perform(to_fc_vector(probe), 1e-7)
+        classifier.Perform(to_native_vector(probe), 1e-7)
         return classifier.State() != TopAbs_IN
 
     def export_step(self, filename: str) -> None:
@@ -917,7 +971,7 @@ class GSolid:
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         classifier = BRepClass3d_SolidClassifier(self.__native__)
-        classifier.Perform(to_fc_vector(point), tolerance if tolerance > 0 else 1e-7)
+        classifier.Perform(to_native_vector(point), tolerance if tolerance > 0 else 1e-7)
         return classifier.State() == TopAbs_IN
 
     def optimal_bounding_box(self, use_triangulation: bool = True) -> GBoundBox:
@@ -1039,7 +1093,7 @@ class GSolid:
 
     def rotate(self, axis_point: GVector, axis_dir: GVector, angle_rad: float) -> "GSolid":
         trsf = gp_Trsf()
-        axis = gp_Ax1(to_fc_vector(axis_point), gp_Dir(axis_dir.x, axis_dir.y, axis_dir.z))
+        axis = gp_Ax1(to_native_vector(axis_point), gp_Dir(axis_dir.x, axis_dir.y, axis_dir.z))
         trsf.SetRotation(axis, angle_rad)
         return GSolid(BRepBuilderAPI_Transform(self.__native__, trsf, True).Shape())
 
@@ -1207,21 +1261,21 @@ def Gmake_box(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, z
 
 
 def Gmake_cylinder(point: GVector, axis: GVector, radius: float, height: float) -> GSolid:
-    ax2 = gp_Ax2(to_fc_vector(point), gp_Dir(axis.x, axis.y, axis.z))
+    ax2 = gp_Ax2(to_native_vector(point), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeCylinder(ax2, radius, height).Shape()
     return GSolid(native)
 
 
 def Gmake_cone(apex: GVector, axis: GVector, half_angle: float, height: float) -> GSolid:
     base_radius = height * math.tan(abs(half_angle))
-    ax2 = gp_Ax2(to_fc_vector(apex), gp_Dir(axis.x, axis.y, axis.z))
+    ax2 = gp_Ax2(to_native_vector(apex), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeCone(ax2, 0.0, base_radius, height).Shape()
     return GSolid(native)
 
 
 def Gmake_cone_frustum(point: GVector, axis: GVector, radius1: float, radius2: float, height: float) -> GSolid:
     """Truncated cone (frustum): radius1 at `point`, radius2 at `point + height*axis`. See _freecad_impl.py's own docstring for why this is a separate function from Gmake_cone."""
-    ax2 = gp_Ax2(to_fc_vector(point), gp_Dir(axis.x, axis.y, axis.z))
+    ax2 = gp_Ax2(to_native_vector(point), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeCone(ax2, radius1, radius2, height).Shape()
     return GSolid(native)
 
@@ -1235,12 +1289,12 @@ def Gmake_cone_double_sheet(apex: GVector, axis: GVector, half_angle: float, len
 
 
 def Gmake_sphere(center: GVector, radius: float) -> GSolid:
-    native = BRepPrimAPI_MakeSphere(to_fc_vector(center), radius).Shape()
+    native = BRepPrimAPI_MakeSphere(to_native_vector(center), radius).Shape()
     return GSolid(native)
 
 
 def Gmake_torus(center: GVector, axis: GVector, major_radius: float, minor_radius: float) -> GSolid:
-    ax2 = gp_Ax2(to_fc_vector(center), gp_Dir(axis.x, axis.y, axis.z))
+    ax2 = gp_Ax2(to_native_vector(center), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeTorus(ax2, major_radius, minor_radius).Shape()
     return GSolid(native)
 
@@ -1256,7 +1310,7 @@ def Gmake_half_space(plane: GPlane) -> GSolid:
     normal = plane.Axis.normalized()
     target = gp_Dir(normal.x, normal.y, normal.z)
     ax3_from = gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1))
-    ax3_to = gp_Ax3(to_fc_vector(plane.Position), target)
+    ax3_to = gp_Ax3(to_native_vector(plane.Position), target)
     trsf = gp_Trsf()
     trsf.SetTransformation(ax3_to, ax3_from)
     moved = BRepBuilderAPI_Transform(box, trsf, True).Shape()
@@ -1273,7 +1327,7 @@ def Gmake_wire(edges: list[GEdge]) -> GWire:
 def Gmake_polygon_face(points: list[GVector]) -> GFace:
     poly = BRepBuilderAPI_MakePolygon()
     for p in points:
-        poly.Add(to_fc_vector(p))
+        poly.Add(to_native_vector(p))
     poly.Close()
     face = BRepBuilderAPI_MakeFace(poly.Wire()).Face()
     return GFace(face)
@@ -1465,7 +1519,9 @@ def _repair_non_manifold_solid(native_solid) -> list:
     return results
 
 
-def Gsplit(base: GSolid, tool: GShape, tolerance: float, scale: float = 0.1, scale_up_floor: float | None = None) -> SplitResult:
+def Gsplit(
+    base: GSolid, tool: GShape, tolerance: float, scale: float = 0.1, scale_up_floor: float | None = None
+) -> SplitResult:
     splitter = BOPAlgo_Splitter()
     splitter.AddArgument(base.__native__)
     splitter.AddTool(tool.__native__)
@@ -1477,7 +1533,9 @@ def Gsplit(base: GSolid, tool: GShape, tolerance: float, scale: float = 0.1, sca
     raw_solids = _exploded_solids(result_shape)
 
     if not raw_solids:
-        return SplitResult(solids=[base], degenerate_case_handled=True, notes="tool did not intersect solid; returning it unchanged")
+        return SplitResult(
+            solids=[base], degenerate_case_handled=True, notes="tool did not intersect solid; returning it unchanged"
+        )
 
     repaired_any = False
     final_native_solids = []

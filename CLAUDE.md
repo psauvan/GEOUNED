@@ -4453,6 +4453,273 @@ traced to the same root mechanism, deliberately not chased further given
 the `tests/test_cadtocsg.py` regression risk already found once).
 `GEOReverse` remains explicitly out of scope, unchanged.
 
+## GEOReverse migration: removing the direct FreeCAD dependency, and real
+FreeCAD/pyOCC symmetry with GEOUNED's own `geo` package
+
+New branch off `pyocc-migration` (per user request, since this work needs
+the current `geo` package). Explicit scope set by the user before
+starting: mirror the exact same "remove `import FreeCAD`/`import Part`
+from everywhere except one designated chokepoint" discipline this file's
+own pyOCC-migration sections document at length for GEOUNED's forward
+pipeline — but applied to `GEOReverse` (CsgToCad, the CSG→CAD reverse
+pipeline), which had never been touched by any of that work. Also
+explicit: GEOReverse relies heavily on split operations like GEOUNED;
+GEOReverse has **no** meta-surface/composite-surface concept (no Can/
+RoundCorner/TCone equivalent — every surface it builds is either a
+primitive `geo` shape or one of 6 "exotic quadric" types GEOUNED never
+produces); bugs found while migrating get fixed in a **separate, later**
+pass, not silently while porting (the same "port bugs as-is, flag them"
+discipline already established for `geo_quadrics.py` in an earlier
+session — see below).
+
+### Phase 0–2 (from an earlier session in this same effort): test
+hardening, dead-code removal, `geo` extensions, the `_geo_bridge.py`
+chokepoint
+
+`tests/test_csgtocad.py`'s 2 tests used to assert only that output files
+*exist*; extended with real per-solid volume assertions (same
+`1e-6 * max(volume, 1.0)` tolerance style as `GSolid.refine()`'s own
+guard) against a captured baseline. Deleted 4 confirmed-dead files
+(`buildSolidCell_mod.py`, `buildSolidCell_org.py`, `Utils/BooleanSolids.py`,
+`processInp.py` — zero references anywhere, verified by grep). Extended
+`geo` itself with what GEOReverse's own algorithms need that GEOUNED's
+forward pipeline never did: `GSolid.copy()`/`.transform_geometry(matrix)`,
+`GBoundBox.transformed(matrix)`/`.contains_point(point, tolerance)`,
+`Gmake_cone_frustum`/`Gmake_cone_double_sheet` (both engines), and
+`GPlane.intersect_line` (companion to the already-existing
+`GPlane.intersect_plane`, same hybrid-then-native-fallback verification
+discipline). Built `GEOReverse/Modules/_geo_bridge.py`, GEOReverse's own
+single-import-point module (mirroring `geo/__init__.py`'s role) — at the
+time, deliberately hardcoded to `geo._freecad_impl` directly (bypassing
+`geo/__init__.py`'s engine switch), reasoning that GEOReverse's hard
+`.FCStd`-export dependency meant it could "never be pyOCC-only" — this
+reasoning was later revisited and reversed, see "Full FreeCAD/pyOCC
+symmetry" below.
+
+### Phase 4: `Utils/boundBox.py` and `Objects.py`, the first real
+integration bug, and the "accept both, normalize once" pattern reused
+
+Converted `boundBox.py`'s internal algorithms (`myBox`, `solid_plane_box`,
+`plane_intersect`/`plane_boundary`/`line_boundary`, `makePlane`) from
+native `FreeCAD.Vector`/`FreeCAD.BoundBox`/`Part.Plane`/`Part.Line` to
+`GVector`/`GBoundBox`/`GPlane`/`GLine`, reusing `GPlane.intersect_plane`/
+`.intersect_line` instead of duplicating plane/line intersection math a
+third time. This alone broke the pipeline immediately once tested for
+real (not just in isolation) — `Objects.py` (not yet migrated at this
+point) still built native `FreeCAD.BoundBox`/called native
+`.getPoint()`/`.getEdge()` on whatever `boundBox.py` handed it, so the
+now-`GBoundBox`-typed value it received didn't have those methods.
+Traced via a debug reproduction (`geo.build_universe()` on
+`cylinder_box.mcnp`, with `buildCAD.py`'s exception-swallowing `except:`
+temporarily removed to see the real traceback — restored afterward)
+rather than guessing. Fixed with the same "accept both, normalize once"
+boundary shim already used throughout the GEOUNED-side migration
+(`to_gboundbox()` at the one chokepoint every caller passes through,
+`myBox.__init__` at the time) — later removed once every producer
+became `GBoundBox`-native (see below).
+
+Rewriting `Objects.py`'s 12 surface classes (`Plane`/`Sphere`/`Cylinder`/
+`Cone`/`EllipticCone`/`Hyperboloid`/`Ellipsoid`/`EllipticCylinder`/
+`HyperbolicCylinder`/`Paraboloid`/`Torus`/`Box`) to use `GVector`/numpy
+instead of native `FreeCAD.Vector`/`FreeCAD.Matrix` surfaced a real,
+pervasive, previously-latent bug: every one of these classes' `__init__`
+did `if tr: self.transform(tr)`, where `tr` is a transform matrix that,
+once `MCNPinput.py`/`XMLinput.py` were also converted, could genuinely be
+a numpy array — and `bool(numpy_array)` raises `ValueError: truth value
+of an array with more than one element is ambiguous` for anything but a
+0/1-element array. All 12 sites fixed to `if tr is not None:`. The same
+class of bug recurred in `MCNPinput.py`'s `substituteLikeCell`/
+`setExplicitCellDefinition` (`if not c.TRCL:`/`if not c.TR:`, checking
+whether a cell *has* a transform after conversion already ran) — fixed
+with `isinstance(x, np.ndarray)` checks instead of bare truthiness,
+preserving the exact original falsy-or-matrix semantics (a matrix is
+never falsy) without ever calling `bool()` on a multi-element array.
+
+Also deleted, once superseded: `Objects.py`'s own module-level
+`makeHyperboloid`/`makeHyperbolicCylinder`/`makeEllipticCylinder`/
+`makeEllipsoid`/`makeEllipticCone`/`makeParaboloid`/`ortoVect`/`FuseSolid`
+(~250 lines) — all already reimplemented, verified, in `geo_quadrics.py`
+(built in an earlier session) or the new shared `fuse_solids()` (below).
+`Plane.buildShape` itself collapsed to a 3-line delegation to
+`boundBox.py`'s own already-existing `makePlane(normal, position, box)`,
+eliminating a second, hand-rolled copy of the same polygon-face
+construction.
+
+### `FuseSolid` consolidated into `_geo_bridge.py::fuse_solids` (the plan's
+Phase 5, done early)
+
+`FuseSolid` was byte-for-byte duplicated 3× (`Objects.py`,
+`buildSolidCell.py`, `splitFunction.py`) — since converting all 3 call
+sites to `GSolid` was happening anyway in this same pass, consolidated
+into one shared `fuse_solids(parts: list[GSolid]) -> GSolid | None` in
+`_geo_bridge.py`, using `Gfuse` + `GSolid.refine()` (not a raw, unguarded
+`removeSplitter()`) — so every call site now gets `.refine()`'s existing
+volume-invariance safety check for free, a real correctness improvement
+over all 3 original copies, not just a refactor.
+
+### `splitFunction.py`/`buildSolidCell.py`/`buildCAD.py`: `BOPTools.SplitAPI.slice`
+→ `Gsplit`, native `.BoundBox`/`.Volume`/`.isValid()` → `GSolid`'s own
+
+`SplitSolid`'s `BOPTools.SplitAPI.slice(...)` → `Gsplit(...)` — an
+intentional behavior improvement flagged in the original plan (`Gsplit`
+has internal tolerance-retry robustness the raw native call never had).
+`point_inside`/`point_inside_org` (~90 lines of manual point-in-solid
+search, `divide_box`) replaced by the already-existing, already-verified
+`GSolid.find_interior_point()` — `point_inside_org` itself confirmed
+dead (zero callers) and deleted outright, not just superseded.
+`surface_side` (the algebraic point-classification fallback, mirroring
+GEOUNED's own `check_sign`) needed only mechanical fixes (`.Length` →
+`.length`, in-place `.normalize()` → reassigned `.normalized()`) since
+its inputs are `GVector` throughout once `Objects.py`'s params became
+`GVector`-native — not consolidated with `geo`'s own duplicate `is_inside_*`
+formulas this pass (same "not worth it on a hot path" call GEOUNED's own
+`check_sign_primitive` made previously). `buildCAD.py::interferencia`
+(`BOPTools.SplitAPI.slice`/`.common()`) → `Gsplit`/`Gcommon` +
+`fuse_solids`; `BuildUniverseCells`'s own `ContainerCell.CurrentTR`
+truthiness checks fixed to `is not None` (same numpy-array class of bug).
+
+### `core.py::export_cad`: engine-independent by design, `format` parameter
+
+User-requested redesign: `export_cad(output_filename="", format="stp")`
+— `format` accepts a `str` or `list` (a list exports one file per
+format). `export_cad` itself validates the requested format(s) against
+`_SUPPORTED_FORMATS[CAD_ENGINE]` before doing any work (clear `ValueError`
+listing what's actually supported if not) and dispatches the real
+writing through `_EXPORTERS[CAD_ENGINE]` — it contains no engine-specific
+code of its own. **Real behavior change, not a bug**: `.FCStd` is no
+longer written unconditionally (the original always wrote both a
+`.stp`/`.step` *and* a `.FCStd`) — now only produced when `"fcstd"` is
+explicitly requested. `tests/test_csgtocad.py` updated to request
+`format=["stp", "fcstd"]` explicitly so both output paths stay covered.
+
+### Full FreeCAD/pyOCC symmetry: `_geo_bridge.py` now really is
+engine-switchable, mirroring `geo/__init__.py` exactly
+
+User pushback on the Phase 2-era `_geo_bridge.py` design (which hardcoded
+`geo._freecad_impl`): "if GEOUNED can be pyOCC-based, GEOReverse should
+be able to too — everything should be symmetric FreeCAD/pyOCC." Traced
+through what that actually requires, in 3 parts of very different size,
+agreed with the user before implementing:
+
+- **Part A (small, done)**: `_geo_bridge.py` changed from
+  `from ...geo._freecad_impl import (...)` to `from ...geo import (...)`
+  — since GEOReverse's own core pipeline (`Objects.py`/`buildSolidCell.py`/
+  `splitFunction.py`/`buildCAD.py`) was, by this point, already fully
+  routed through the bridge's re-exported names and touched no native
+  type directly, this one import-line change makes the *entire*
+  GEOReverse core follow `GEOUNED_CAD_ENGINE` automatically. Required
+  filling 2 real gaps in `geo/__init__.py`'s export surface first:
+  `GMatrix`/`to_gmatrix` (pure `vector_geometry.py` types, just never
+  added to the top-level unconditional import block before) and
+  `to_native_matrix` (GMatrix → native matrix; existed in
+  `_freecad_impl.py`, missing from `_occ_impl.py` — added, returning a
+  `gp_Trsf` built via `SetValues(...)` from the `GMatrix`'s own top-3-rows
+  layout, matching how `_occ_impl.py`'s own `GSolid.transform_geometry`
+  already expected a `gp_Trsf`, not a general 4×4). Also found and
+  deleted `to_fc_boundbox` (renamed `to_native_boundbox` mid-session,
+  then deleted outright) as confirmed dead — added to `_freecad_impl.py`
+  in an earlier pass for a `Plane.buildShape` call site that no longer
+  existed once that method was rewritten to delegate to `makePlane`.
+- **Part B (small, done)**: `makeTree` (the FreeCAD document/label-tree
+  builder — `App::Part`/`Part::FeaturePython`, no pyOCC equivalent at
+  all) moved out of the now-fully-engine-agnostic `buildCAD.py` into a
+  new `GEOReverse/Modules/_freecad_impl.py`, alongside `export_freecad`
+  (built earlier this session for the `format=` redesign above). New
+  sibling `GEOReverse/Modules/_occ_impl.py` (`export_occ`) is a stub —
+  raises `NotImplementedError` with a docstring explaining the real gap:
+  under pyOCC there's no document/label-tree concept, so a real
+  implementation would need XCAF (`XCAFDoc_ShapeTool`/`ColorTool` for
+  per-solid names, `STEPCAFControl_Writer` instead of the plain
+  `STEPControl_Writer` `Gexport_step` already uses) — not attempted, since
+  it needs a real pyOCC session to verify against known volumes/labels,
+  same discipline as every other piece of this project's pyOCC work.
+  `core.py` now dispatches through `_EXPORTERS`/`_SUPPORTED_FORMATS` built
+  from both modules' own exports, with zero `FreeCAD`/`Import` imports of
+  its own.
+- **Part C (small, done)**: `geo_quadrics.py` (the 6 exotic quadric
+  surfaces) restructured from one flat file into a package mirroring
+  `geo/__init__.py`'s own dispatch pattern exactly:
+  `geo_quadrics/__init__.py` (reads `CAD_ENGINE` from `_geo_bridge.py`,
+  re-exports `Gmake_elliptic_cone`/`Gmake_hyperboloid`/`Gmake_ellipsoid`/
+  `Gmake_elliptic_cylinder`/`Gmake_hyperbolic_cylinder`/`Gmake_paraboloid`/
+  `Gmake_torus_elliptic` from whichever impl resolves), `_freecad_impl.py`
+  (the existing dataclass-based implementation, unchanged behavior, now
+  wrapped by 7 generic `Gmake_*` free functions — the *only* names the
+  package re-exports; the dataclasses themselves are no longer imported
+  by `Objects.py` directly), `_occ_impl.py` (a stub, same
+  `_not_implemented(name)` pattern `geo/_occ_impl.py` itself already
+  established for its own early Phase 1). `Objects.py`'s 6 call sites
+  updated from the two-step `GClass.from_values(...).build_shape(...)`
+  pattern to a single `Gmake_*(...)` call — the FreeCAD/pyOCC choice is
+  now entirely internal to the `geo_quadrics` package, invisible to
+  `Objects.py`.
+
+Renamed `to_fc_vector`/`to_fc_matrix` → `to_native_vector`/`to_native_matrix`
+throughout `geo` and GEOReverse (user request, for coherence): the old
+"fc" prefix was already misleading on the pyOCC side (`_occ_impl.py`'s
+own version returned a `gp_Pnt`, not a `FreeCAD.Vector`, with a docstring
+apologizing for the mismatch) — the new name describes what the function
+actually does on either backend.
+
+### Real bug found via this restructuring: `geo/_freecad_impl.py`'s own
+import order (`BOPTools` before `FreeCAD`)
+
+Part A's `_geo_bridge.py` change removed that module's own `import FreeCAD`/
+`import Part` (no longer needed once nothing in the file touched them
+directly) — which immediately broke a bare `import geouned` with
+`ModuleNotFoundError: No module named 'BOPTools'`. Root cause: `geo/
+_freecad_impl.py`'s own top-level imports were ordered `import
+BOPTools.SplitAPI` *before* `import FreeCAD` — harmless as long as
+*something* elsewhere in the import chain happened to import `FreeCAD`
+first (which is what actually appends FreeCAD's `Mod/*` subdirectories,
+including the one providing `BOPTools`, to `sys.path` — confirmed
+directly: `import FreeCAD` alone changes `sys.path` from a handful of
+entries to ~30 new `Mod/*` paths). `_geo_bridge.py`'s own now-removed
+`import FreeCAD` used to be exactly that "something," purely by
+accident of file layout, not by design. `tests/geo`'s own test files
+were never exposed to this because they explicitly `pytest.importorskip("FreeCAD")`
+before importing anything `geouned`-side — a workaround for the same
+latent bug, not evidence it didn't exist. Fixed at the actual root: `geo/
+_freecad_impl.py`'s own import order swapped to `FreeCAD`/`Part` before
+`BOPTools.SplitAPI`. A real, previously-undiscovered fragility in a file
+that's been stable throughout this whole project's history — exposed
+only once something changed *elsewhere* removed the accidental workaround.
+
+### Verification
+
+`tests/geo` (FreeCAD, 106/106, 1 pre-existing skip unrelated), `tests/
+test_csgtocad.py` (2/2, both `mcnp`/`openmc_xml`, with the real volume
+assertions), `tests/test_cadtocsg.py` (GEOUNED's own 50-file forward
+regression, 50/50 — confirming the `geo` package additions this whole
+effort needed have zero impact on GEOUNED itself) — re-run after every
+real milestone throughout, not just at the end, matching this project's
+own established discipline. `GEOUNED_CAD_ENGINE=occ` confirmed to reach
+the new stub code paths correctly (dispatch resolves, raises the
+intended `NotImplementedError` rather than crashing on an import error)
+— full end-to-end pyOCC testing not possible from the default shell used
+this session (no `pyoccenv` conda environment active here; matches this
+project's own established split-environment setup documented earlier in
+this file).
+
+### Deferred, explicitly out of scope this pass
+
+- Real pyOCC implementations for `geo_quadrics/_occ_impl.py` and
+  `GEOReverse/Modules/_occ_impl.py` (export) — both stubs, both need a
+  real `pyoccenv` session to build and verify against known geometry,
+  per the user's own explicit instruction to leave them empty for now
+  ("por ahora lo dejamos vacío, cuando pasamos realmente a pyocc habrá
+  que crearlo").
+- The bugs deliberately ported as-is and flagged (not fixed) in
+  `geo_quadrics.py` during an earlier session — `GEllipsoid.build_shape()`/
+  `GHyperboloid.build_shape(one_sheet=True)`'s native construction
+  failures, the `is_inside()` pre-existing sign/typo bugs — untouched by
+  this session's restructuring, still living in `geo_quadrics/_freecad_impl.py`
+  under the same documented-but-not-fixed status.
+- No attempt to independently verify GEOReverse's own output beyond the
+  existing `test_csgtocad.py` fixture (`cylinder_box`) — broadening that
+  fixture set was explicitly deferred back when `test_csgtocad.py` was
+  first hardened, and remains deferred.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

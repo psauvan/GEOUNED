@@ -1,15 +1,30 @@
-import FreeCAD
-import Import
 import typing
 
 from pathlib import Path
 
-from .Modules.buildCAD import makeTree, AssignSurfaceToCell, BuildUniverseCells
+from .Modules.buildCAD import AssignSurfaceToCell, BuildUniverseCells
 from .Modules.Utils.booleanFunction import BoolSequence
 from .Modules.Utils.boundBox import BoxSettings
 from .Modules.Objects import CadCell
 from .Modules.MCNPinput import McnpInput
 from .Modules.XMLinput import XmlInput
+from .Modules._geo_bridge import CAD_ENGINE
+from .Modules._freecad_impl import SUPPORTED_FORMATS as _freecad_formats, export_freecad
+from .Modules._occ_impl import SUPPORTED_FORMATS as _occ_formats, export_occ
+
+# `export_cad` itself is CAD-engine-independent -- it never imports FreeCAD/
+# pyOCC directly, only dispatches through these two tables. A future third
+# engine would add its own sibling module (`_freecad_impl.py`/`_occ_impl.py`
+# pattern) and one entry in each dict here.
+_SUPPORTED_FORMATS = {
+    "freecad": _freecad_formats,
+    "occ": _occ_formats,
+}
+
+_EXPORTERS = {
+    "freecad": export_freecad,
+    "occ": export_occ,
+}
 
 
 class CsgToCad:
@@ -203,14 +218,36 @@ class CsgToCad:
         if fails:
             print("failed cell conversion:", fails)
 
-    def export_cad(self, output_filename: str = ""):
+    def export_cad(self, output_filename: str = "", format: typing.Union[str, list] = "stp"):
         """export the CSG geometry in OpenMC or MCNP format to a CAD model.
 
+        This method itself is CAD-engine-independent: it validates the
+        requested format(s) against what the currently-active engine
+        (`geouned.GEOReverse.Modules._geo_bridge.CAD_ENGINE`) can produce,
+        then dispatches to that engine's own exporter. It never builds a
+        native document itself.
+
         Args:
-            output_filename (str, optional): The filename stem and path of the output file created.
-                Two files will be created with the '.step' suffix and one with the 'FCStd' suffix.
-                Defaults to name of the csg file + stp.
+            output_filename (str, optional): The filename stem and path of the output file(s) created.
+                Defaults to the name of the csg file.
+            format (str or list, optional): CAD file format(s) to export, e.g. "stp" or
+                ["stp", "fcstd"]. A single file is written per requested format. Must be one of
+                the formats supported by the CAD engine currently in use. Defaults to "stp".
         """
+
+        formats = [format] if isinstance(format, str) else list(format)
+        formats = [f.lower().lstrip(".") for f in formats]
+
+        supported = _SUPPORTED_FORMATS.get(CAD_ENGINE)
+        if supported is None:
+            raise ValueError(f"Unknown CAD engine '{CAD_ENGINE}'")
+
+        unsupported = [f for f in formats if f not in supported]
+        if unsupported:
+            raise ValueError(
+                f"format(s) {unsupported} are not supported by the '{CAD_ENGINE}' CAD engine. "
+                f"Supported formats: {sorted(supported)}"
+            )
 
         if output_filename == "":
             output_filename = Path(self.input_filename).name
@@ -225,16 +262,4 @@ class CsgToCad:
         else:
             barename = fullname
 
-        if suffix not in (".stp", ".step"):
-            suffix = ".stp"
-
-        CADdoc = FreeCAD.newDocument("converted_with_geouned")
-
-        CADobj = CADdoc.addObject("App::Part", "Universes")
-        CADobj.Label = barename
-
-        for CAD in self.buildCAD_list:
-            CADobj.addObject(makeTree(CADdoc, CAD))
-
-        Import.export(CADdoc.Objects[0:1], output_filename + suffix)
-        CADdoc.saveAs(f"{output_filename}.FCStd")
+        _EXPORTERS[CAD_ENGINE](self.buildCAD_list, formats, output_filename, barename)

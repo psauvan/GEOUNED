@@ -227,6 +227,14 @@ class GBoundBox:
             min(self.ZMax, other.ZMax),
         )
 
+    def contains_point(self, point: GVector, tolerance: float = 0.0) -> bool:
+        """True if `point` lies inside or on the boundary of the box (matches FreeCAD's own `BoundBox.isInside`)."""
+        return (
+            self.XMin - tolerance <= point.x <= self.XMax + tolerance
+            and self.YMin - tolerance <= point.y <= self.YMax + tolerance
+            and self.ZMin - tolerance <= point.z <= self.ZMax + tolerance
+        )
+
     def get_point(self, i: int) -> GVector:
         """
         Corner `i` (0-7) of the box. Numbering matches FreeCAD's own

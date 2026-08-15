@@ -20,9 +20,15 @@ import os
 
 _engine = os.environ.get("GEOUNED_CAD_ENGINE", "freecad").strip().lower()
 
+CAD_ENGINE = _engine
+"""Public name for the resolved engine ("freecad" or "occ") -- read by
+GEOReverse's own `_geo_bridge.py` so its export dispatch follows the same
+`GEOUNED_CAD_ENGINE` choice as GEOUNED's own forward pipeline."""
+
 from .vector_geometry import (
     GBoundBox,
     GLabelNode,
+    GMatrix,
     GVector,
     cylinder_tangent_at,
     cylinder_value_at,
@@ -41,8 +47,10 @@ from .vector_geometry import (
     plane_value_at,
     sign_plane,
     to_gboundbox,
+    to_gmatrix,
     to_gvector,
 )
+
 if _engine == "occ":
     from ._occ_impl import (
         GBSpline,
@@ -87,7 +95,8 @@ if _engine == "occ":
         Gsplit,
         kernel_version,
         pick_outer_wire,
-        to_fc_vector,
+        to_native_matrix,
+        to_native_vector,
     )
 else:
     from ._freecad_impl import (
@@ -133,5 +142,6 @@ else:
         Gsplit,
         kernel_version,
         pick_outer_wire,
-        to_fc_vector,
+        to_native_matrix,
+        to_native_vector,
     )

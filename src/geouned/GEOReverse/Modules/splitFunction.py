@@ -1,8 +1,6 @@
 import math
 
-import BOPTools.SplitAPI
-import FreeCAD
-import Part
+from ._geo_bridge import GSolid, Gsplit, fuse_solids
 
 
 class SplitBase:
@@ -34,7 +32,7 @@ def joinBase(baseList):
                     surf[k] = None
                     removedKeys.append(k)
 
-    newbase = FuseSolid(shape)
+    newbase = fuse_solids(shape)
     orientation = "Forward" if fwd else "Reversed"
     return SplitBase(newbase, surf, orientation)
 
@@ -71,14 +69,18 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
     if abs(base.base.Volume / base.base.Area) < 1e-2:
         return fullPart, cutPart
 
-    Tools = tuple(s.shape for s in surfacesCut)
-    if Tools[0] is not None:
+    # SplitSolid is always called with exactly one cutting surface
+    # (`(p,)`/`(surf,)` at every call site in buildSolidCell.py) -- the
+    # tuple form is legacy, only its first (only) element is ever used.
+    tool = surfacesCut[0].shape
+    if tool is not None:
         try:
-            Solids = BOPTools.SplitAPI.slice(base.base, Tools, "Split", tolerance=tolerance).Solids
-        except:
+            Solids = [s.__native__ for s in Gsplit(base.base, tool, tolerance=tolerance).solids]
+        except Exception:
             Solids = []
         if not Solids:
-            Solids = [base.base]
+            Solids = [base.base.__native__]
+        Solids = [GSolid(s) for s in Solids]
     else:
         Solids = [base.base]
 
@@ -129,11 +131,11 @@ def space_decomposition(solids, surfaces):
             if abs(c.Volume) < 1e-3:
                 continue
             else:
-                c.reverse()
+                c = c.reverse()
                 print("Negative solid Volume", c.Volume)
         Svalues = {}
-        point = point_inside(c)
-        if point == None:
+        point = c.find_interior_point()
+        if point is None:
             continue  # point not found in solid (solid is surface or very thin can be source of lost particules in MCNP)
         for surf in surfaces:
             Svalues[surf.id] = surface_side(point, surf)
@@ -143,126 +145,13 @@ def space_decomposition(solids, surfaces):
     return component, good_solids
 
 
-def point_inside(solid):
-
-    point = solid.Solids[0].CenterOfMass
-    if solid.isInside(point, 0.0, False):
-        return point
-
-    L = 0.5 * abs(solid.Volume) ** 0.33333
-    for face in solid.Faces:
-        u0, u1, v0, v1 = face.ParameterRange
-        u = 0.5 * (u0 + u1)
-        v = 0.5 * (v0 + v1)
-        if face.isPartOfDomain(u, v):
-            normal = -face.normalAt(u, v)
-            pos = face.valueAt(u, v)
-            d = L
-            for i in range(12):
-                d = d * 0.5
-                point = pos + d * normal
-                if solid.isInside(point, 0.0, False):
-                    return point
-
-
-# find one point inside a solid (region)
-def point_inside_org(solid):
-
-    cut_line = 32
-    cut_box = 4
-
-    # no poner boundbox, el punto puente caer en una superficie para geometria triangular
-    point = solid.CenterOfMass
-    if solid.isInside(point, 0.0, False):
-        return point
-
-    v1 = solid.Vertexes[0].Point
-    for vi in range(len(solid.Vertexes) - 1, 0, -1):
-        v2 = solid.Vertexes[vi].Point
-        dv = (v2 - v1) * 0.5
-
-        n = 1
-        while True:
-            for i in range(n):
-                point = v1 + dv * (1 + 0.5 * i)
-                if solid.isInside(point, 0.0, False):
-                    return point
-            n = n * 2
-            dv = dv * 0.5
-            if n > cut_line:
-                break
-
-    #      Box_Volume = BBox.XLength*BBox.YLength*BBox.ZLength
-    #      if (solid.Volume < Box_Volume/ math.pow(16,nmax_cut)) :
-    #           print('very small Solid Volume (solid volume, box volume): {},{}'.format(solid.Volume,Box_Volume))
-    #           return None
-    BBox = solid.optimalBoundingBox(False)
-    box = [BBox.XMin, BBox.XMax, BBox.YMin, BBox.YMax, BBox.ZMin, BBox.ZMax]
-
-    boxes, centers = divide_box(box)
-    n = 0
-
-    while True:
-        for p in centers:
-            pp = FreeCAD.Vector(p[0], p[1], p[2])
-            if solid.isInside(pp, 0.0, False):
-                return pp
-
-        subbox = []
-        centers = []
-        for b in boxes:
-            btab, ctab = divide_box(b)
-            subbox.extend(btab)
-            centers.extend(ctab)
-        boxes = subbox
-        n = n + 1
-
-        if n == cut_box:
-            print(f"Solid not found in bounding Box (Volume : {solid.Volume})")
-            print("Valid Solid : ", solid.isValid())
-            return None
-
-
-# divide a box into 8 smaller boxes
-def divide_box(Box):
-    xmid = (Box[1] + Box[0]) * 0.5
-    ymid = (Box[3] + Box[2]) * 0.5
-    zmid = (Box[5] + Box[4]) * 0.5
-
-    b1 = (Box[0], xmid, Box[2], ymid, Box[4], zmid)
-    p1 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
-
-    b2 = (xmid, Box[1], Box[2], ymid, Box[4], zmid)
-    p2 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (Box[4] + zmid))
-
-    b3 = (Box[0], xmid, ymid, Box[3], Box[4], zmid)
-    p3 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
-
-    b4 = (xmid, Box[1], ymid, Box[3], Box[4], zmid)
-    p4 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (Box[4] + zmid))
-
-    b5 = (Box[0], xmid, Box[2], ymid, zmid, Box[5])
-    p5 = (0.5 * (Box[0] + xmid), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
-
-    b6 = (xmid, Box[1], Box[2], ymid, zmid, Box[5])
-    p6 = (0.5 * (xmid + Box[1]), 0.5 * (Box[2] + ymid), 0.5 * (zmid + Box[5]))
-
-    b7 = (Box[0], xmid, ymid, Box[3], zmid, Box[5])
-    p7 = (0.5 * (Box[0] + xmid), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
-
-    b8 = (xmid, Box[1], ymid, Box[3], zmid, Box[5])
-    p8 = (0.5 * (xmid + Box[1]), 0.5 * (ymid + Box[3]), 0.5 * (zmid + Box[5]))
-
-    return [b1, b2, b3, b4, b5, b6, b7, b8], [p1, p2, p3, p4, p5, p6, p7, p8]
-
-
 # check the position of the point with respect
 # a surface
 def surface_side(p, surf):
     if surf.type == "sphere":
         org, R = surf.params
         D = p - org
-        inout = D.Length - R
+        inout = D.length - R
 
     elif surf.type == "plane":
         normal, d = surf.params
@@ -273,9 +162,9 @@ def surface_side(p, surf):
 
         D = p - P
         if not surf.truncated:
-            inout = D.cross(v).Length - R
+            inout = D.cross(v).length - R
         else:
-            inCyl = D.cross(v).Length / v.Length - R  # <0 in cylinder
+            inCyl = D.cross(v).length / v.length - R  # <0 in cylinder
             inPln = btwPPlanes(p, P, v)  # <0  between planes
 
             if (inCyl < 0) and (inPln < 0):
@@ -286,8 +175,7 @@ def surface_side(p, surf):
     elif surf.type == "cone":
         if not surf.truncated:
             P, v, t, dblsht = surf.params
-            X = p - P
-            X.normalize()
+            X = (p - P).normalized()
             dprod = X.dot(v)
             dprod = max(-1, min(1, dprod))
             a = math.acos(dprod) if not dblsht else math.acos(abs(dprod))
@@ -296,13 +184,12 @@ def surface_side(p, surf):
             P, v, R1, R2 = surf.params
             apex = P + R1 / (R1 - R2) * v
 
-            X = p - apex
-            X.normalize()
-            dprod = X.dot(-v) / v.Length  # -v because reverse axis. in MCNP TRC r1 > r2
+            X = (p - apex).normalized()
+            dprod = X.dot(-v) / v.length  # -v because reverse axis. in MCNP TRC r1 > r2
             dprod = max(-1, min(1, dprod))
             a = math.acos(dprod)
 
-            t = (R1 - R2) / v.Length
+            t = (R1 - R2) / v.length
             inCone = a - math.atan(t)
             inPln = btwPPlanes(p, P, v)  # <0  between planes
 
@@ -328,7 +215,7 @@ def surface_side(p, surf):
         r = p - center
         rX = r.dot(rAxes[1])
         v = r - (rX * rAxes[1] + center)
-        d = v.Length
+        d = v.length
 
         one = 1 if onesht else -1
         radical = (rX / radii[1]) ** 2 + one
@@ -346,7 +233,7 @@ def surface_side(p, surf):
         rX = r.dot(axis)
         rY = r - (rX * axis + center)
 
-        if axis.add(-rAxes[0]).Length < 1e-5:
+        if (axis - rAxes[0]).length < 1e-5:
             radX, radY = radii
         else:
             radY, radY = radii
@@ -386,7 +273,7 @@ def surface_side(p, surf):
             inout = 1
         else:
             v = r - X * axis
-            d = v.Length
+            d = v.length
             Y = math.sqrt(4 * focal * X)
             inout = d - Y
 
@@ -396,7 +283,7 @@ def surface_side(p, surf):
         d = p - P
         z = d.dot(v)
         rz = d - z * v
-        inout = (z / Rb) ** 2 + ((rz.Length - Ra) / Rc) ** 2 - 1
+        inout = (z / Rb) ** 2 + ((rz.length - Ra) / Rc) ** 2 - 1
 
     elif surf.type == "box":
         P, v1, v2, v3 = surf.params
@@ -422,39 +309,3 @@ def btwPPlanes(p, p0, v):
         return -1
     else:
         return 1
-
-
-# ************************************************
-
-
-def FuseSolid(parts):
-    if (len(parts)) <= 1:
-        if parts:
-            solid = parts[0]
-        else:
-            return None
-    else:
-        try:
-            fused = parts[0].fuse(parts[1:])
-        except:
-            fused = None
-
-        if fused is not None:
-            try:
-                refinedfused = fused.removeSplitter()
-            except:
-                refinedfused = fused
-
-            if refinedfused.isValid():
-                solid = refinedfused
-            else:
-                if fused.isValid():
-                    solid = fused
-                else:
-                    solid = Part.makeCompound(parts)
-        else:
-            solid = Part.makeCompound(parts)
-
-    if solid.Volume < 0:
-        solid.reverse()
-    return solid

@@ -8,7 +8,10 @@ os.environ.setdefault("GEOUNED_CAD_ENGINE", "occ")
 pytest.importorskip("OCC.Core.BRepPrimAPI", reason="pythonocc-core not available on this machine")
 
 if os.environ.get("GEOUNED_CAD_ENGINE", "freecad").strip().lower() != "occ":
-    pytest.skip("GEOUNED_CAD_ENGINE is not 'occ' -- geouned.geo already loaded the FreeCAD backend in this process", allow_module_level=True)
+    pytest.skip(
+        "GEOUNED_CAD_ENGINE is not 'occ' -- geouned.geo already loaded the FreeCAD backend in this process",
+        allow_module_level=True,
+    )
 
 from geouned.geo import (
     GCircle,
@@ -36,7 +39,6 @@ from geouned.geo import (
     Gmake_wire,
     Gsplit,
 )
-
 
 # ---------------------------------------------------------------------------
 # Primitives

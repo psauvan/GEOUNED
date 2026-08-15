@@ -1,39 +1,50 @@
 """
 GEOReverse/Modules/_geo_bridge.py
 
-The single point of import for the rest of GEOReverse: `from ._geo_bridge
-import GVector, GSolid, Gmake_cylinder, ...`. Never `import Part`/
-`FreeCAD`/`BOPTools` outside this module -- mirrors the role
-`geo/__init__.py` plays for GEOUNED, with one deliberate difference (see
-below).
+The single point of import for the rest of GEOReverse's core geometry
+pipeline: `from ._geo_bridge import GVector, GSolid, Gmake_cylinder, ...`.
+Mirrors the role `geo/__init__.py` plays for GEOUNED -- and, as of this
+module, genuinely delegates to it (`from ...geo import (...)`) rather
+than hardcoding a backend, so GEOReverse's core follows the same
+`GEOUNED_CAD_ENGINE` environment variable GEOUNED's forward pipeline
+does. `CAD_ENGINE` below records which one actually resolved, for
+`core.py::export_cad`'s own per-engine dispatch/validation.
 
-GEOReverse always needs the full FreeCAD implementation of `geo` and
-never the pyOCC one -- CsgToCad has a hard dependency on FreeCAD's own
-document format for `.FCStd` export (`core.py::export_cad`), so it can
-never be pyOCC-only, and there is currently no plan to give it a pyOCC
-backend at all. Importing through `geo/__init__.py` would risk silently
-resolving against `geo._occ_impl`'s stubs whenever a process also has
-`GEOUNED_CAD_ENGINE=occ` set (e.g. for GEOUNED's own forward pipeline,
-in the same process). This module therefore imports directly from
-`geo._freecad_impl`, bypassing `geo/__init__.py`'s engine switch
-entirely -- a deliberate, narrow exception to "always go through the
-package's single import point", justified because that rule exists to
-keep GEOUNED's engine swappable, and GEOReverse is explicitly not.
+Two things still don't follow the engine switch, both deliberately, both
+narrower than "GEOReverse is FreeCAD-only" used to be:
+- `geo_quadrics/` (the 6 exotic quadric surfaces GEOUNED's own
+  decomposition never produces) is its own small package mirroring this
+  same `__init__.py`-dispatch pattern (`geo_quadrics/_freecad_impl.py` +
+  `geo_quadrics/_occ_impl.py`) -- but the pyOCC side is currently an
+  empty stub (every `Gmake_*` raises `NotImplementedError`), since a real
+  port needs pyOCC equivalents of `Part.Ellipse`/`Part.Hyperbola`/
+  `.revolve()`/`Part.makeLoft` that haven't been built yet. That package
+  imports `FreeCAD`/`Part` directly in its own `_freecad_impl.py`, the
+  same way `geo/_freecad_impl.py` does -- not through this module.
+- `core.py::export_cad`'s `.FCStd` output has no pyOCC equivalent at
+  all (no such document concept) -- handled by that function's own
+  per-engine `_SUPPORTED_FORMATS` validation, not by anything here.
 
 GEOReverse represents its own affine transforms (MCNP TRn cards,
-universe nesting) as plain numpy 4x4 arrays, not `geo`'s `GMatrix`
-(which stays a passive data container, used only for GEOUNED's own
-`MatrixOfInertia` bookkeeping) -- `to_fc_matrix`/`to_np_matrix` below
-are the bridge between that representation and the native
-`FreeCAD.Matrix` that `GSolid.transform_geometry`/`GPlane.transform`/
-`GCylinder.transform`/etc. and `GBoundBox.transformed` all expect.
+universe nesting) as plain numpy 4x4 arrays -- its own working matrix
+type, chosen for the battle-tested composition/inversion numpy already
+gives for free (`@`, `numpy.linalg.inv`). The *only* neutral types that
+ever cross between GEOReverse and `geo` are `GVector` and `GMatrix`;
+numpy arrays never convert directly to/from a native type --
+`to_np_matrix`/`to_gmatrix_from_np` below always go through `GMatrix`
+(via `geo`'s own `to_gmatrix`/`to_native_matrix`, both already
+engine-dispatched by `geo/__init__.py`), never around it. Native
+geometry types (`FreeCAD.Matrix`/`FreeCAD.Vector`, or their pyOCC
+equivalents) should never appear anywhere in GEOReverse outside this one
+file, `geo_quadrics/_freecad_impl.py`/`_occ_impl.py`, and `_freecad_impl.py`/
+`_occ_impl.py` (the export-side pair, used only by `core.py`).
 """
 
 import numpy as np
-import FreeCAD
-import Part
 
-from ...geo._freecad_impl import (
+from ...geo import (
+    CAD_ENGINE,
+    GBoundBox,
     GBSpline,
     GCircle,
     GCone,
@@ -42,12 +53,14 @@ from ...geo._freecad_impl import (
     GEllipse,
     GFace,
     GLine,
+    GMatrix,
     GPlane,
     GShape,
     GShell,
     GSolid,
     GSphere,
     GTorus,
+    GVector,
     GWire,
     SplitResult,
     Gclassify_curve,
@@ -76,21 +89,20 @@ from ...geo._freecad_impl import (
     Gsplit,
     kernel_version,
     pick_outer_wire,
-    to_fc_vector,
+    to_native_matrix,
+    to_native_vector,
+    to_gboundbox,
+    to_gmatrix,
+    to_gvector,
 )
-from ...geo.vector_geometry import GBoundBox, GVector, to_gboundbox, to_gvector
+
+IDENTITY_MATRIX = np.eye(4)
 
 
-def to_fc_matrix(matrix: np.ndarray) -> FreeCAD.Matrix:
-    """4x4 row-major numpy array (GEOReverse's own transform
-    representation) -> native FreeCAD.Matrix, for the handful of `geo`
-    calls that need one (`GSolid.transform_geometry`, `GPlane.transform`
-    and friends, `GBoundBox.transformed`)."""
-    return FreeCAD.Matrix(*matrix.flatten().tolist())
-
-
-def to_np_matrix(matrix: FreeCAD.Matrix) -> np.ndarray:
-    """Native FreeCAD.Matrix -> 4x4 row-major numpy array."""
+def to_np_matrix(matrix: GMatrix) -> np.ndarray:
+    """GMatrix -> 4x4 row-major numpy array (GEOReverse's own transform
+    representation). Never takes a native FreeCAD.Matrix directly --
+    callers holding one convert it via `geo`'s own `to_gmatrix` first."""
     return np.array(
         [
             [matrix.A11, matrix.A12, matrix.A13, matrix.A14],
@@ -99,3 +111,71 @@ def to_np_matrix(matrix: FreeCAD.Matrix) -> np.ndarray:
             [matrix.A41, matrix.A42, matrix.A43, matrix.A44],
         ]
     )
+
+
+def to_gmatrix_from_np(matrix: np.ndarray) -> GMatrix:
+    """Inverse of `to_np_matrix` -- 4x4 numpy array -> GMatrix."""
+    a = [float(v) for v in matrix.flatten()]
+    return GMatrix(*a)
+
+
+def transform_solid(solid: GSolid, matrix: np.ndarray) -> GSolid:
+    """Apply a numpy affine transform to a `GSolid`. Routes through
+    `GMatrix` (`to_gmatrix_from_np` then `to_native_matrix`) since
+    `GSolid.transform_geometry` has no GMatrix-accepting form of its own --
+    there is no direct numpy -> native shortcut anywhere in this module."""
+    return solid.transform_geometry(to_native_matrix(to_gmatrix_from_np(matrix)))
+
+
+def matrix_multVec(matrix: np.ndarray, v: GVector) -> GVector:
+    """Full affine transform of a position (rotation + translation) --
+    numpy equivalent of native `FreeCAD.Matrix.multVec`. Pure GVector/numpy
+    math, no native detour needed."""
+    r = matrix[:3, :3] @ np.array([v.x, v.y, v.z]) + matrix[:3, 3]
+    return GVector(float(r[0]), float(r[1]), float(r[2]))
+
+
+def matrix_rotate_vec(matrix: np.ndarray, v: GVector) -> GVector:
+    """Rotation-only transform of a direction (no translation) -- numpy
+    equivalent of native `FreeCAD.Matrix.submatrix(3).multVec`."""
+    r = matrix[:3, :3] @ np.array([v.x, v.y, v.z])
+    return GVector(float(r[0]), float(r[1]), float(r[2]))
+
+
+def fuse_solids(parts: list) -> GSolid | None:
+    """Boolean-union `parts` (a list of `GSolid`) into one solid,
+    tolerating a failed/invalid fuse by falling back to an unfused
+    compound. The single shared implementation for what used to be 3
+    byte-for-byte-identical copies (`Objects.py`, `buildSolidCell.py`,
+    `splitFunction.py`) -- consolidated here per the migration plan's
+    Phase 5. Uses `GSolid.refine()` (not a raw, unguarded
+    `removeSplitter()`) so the fused result gets that method's existing
+    volume-invariance safety check for free."""
+    if len(parts) == 0:
+        return None
+    if len(parts) == 1:
+        solid = parts[0]
+    else:
+        try:
+            fused = Gfuse(parts)
+        except Exception:
+            fused = None
+
+        if fused is not None:
+            try:
+                refined = fused.refine()
+            except Exception:
+                refined = fused
+
+            if refined.is_valid():
+                solid = refined
+            elif fused.is_valid():
+                solid = fused
+            else:
+                solid = Gmake_compound(parts)
+        else:
+            solid = Gmake_compound(parts)
+
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid

@@ -31,9 +31,9 @@ import math
 import uuid
 from dataclasses import dataclass
 
-import BOPTools.SplitAPI
 import FreeCAD
 import Part
+import BOPTools.SplitAPI
 from FreeCAD import Import
 
 from .vector_geometry import (
@@ -56,11 +56,36 @@ from .vector_geometry import (
 )
 
 
-def to_fc_vector(vector: GVector) -> FreeCAD.Vector:
+def to_native_vector(vector: GVector) -> FreeCAD.Vector:
     """Write-side half of the transitional pair with `vector_geometry.to_gvector` --
     materializes a neutral GVector back into a native FreeCAD.Vector, needed only
     where geo code calls a native Part/FreeCAD function directly."""
     return FreeCAD.Vector(vector.x, vector.y, vector.z)
+
+
+def to_native_matrix(matrix: GMatrix) -> FreeCAD.Matrix:
+    """Write-side half of the transitional pair with `vector_geometry.to_gmatrix` --
+    materializes a neutral GMatrix back into a native FreeCAD.Matrix, needed only
+    where geo code calls a native Part/FreeCAD function directly (e.g.
+    `GSolid.transform_geometry`, which has no GMatrix-accepting overload)."""
+    return FreeCAD.Matrix(
+        matrix.A11,
+        matrix.A12,
+        matrix.A13,
+        matrix.A14,
+        matrix.A21,
+        matrix.A22,
+        matrix.A23,
+        matrix.A24,
+        matrix.A31,
+        matrix.A32,
+        matrix.A33,
+        matrix.A34,
+        matrix.A41,
+        matrix.A42,
+        matrix.A43,
+        matrix.A44,
+    )
 
 
 def kernel_version() -> str:
@@ -109,7 +134,7 @@ class GPlane:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the plane to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
     def value_at(self, u: float, v: float) -> GVector:
         return plane_value_at(self, u, v)
@@ -131,8 +156,8 @@ class GPlane:
         CadToCsg (the corresponding Objects.py::Plane.transform() this
         replaces was confirmed dead there) -- kept/ported for CsgToCad
         (GEOReverse), which does need to move surfaces around."""
-        position = to_gvector(matrix.multVec(to_fc_vector(self.Position)))
-        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis))).normalized()
+        position = to_gvector(matrix.multVec(to_native_vector(self.Position)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_native_vector(self.Axis))).normalized()
         return GPlane.from_values(position, axis)
 
     def intersect_plane(self, other: "GPlane") -> "GLine | None":
@@ -158,8 +183,8 @@ class GPlane:
             return None  # parallel or coincident
 
         if dl < 0.05:  # well below the verified-safe 0.01 rad boundary
-            native1 = Part.Plane(to_fc_vector(self.Position), to_fc_vector(n1))
-            native2 = Part.Plane(to_fc_vector(other.Position), to_fc_vector(n2))
+            native1 = Part.Plane(to_native_vector(self.Position), to_native_vector(n1))
+            native2 = Part.Plane(to_native_vector(other.Position), to_native_vector(n2))
             lines = native1.intersect(native2)
             if not lines:
                 return None
@@ -184,6 +209,25 @@ class GPlane:
 
         return GLine.from_values(point, direction)
 
+    def intersect_line(self, line: "GLine") -> GVector | None:
+        """
+        The single point where the (infinite) `line` crosses this
+        (infinite) plane. Returns None if the line is parallel to the
+        plane (including the degenerate case where it lies within it --
+        callers needing to distinguish "parallel" from "coincident" must
+        check that separately). Pure GVector math, no native fallback
+        needed -- unlike `intersect_plane`/`GLine.intersect_line`, this
+        has no near-parallel numerical instability of its own (it's a
+        single division by `Axis.dot(Direction)`, not a cross-product-
+        magnitude-scaled system), so there is no verified-unsafe regime
+        to fall back from.
+        """
+        denom = self.Axis.dot(line.Direction)
+        if abs(denom) < 1e-12:
+            return None
+        t = self.Axis.dot(self.Position - line.Position) / denom
+        return line.Position + line.Direction * t
+
 
 class GCylinder:
     def __init__(self, native):
@@ -206,7 +250,7 @@ class GCylinder:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the cylinder to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
     def value_at(self, u: float, v: float) -> GVector:
         return cylinder_value_at(self, u, v)
@@ -223,8 +267,8 @@ class GCylinder:
         """Apply a native FreeCAD.Matrix affine transform, returning a new
         GCylinder. See GPlane.transform for why this isn't exercised by
         CadToCsg today but is kept for CsgToCad (GEOReverse)."""
-        center = to_gvector(matrix.multVec(to_fc_vector(self.Center)))
-        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis)))
+        center = to_gvector(matrix.multVec(to_native_vector(self.Center)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_native_vector(self.Axis)))
         return GCylinder.from_values(center, axis, self.Radius)
 
 
@@ -252,7 +296,7 @@ class GCone:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the cone to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the (infinite, single-sheet) cone.
@@ -263,8 +307,8 @@ class GCone:
         """Apply a native FreeCAD.Matrix affine transform, returning a new
         GCone. See GPlane.transform for why this isn't exercised by
         CadToCsg today but is kept for CsgToCad (GEOReverse)."""
-        apex = to_gvector(matrix.multVec(to_fc_vector(self.Apex)))
-        axis = to_gvector(matrix.submatrix(3).multVec(to_fc_vector(self.Axis)))
+        apex = to_gvector(matrix.multVec(to_native_vector(self.Apex)))
+        axis = to_gvector(matrix.submatrix(3).multVec(to_native_vector(self.Axis)))
         return GCone.from_values(apex, axis, self.SemiAngle, self.Radius)
 
 
@@ -285,7 +329,7 @@ class GSphere:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the sphere to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the sphere. See GPlane.is_inside
@@ -296,7 +340,7 @@ class GSphere:
         """Apply a native FreeCAD.Matrix affine transform, returning a new
         GSphere. See GPlane.transform for why this isn't exercised by
         CadToCsg today but is kept for CsgToCad (GEOReverse)."""
-        center = to_gvector(matrix.multVec(to_fc_vector(self.Center)))
+        center = to_gvector(matrix.multVec(to_native_vector(self.Center)))
         return GSphere.from_values(center, self.Radius)
 
 
@@ -321,7 +365,7 @@ class GTorus:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """Parametric coordinates (u, v) of the nearest point on the torus to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
     def is_inside(self, point: GVector) -> bool:
         """True if `point` is outside the torus. See GPlane.is_inside
@@ -411,8 +455,8 @@ class GLine:
         scale_ref = max(self.Position.length, other.Position.length, 1.0)
 
         if crl < 0.05:
-            native1 = Part.Line(to_fc_vector(self.Position), to_fc_vector(self.Position + d1))
-            native2 = Part.Line(to_fc_vector(other.Position), to_fc_vector(other.Position + d2))
+            native1 = Part.Line(to_native_vector(self.Position), to_native_vector(self.Position + d1))
+            native2 = Part.Line(to_native_vector(other.Position), to_native_vector(other.Position + d2))
             pts = native1.intersect(native2)
             if not pts:
                 return None
@@ -430,7 +474,7 @@ class GLine:
 
     def parameter(self, point: GVector) -> float:
         """Parametric coordinate `u` (distance along the line from `Position`) of the nearest point on the line to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
 
 class GCircle:
@@ -446,7 +490,7 @@ class GCircle:
 
     def parameter(self, point: GVector) -> float:
         """Parametric coordinate `u` (radians) of the nearest point on the circle to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
 
 class GEllipse:
@@ -467,7 +511,7 @@ class GEllipse:
 
     def parameter(self, point: GVector) -> float:
         """Parametric coordinate `u` (radians) of the nearest point on the ellipse to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
 
 class GBSpline:
@@ -481,7 +525,7 @@ class GBSpline:
 
     def parameter(self, point: GVector) -> float:
         """Parametric coordinate `u` of the nearest point on the B-spline to `point`."""
-        return self.__native__.parameter(to_fc_vector(point))
+        return self.__native__.parameter(to_native_vector(point))
 
 
 def Gclassify_curve(native_edge):
@@ -563,7 +607,7 @@ class GEdge:
         model, e.g. Hyperbola/Parabola) -- `.parameter()` itself is a basic
         native curve operation, available regardless of classification.
         """
-        return self.__native__.Curve.parameter(to_fc_vector(point))
+        return self.__native__.Curve.parameter(to_native_vector(point))
 
     def curvature(self, u: float) -> float:
         """Curvature of the edge's curve at parametric coordinate `u`
@@ -592,7 +636,7 @@ class GEdge:
         endpoints, the tolerance boundary, and points beyond a curve's
         trim on its periodic/infinite extension.
         """
-        return self.__native__.isInside(to_fc_vector(point), tolerance, True)
+        return self.__native__.isInside(to_native_vector(point), tolerance, True)
 
     def export_step(self, filename: str) -> None:
         Part.makeCompound([self.__native__]).exportStep(filename)
@@ -694,7 +738,7 @@ class GFace:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         """(u, v) parametric coordinates of `point`, assumed to lie on the face. Inverse of `value_at`."""
-        return self.__native__.Surface.parameter(to_fc_vector(point))
+        return self.__native__.Surface.parameter(to_native_vector(point))
 
     def is_part_of_domain(self, u: float, v: float) -> bool:
         """True if (u, v) lies within the face's actual trimmed boundary, not just its parameter-range rectangle."""
@@ -821,7 +865,7 @@ class GSolid:
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         """True if `point` lies inside the solid (equivalent to Part.Shape.isInside())."""
-        return self.__native__.isInside(to_fc_vector(point), tolerance, False)
+        return self.__native__.isInside(to_native_vector(point), tolerance, False)
 
     def optimal_bounding_box(self, use_triangulation: bool = True) -> GBoundBox:
         """
@@ -931,12 +975,12 @@ class GSolid:
 
     def translate(self, vector: GVector) -> "GSolid":
         shape = self.__native__.copy()
-        shape.translate(to_fc_vector(vector))
+        shape.translate(to_native_vector(vector))
         return GSolid(shape)
 
     def rotate(self, axis_point: GVector, axis_dir: GVector, angle_rad: float) -> "GSolid":
         shape = self.__native__.copy()
-        shape.rotate(to_fc_vector(axis_point), to_fc_vector(axis_dir), math.degrees(angle_rad))
+        shape.rotate(to_native_vector(axis_point), to_native_vector(axis_dir), math.degrees(angle_rad))
         return GSolid(shape)
 
     def export_step(self, filename: str) -> None:
@@ -1069,13 +1113,13 @@ def Gmake_box(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, z
 
 
 def Gmake_cylinder(point: GVector, axis: GVector, radius: float, height: float) -> GSolid:
-    native = Part.makeCylinder(radius, height, to_fc_vector(point), to_fc_vector(axis))
+    native = Part.makeCylinder(radius, height, to_native_vector(point), to_native_vector(axis))
     return GSolid(native)
 
 
 def Gmake_cone(apex: GVector, axis: GVector, half_angle: float, height: float) -> GSolid:
     base_radius = height * math.tan(abs(half_angle))
-    native = Part.makeCone(0.0, base_radius, height, to_fc_vector(apex), to_fc_vector(axis))
+    native = Part.makeCone(0.0, base_radius, height, to_native_vector(apex), to_native_vector(axis))
     return GSolid(native)
 
 
@@ -1087,7 +1131,7 @@ def Gmake_cone_frustum(point: GVector, axis: GVector, radius1: float, radius2: f
     truncated-cone surface form, which `Gmake_cone`'s single-apex shape has
     no way to represent.
     """
-    native = Part.makeCone(radius1, radius2, height, to_fc_vector(point), to_fc_vector(axis))
+    native = Part.makeCone(radius1, radius2, height, to_native_vector(point), to_native_vector(axis))
     return GSolid(native)
 
 
@@ -1106,12 +1150,12 @@ def Gmake_cone_double_sheet(apex: GVector, axis: GVector, half_angle: float, len
 
 
 def Gmake_sphere(center: GVector, radius: float) -> GSolid:
-    native = Part.makeSphere(radius, to_fc_vector(center))
+    native = Part.makeSphere(radius, to_native_vector(center))
     return GSolid(native)
 
 
 def Gmake_torus(center: GVector, axis: GVector, major_radius: float, minor_radius: float) -> GSolid:
-    native = Part.makeTorus(major_radius, minor_radius, to_fc_vector(center), to_fc_vector(axis))
+    native = Part.makeTorus(major_radius, minor_radius, to_native_vector(center), to_native_vector(axis))
     return GSolid(native)
 
 
@@ -1119,9 +1163,9 @@ def Gmake_half_space(plane: GPlane) -> GSolid:
     """Half-space bounded by an infinite plane (internally clipped to a working box). Needed to reconstruct CSG cells defined by the intersection of half-spaces."""
     extent = 1.0e6
     box = Part.makeBox(extent, extent, extent, FreeCAD.Vector(-extent / 2.0, -extent / 2.0, -extent))
-    normal = to_fc_vector(plane.Axis.normalized())
+    normal = to_native_vector(plane.Axis.normalized())
     box.Placement = FreeCAD.Placement(
-        to_fc_vector(plane.Position),
+        to_native_vector(plane.Position),
         FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), normal),
     )
     return GSolid(box)
@@ -1144,7 +1188,7 @@ def Gmake_polygon_face(points: list[GVector]) -> GFace:
     `points`, in order. Used to reconstruct a bounded plane face from the
     points where an infinite plane crosses a bounding box.
     """
-    native = Part.Face(Part.makePolygon([to_fc_vector(p) for p in points], True))
+    native = Part.Face(Part.makePolygon([to_native_vector(p) for p in points], True))
     return GFace(native)
 
 
