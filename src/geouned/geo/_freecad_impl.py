@@ -943,6 +943,22 @@ class GSolid:
         """Export all of this solid's shapes to a single STEP file."""
         self.__native__.exportStep(filename)
 
+    def copy(self) -> "GSolid":
+        return GSolid(self.__native__.copy())
+
+    def transform_geometry(self, matrix) -> "GSolid":
+        """
+        Apply a general affine transform (equivalent to `Part.Shape.transformGeometry(matrix)`)
+        -- unlike `.translate()`/`.rotate()`, this accepts an arbitrary 4x4
+        affine `matrix` (a native `FreeCAD.Matrix`, matching the convention
+        `GPlane.transform`/`GCylinder.transform`/etc. already use), not just
+        a translation vector or axis-angle rotation. Needed by CsgToCad
+        (GEOReverse), which moves whole reconstructed solids by MCNP TRn
+        transforms.
+        """
+        shape = self.__native__.copy()
+        return GSolid(shape.transformGeometry(matrix))
+
 
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).
 GShape = GSolid | GFace | GEdge | GShell
@@ -1061,6 +1077,32 @@ def Gmake_cone(apex: GVector, axis: GVector, half_angle: float, height: float) -
     base_radius = height * math.tan(abs(half_angle))
     native = Part.makeCone(0.0, base_radius, height, to_fc_vector(apex), to_fc_vector(axis))
     return GSolid(native)
+
+
+def Gmake_cone_frustum(point: GVector, axis: GVector, radius1: float, radius2: float, height: float) -> GSolid:
+    """
+    Truncated cone (frustum): `radius1` at `point`, `radius2` at
+    `point + height*axis` -- unlike `Gmake_cone`, neither end needs to be
+    zero (a real apex). Needed by CsgToCad (GEOReverse) for MCNP's
+    truncated-cone surface form, which `Gmake_cone`'s single-apex shape has
+    no way to represent.
+    """
+    native = Part.makeCone(radius1, radius2, height, to_fc_vector(point), to_fc_vector(axis))
+    return GSolid(native)
+
+
+def Gmake_cone_double_sheet(apex: GVector, axis: GVector, half_angle: float, length: float) -> GSolid:
+    """
+    Both nappes of an infinite (quadric) cone, built as one fused solid --
+    `Gmake_cone` only ever builds a single nappe. `length` bounds how far
+    each nappe extends from `apex` along `+axis`/`-axis`, same convention
+    as `Gmake_cone`'s own `height`. Needed by CsgToCad (GEOReverse) for
+    MCNP's double-sheet quadric cone form.
+    """
+    sheet1 = Gmake_cone(apex, axis, half_angle, length)
+    sheet2 = Gmake_cone(apex, -axis, half_angle, length)
+    fused = Gfuse([sheet1, sheet2])
+    return fused.refine()
 
 
 def Gmake_sphere(center: GVector, radius: float) -> GSolid:

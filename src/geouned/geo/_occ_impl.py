@@ -1046,6 +1046,16 @@ class GSolid:
     def export_step(self, filename: str) -> None:
         _export_shapes_step([self.__native__], filename)
 
+    def copy(self) -> "GSolid":
+        return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape())
+
+    def transform_geometry(self, matrix) -> "GSolid":
+        """Apply a rigid affine transform (a native gp_Trsf). See
+        _freecad_impl.py's own docstring -- not currently used anywhere
+        (GEOReverse, this method's only real consumer, is FreeCAD-only),
+        kept for backend symmetry."""
+        return GSolid(BRepBuilderAPI_Transform(self.__native__, matrix, True).Shape())
+
 
 GShape = GSolid | GFace | GEdge | GShell
 
@@ -1207,6 +1217,21 @@ def Gmake_cone(apex: GVector, axis: GVector, half_angle: float, height: float) -
     ax2 = gp_Ax2(to_fc_vector(apex), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeCone(ax2, 0.0, base_radius, height).Shape()
     return GSolid(native)
+
+
+def Gmake_cone_frustum(point: GVector, axis: GVector, radius1: float, radius2: float, height: float) -> GSolid:
+    """Truncated cone (frustum): radius1 at `point`, radius2 at `point + height*axis`. See _freecad_impl.py's own docstring for why this is a separate function from Gmake_cone."""
+    ax2 = gp_Ax2(to_fc_vector(point), gp_Dir(axis.x, axis.y, axis.z))
+    native = BRepPrimAPI_MakeCone(ax2, radius1, radius2, height).Shape()
+    return GSolid(native)
+
+
+def Gmake_cone_double_sheet(apex: GVector, axis: GVector, half_angle: float, length: float) -> GSolid:
+    """Both nappes of an infinite cone, fused into one solid. See _freecad_impl.py's own docstring."""
+    sheet1 = Gmake_cone(apex, axis, half_angle, length)
+    sheet2 = Gmake_cone(apex, -axis, half_angle, length)
+    fused = Gfuse([sheet1, sheet2])
+    return fused.refine()
 
 
 def Gmake_sphere(center: GVector, radius: float) -> GSolid:

@@ -255,6 +255,33 @@ class GBoundBox:
         j = i - 8
         return self.get_point(j), self.get_point(j + 4)
 
+    def transformed(self, matrix) -> "GBoundBox":
+        """
+        New box enclosing this one after applying an affine `matrix`
+        (matches FreeCAD's own `BoundBox.transformed`, but non-mutating) --
+        since a general affine transform can rotate an axis-aligned box off
+        -axis, this transforms all 8 corners and returns their own new
+        axis-aligned bounding box, not a simple componentwise remap.
+
+        Duck-typed on `.A11`..`.A44` (row-major affine, translation in the
+        4th column: `x' = A11*x + A12*y + A13*z + A14`, etc.) -- works with
+        either a native `FreeCAD.Matrix` or a `GMatrix`, same as
+        `to_gmatrix`'s own tolerance for either.
+        """
+        corners = [_affine_transform_point(matrix, self.get_point(i)) for i in range(8)]
+        xs = [c.x for c in corners]
+        ys = [c.y for c in corners]
+        zs = [c.z for c in corners]
+        return GBoundBox(min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
+
+
+def _affine_transform_point(matrix, point: GVector) -> GVector:
+    return GVector(
+        matrix.A11 * point.x + matrix.A12 * point.y + matrix.A13 * point.z + matrix.A14,
+        matrix.A21 * point.x + matrix.A22 * point.y + matrix.A23 * point.z + matrix.A24,
+        matrix.A31 * point.x + matrix.A32 * point.y + matrix.A33 * point.z + matrix.A34,
+    )
+
 
 def to_gboundbox(box) -> GBoundBox:
     """Convert any box-like object exposing `.XMin`/.../`.ZMax` (e.g. a native `FreeCAD.BoundBox`) into a neutral GBoundBox."""
