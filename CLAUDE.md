@@ -3946,6 +3946,201 @@ STEP-round-trip healing attempts), `reconstruct_piece0.py` /
 `reconstruct_piece0_v2.py` (the face-adjacency-graph reconstruction and
 per-non-manifold-edge face dump).
 
+## pyOCC migration, Phase 1: engine-selection scaffolding + a positive `Gsplit` go/no-go result
+
+Kicked off the actual pyOCC migration this file's top section has always
+named as the eventual fix for the project's original motivating bug.
+New branch `pyocc-migration` off `refactor_2.1_base`. Three decisions
+confirmed with the user before starting: engine choice via an
+environment variable, `GEOUNED_CAD_ENGINE` (`"freecad"`, the default, or
+`"occ"`) -- not a `Settings` field, confirmed structurally impossible
+without a much bigger refactor, since `geo/__init__.py`'s backend import
+happens at `import geouned` time, well before any `Settings`/`CadToCsg`
+instance could exist to carry the choice; migration order starts with
+`Gsplit`/`GSolid` (highest risk, highest value -- it's the actual
+function tied to the motivating bug), not the small analytic surface
+classes; `GEOReverse` (CsgToCad) stays FreeCAD-only, permanently out of
+scope (hard `.FCStd` export dependency, no pyOCC equivalent).
+
+**Scaffolding**: `geo/__init__.py` now reads `GEOUNED_CAD_ENGINE` once
+at module top and imports the same full name list from either
+`._freecad_impl` (default) or a new `._occ_impl` -- every other file in
+`GEOUNED` is unaffected either way, exactly the swappability this
+package was designed for from the start. `geouned/__init__.py`'s
+previously-unconditional `from .GEOReverse import *` (which does a hard
+`import FreeCAD` at its own top) is now wrapped in the same
+`try/except ImportError` pattern the existing conda-`freecad`-shim
+import right above it already uses -- under `GEOUNED_CAD_ENGINE=occ` a
+user may have no FreeCAD installed at all, so `CsgToCad`/`BoxSettings`
+degrade to `None` with a logged warning instead of crashing `CadToCsg`
+(GEOUNED) along with them.
+
+**`geo/_occ_impl.py`** (new file) implements only what this validation
+phase needs -- `kernel_version()`, `GVector`<->`gp_Pnt` conversion,
+minimal `GSolid`/`GFace`/`GEdge` (`.Volume`/`.Faces`/`.Edges`/
+`.is_valid()`/`.export_step()`, matching `_freecad_impl.py`'s own field
+names where they overlap), `Gload_step`/`Gexport_step`, and `Gsplit`
+itself -- everything else (`GPlane`/`GCylinder`/.../`Gcut`/`Gfuse`/...,
+~30 names) is a `NotImplementedError` stub, kept only so
+`geo/__init__.py`'s import list stays symmetric between both backends
+rather than needing its own per-backend branching logic beyond the one
+top-level `if`.
+
+`Gsplit`'s pyOCC implementation: `BOPAlgo_Splitter` (`OCC.Core.BOPAlgo`,
+the pyOCC equivalent of FreeCAD's `BOPTools.SplitAPI.slice` -- both
+produce fragments from *both* sides of the cut, unlike a one-sided
+`BRepAlgoAPI_Cut`), then per-resulting-solid `BRepCheck_Analyzer.IsValid()`;
+any solid that comes back invalid goes through
+`_repair_non_manifold_solid` -- builds an edge->faces adjacency map via
+`TopTools_IndexedDataMapOfShapeListOfShape`/`topexp.MapShapesAndAncestors`,
+finds edges shared by `!= 2` faces (non-manifold), union-finds the
+solid's own faces into connected components excluding those edges, and
+for any component missing a real face at a non-manifold edge, adds a
+`BRepBuilderAPI_Copy` of a donor component's face there before sewing
+(`BRepBuilderAPI_Sewing`) and solidifying (`BRepBuilderAPI_MakeSolid`)
+each component independently -- the OCC-native version of the
+duplicated-capping-face technique `reconstruct_piece0.py`/
+`reconstruct_piece0_v2.py` prototyped by hand against FreeCAD earlier in
+this project's history, never finished there.
+
+**The actual go/no-go test, run against the exact `rev_pipe.stp` case
+already fully characterized as broken on the FreeCAD side** (see the
+section above this one: `BOPTools.SplitAPI.slice` returns a single
+`isValid()==False` piece, Volume=504643.5350, 6 non-manifold edges, not
+healed by `removeSplitter()` or a STEP round-trip): exported
+`rev_pipe.stp`'s original 13-face solid (Volume=512337.6683) and its
+`MultiRoundCorner` cutting tool as two independent STEP files from the
+FreeCAD-capable default Python, then loaded both fresh into a
+FreeCAD-free `pyoccenv` conda environment (pythonocc-core 7.9.0) and
+called the new OCC `Gsplit` on them directly, with no shared state or
+prior FreeCAD involvement in the cut itself. Result: **`BOPAlgo_Splitter`
+correctly returns 3 valid solids on the raw, unrepaired first attempt**
+(`degenerate_case_handled=False` -- the repair path was never even
+needed): Volume 465264.5885 + 7694.1331 + 39378.9463 = 512337.6679,
+matching the original volume to floating-point noise (diff 0.000389).
+Confirms the mechanism directly: FreeCAD's single invalid
+504643.5350-volume piece is exactly the *union* of the new pieces 0 and
+2 (465264.5885 + 39378.9463 = 504643.5348) that `BOPAlgo_Splitter`
+correctly keeps separate -- pyOCC resolves precisely the tangency-merge
+FreeCAD's own splitter couldn't. `tests/geo` (106/106) confirmed
+unaffected by the `geo/__init__.py` scaffolding change (default engine
+still `"freecad"`, byte-identical behavior).
+
+**Not yet validated**: the `_repair_non_manifold_solid` fallback path
+itself -- this one test case never exercised it, since `BOPAlgo_Splitter`
+didn't need repair here. Whether it actually works (on a case where OCC's
+own splitter *does* leave an invalid result) is still open; the plan's
+own framing already anticipated this ("if OCC's `BOPAlgo_Splitter` +
+the face-adjacency reconstruction correctly separates this case, that's
+strong evidence to continue" -- true here, but for a simpler reason than
+the reconstruction logic being exercised and validated). Also not yet
+done, per the plan's explicit "Not in this phase" list: full `GSolid`/
+`GFace` port, a parallel `tests/geo/test_occ_impl.py`, the analytic
+surface/curve descriptor classes, `Gclassify_surface`/`Gclassify_curve`
+dispatch, a full `tests/test_cadtocsg.py` run under
+`GEOUNED_CAD_ENGINE=occ`. Also found, not yet fixed: `utils/
+meta_surfaces_utils.py` imports `GEdge`/`GFace` directly from
+`geouned.geo._freecad_impl` instead of `geouned.geo` -- bypassing the
+single-import-point convention this whole package's swappability
+depends on, unconditionally requiring FreeCAD/`BOPTools` even under
+`GEOUNED_CAD_ENGINE=occ`. Not a blocker for this validation slice
+(tested `_occ_impl.py` standalone, bypassing `geouned/__init__.py`'s
+full chain) but needs fixing before `GEOUNED_CAD_ENGINE=occ` can ever
+support a real end-to-end run.
+
+Diagnostic/setup scripts (scratchpad only, not committed):
+`occ_import_helper.py` (standalone `_occ_impl.py` import bypassing the
+`geouned` package init chain), `test_occ_simple_split.py` (box-cut-by-
+plane sanity check before the real case), `export_rev_pipe_base_tool.py`
+(FreeCAD-side STEP export of the base solid + tool, run with the default
+Python), `test_occ_rev_pipe.py` (the actual go/no-go test, run in
+`pyoccenv`).
+
+## pyOCC migration, Phase 2: full `GSolid`/`GFace`/`GEdge`/`GWire` + analytic
+descriptor port, `tests/geo/test_occ_impl.py`
+
+Continued directly from Phase 1's positive go/no-go signal. Also fixed,
+as a prerequisite: `utils/meta_surfaces_utils.py`'s `from
+geouned.geo._freecad_impl import GEdge, GFace` (bypassing the
+single-import-point convention, flagged but not fixed in Phase 1) now
+imports from `geouned.geo` like everywhere else -- confirmed via a
+direct test that `import geouned` under `GEOUNED_CAD_ENGINE=occ` now
+succeeds end-to-end (degrading `GEOReverse`/`CsgToCad` to `None` with a
+warning, as designed) in a completely FreeCAD-free environment
+(`pyoccenv`), where it previously crashed on this one holdout import.
+
+**`_occ_impl.py` now ports the full surface this migration's Phase 1
+plan scoped as "not in this phase"**: all 5 analytic surface descriptors
+(`GPlane`/`GCylinder`/`GCone`/`GSphere`/`GTorus`, including
+`.from_values`/`.parameter`/`.is_inside`/`.transform`, plus `GPlane`'s
+`.intersect_plane`/`GLine`'s `.intersect_line` with the same
+hybrid-pure-math-then-native-fallback shape as `_freecad_impl.py`, using
+`GeomAPI_IntSS`/`GeomAPI_ProjectPointOnCurve` as the native fallback);
+all 4 curve descriptors (`GLine`/`GCircle`/`GEllipse`/`GBSpline`);
+`Gclassify_surface`/`Gclassify_curve` (dispatching on
+`BRepAdaptor_Surface`/`BRepAdaptor_Curve`'s own `GetType()`, mirroring
+FreeCAD's `type(surface) is Part.Plane`-style dispatch); full
+`GEdge`/`GWire`/`GFace`/`GShell`/`GSolid` (every method from
+`_freecad_impl.py`'s version, including `find_interior_point`,
+`faces_sharing_edge`, `fix`/`refine` -- using
+`ShapeUpgrade_UnifySameDomain` as the `removeSplitter()` equivalent,
+`ShapeFix_Shape` as the deeper repair fallback, same volume-invariance
+guard as `refine()`'s FreeCAD version -- `reverse`/`translate`/`rotate`,
+`tessellate`/`getUVNodes`, `my_distToshape`); every `Gmake_*` primitive
+constructor (`Gmake_box`/`_cylinder`/`_cone`/`_sphere`/`_torus`/
+`_half_space`/`_wire`/`_polygon_face`/`_shell`/`_compound`); `Gcut`/
+`Gcommon`/`Gfuse` (via `BRepAlgoAPI_Cut`/`_Common`/`_Fuse`); `Gin_contact`/
+`Gdistance` (via `BRepExtrema_DistShapeShape`, same BoundBox-prefilter
+structure as the FreeCAD version).
+
+Only 2 real gaps remain, both explicitly documented in the file's own
+docstring rather than silently missing: `Gload_step_labels` (STEP
+assembly/label-tree reading -- a separate concern from `Gload_step`'s
+geometry-only read, needs `XCAFDoc`/`STEPCAFControl_Reader`, not yet
+attempted) stays a `NotImplementedError` stub; `Gclassify_surface`'s
+FreeCAD-side fallback for a `BSplineSurface` that's secretly a mislabeled
+flat plane (`face.findPlane()`) has no pyOCC port, so that one case
+returns `None` (unsupported surface) instead of a `GPlane` -- narrower
+than FreeCAD, not wider (never silently misclassifies something FreeCAD
+would reject too).
+
+**`tests/geo/test_occ_impl.py`** (new, 39 tests) mirrors
+`test_freecad_impl.py`'s coverage shape against real geometry with known
+expected values (volumes, radii, semi-angles, intersection points, not
+just "does it run") -- primitives, surface/curve classification,
+`GPlane`/`GLine` intersection (well-conditioned, parallel, and skew
+cases), face/wire/edge topology, half-spaces, all 3 boolean ops,
+`Gsplit`, `Gin_contact`/`Gdistance`, `find_interior_point`/`fix`/
+`refine`/`reverse`/`translate`/`rotate`, and a STEP round-trip. Guarded
+the same way `test_freecad_impl.py` guards for FreeCAD
+(`pytest.importorskip("OCC.Core.BRepPrimAPI", ...)`) plus an explicit
+`GEOUNED_CAD_ENGINE` check, since `geouned.geo`'s backend choice is
+resolved once at first import and cached in `sys.modules` -- if this
+file's `os.environ.setdefault(...)` runs *after* something else in the
+same test session already imported `geouned.geo` under the FreeCAD
+engine, the module-level skip catches that instead of silently testing
+the wrong backend. In practice this only ever matters for a single
+process running both suites, which doesn't happen in this project's real
+setup (FreeCAD and pythonocc-core live in mutually exclusive conda
+environments -- confirmed directly: `test_freecad_impl.py` fails even to
+*collect* under `pyoccenv`, `Module use of python311.dll conflicts with
+this version of Python`, an OS/ABI-level DLL conflict pytest's
+`importorskip` can't catch; `test_occ_impl.py` skips cleanly under the
+default FreeCAD-capable Python, as designed). 106/106 `tests/geo`
+(FreeCAD/default engine) confirmed unaffected throughout this whole
+phase; the `rev_pipe.stp` go/no-go result (3 valid pieces,
+`degenerate_case_handled=False`) re-verified byte-identical after
+swapping in the full `GSolid`/`GFace` port in place of Phase 1's minimal
+version.
+
+**Not yet attempted**: a full `tests/test_cadtocsg.py` run under
+`GEOUNED_CAD_ENGINE=occ` (the real decomposition/conversion/void/write
+pipeline exercises a long tail of `geo` functionality beyond what
+`test_occ_impl.py`'s unit-level coverage reaches -- e.g. void generation,
+the writers, `Gload_step_labels`, and many call sites never exercised
+by a synthetic box/cylinder/sphere/torus). This is the natural next
+slice once picked back up, per the original Phase 1 plan's own framing.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

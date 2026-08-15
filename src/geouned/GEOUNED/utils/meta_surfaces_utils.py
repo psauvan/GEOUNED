@@ -2,8 +2,6 @@ import math
 
 from collections import OrderedDict
 
-from geouned.geo._freecad_impl import GEdge, GFace
-
 from .geometry_gu import ShellGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
@@ -11,6 +9,8 @@ from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 from ...geo import (
+    GEdge,
+    GFace,
     GVector,
     GPlane,
     GCylinder,
