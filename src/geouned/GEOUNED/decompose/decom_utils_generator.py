@@ -15,6 +15,7 @@ from ...geo import (
     GPlane,
     GCylinder,
     GCone,
+    GSolid,
     GSphere,
     GTorus,
     GLine,
@@ -244,7 +245,7 @@ def get_axis_inertia(mat: GMatrix):
     return GVector(float(principal[0]), float(principal[1]), float(principal[2]))
 
 
-def valid_solid(solid, Volume):
+def valid_solid(solid: GSolid, Volume) -> bool:
     if solid.Volume < 0:
         return False
     Vol_tol = 1e-2
@@ -256,20 +257,10 @@ def valid_solid(solid, Volume):
     return True
 
 
-def remove_solids(Solids, Volume):
+def remove_solids(Solids: list[GSolid], Volume) -> list[GSolid]:
 
     if len(Solids) == 1:
-        try:
-            rs = Solids[0].removeSplitter()
-            if rs.isValid():
-                Solids[0] = rs
-        except:
-            pass
-        return Solids
-
-    compVol = 0
-    for sol in Solids:
-        compVol += sol.Volume
+        return [Solids[0].refine()]
 
     Solids_Clean = []
     for solid in Solids:
@@ -278,16 +269,7 @@ def remove_solids(Solids, Volume):
             continue
         Solids_Clean.append(solid)
 
-    for i, sol in enumerate(Solids_Clean):
-        try:
-            rs = sol.removeSplitter()
-            if rs.isValid():
-                Solids_Clean[i] = rs
-            else:
-                Solids_Clean[i] = sol
-        except:
-            Solids_Clean[i] = sol
-    return Solids_Clean
+    return [sol.refine() for sol in Solids_Clean]
 
 
 def external_plane(plane, Faces):

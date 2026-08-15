@@ -39,7 +39,7 @@ from .build_shape_functions import (
     makeMultiRoundCorner,
 )
 from .basic_functions_part1 import is_parallel, is_opposite
-from ...geo import GBoundBox, GSolid, GVector, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox
+from ...geo import GBoundBox, GSolid, GVector, Gfirst_shell, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox
 
 
 def _empty_boundbox():
@@ -323,7 +323,7 @@ class GeounedSurface:
             rad = sph.Surf.Radius
             pnt = sph.Surf.Center
             self.shape = Gmake_sphere(pnt, rad).__native__
-            self.shell = self.shape.Shells[0]
+            self.shell = Gfirst_shell(self.shape)
             return
 
         elif self.Type == "Torus" or self.Type == "TorusOnly":
@@ -333,9 +333,9 @@ class GeounedSurface:
             majorR = tor.Surf.MajorRadius
             minorR = tor.Surf.MinorRadius
 
-            torus = Gmake_torus(center, axis, majorR, minorR).__native__
-            self.shape = torus.Faces[0]
-            self.shell = torus.Shells[0]
+            torus_solid = Gmake_torus(center, axis, majorR, minorR)
+            self.shape = torus_solid.Faces[0].__native__
+            self.shell = Gfirst_shell(torus_solid.__native__)
             return
 
         elif self.Type == "MultiPlane":

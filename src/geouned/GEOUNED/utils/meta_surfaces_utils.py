@@ -594,8 +594,10 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     for e in GUFaces[ifacemin].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemin].parameter(pnt)
-        if abs(umin - u) < du:
-            du = abs(umin - u)
+        d = abs(umin - u)
+        d = min(d, twoPi - d)  # wraparound-aware: umin==0 must also match u near twoPi
+        if d < du:
+            du = d
             emin = e
 
     du = twoPi
@@ -603,8 +605,10 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     for e in GUFaces[ifacemax].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemax].parameter(pnt)
-        if abs(umax - u) < du:
-            du = abs(umax - u)
+        d = abs(umax - u)
+        d = min(d, twoPi - d)  # wraparound-aware: umax==0 must also match u near twoPi
+        if d < du:
+            du = d
             emax = e
 
     adjacent1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces)
@@ -1435,16 +1439,13 @@ def edge_1D(edge):
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
-    # .curvature()/.getKnots() (here and in spline_2D) have no `geo`
-    # equivalent -- native-only curve query, unwrap explicitly.
-    return edge.__native__.Curve.curvature(pe) < 1e-6
+    return edge.curvature(pe) < 1e-6
 
 
 def spline_2D(edge):
-    native_curve = edge.__native__.Curve
-    knots = native_curve.getKnots()
+    knots = edge.knots()
 
-    if native_curve.curvature(knots[0]) < 1e-6:
+    if edge.curvature(knots[0]) < 1e-6:
         return False  # straight line
 
     d0 = edge.derivative1_at(knots[0])

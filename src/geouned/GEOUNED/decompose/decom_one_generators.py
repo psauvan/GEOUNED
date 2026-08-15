@@ -37,9 +37,9 @@ def generic_split(solid, options, tolerances, loop=0):
                 options.splitTolerance,
                 scale_up_floor=options.splitTolerance if options.scaleUp else None,
             )
-            comsolid_solids = [s.__native__ for s in result.solids]
+            comsolid_solids = result.solids
         except Exception:
-            comsolid_solids = [solid.__native__]
+            comsolid_solids = [solid]
             logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
 
         if not comsolid_solids:
@@ -49,7 +49,7 @@ def generic_split(solid, options, tolerances, loop=0):
         elif len(comsolid_solids) == 1:
             cleaned = solid.Solids
         else:
-            cleaned = [GSolid(s) for s in remove_solids(comsolid_solids, solid.Volume)]
+            cleaned = remove_solids(comsolid_solids, solid.Volume)
         if len(cleaned) > 1:
             new_split = True
             break

@@ -565,6 +565,16 @@ class GEdge:
         """
         return self.__native__.Curve.parameter(to_fc_vector(point))
 
+    def curvature(self, u: float) -> float:
+        """Curvature of the edge's curve at parametric coordinate `u`
+        (0 for a straight line)."""
+        return self.__native__.Curve.curvature(u)
+
+    def knots(self) -> list[float]:
+        """Unique knot values of the edge's curve (only meaningful for a
+        BSpline curve -- see Gclassify_curve/GBSpline)."""
+        return list(self.__native__.Curve.getKnots())
+
     def is_same(self, other: "GEdge") -> bool:
         """
         True if `self` and `other` are the same underlying topological
@@ -963,6 +973,17 @@ class SplitResult:
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
+
+
+def Gfirst_shell(native_shape):
+    """
+    The first shell of a native solid shape. Native-in/native-out (used
+    at the handful of GEOUNED call sites -- geouned_classes.py::build_surface,
+    build_shape_functions.py::build_complex_shape -- that deliberately
+    stay in native space at this boundary, per those files' own
+    comments, rather than round-tripping through GSolid).
+    """
+    return native_shape.Shells[0]
 
 
 def Gload_step(filename: str) -> list[GSolid]:

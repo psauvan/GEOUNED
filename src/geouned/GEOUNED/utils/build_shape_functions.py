@@ -9,6 +9,7 @@ from ...geo import (
     GCone,
     GFace,
     GVector,
+    Gfirst_shell,
     Gmake_shell,
     Gmake_polygon_face,
 )
@@ -105,10 +106,7 @@ def build_complex_shape(surface, Box, forward=False):
     # expect native Part shapes, so convert here, at the boundary, rather
     # than pushing this change any further out.
     solid = gsolid.__native__
-    if len(solid.Shells) == 0:
-        shell = solid.Shells[0]
-    else:
-        shell = solid.Shells[0]  # not sure if for Reversed MultiRoundConer inner shells is the index 0 shell
+    shell = Gfirst_shell(solid)  # not sure if for Reversed MultiRoundConer inner shells is the index 0 shell
     return (solid, shell)
 
 

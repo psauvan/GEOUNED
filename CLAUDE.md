@@ -4141,6 +4141,149 @@ the writers, `Gload_step_labels`, and many call sites never exercised
 by a synthetic box/cylinder/sphere/torus). This is the natural next
 slice once picked back up, per the original Phase 1 plan's own framing.
 
+## pyOCC migration, Phase 3: full `tests/test_cadtocsg.py` passes under
+`GEOUNED_CAD_ENGINE=occ` (50/50, matching the FreeCAD baseline)
+
+Closes the "not yet attempted" item above -- the actual integration
+pipeline (`load_step_file` -> `decompose_solids` -> `build_solid_definition`
+-> writers), run end to end against the same 50-file `testing/inputSTEP`
+corpus `tests/test_cadtocsg.py` has always used to validate the FreeCAD
+engine, now passes identically under the OCC engine. Reached by running
+the suite repeatedly against `pyoccenv`, fixing exactly what each
+traceback pointed at, and re-verifying `tests/geo` (FreeCAD, 106/106)
+after every change -- the same empirical, one-gap-at-a-time discipline
+this whole migration has used throughout. 6 real gaps found and fixed,
+none of them guessed:
+
+1. **`Gload_step_labels` was a stub, and load_cad calls it
+   unconditionally** -- not the secondary/deferrable feature Phase 2
+   assumed. Implemented via XCAF (`STEPCAFControl_Reader`, `XCAFDoc_
+   DocumentTool.ShapeTool`, walking `IsAssembly`/`IsReference`/
+   `IsSimpleShape` labels recursively). Verified positional alignment
+   against FreeCAD's own output on 2 real fixtures (`BC.stp`, 1 solid;
+   `tubos.stp`, 3 solids) -- node count, per-node `n_solids`, and
+   `Gload_step`'s own solid order/volumes all had to line up, per
+   `GLabelNode`'s documented contract. Found one real structural
+   difference along the way: XCAF can represent several solids as
+   sub-shapes of a single "simple shape" label (`tubos.stp`: 1 label,
+   `n_solids=3`), where FreeCAD's `Import.insert()` splits that into 3
+   separate auto-suffixed leaf objects -- matched by splitting into N
+   `GLabelNode`s (sharing the same label/parent) on the OCC side too,
+   preserving the positional-count contract exactly even though the
+   exact label text can't be replicated without reverse-engineering
+   FreeCAD's internal auto-suffix convention (a known, documented,
+   non-blocking gap -- affects only the free-text comment for a
+   multi-solid-per-label leaf, never indexing/counting).
+2. **`solid.Shells[0]`, a real native-FreeCAD leak in 3 call sites**
+   outside `geo/` (`build_shape_functions.py::build_complex_shape`,
+   `geouned_classes.py::build_surface`'s Sphere and Torus branches) --
+   added `Gfirst_shell(native_shape)` to both backends (native-in/
+   native-out, matching the existing "convert at the boundary"
+   convention these 3 call sites already followed) and swapped all 3.
+   `build_shape_functions.py`'s own version also had a real, harmless
+   pre-existing dead branch (`if len(solid.Shells) == 0: shell =
+   solid.Shells[0] else: shell = solid.Shells[0]` -- both arms
+   identical) collapsed away as part of the same edit.
+3. **`decom_utils_generator.py::remove_solids`/`valid_solid` were
+   entirely native-FreeCAD** (`.removeSplitter()`/`.isValid()`/`.Volume`/
+   `.Area` called directly on raw native shapes), reached from
+   `decom_one_generators.py::generic_split` by deliberately unwrapping
+   `Gsplit`'s own `GSolid` results to native and re-wrapping after --
+   real, working FreeCAD-only code with no OCC equivalent at all,
+   unlike every other native leak found this migration (which were
+   thin, mechanical unwraps). Both already-existing `GSolid` methods
+   (`.refine()` -- the same removeSplitter-with-volume-invariance-guard
+   `remove_solids` was hand-rolling -- and `.Volume`/`.Area`/`.is_valid()`)
+   made the fix a real simplification, not just a port: rewrote both
+   functions to operate on `list[GSolid]` throughout, deleted the
+   native round-trip at the `generic_split` call site entirely, and
+   dropped a confirmed-dead local variable (`compVol`, computed and
+   never read) found while rewriting.
+4. **`meta_surfaces_utils.py::edge_1D`/`spline_2D` called
+   `edge.__native__.Curve.curvature(u)`/`.getKnots()` directly**,
+   flagged in their own comments as having "no `geo` equivalent" --
+   that was true until this pass. Added `GEdge.curvature(u)` (native
+   `Part.Curve.curvature()` for FreeCAD; `GeomLProp_CLProps(curve, u, 2,
+   tol).Curvature()` for OCC, verified against a real cylinder: radius-5
+   circle gives curvature exactly 0.2, straight edges give 0) and
+   `GEdge.knots()` (native `getKnots()` for FreeCAD;
+   `Geom_BSplineCurve.DownCast(curve).Knot(i)` for OCC, verified to
+   return the same *unique* knot values FreeCAD's version does, not the
+   multiplicity-expanded sequence) to both backends. Both call sites
+   simplified to `edge.curvature(...)`/`edge.knots()`, no native unwrap
+   left in `meta_surfaces_utils.py` at either spot.
+5. **A real, engine-independent periodicity bug in
+   `get_join_cone_cyl`'s edge-matching loop**, found (not guessed) via
+   direct instrumentation of a genuine OCC-only crash (`emin`/`emax`
+   left unbound -- the search loop never matched any edge). Root cause:
+   `d = abs(umin - u)` doesn't account for angular wraparound, so when
+   `twoPimod` normalizes `Umin`/`Umax` to exactly `0.0` (a real,
+   legitimate case: a merged face group whose combined angular span
+   closes exactly at `2*pi`) but the actual candidate edges sit near
+   `2*pi` rather than near `0`, the naive linear distance
+   (`~2*pi - 0 ≈ 6.28`) can exceed the loop's own initial bound
+   (`du = twoPi`), so the `if d < du` condition never fires for any
+   edge. Fixed with the mathematically-strict generalization
+   `d = min(d, twoPi - d)` (wraparound-aware angular distance -- always
+   `<=` the naive linear distance, so it can only ever *find* a match
+   the old code missed, never pick a worse one than before) in both of
+   the function's two symmetric search loops (`emin` and `emax`).
+   **This is a real, pre-existing bug reachable under FreeCAD too** --
+   the OCC port's own slightly different (not wrong, just different --
+   raw untrimmed STEP-authored range rather than a wrapped-into-[0,2*pi)
+   one) `ParameterRange` convention for this specific merged face group
+   is what happened to expose it on `BC.stp`, not something the port
+   introduced. `tests/test_cadtocsg.py` (FreeCAD, 50/50) confirms zero
+   regressions from this fix -- it only changes behavior in the
+   wraparound case the old code got wrong.
+6. **`GeomAPI_ProjectPointOnSurf` (backing every analytic descriptor's
+   `.parameter()`, plus `GFace.parameter()`'s own separate copy of the
+   same call -- found as a second, missed instance of the same pattern
+   after the first fix didn't fully resolve the failure) can genuinely
+   fail to converge** (`StdFail_NotDone`) -- confirmed two distinct real
+   causes, not one: the default gradient-based algorithm
+   (`Extrema_ExtAlgo_Grad`) failing where the more exhaustive
+   `Extrema_ExtAlgo_Tree` succeeds (most cases), and a genuinely
+   ill-posed query -- a point sitting exactly on a cylinder's own axis,
+   confirmed via the real failing point
+   (`GVector(x=0.0, y=0.0, z=-13.2287565553)` on a `GCylinder` centered
+   on that same axis) -- where *no* algorithm can produce a unique
+   answer, since every point on the circle at that height is exactly
+   equidistant. Added a shared `_project_point_on_surface(point,
+   geom_surface)` helper (deduplicating what had been 5 separate
+   `GeomAPI_ProjectPointOnSurf` call sites -- one per analytic
+   descriptor's own `.parameter()`, plus `GFace.parameter()`) with a
+   3-tier fallback: `Extrema_ExtAlgo_Grad` (fast path) -> `Extrema_
+   ExtAlgo_Tree` (recovers the real non-degenerate failures) -> `(0.0,
+   0.0)` (a defined, arbitrary-but-deterministic answer for the
+   inherently-undefined on-axis case, matching this migration's
+   existing convention of never letting a genuinely ambiguous
+   degenerate case crash the pipeline).
+
+**Verification**: `tests/geo` (FreeCAD, 106/106) and
+`tests/geo/test_occ_impl.py` (OCC, 39/39) confirmed after every one of
+the 6 fixes above, individually; `tests/test_cadtocsg.py` run to
+completion (not `-x`) after each round to catch every remaining gap in
+one pass rather than one-at-a-time -- final state: **50/50 under both
+`GEOUNED_CAD_ENGINE=freecad` (default) and `GEOUNED_CAD_ENGINE=occ`**,
+confirming this migration has reached real functional parity across the
+entire `testing/inputSTEP` corpus, not just the hand-picked `rev_pipe.stp`
+go/no-go case Phase 1 validated.
+
+**Still open, not attempted this pass** (per Phase 1's own "Not in this
+phase" list, still unclaimed beyond `test_cadtocsg.py`): the
+`Solidos/`-corpus-scale verification this project's FreeCAD-side history
+relies on heavily (`check_sign` end-to-end verification, the MCNP
+stochastic volume check, differential Can/TCone/RoundCorner/
+MultiRoundCorner/MultiPlane corpus scans) has not been run under the OCC
+engine at all -- `test_cadtocsg.py`'s 50-file corpus is `testing/inputSTEP`
+only, a narrower, faster fixture set than `Solidos/`. `GEOReverse`
+(CsgToCad) remains explicitly out of scope, unchanged. Void generation
+and all 4 writers (MCNP/Serpent/PHITS/OpenMC) pass within
+`test_cadtocsg.py`'s own assertions but haven't been separately
+stress-tested the way the FreeCAD engine's void/writer code has been
+throughout this project's history.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

@@ -57,7 +57,7 @@ from OCC.Core.BRepTools import breptools
 from OCC.Core.BRepTopAdaptor import BRepTopAdaptor_FClass2d
 from OCC.Core.GeomAbs import GeomAbs_Circle, GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Ellipse, GeomAbs_Line, GeomAbs_Plane, GeomAbs_Sphere, GeomAbs_Torus
 from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnCurve, GeomAPI_ProjectPointOnSurf
-from OCC.Core.GeomLProp import GeomLProp_SLProps
+from OCC.Core.GeomLProp import GeomLProp_CLProps, GeomLProp_SLProps
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Pnt, gp_Pnt2d, gp_Trsf, gp_Vec
 from OCC.Core.IFSelect import IFSelect_RetDone
@@ -67,7 +67,7 @@ from OCC.Core.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPContr
 from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_SOLID, TopAbs_VERTEX
 from OCC.Core.TopExp import TopExp_Explorer, topexp
 from OCC.Core.TopLoc import TopLoc_Location
-from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Shell, topods
+from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Shell, TopoDS_Vertex, topods
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 
 from .vector_geometry import (
@@ -152,6 +152,30 @@ def _volume_props(shape) -> GProp_GProps:
     return props
 
 
+def _project_point_on_surface(point: GVector, geom_surface) -> tuple[float, float]:
+    """(u, v) of the nearest point on `geom_surface` to `point`. The
+    default GeomAPI_ProjectPointOnSurf algorithm (Extrema_ExtAlgo_Grad,
+    gradient-based) occasionally fails to converge (StdFail_NotDone) on
+    a real, well-formed surface/point pair -- confirmed on a real case
+    in PiezaDavid.stp -- so this retries with the more exhaustive
+    Extrema_ExtAlgo_Tree before giving up. Confirmed via that same case:
+    even Extrema_ExtAlgo_Tree can genuinely fail for a point sitting
+    exactly on a cylinder's own axis (r=0) -- there the "nearest point"
+    isn't mathematically unique (every point on the circle at that
+    height is equidistant), not a numerical fluke, so no algorithm can
+    do better; falls back to (0.0, 0.0), an arbitrary-but-deterministic
+    answer for what is an inherently undefined query at that exact point."""
+    from OCC.Core.Extrema import Extrema_ExtAlgo_Tree
+
+    proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), geom_surface)
+    if proj.IsDone():
+        return proj.LowerDistanceParameters()
+    proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), geom_surface, Extrema_ExtAlgo_Tree)
+    if proj.IsDone():
+        return proj.LowerDistanceParameters()
+    return (0.0, 0.0)
+
+
 def _bnd_box(shape) -> GBoundBox:
     box = Bnd_Box()
     brepbndlib.Add(shape, box)
@@ -187,8 +211,7 @@ class GPlane:
         return plane
 
     def parameter(self, point: GVector) -> tuple[float, float]:
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), self.__native__)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, self.__native__)
 
     def value_at(self, u: float, v: float) -> GVector:
         return plane_value_at(self, u, v)
@@ -272,8 +295,7 @@ class GCylinder:
         return cylinder
 
     def parameter(self, point: GVector) -> tuple[float, float]:
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), self.__native__)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, self.__native__)
 
     def value_at(self, u: float, v: float) -> GVector:
         return cylinder_value_at(self, u, v)
@@ -312,8 +334,7 @@ class GCone:
         return cone
 
     def parameter(self, point: GVector) -> tuple[float, float]:
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), self.__native__)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, self.__native__)
 
     def is_inside(self, point: GVector) -> bool:
         return is_inside_cone(point, self)
@@ -341,8 +362,7 @@ class GSphere:
         return sphere
 
     def parameter(self, point: GVector) -> tuple[float, float]:
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), self.__native__)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, self.__native__)
 
     def is_inside(self, point: GVector) -> bool:
         return is_inside_sphere(point, self)
@@ -372,8 +392,7 @@ class GTorus:
         return torus
 
     def parameter(self, point: GVector) -> tuple[float, float]:
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), self.__native__)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, self.__native__)
 
     def is_inside(self, point: GVector) -> bool:
         return is_inside_torus(point, self)
@@ -576,6 +595,22 @@ class GEdge:
         proj = GeomAPI_ProjectPointOnCurve(to_fc_vector(point), curve_and_range[0])
         return proj.LowerDistanceParameter()
 
+    def curvature(self, u: float) -> float:
+        """Curvature of the edge's curve at parametric coordinate `u`
+        (0 for a straight line)."""
+        curve_and_range = BRep_Tool.Curve(self.__native__)
+        props = GeomLProp_CLProps(curve_and_range[0], u, 2, 1e-6)
+        return props.Curvature()
+
+    def knots(self) -> list[float]:
+        """Unique knot values of the edge's curve (only meaningful for a
+        BSpline curve -- see Gclassify_curve/GBSpline)."""
+        from OCC.Core.Geom import Geom_BSplineCurve
+
+        curve_and_range = BRep_Tool.Curve(self.__native__)
+        bspline = Geom_BSplineCurve.DownCast(curve_and_range[0])
+        return [bspline.Knot(i) for i in range(1, bspline.NbKnots() + 1)]
+
     def is_same(self, other: "GEdge") -> bool:
         return self.__native__.IsSame(other.__native__)
 
@@ -599,22 +634,28 @@ class GWire:
         self.__native__ = native
         props = _linear_props(native)
         self.CenterOfMass = _to_gvector(props.CentreOfMass())
-        edges = []
         from OCC.Core.BRepTools import BRepTools_WireExplorer
 
+        edges = []
+        vertices = []
         wexp = BRepTools_WireExplorer(native)
         while wexp.More():
             edges.append(GEdge(topods.Edge(wexp.Current())))
+            vertices.append(_to_gvector(BRep_Tool.Pnt(wexp.CurrentVertex())))
             wexp.Next()
         self.Edges = edges
-        seen = set()
-        vertices = []
-        for edge in edges:
-            for v in edge.Vertexes:
-                key = (round(v.x, 9), round(v.y, 9), round(v.z, 9))
-                if key not in seen:
-                    seen.add(key)
-                    vertices.append(v)
+        # BRepTools_WireExplorer.CurrentVertex() is the vertex the current
+        # edge starts FROM in wire-traversal order -- one per edge, matching
+        # FreeCAD's native Wire.OrderedVertexes convention for a CLOSED wire
+        # exactly (N vertices for N edges). For an OPEN wire, FreeCAD's
+        # convention has N+1 (also including the last edge's own trailing
+        # endpoint, never visited as a "current" vertex by the explorer) --
+        # topexp.Vertices gives that endpoint respecting the same
+        # traversal-consistent orientation CurrentVertex() already used.
+        if edges and not BRep_Tool.IsClosed(native):
+            v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+            topexp.Vertices(edges[-1].__native__, v1, v2)
+            vertices.append(_to_gvector(BRep_Tool.Pnt(v2)))
         self.OrderedVertexes = vertices
         self.MatrixOfInertia = _to_gmatrix_3x3(props.MatrixOfInertia())
 
@@ -706,8 +747,7 @@ class GFace:
 
     def parameter(self, point: GVector) -> tuple[float, float]:
         surf = BRep_Tool.Surface(self.__native__)
-        proj = GeomAPI_ProjectPointOnSurf(to_fc_vector(point), surf)
-        return proj.LowerDistanceParameters()
+        return _project_point_on_surface(point, surf)
 
     def is_part_of_domain(self, u: float, v: float) -> bool:
         classifier = BRepTopAdaptor_FClass2d(self.__native__, 1e-7)
@@ -1014,6 +1054,16 @@ def _export_shapes_step(native_shapes: list, filename: str) -> None:
         raise RuntimeError(f"STEP export failed for {filename} (status={status})")
 
 
+def Gfirst_shell(native_shape):
+    """The first shell of a native solid shape. See _freecad_impl.py's
+    Gfirst_shell docstring for why this exists and where it's called
+    from."""
+    from OCC.Core.TopAbs import TopAbs_SHELL
+
+    explorer = TopExp_Explorer(native_shape, TopAbs_SHELL)
+    return topods.Shell(explorer.Current())
+
+
 def Gload_step(filename: str) -> list[GSolid]:
     reader = STEPControl_Reader()
     status = reader.ReadFile(filename)
@@ -1029,7 +1079,90 @@ def Gload_step(filename: str) -> list[GSolid]:
     return solids
 
 
-Gload_step_labels = _unimplemented("Gload_step_labels")
+def Gload_step_labels(filename: str) -> list[GLabelNode]:
+    """
+    Parse the STEP file's assembly tree via XCAF and return one
+    `GLabelNode` per solid-bearing leaf, in the same order as
+    `Gload_step`'s solids -- see `GLabelNode`'s own docstring for the
+    positional-alignment contract this must satisfy. Only XCAF "simple
+    shape" leaf labels are ever appended to the returned list (an
+    assembly label's own conceptual shape is just a grouping container,
+    matching FreeCAD's `Import.insert()`-based version, which only ever
+    sees `Part::Feature` leaf objects, never the group/assembly
+    containers STEP's importer builds around them) -- but assembly
+    labels are still walked and given their own `GLabelNode`, used as
+    the `parent` of their children, exactly like the FreeCAD version's
+    non-solid-bearing ancestor nodes.
+    """
+    from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
+    from OCC.Core.TDF import TDF_Label, TDF_LabelSequence
+    from OCC.Core.TDocStd import TDocStd_Document
+    from OCC.Core.XCAFApp import XCAFApp_Application
+    from OCC.Core.XCAFDoc import XCAFDoc_DocumentTool
+
+    app = XCAFApp_Application.GetApplication()
+    doc = TDocStd_Document("XmlXCAF")
+    app.NewDocument("XmlXCAF", doc)
+
+    reader = STEPCAFControl_Reader()
+    reader.SetColorMode(False)
+    reader.SetNameMode(True)
+    reader.SetLayerMode(False)
+    reader.SetMatMode(False)
+    status = reader.ReadFile(filename)
+    if status != IFSelect_RetDone:
+        raise RuntimeError(f"STEP read failed for {filename} (status={status})")
+    reader.Transfer(doc)
+
+    shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
+    nodes: list[GLabelNode] = []
+
+    def count_solids(shape) -> int:
+        n = 0
+        exp = TopExp_Explorer(shape, TopAbs_SOLID)
+        while exp.More():
+            n += 1
+            exp.Next()
+        return n
+
+    def walk(label, parent_node):
+        name = label.GetLabelName()
+        if shape_tool.IsReference(label):
+            referred = TDF_Label()
+            shape_tool.GetReferredShape(label, referred)
+            walk(referred, parent_node)
+            return
+        if shape_tool.IsAssembly(label):
+            node = GLabelNode(label=name, parent=parent_node, n_solids=0)
+            comps = TDF_LabelSequence()
+            shape_tool.GetComponents(label, comps)
+            for i in range(1, comps.Length() + 1):
+                walk(comps.Value(i), node)
+        elif shape_tool.IsSimpleShape(label):
+            n_solids = count_solids(shape_tool.GetShape(label))
+            if n_solids == 0:
+                return
+            if n_solids == 1:
+                nodes.append(GLabelNode(label=name, parent=parent_node, n_solids=1))
+            else:
+                # A single XCAF "simple shape" label whose own geometry is a
+                # compound of several solids -- unlike FreeCAD's Import.insert(),
+                # which splits this into several separate Part::Feature leaf
+                # objects (with auto-suffixed names), XCAF keeps it as one
+                # label. Split into one node per solid here too, to preserve
+                # the positional-alignment contract with Gload_step's own
+                # per-solid TopExp_Explorer walk -- sharing the same label/
+                # parent across all of them rather than guessing at FreeCAD's
+                # internal auto-suffix naming convention.
+                for _ in range(n_solids):
+                    nodes.append(GLabelNode(label=name, parent=parent_node, n_solids=1))
+
+    free_labels = TDF_LabelSequence()
+    shape_tool.GetFreeShapes(free_labels)
+    for i in range(1, free_labels.Length() + 1):
+        walk(free_labels.Value(i), None)
+
+    return nodes
 
 
 def Gexport_step(shapes: list[GShape], filename: str) -> None:
