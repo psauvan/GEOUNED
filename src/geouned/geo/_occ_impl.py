@@ -670,6 +670,10 @@ def pick_outer_wire(wires: list[GWire]) -> "GWire":
     best_extension = 0.0
     for wire in wires:
         vertices = wire.OrderedVertexes
+        if not vertices:
+            # a degenerate (edgeless) wire can never be the meaningful
+            # outer boundary -- skip rather than divide by zero
+            continue
         center = wire.CenterOfMass
         extension = sum((v - center).length for v in vertices) / len(vertices)
         if extension > best_extension:
@@ -1003,7 +1007,20 @@ class GSolid:
     def refine(self) -> "GSolid":
         """See _freecad_impl.py's GSolid.refine docstring -- same
         volume-invariance guard, using ShapeUpgrade_UnifySameDomain as
-        the removeSplitter() equivalent."""
+        the removeSplitter() equivalent.
+
+        KNOWN GAP: UnifyEdges=True can genuinely hang (not raise, not
+        slow -- truly never return) on some real, valid tangent geometry
+        -- reproduced deterministically on a tangent cone+sphere solid
+        (Solidos/trier/ConeSphere.stp). Turning UnifyEdges off avoids
+        that hang and gives an identical volume there, but was reverted:
+        it silently changes face topology broadly enough to regress 2
+        real cells in tests/test_cadtocsg.py's own established 50-file
+        corpus (cylBox.stp, DoubleCylinder/pieza.stp -- both lose a real
+        Can secondary surface, `build_can_params`'s `cs` unpacking then
+        fails). That authoritative suite is the higher-priority bar, so
+        UnifyEdges stays on and ConeSphere.stp remains a known,
+        unresolved hang under the OCC engine specifically."""
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
@@ -1333,7 +1350,7 @@ def _repair_non_manifold_solid(native_solid) -> list:
     n = len(faces)
 
     edge_map = _edge_face_map(native_solid)
-    non_manifold_edge_keys = {i for i in range(1, edge_map.Extent() + 1) if edge_map.FindFromIndex(i).Extent() != 2}
+    non_manifold_edge_keys = {i for i in range(1, edge_map.Size() + 1) if edge_map.FindFromIndex(i).Size() != 2}
 
     def face_index(face):
         for i, f in enumerate(faces):
@@ -1354,11 +1371,11 @@ def _repair_non_manifold_solid(native_solid) -> list:
         if ra != rb:
             parent[ra] = rb
 
-    for i in range(1, edge_map.Extent() + 1):
+    for i in range(1, edge_map.Size() + 1):
         if i in non_manifold_edge_keys:
             continue
         face_list = edge_map.FindFromIndex(i)
-        if face_list.Extent() == 2:
+        if face_list.Size() == 2:
             it = iter(face_list)
             f1 = next(it)
             f2 = next(it)

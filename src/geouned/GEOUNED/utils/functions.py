@@ -310,7 +310,21 @@ def build_RCC_params(rc):
     if len(group_planes) == 1:
         planeSeq = group_planes
     else:
-        convex, orientation = convex_planes(group_planes, cylcones[0].Surf.Axis)
+        # cylcones[0].Surf can be a Tier-1 CylinderOnlyParams/ConeOnlyParams
+        # (.Axis directly) or a Tier-2 CylinderParams/ConeParams (basic
+        # surface + bounding plane(s), wrapping its own primitive one level
+        # down as a further GeounedSurface, e.g. .Cone -- itself needing
+        # .Surf.Axis, not .Axis) -- which shape depends on how `cc.Params`
+        # unpacked above, not reliably on cc.Type's exact string, so walk
+        # down (.Cylinder/.Cone, unwrapping a nested GeounedSurface via
+        # .Surf each time) until a direct .Axis is found.
+        seed = cylcones[0].Surf
+        while not hasattr(seed, "Axis"):
+            seed = seed.Cylinder if hasattr(seed, "Cylinder") else seed.Cone
+            if type(seed).__name__ == "GeounedSurface":
+                seed = seed.Surf
+        axis = seed.Axis
+        convex, orientation = convex_planes(group_planes, axis)
         if not convex:
             logger.info("ReversedConeCylinder: plane group is not convex/concave as expected")
         planeSeq = [group_planes] if orientation == "Forward" else group_planes

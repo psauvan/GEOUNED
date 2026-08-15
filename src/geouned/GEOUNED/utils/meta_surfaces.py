@@ -212,6 +212,19 @@ def get_can_surfaces(cylinder, solidFaces):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
 
+    if len(surfaces) != 3:
+        # A real Can always needs exactly 2 closing ends (cylinder_shell
+        # + 2 secondary surfaces) -- build_can_params unconditionally
+        # unpacks 3 values. Fewer than that means this piece's own
+        # topology doesn't actually offer 2 distinct closures (e.g. an
+        # intermediate decomposition fragment whose cylindrical face has
+        # no real end caps at all) -- not a valid Can, reject cleanly
+        # rather than crashing on unpack. Confirmed reachable with a
+        # legitimately different (not wrong) decomposition path: the two
+        # geometry backends this project supports don't always split a
+        # solid into the same intermediate pieces.
+        return None, None
+
     return surfaces, faceindex
 
 

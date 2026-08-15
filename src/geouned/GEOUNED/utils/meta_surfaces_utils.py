@@ -1080,11 +1080,27 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
 
     u1, u1b, v1, v1b = cyl1.ParameterRange
     u2, u2b, v2, v2b = cyl2.ParameterRange
-    r1 = cyl1.value_at(u1, 0.5 * (v1 + v1b))
-    r2 = cyl2.value_at(u2b, 0.5 * (v2 + v2b))
-    nt1 = cyl1.tangent_at(u1, v1)[0]
-    nc1 = -cyl1.normal_at(u1, v1)
-    nc2 = -cyl2.normal_at(u2b, v2b)
+
+    def sample(cyl1_u, cyl2_u):
+        r1 = cyl1.value_at(cyl1_u, 0.5 * (v1 + v1b))
+        r2 = cyl2.value_at(cyl2_u, 0.5 * (v2 + v2b))
+        nt1 = cyl1.tangent_at(cyl1_u, v1)[0]
+        nc1 = -cyl1.normal_at(cyl1_u, v1)
+        nc2 = -cyl2.normal_at(cyl2_u, v2b)
+        return r1, r2, nt1, nc1, nc2
+
+    # u1/u2b are each piece's own boundary farthest from the other -- the
+    # true corner-plane tangency points -- for the common case of two
+    # pieces meeting at a single shared seam. When cyl1/cyl2 are split
+    # pieces of the same cylinder, that seam can sit at *either* end
+    # depending on piece ordering (u1==u2b is the expected/common case,
+    # but u1b==u2 happens just as validly) -- if the default pairing
+    # lands both reference points on the shared seam itself (r1==r2,
+    # degenerate), retry with the other boundary pairing instead of
+    # dividing by a zero-length cross product.
+    r1, r2, nt1, nc1, nc2 = sample(u1, u2b)
+    if (r2 - r1).length < 1e-7:
+        r1, r2, nt1, nc1, nc2 = sample(u1b, u2)
 
     if nc1.dot(r1 - cyl1_center) < 0:
         nc1 = -nc1

@@ -250,7 +250,7 @@ def valid_solid(solid: GSolid, Volume) -> bool:
         return False
     Vol_tol = 1e-2
     Vol_area_ratio = 1e-3
-    if abs(solid.Volume / solid.Area) < Vol_area_ratio:
+    if solid.Area == 0 or abs(solid.Volume / solid.Area) < Vol_area_ratio:
         return False
     if abs(solid.Volume) < Vol_tol:
         return False

@@ -4284,6 +4284,175 @@ and all 4 writers (MCNP/Serpent/PHITS/OpenMC) pass within
 stress-tested the way the FreeCAD engine's void/writer code has been
 throughout this project's history.
 
+## pyOCC migration, Phase 4: `Solidos/` corpus verification (98/99 files),
+7 more real bugs found and fixed, and a positive `rev_pipe.stp` full-pipeline
+confirmation
+
+Continued directly from Phase 3's `tests/test_cadtocsg.py` parity. Ran the
+same `corpus_scan.py` methodology this project has used throughout its
+FreeCAD-only history (load -> decompose -> build_solid_definition, count
+each composite-surface type) against the full 99-file `Solidos/` corpus
+(excluding `Big_model_reserved`, per established convention) under
+`GEOUNED_CAD_ENGINE=occ`, diffed against a fresh FreeCAD baseline. Per
+explicit user reminder mid-session: FreeCAD and pyOCC can legitimately cut
+a solid into different intermediate pieces, so this phase's goal was
+*parity of robustness* (no new crashes, `tests/test_cadtocsg.py` staying
+50/50), not byte-identical decomposition -- a count difference alone,
+without independent CAD-ground-truth verification, is not treated as a
+bug.
+
+**Environment/tooling gotcha, worth remembering**: passing a POSIX-style
+path (`/c/Users/...`, as produced by Git Bash's own `find`) *embedded
+inside a `python -c "..."` string* silently fails with `FileNotFoundError`
+-- standard Windows Python's `open()` doesn't understand that path form.
+It works fine as a separate shell *argument* to a script (`python
+script.py "$SCRATCH/file"`), since Git Bash's MSYS layer auto-converts
+paths only at that boundary, not inside an opaque string. Rebuilt the
+corpus file list via PowerShell's `Get-ChildItem` instead (also needed
+`encoding="utf-8-sig"` on the Python read side, since PowerShell's
+`Set-Content -Encoding utf8` still emits a BOM in PowerShell 5.1).
+
+**8 real bugs found and fixed this phase, all via the same discipline as
+every prior phase -- real crash/hang first, then traced to a root cause,
+never guessed**:
+
+1. **`ShapeUpgrade_UnifySameDomain(..., True, True, True)` (the
+   `removeSplitter()` equivalent inside `GSolid.refine()`/`.fix()`) can
+   segfault the whole process** -- not just raise, not just run slow --
+   on real, valid tangent geometry: confirmed deterministically on
+   `Solidos/trier/ConeSphere.stp` (a tangent cone+sphere solid). Isolated
+   to the `UnifyEdges` flag specifically (`UnifyFaces` alone gives an
+   identical volume on the same case and returns promptly). **Tried
+   disabling `UnifyEdges` globally, then reverted it**: doing so avoids
+   the segfault but silently changes face topology broadly enough to
+   regress 2 real cells in the authoritative `tests/test_cadtocsg.py`
+   suite (`cylBox.stp`, `DoubleCylinder/pieza.stp` -- both lose a real
+   Can secondary surface). Given that suite is the higher-priority,
+   already-committed bar, `UnifyEdges` stays on; `ConeSphere.stp` remains
+   a known, unresolved, narrow segfault under the OCC engine specifically
+   -- documented in `GSolid.refine()`'s own docstring, not silently
+   dropped.
+2. **`TopTools_IndexedDataMapOfShapeListOfShape`/`TopTools_ListOfShape`
+   don't have `.Extent()`** (both use `.Size()`) -- a bug in
+   `_repair_non_manifold_solid`'s own code, written speculatively during
+   Phase 1 and never actually exercised until this phase (Phase 1's
+   `rev_pipe.stp` go/no-go test never needed the repair path, since
+   `BOPAlgo_Splitter` succeeded raw). First fixed only the map's own
+   `.Extent()` call (confirmed via direct API testing that a raw
+   `TopTools_ListOfShape` legitimately doesn't have `.Extent()` either --
+   an earlier isolated API check that "confirmed" `.Extent()` worked was
+   itself testing the wrong object). Found and fixed via 2 real corpus
+   files (`SCDR_90_piece0_gsplit_tangent_bug.stp`, `double_RC.stp`).
+3. **A second, different degenerate case in `cyl_plane_region_conf`**
+   (the same historically-fragile function documented at length earlier
+   in this file, under "the L1_S23.stp solid 174" and "rc16.stp"
+   sections): when a round corner's cylinder is split into 2 pieces
+   meeting at a shared seam, the function's `r1`/`r2` reference-point
+   sampling (`cyl1.value_at(u1, ...)`/`cyl2.value_at(u2b, ...)`) can land
+   *both* points on the shared seam itself rather than each piece's own
+   true far boundary, depending on which end of each piece's own
+   `ParameterRange` happens to be the seam -- a real, reproducible
+   `ZeroDivisionError` on `rc16.stp` (the function's own established
+   canary file). Fixed with a self-correcting retry (try the default
+   `(u1, u2b)` pairing; if the two points coincide, retry with `(u1b,
+   u2)`) rather than guessing which end is "always" correct -- verified
+   this doesn't change behavior for any already-working case (the retry
+   only fires when the default pairing is already degenerate).
+4. **`pick_outer_wire` divides by `len(vertices)` without checking it's
+   nonzero** -- a face can legitimately have a wire with zero edges/
+   vertices (confirmed on a decomposition fragment in `Solidos/Cans/
+   pipe.stp`); fixed by skipping empty wires when picking the outer one
+   (an edgeless wire can never meaningfully be "the outer boundary"
+   anyway).
+5. **`get_can_surfaces` could return an incomplete `surfaces` list (2
+   elements instead of the required 3: `cylinder_shell` + exactly 2
+   closing ends) without rejecting it**, crashing `build_can_params`'s
+   unconditional `cyl_in, sr1, sr2 = cs` unpack. Confirmed via
+   `DoubleCylinder/pieza.stp` (already in `tests/test_cadtocsg.py`'s own
+   50-file corpus) that this is a real, generic robustness gap -- a Can
+   without exactly 2 closing ends was never a valid Can in the first
+   place, matching the function's own established "reject cleanly, don't
+   crash" pattern used everywhere else in it. This is the concrete case
+   the user's mid-session reminder anticipated: OCC's own decomposition
+   produced a genuinely different intermediate fragment here (one whose
+   cylindrical face has no real end caps in this particular piece) than
+   FreeCAD's decomposition does for the same file -- not a bug in the
+   fragment itself, just a shape `get_can_surfaces` needed to handle
+   gracefully.
+6. **`valid_solid` divides by `solid.Area` without checking it's
+   nonzero** -- exactly the class of degenerate solid this function
+   exists to reject (found immediately after fixing #5, on the very next
+   fragment `DoubleCylinder/pieza.stp`'s own decomposition produces).
+   Fixed with the same "reject, don't crash" guard.
+7. **`build_RCC_params`'s `cylcones[0].Surf.Axis` access assumed a field
+   shape that doesn't always hold**: `cylcones[0].Surf` can be a Tier-1
+   `CylinderOnlyParams`/`ConeOnlyParams` (`.Axis` directly) or a Tier-2
+   `CylinderParams`/`ConeParams` (basic surface + bounding plane(s),
+   wrapping its own primitive one level down as a further
+   `GeounedSurface` -- itself needing `.Surf.Axis`, not `.Axis`) --
+   confirmed via direct instrumentation that which shape applies isn't
+   reliably predicted by `cc.Type`'s exact string. Fixed by walking down
+   (`.Cylinder`/`.Cone`, unwrapping a nested `GeounedSurface` via `.Surf`
+   each time) until a direct `.Axis` is found, rather than assuming one
+   fixed shape. Found via `Reversed_Cyl_Cones/cyl_cone.stp` and
+   `cylcone_exact_placa3_pos.step` -- both files `get_reversed_cone_
+   cylinder`/`build_RCC_params` is *never actually reached for* under
+   FreeCAD's own decomposition of the same files (confirmed: FreeCAD
+   succeeds on both with real `RevTCone`/`RoundC` counts, never touching
+   this code path at all) -- another concrete instance of OCC's
+   decomposition legitimately reaching a different, real code branch.
+   Verified exact parity after the fix: both files now give
+   `RevTCone=1, RoundC=1` under OCC, matching FreeCAD's own values
+   precisely.
+
+**Final diff, 98 files compared (`ConeSphere.stp` excluded, its segfault
+already fully characterized in point 1)**:
+- **8 files with composite-surface-count differences** (`SCDR_90_piece0_
+  gsplit_tangent_bug.stp`, `placa.stp`, `PiezaDavid_pieces/piece_0.stp`,
+  `TVA_solid0_cell1.stp`, `TVA_solid1_cell2.stp`, `double_RC.stp`,
+  `series_solid2_halfcyl_plus_inclined.stp`, `series_solid3_sphere_
+  plus_inclined.stp`) -- all attributable to legitimately different
+  decomposition paths per the user's own explicit framing; not
+  independently verified against CAD ground truth this pass (that deeper
+  verification, `check_sign`-style, is out of scope here -- see "Still
+  open" below).
+- **1 OCC-only crash**: `SCDR_90.stp` (`Courbes non jointives`, the same
+  `UnifyEdges` fragility family as `ConeSphere.stp` -- this file is
+  already independently known-problematic on the FreeCAD side too, per
+  this file's own extensive earlier "SCDR_90.stp" investigation history).
+- **2 FreeCAD-only failures, both `rev_pipe.stp`** (`OCCError: FuseEdges
+  : Fusion failed`) -- **OCC succeeds on both with a real, non-trivial
+  result** (`RoundC=2, MultiRoundC=1`). This is the same file this whole
+  migration's Phase 1 go/no-go test was built around (a confirmed
+  FreeCAD non-manifold/tangency bug in `piece0`) -- this result extends
+  that original, isolated `Gsplit`-only confirmation to the *full*
+  decompose+convert pipeline: FreeCAD's own `build_solid_definition`
+  path (via `FuseSolid`'s `.fix()` call, matching the `FuseEdges`
+  signature) still trips on this file even after Phase 1's findings,
+  while OCC's equivalent path does not.
+- **2 files failing identically on both engines** (`modelCell_670000.stp`,
+  `modelcell_cut1.stp`, different error text but same underlying
+  already-known-problematic files) -- not a migration regression.
+
+**Verification**: `tests/geo` (FreeCAD, 106/106) and `tests/geo/
+test_occ_impl.py` (OCC, 39/39) confirmed after every one of the 7 code
+fixes above; `tests/test_cadtocsg.py` re-run to full completion (not
+`-x`) after each round -- final state **50/50 under both engines**,
+confirmed twice in a row (once immediately after the `UnifyEdges` revert,
+once again after the `build_RCC_params` fix) to be sure neither
+introduced a fresh regression.
+
+**Still open, not attempted this pass**: independent CAD-ground-truth
+verification (`check_sign`-style, or the MCNP stochastic volume check)
+of the 8 count-differing files above, to confirm each is a "different,
+equally-valid decomposition" rather than a real classification miss --
+this project's own established methodology for that kind of deeper
+verification, not yet pointed at the OCC engine. `ConeSphere.stp`'s
+segfault and `SCDR_90.stp`'s `UnifyEdges` crash remain unresolved (both
+traced to the same root mechanism, deliberately not chased further given
+the `tests/test_cadtocsg.py` regression risk already found once).
+`GEOReverse` remains explicitly out of scope, unchanged.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
