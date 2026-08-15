@@ -420,6 +420,177 @@ def is_inside_torus(point: GVector, torus) -> bool:
     return rp > torus.MinorRadius
 
 
+def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None:
+    """Real roots of a*t^2 + b*t + c = 0, ordered (smaller, larger).
+    None if there are 0 real roots, or if the equation degenerates to
+    non-quadratic (a ~ 0) -- the caller needs a genuine entry/exit pair,
+    not a single crossing."""
+    if abs(a) < 1e-9:
+        return None
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return None
+    sq = math.sqrt(disc)
+    r1 = (-b - sq) / (2.0 * a)
+    r2 = (-b + sq) / (2.0 * a)
+    return (r1, r2) if r1 <= r2 else (r2, r1)
+
+
+def find_can_plane(
+    main_center: GVector,
+    main_axis: GVector,
+    main_radius: float,
+    kind: str,
+    secondary,
+    n_angles: int = 720,
+    narrow_wide_threshold: float | None = None,
+) -> tuple[GVector, GVector] | None:
+    """Compute the disambiguating plane for a Can/RoundCorner-style
+    composite surface: a main cylinder split into two disjoint pieces by
+    a secondary surface (`kind` one of "cylinder"/"cone"/"sphere",
+    `secondary` a GCylinder/GCone/GSphere-like descriptor).
+
+    The two (infinite) analytic surfaces meet along two closed tangency
+    contours on the main cylinder -- for each angle phi around the main
+    cylinder's own circumference, the line along its axis crosses the
+    secondary surface's boundary at up to two points (a quadratic in the
+    axial parameter t, for all three secondary types). The near contour
+    is where each such line *enters* the secondary surface, the far
+    contour where it *exits*; the free zone -- where a plane can sit
+    without cutting either the "outside secondary" or "inside secondary"
+    real material -- lies strictly between the near contour's own
+    furthest-advanced point and the far contour's own furthest-back
+    point, projected onto the plane's normal.
+
+    Returns None if either contour fails to close over the full angular
+    range (no real roots, or -- for a cone secondary -- a root on the
+    wrong nappe -- at some phi): the main cylinder isn't actually split
+    into two disjoint pieces by this secondary surface, so the premise
+    for a Can doesn't hold at all.
+
+    The plane's normal is not always main_axis: for a Cylinder/Cone
+    secondary (which has its own axis), it's the direction perpendicular
+    to the secondary's axis within the plane containing both axes --
+    the natural cross-cutting direction where the two axes are close to
+    parallel, not a cut transverse to the main cylinder's own length.
+    Only a Sphere secondary (no axis of its own) uses main_axis directly.
+
+    Once the free zone is found, its position is either the midpoint (if
+    narrow) or a small step past the near contour capped at
+    narrow_wide_threshold (if wide, so the plane never drifts far from
+    the real local feature just because the analytic zone is huge) --
+    see the docstring-adjacent discussion in functions.py::build_can_params
+    for why both regimes are needed.
+    """
+    A = main_axis.normalized()
+    e2 = A.cross(GVector(1.0, 0.0, 0.0))
+    if e2.length < 1e-6:
+        e2 = A.cross(GVector(0.0, 1.0, 0.0))
+    e2 = e2.normalized()
+    e1 = A.cross(e2).normalized()
+
+    if kind == "cylinder":
+        secondary_axis = secondary.Axis.normalized()
+        a_dot_as = A.dot(secondary_axis)
+        radius2 = secondary.Radius * secondary.Radius
+        reference = secondary.Center
+
+        def coeffs(u: GVector) -> tuple[float, float, float]:
+            a = 1.0 - a_dot_as * a_dot_as
+            u_a = u.dot(A)
+            u_as = u.dot(secondary_axis)
+            b = 2.0 * (u_a - u_as * a_dot_as)
+            c = u.dot(u) - u_as * u_as - radius2
+            return a, b, c
+
+        def root_ok(u: GVector, t: float) -> bool:
+            return True
+
+    elif kind == "cone":
+        secondary_axis = secondary.Axis.normalized()
+        a_dot_ac = A.dot(secondary_axis)
+        cos2 = math.cos(secondary.SemiAngle) ** 2
+        reference = secondary.Apex
+
+        def coeffs(u: GVector) -> tuple[float, float, float]:
+            p_ = u.dot(secondary_axis)
+            a = a_dot_ac * a_dot_ac - cos2
+            b = 2.0 * (p_ * a_dot_ac - cos2 * u.dot(A))
+            c = p_ * p_ - cos2 * u.dot(u)
+            return a, b, c
+
+        def root_ok(u: GVector, t: float) -> bool:
+            # single-nappe cone: only the side u.dot(axis) + t*(A.dot(axis)) >= 0
+            # (matching is_inside_cone's own convention) is physically real.
+            return (u.dot(secondary_axis) + t * a_dot_ac) >= 0.0
+
+    elif kind == "sphere":
+        secondary_axis = None
+        radius2 = secondary.Radius * secondary.Radius
+        reference = secondary.Center
+
+        def coeffs(u: GVector) -> tuple[float, float, float]:
+            a = 1.0
+            b = 2.0 * u.dot(A)
+            c = u.dot(u) - radius2
+            return a, b, c
+
+        def root_ok(u: GVector, t: float) -> bool:
+            return True
+
+    else:
+        raise ValueError(f"find_can_plane: unknown secondary kind {kind!r}")
+
+    if secondary_axis is None:
+        normal = A
+    else:
+        n_common = A.cross(secondary_axis)
+        if n_common.length < 1e-9:
+            normal = A  # axes (near-)parallel -- common plane undefined
+        else:
+            normal = secondary_axis.cross(n_common.normalized()).normalized()
+
+    best_near = (-math.inf, None)  # (projection onto normal, point)
+    best_far = (math.inf, None)
+    for i in range(n_angles):
+        phi = 2.0 * math.pi * i / n_angles
+        offset = e1 * (main_radius * math.cos(phi)) + e2 * (main_radius * math.sin(phi))
+        u = (main_center - reference) + offset
+
+        roots = _solve_quadratic(*coeffs(u))
+        if roots is None:
+            return None
+        t_near, t_far = roots
+        if not (root_ok(u, t_near) and root_ok(u, t_far)):
+            return None
+
+        p_near = main_center + A * t_near + offset
+        p_far = main_center + A * t_far + offset
+        proj_near = p_near.dot(normal)
+        proj_far = p_far.dot(normal)
+        if proj_near > best_near[0]:
+            best_near = (proj_near, p_near)
+        if proj_far < best_far[0]:
+            best_far = (proj_far, p_far)
+
+    proj_near, point_near = best_near
+    proj_far, point_far = best_far
+    if proj_far <= proj_near:
+        return None
+
+    if narrow_wide_threshold is None:
+        narrow_wide_threshold = 0.01 * main_radius
+
+    half_width = 0.5 * (proj_far - proj_near)
+    if half_width <= narrow_wide_threshold:
+        offset_amount = half_width
+    else:
+        offset_amount = min(0.001 * half_width, narrow_wide_threshold)
+
+    position = point_near + normal * offset_amount
+    return position, normal
+
+
 def _require_x_dir(surface) -> GVector:
     if surface.XDir is None:
         raise ValueError(

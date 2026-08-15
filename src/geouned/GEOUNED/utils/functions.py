@@ -15,7 +15,7 @@ from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edg
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box
+from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, vector_geometry
 from .basic_functions_part1 import shapes_in_contact
 
 
@@ -82,9 +82,11 @@ def get_Can(solidFaces, canface_index=None):
                 continue
             cs, surfindex = get_can_surfaces(f, solidFaces)
             if cs is not None:
-                gc = GeounedSurface(("Can", build_can_params(cs), f.Orientation))
-                can_list.append(gc)
-                canface_index.update(surfindex)
+                params = build_can_params(cs)
+                if params is not None:
+                    gc = GeounedSurface(("Can", params, f.Orientation))
+                    can_list.append(gc)
+                    canface_index.update(surfindex)
 
     if one_value_return:
         return can_list
@@ -317,6 +319,41 @@ def build_RCC_params(rc):
     return params
 
 
+def _closing_plane(cyl, edges, kind, secondary):
+    """The plane closing a Can/RoundCorner-style secondary surface off
+    against cyl's own boundary. A real circular/elliptical tangency
+    (planar_edges) already has an exact plane through its curve's own
+    center (cks_edge_plane) -- kept as-is. A non-planar (generally
+    BSpline) tangency has no such center; the plane there is computed
+    analytically from the two real surfaces themselves, not guessed
+    from the tangency curve's shape -- see
+    vector_geometry.find_can_plane. Returns None if that analytic
+    computation finds the main cylinder isn't actually split into two
+    disjoint pieces by the secondary surface -- the caller must treat
+    that as "this isn't a valid Can", not fall back to a guess."""
+    if planar_edges(edges):
+        return cks_edge_plane(cyl, edges)
+    result = vector_geometry.find_can_plane(cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, kind, secondary)
+    if result is None:
+        return None
+    position, normal = result
+
+    # find_can_plane's normal comes from a cross product, which has no
+    # preferred sign of its own -- cks_edge_plane's own convention
+    # ("positive plane direction toward material", enforced there via
+    # the identical material_direction-based check) has to be applied
+    # here too, since find_can_plane never sees a real edge/face to
+    # derive it from.
+    edge = edges[0]
+    p0, p1 = edge.ParameterRange
+    pos = edge.value_at(0.5 * (p0 + p1))
+    vect, _ = material_direction(pos, cyl, edge)
+    if normal.dot(vect) < 0:
+        normal = -normal
+
+    return GeounedSurface(("Plane", (position, normal, 1.0, 1.0)))
+
+
 def build_can_params(cs):
     cyl_in, sr1, sr2 = cs
     shell = type(cyl_in) is ShellGu
@@ -344,25 +381,28 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            pa = cks_edge_plane(cyl, edges)
-            if pa is not None:
-                sid += 1
-                pa.bVar = BoolVariable(sid)
-
             if r is None:
-                # adjacent cylinder has same radius and is parallel to cylinder.
+                # adjacent cylinder has same radius and is parallel to cylinder --
+                # this is a continuation of the same analytic surface, not a
+                # split-by-a-different-surface Can, so the tangency-curve-only
+                # plane (cks_edge_plane) is still the right tool here.
+                pa = cks_edge_plane(cyl, edges)
+                if pa is not None:
+                    sid += 1
+                    pa.bVar = BoolVariable(sid)
                 r = "AND" if s.Orientation == "Forward" else "OR"
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
                 gs.bVar = pa.bVar
             else:
+                pa = _closing_plane(cyl, edges, "cylinder", s.Surface)
+                if pa is None:
+                    return None
+                sid += 1
+                pa.bVar = BoolVariable(sid)
+
                 cylOnly = GeounedSurface(("CylinderOnly", (s.Surface.Center, s.Surface.Axis, s.Surface.Radius, 1.0, 1.0)))
                 sid += 1
                 cylOnly.bVar = BoolVariable(sid)
-                if not planar_edges(edges):
-                    # move sligtly the plane position toward boundary surface center
-                    cr = cylOnly.Surf.Center - pa.Surf.Position
-                    d = cr - cr.dot(cylOnly.Surf.Axis) * cylOnly.Surf.Axis
-                    pa.Surf.Position = pa.Surf.Position + 0.01 * d
 
                 if omit:
                     orientation = s.Orientation
@@ -398,16 +438,12 @@ def build_can_params(cs):
                     apexPlane.bVar = BoolVariable(sid)
                 pa = None
             else:
-                pa = cks_edge_plane(cyl, edges)
                 apexPlane = None
-                if pa is not None:
-                    sid += 1
-                    pa.bVar = BoolVariable(sid)
-                if not planar_edges(edges):
-                    # move sligtly the plane position toward boundary surface center
-                    cr = coneOnly.Surf.Apex - pa.Surf.Position
-                    d = cr - cr.dot(coneOnly.Surf.Axis) * coneOnly.Surf.Axis
-                    pa.Surf.Position = pa.Surf.Position + 0.01 * d
+                pa = _closing_plane(cyl, edges, "cone", s.Surface)
+                if pa is None:
+                    return None
+                sid += 1
+                pa.bVar = BoolVariable(sid)
 
             if omit:
                 orientation = s.Orientation
@@ -427,15 +463,11 @@ def build_can_params(cs):
             sid += 1
             sphOnly.bVar = BoolVariable(sid)
 
-            pa = cks_edge_plane(cyl, edges)
-            if pa is not None:
-                sid += 1
-                pa.bVar = BoolVariable(sid)
-
-            if not planar_edges(edges):
-                # move sligtly the plane position toward boundary surface center
-                d = sphOnly.Surf.Center - pa.Surf.Position
-                pa.Surf.Position = pa.Surf.Position + 0.01 * d
+            pa = _closing_plane(cyl, edges, "sphere", s.Surface)
+            if pa is None:
+                return None
+            sid += 1
+            pa.bVar = BoolVariable(sid)
 
             if omit:
                 orientation = s.Orientation

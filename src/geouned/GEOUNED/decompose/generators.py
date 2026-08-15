@@ -197,9 +197,11 @@ def next_Can(solid, canface_index):
 
             cs, surfindex = get_can_surfaces(f, solidFaces)
             if cs is not None:
-                gc = GeounedSurface(("Can", build_can_params(cs)))
-                canface_index.update(surfindex)
-                yield gc
+                params = build_can_params(cs)
+                if params is not None:
+                    gc = GeounedSurface(("Can", params))
+                    canface_index.update(surfindex)
+                    yield gc
 
     return None
 
