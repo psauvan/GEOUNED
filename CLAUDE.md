@@ -3666,6 +3666,286 @@ with the newly-recognized Can adding surface area to a model that still
 carries the separate, unfixed `spline_wires` bug from the section
 above. Real, verified, safe fix -- but does not move the open leak.
 
+### `build_can_params`'s non-planar closing plane: replaced the empirical margin heuristic with an analytic two-contour calculation
+
+The `cks_edge_plane`/`spline_wires`-based plane closing a Can's
+non-planar (BSpline) secondary surface used a fixed `0.01 * d` shift
+toward the secondary surface's own center -- an empirical guess that
+found the original TVA_2_28.stp leak (piece0/Pipe0041's R=395 corner):
+the shift could land inside the real tangency's own ambiguous zone and
+cut real material, causing MCNP lost particles.
+
+**Root geometric insight** (derived from a user-led back-and-forth,
+starting from a hand-drawn diagram): the main Can cylinder and the
+secondary surface (cylinder/cone/sphere) are two infinite analytic
+surfaces meeting along real tangency contours. For each angle around the
+main cylinder's own circumference, the line along its axis crosses the
+secondary surface's boundary at up to two points -- a quadratic in the
+axial parameter, solvable in closed form for all three secondary types.
+Sweeping the angle traces one or two real contours; the free zone where
+a plane can sit without cutting either "outside secondary" or "inside
+secondary" real material lies strictly between the near contour's own
+furthest-advanced point and the far contour's own furthest-back point,
+projected onto the plane's normal. Verified against plane D's own real
+geometry: the closed-form calculation reproduces the numeric search's
+own boundary values (353.07/5175.19) to 2 decimal places, and a second,
+far contour (~5175, previously invisible to the numeric search's smaller
+step budget) was discovered this way.
+
+**The plane's normal is not always the main cylinder's own axis**: for a
+Cylinder/Cone secondary (which has its own axis), it's the direction
+perpendicular to that axis within the plane containing both axes -- the
+natural cross-cutting direction when the two axes are close to parallel
+(verified with a synthetic near-parallel test case: normal came out
+`(-0.9998, 0, 0.0175)`, nothing like the main axis). Only a Sphere
+secondary (no axis of its own) uses the main axis directly.
+
+**Position within the free zone**: per explicit user design, not simply
+the midpoint (which could drift arbitrarily far from the real local
+feature when the zone happens to be huge, as with plane D's second
+contour). If the zone is narrow (half-width <= a threshold `T = 0.01 *
+main_radius`), use the true midpoint (maximally safe on both sides).
+If wide, use `min(0.001 * half_width, T)` past the near contour --
+scales gently for moderately-wide zones, capped at `T` so it never
+drifts far even for enormous zones. The discontinuity at the narrow/wide
+boundary is intentional (explicit user confirmation), not smoothed.
+
+Returns `None` -- rejecting the whole Can candidate, propagated up
+through `build_can_params`/`next_Can`/`get_Can` -- if either contour
+fails to close over the full angular range (no real roots at some angle,
+or, for a cone secondary, a root landing on the wrong nappe): the main
+cylinder isn't actually split into two disjoint pieces by the secondary
+surface, so the Can premise doesn't hold at all, and no plane should be
+guessed.
+
+**A real, cross-product sign-ambiguity bug found and fixed during
+verification**: `find_can_plane`'s normal comes from a cross product,
+which has no preferred sign of its own -- unlike `cks_edge_plane`'s own
+convention, always resolved via `material_direction` (a real geometric
+signal: the face's own outward normal crossed with the tangent edge
+direction, both orientation-corrected). Found via the full verification
+pipeline (`SCDR.stp` crashing with a `laj overflow` MCNP fatal error;
+`TVA_final_noencl.stp` cells 1/2/16/17 off by 5.7-8 sigma) -- both clean
+with the old heuristic, both broken with the new analytic one. Root
+cause confirmed by diffing the exported `.mcnp` surface cards directly:
+2 of ~12 differing planes had their normal *fully flipped* (not just
+repositioned) between old and new code, for the same physical corner.
+Fixed by applying the identical `material_direction`-based sign check
+`cks_edge_plane` already used, right after `find_can_plane` returns, in
+`_closing_plane` (the new dispatcher that picks between `cks_edge_plane`
+for planar/circular tangencies and `find_can_plane` for non-planar
+ones): sample `material_direction` at the real tangency edge's own
+midpoint, flip the returned normal if its dot product with that
+direction is negative. Verified: `SCDR.stp` recovered its full clean
+1,000,000-particle run (tally identical to the pre-analytic-rewrite
+baseline, `0.99838`); `TVA_final_noencl.stp`'s 4 broken cells came back
+to `0.32-0.96` sigma; the 86-file `Solidos/` corpus diff (excluding
+`Big_model_reserved`) went from 1 difference (`series_solid3_complement.stp`'s
+`RevCan` count, itself confirmed a different-but-valid decomposition via
+d1suned) to **zero** once the sign fix landed -- meaning the sign bug
+was silently steering that file's decomposition too, not just the two
+volume-check failures that surfaced it.
+
+**Full-corpus verification, this pass**: `tests/geo` +
+`tests/test_cadtocsg.py` 156/156; the 86-file `Solidos/` differential
+regression, zero diffs; the original `TVA_2_28.stp` leak still resolved
+(0 lost particles, tallies `0.998`/`0.989`); a fresh translation +
+d1suned pass across all 6 `Big_model_reserved` models (517 solid-cell
+tallies total) -- 96.5% within 2 sigma, the only >3 sigma cases being
+`TVA_final_allencl`'s already-documented, confirmed-pre-existing
+cells-1/2 leak (identical lost-particle severity with the old code too)
+and 2 marginal `SCDR.stp` cells (3.0-3.4 sigma, not investigated
+further, plausible statistical noise at 153 cells sampled).
+
+### `Solidos/Cans/pipe.stp`/`Tcan.stp`/`RevTcan.stp` and `Solidos/Big_one_cell/`: new user-provided fixtures, 3 more real bugs found
+
+New corpus additions, per the user's own workshop: 3 small hand-built
+Can/TCone examples (`pipe.stp`, `Tcan.stp`, `RevTcan.stp`, in `Solidos/Cans/`)
+and 2 large real-world models (`FWTBM1.stp`, `modelCell_670000.stp`, in
+the new `Solidos/Big_one_cell/` folder -- a solid component with many
+pipe-like holes drilled through it, "como haber muchos RevCan", per the
+user's own description). All 5 translated and checked with the same
+d1suned stochastic volume methodology as everywhere else in this file:
+the 3 `Cans/` fixtures all converted and ran clean (0 lost particles,
+1,000,000-particle runs, 1.2-1.7 sigma); `FWTBM1.stp` converted and ran
+clean too (0.39 sigma).
+
+`modelCell_670000.stp` crashed, surfacing a real, pre-existing,
+production-reachable bug unrelated to anything else this session:
+`get_can_surfaces`'s "adjacent cylinder same radius and parallel"
+branch (`meta_surfaces.py`) appended a 2-tuple `(s, None)` while
+`build_can_params` always unpacks a 3-tuple `(s, r, omit)` --
+`ValueError: not enough values to unpack`. Fixed to a 3-tuple (`omit`
+value is never read on this branch, `True` only keeps the shape
+consistent with every other entry). `tests/geo` + `test_cadtocsg.py`
+still 156/156 after the fix -- this exact branch was apparently never
+exercised by the existing corpus.
+
+### `rev_pipe.stp`/`fwd_pipe.stp`: a minimal, deliberately-built pair of fixtures, and 3 more MultiRoundCorner-construction crashes fixed
+
+`modelCell_670000.stp`'s *next* failure (past the tuple-unpacking fix)
+was a deliberate safety guard (`_validated_material_direction`, added
+earlier in this file's own history) rejecting a residual sliver face's
+untrustworthy geometry -- too large/complex a model to debug directly,
+per the user's own call ("hay que aislar el problema para no
+perdernos"). The user built a minimal, deliberately-paired reproduction:
+`Solidos/trier/rev_pipe.stp` (13 faces, the "reverse"/original solid --
+the *big* block with 2 small pipe-junction corners carved out) and
+`Solidos/trier/fwd_pipe.stp` (8 faces, the exact complementary piece --
+just the 2 small carved-out corners, joined by a 4-plane "bridge").
+`rev_pipe.stp` alone reproduces the crash deterministically; `fwd_pipe.stp`
+converts cleanly (`FwdCan x2`, `MultiRoundC x1`) and, per the user's own
+suggestion, served as an independent reference for what a *correct*,
+uncorrupted construction of the same physical corner looks like --
+though it turned out `fwd_pipe.stp` doesn't have an equivalent corner
+for every failure found (see below), so this only partially panned out
+as a direct oracle and instead mostly helped narrow down which
+mechanism was broken.
+
+Chasing `rev_pipe.stp`'s crash surfaced 3 more real, independent bugs in
+`get_additional_corner_plane`/its helpers (`functions.py`,
+`meta_surfaces_utils.py`) -- **all reachable through the same underlying
+cause**: a round-corner cylinder split into pieces by an earlier cut,
+whose split-boundary is razor-thin/near-degenerate (the corpus's
+existing fixtures never had a case this extreme).
+
+1. **The sliver-validation guard itself was masking its own fix.**
+   `get_adjacent_cylplane`'s `skip_slivers` walk (`other_face_edge`)
+   already finds the real, non-degenerate face beyond a residual sliver
+   -- and *had always been returning it* (the 5-tuple's last element,
+   `plane`) -- but `get_additional_corner_plane` discarded it (`_` in
+   the unpacking) and evaluated `material_direction` on the sliver's own
+   near-zero-area geometry instead, only cross-checking the sign against
+   a *different* reference (the anchor's own edge). Per direct user
+   confirmation ("sí usa la cara real en lugar de sliver en este caso"):
+   fixed to evaluate on the real far face (`plane`) instead of the
+   sliver (`near_face`) whenever a sliver walk actually happened
+   (`near_face.Index != anchor.Index`) -- the whole
+   `_validated_material_direction` wrapper (raise-on-disagreement) is no
+   longer needed and was deleted, since there's no longer an untrustworthy
+   value to validate.
+2. **A second, genuinely different degeneracy, once the first was fixed**:
+   two round-corner "wings" sharing the exact same tiny cylinder fragment
+   (a wedge converging to a single point/cusp) gave `v1 = -v2` *exactly*
+   -- `(v1+v2).normalized()` divides by zero. Per direct user
+   confirmation, this is not a numerical fluke but a real, valid
+   configuration for a **Reversed MultiRoundCorner**: every wing's
+   material-pointing normal faces "outward", and two wings meeting at a
+   cusp can legitimately point in exactly opposite outward directions
+   there; since the corner's bounding planes are OR-combined, either
+   direction alone is a correct choice (there is no well-defined
+   bisector to average toward instead when they're antiparallel). Fixed
+   by falling back to `v1` alone when `(v1+v2).length < 1e-6`.
+3. **`region_sign` crashing on `Edges[0]` when `commonEdge` legitimately
+   finds no shared edge**, for a pair `cutting_face_number` only
+   speculatively considered adjacent (walking every face pair, not one
+   pre-confirmed to share an edge). Root cause, confirmed by comparing
+   against the *native* `distToShape` directly: `GFace.my_distToshape`'s
+   BoundBox-fallback branch reported a genuinely-touching pair (native
+   distance `0.0`) as `18.23` units apart, because one face is flat
+   (zero-thickness bounding box) along an axis the other face's own
+   bounding box doesn't span at all -- `Boxinter.YLength` came out
+   *negative* (`-3.5`), correctly failing the "boxes intersect" check
+   even though the real shapes do touch at a point. Same class of bug as
+   the `dist2Shape=1.0` sentinel fixed earlier this session, reached via
+   a different call path (`commonEdgeFace`'s own pre-check, not
+   `FaceGu.distToShape`'s dead-end fallback). Fixed defensively at the
+   `region_sign` level rather than trying to patch `my_distToshape`
+   again: return `None` when `Edges` comes back empty/`None` -- checked
+   all 6 existing call sites, every one already does `if sign ==
+   "OR"`/`"AND"`, safe with `None`.
+4. **`eligible_plane` crashing on `e.Vertexes[1]`** for a degenerate
+   zero-length edge with only 1 vertex. Fixed to reject the plane
+   (matching the function's own existing non-`GLine` rejection) instead
+   of crashing.
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` 156/156 after
+each of the 4 fixes individually and combined; a full 86-file `Solidos/`
+differential regression (excluding `Big_model_reserved`) -- **zero**
+Can/TCone/RoundCorner/MultiRoundCorner/MultiPlane count differences from
+the prior commit, confirming none of the 4 fixes changed anything for
+the established corpus, only unblocked `rev_pipe.stp`'s previously-crashing
+case. `rev_pipe.stp` now builds its `MultiRoundCorner` successfully
+end-to-end (previously crashed on all 3 `functions.py`/`meta_surfaces_utils.py`
+bugs in strict sequence -- fixing one only revealed the next).
+
+**A `forward` build parameter was added alongside this** (user's own
+addition, mostly independent of the 4 bug fixes): `GeounedSurface.build_surface`/
+`makeCan`/`makeMultiRoundCorner`/`build_complex_shape` gained an optional
+`forward` parameter -- when `True` and the surface's own `Orientation`
+is `"Reversed"`, complements the cell's boolean definition before
+building, producing the shape's Forward/complementary version instead
+of its natural Reversed one (for comparing a composite surface's two
+possible orientations against each other, e.g. against `fwd_pipe.stp`-style
+independent references). `decompose/decom_one_generators.py`'s own call
+site passes `forward=False` explicitly -- unchanged decomposition
+behavior from before this parameter existed. **A real accidental
+regression found and fixed while integrating this**: the edit that added
+the `if forward: ...` block had *replaced* (not added alongside) the
+pre-existing `rc.boundBox = myBox(Box, "Forward")` line in
+`build_complex_shape` -- leaving `rc.boundBox` permanently `None` and
+crashing `BuildDepth` (`subcell.boundBox.Box` on a `None`) for *every*
+Can/MultiRoundCorner build, forward or not. (The literal string
+`"Forward"` here is unrelated to the new `forward` boolean -- a
+same-spelling coincidence between `myBox`'s own internal orientation
+bookkeeping, used by `BuildDepth`'s box-splitting logic, and the new
+parameter name.) Restored; confirmed `rev_pipe.stp`'s `MultiRoundCorner`
+build works again immediately after.
+
+### `rev_pipe.stp`, part 2: a real, reproducible instance of the project's original motivating non-manifold/tangency bug -- found, confirmed, not yet fixed
+
+With `rev_pipe.stp` converting past the 4 crashes above, the user asked
+whether `Gsplit`'s own result still under-separates the solid -- the
+same class of problem as this file's own "Motivating problem" section.
+Cutting the original 13-face solid by its own `MultiRoundCorner` tool
+(`Gsplit`, and independently cross-checked with a plain native
+`.cut()`, both agreeing exactly: 2 pieces, `504643.5350` + `7694.1331`,
+volume conserved to float noise) leaves a **confirmed-invalid** big
+piece: `piece.__native__.isValid()` is `False`, with **6 non-manifold
+edges**, each shared by 3 faces instead of 2 (`removeSplitter()` and a
+STEP round-trip -- the two techniques that "fixed" this class of bug
+earlier for other files -- do *not* heal it here, unlike those earlier
+cases).
+
+Direct inspection of the 6 non-manifold edges (per-edge face dump: area,
+surface type, shared vertices) shows a clean, consistent pattern: **4 of
+the 6** involve a genuinely tiny sliver face (area ~0.0125, alongside 2
+real substantial faces); the **other 2** (the two *longest* non-manifold
+edges, both length 118.81, versus the 4 slivers' 30-or-less) involve one
+real, substantial plane -- face 28, area `3564.32`, nothing degenerate
+about it -- alongside 2 real faces of the main body.
+
+Building a face-adjacency graph over `piece0`'s own 30 faces, excluding
+all 6 non-manifold edges (`GSolid.faces_sharing_edge`'s existing
+diagnostic, still not called from anywhere in production code, used
+here manually), finds exactly **2 connected components**: a 27-face
+main body and a 3-face group (`{28, 27, 29}` -- face 28 itself plus the
+2 tiny slivers it happens to also touch). Neither raw group closes into
+a valid solid on its own: the 27-face group's own shell is reported
+`closed` but `isValid=False` (`.fix()` collapses it to **zero solids**
+-- genuinely not a coherent volume without face 28 as its own proper
+boundary); the 3-face group's shell is a valid but *open* (non-closed)
+patch, `Part.makeSolid` fails outright. Conclusion, not yet acted on:
+the correct reconstruction isn't a simple 2-way face partition -- face
+28 is the real shared boundary between two solids and needs to be
+*duplicated* (one copy per side, opposite orientation) to properly cap
+both, the standard technique for splitting a non-manifold solid at a
+shared face, one step beyond what `GSolid.faces_sharing_edge`'s existing
+diagnostic alone provides.
+
+**Not fixed** -- this is a live, concrete instance of the "still NOT
+solved" problem named at the very top of this file (motivating the
+entire pyOCC migration), now with a minimal, deliberately-reproducible
+13-face fixture (`rev_pipe.stp`) and a fully characterized failure
+mode (which 6 edges, which faces, why the 2 obvious repair attempts
+don't work) ready for whenever that migration phase starts. Diagnostic
+scripts (scratchpad only, not committed): `verify_gsplit_undercut.py`
+(the `Gsplit`-vs-native-`.cut()`/`.common()` cross-check),
+`verify_piece0_manifold.py` (non-manifold edge count + `removeSplitter`/
+STEP-round-trip healing attempts), `reconstruct_piece0.py` /
+`reconstruct_piece0_v2.py` (the face-adjacency-graph reconstruction and
+per-non-manifold-edge face dump).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
