@@ -64,21 +64,25 @@ def makeRoundCorner(roundCorner, Box):
     return build_complex_shape(roundCorner, Box)
 
 
-def makeMultiRoundCorner(multiRoundCorner, Box):
-    return build_complex_shape(multiRoundCorner, Box)
+def makeMultiRoundCorner(multiRoundCorner, Box, forward=False):
+    return build_complex_shape(multiRoundCorner, Box, forward=forward)
 
 
-def makeCan(can, Box):
-    return build_complex_shape(can, Box)
+def makeCan(can, Box, forward=False):
+    return build_complex_shape(can, Box, forward=forward)
 
 
 def makeTCone(tcone, Box):
     return build_complex_shape(tcone, Box)
 
 
-def build_complex_shape(surface, Box):
+def build_complex_shape(surface, Box, forward=False):
     rc = get_cell_object(surface)
     rc.boundBox = myBox(Box, "Forward")
+    if forward:
+        # if forward is True, the forward shape of the surface is built instead of the reversed shape.
+        if surface.Orientation == "Reversed":
+            rc.definition = rc.definition.get_complementary()
     for s in rc.surfaces.values():
         s.buildShape(Box)
     celparts = BuildDepth(rc, None)

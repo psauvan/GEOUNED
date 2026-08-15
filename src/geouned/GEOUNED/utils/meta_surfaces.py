@@ -142,7 +142,10 @@ def get_can_surfaces(cylinder, solidFaces):
                 edges = result[0] if is_shell else result
                 if edges is not None:
                     if planar_edges(edges):
-                        surfaces.append((s, None))  # adjacent cylinder has same radius and is parallel to cylinder.
+                        # adjacent cylinder has same radius and is parallel to cylinder.
+                        # build_can_params's r is None branch never reads omit -- True
+                        # here only keeps this a 3-tuple like every other entry.
+                        surfaces.append((s, None, True))
                         continue
         elif type(s.Surface) is GTorus:
             return None, None

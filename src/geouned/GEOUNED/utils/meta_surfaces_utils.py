@@ -940,6 +940,9 @@ def eligible_plane(plane):
         if type(Gclassify_curve(e)) is not GLine:
             # continue
             return False  # for now only plane with line for all outer edges are eligible
+        if len(e.Vertexes) < 2:
+            # a degenerate (zero-length) edge -- not a real, usable boundary segment
+            return False
         Vertexes.append((e.Vertexes[0], e.Vertexes[1]))
 
     if len(Vertexes) == 0:
@@ -1161,6 +1164,16 @@ def region_sign(s1_in, s2, outAngle=False):
     else:
         Edges = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
         s1 = s1_in
+
+    if not Edges:
+        # s1/s2 were only speculatively adjacent (a caller walking every
+        # face pair, not one that already confirmed a shared edge) --
+        # my_distToshape's BoundBox-fallback branch can also report a
+        # real, touching pair (native distToShape == 0) as far apart when
+        # one shape is flat/degenerate along an axis the other doesn't
+        # span, making commonEdge legitimately find nothing here. No
+        # sign to report either way.
+        return (None, None) if outAngle else None
 
     e1 = Edges[0]
     p0, p1 = e1.ParameterRange

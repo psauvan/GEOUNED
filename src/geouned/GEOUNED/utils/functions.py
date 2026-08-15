@@ -603,49 +603,38 @@ def convex_planes(plane_list, zaxis):
     return convex, orientation
 
 
-def _validated_material_direction(anchor, cyl_edge, near_face, edge, pos):
-    """material_direction at `pos`/`edge`, evaluated on `near_face` -- the
-    face get_adjacent_cylplane's skip_slivers walk found actually touching
-    the plane, which is the real cylinder piece `anchor` itself when found
-    directly, or a residual sliver bridging them otherwise. A sliver's own
-    geometry is near-degenerate and not fully trusted on its own: when
-    near_face isn't anchor, the sliver-computed direction is validated
-    against a reference computed on anchor (the real, adjacent face) at a
-    nearby point on its own edge cyl_edge -- the two must agree in sense
-    (positive dot product), since they're geometrically continuous across a
-    physically negligible gap. A disagreement means the sliver's geometry
-    can't be trusted here."""
-    vect, normal = material_direction(pos, near_face, edge)
-    if near_face.Index == anchor.Index:
-        return vect, normal
-
-    e0, e1 = cyl_edge.ParameterRange
-    ref_pos = cyl_edge.value_at(0.5 * (e0 + e1))
-    ref_vect, _ = material_direction(ref_pos, anchor, cyl_edge)
-    if vect.dot(ref_vect) <= 0:
-        raise RuntimeError(
-            "get_additional_corner_plane: material direction computed on a residual "
-            "sliver face disagrees with the reference direction on the real adjacent "
-            f"cylinder face near {pos} -- sliver geometry cannot be trusted here."
-        )
-    return vect, normal
-
-
 def get_additional_corner_plane(ep1, ep2):
     # ep1/ep2 come from get_adjacent_cylplane's cornerPlanes=True search:
-    # (anchor, cyl_edge, touching_edge, near_face, plane). touching_edge/
-    # near_face are where `plane` actually touches -- anchor itself when
-    # found directly, or a residual sliver bridging them (see
+    # (anchor, cyl_edge, touching_edge, near_face, plane). near_face/plane
+    # are where `plane` actually touches -- anchor itself (near_face is
+    # anchor) when found directly, or a residual sliver bridging them (see
     # get_roundcorner_surfaces' merge_same_surface_faces + skip_slivers)
-    # otherwise -- so evaluate exactly there instead of at anchor's own,
-    # possibly non-touching, cyl_edge.
-    anchor1, cyl_edge1, e1, near1, _ = ep1
-    anchor2, cyl_edge2, e2, near2, _ = ep2
+    # otherwise, in which case `plane` is the real, non-degenerate face the
+    # sliver walk found beyond it. material_direction needs real, trustworthy
+    # geometry -- evaluate on `plane` (already found, previously discarded
+    # here) instead of on the sliver's own near-zero-area geometry, which
+    # can have an arbitrary/wrong normal from its own degenerate
+    # triangulation.
+    anchor1, cyl_edge1, e1, near1, plane1 = ep1
+    anchor2, cyl_edge2, e2, near2, plane2 = ep2
 
     pos1 = e1.Vertexes[0]
     pos2 = e2.Vertexes[0]
-    v1, n1 = _validated_material_direction(anchor1, cyl_edge1, near1, e1, pos1)
-    v2, n2 = _validated_material_direction(anchor2, cyl_edge2, near2, e2, pos2)
+    face1 = anchor1 if near1.Index == anchor1.Index else plane1
+    face2 = anchor2 if near2.Index == anchor2.Index else plane2
+    v1, n1 = material_direction(pos1, face1, e1)
+    v2, n2 = material_direction(pos2, face2, e2)
     point = 0.5 * (pos1 + pos2)
-    paxis = (v1 + v2).normalized()
+    combined = v1 + v2
+    if combined.length < 1e-6:
+        # v1/v2 exactly opposed: a real, valid configuration for a Reversed
+        # MultiRoundCorner (every wing's material-pointing normal faces
+        # "outward", and two wings meeting at a cusp can legitimately point
+        # in exactly opposite outward directions there) -- the corner's
+        # bounding planes are OR-combined, so either direction alone is a
+        # correct choice; there's no well-defined bisector to average
+        # toward instead.
+        paxis = v1
+    else:
+        paxis = combined.normalized()
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))
