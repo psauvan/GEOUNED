@@ -4944,6 +4944,105 @@ default FreeCAD engine, both from the same test file.
 remain stubs (unrelated to CAD export, a separate follow-up phase per
 this file's own earlier notes).
 
+### GEOReverse STEP export: per-material color (occ engine only), and IGES ruled out
+
+**IGES investigated, dropped.** User asked whether pyOCC could also
+support `.igs` export (GEOReverse) / read (GEOUNED), as a quick extra
+while searching for the original MCNP file for a stalled CAD round-trip
+test (see below). Verified live against `pyoccenv` before writing
+anything: `IGESControl_Writer`/`IGESCAFControl_Writer` do NOT preserve
+solids through IGES in this OCCT build -- a test box round-tripped as 6
+disconnected trimmed-planar-surface entities (IGES types 144/108/142/
+102/110, grouped via a type-402 "Group" association), zero shell/solid
+topology, confirmed by direct inspection of the raw `.igs` text. Tried
+`write.iges.brep.mode=1` (a real, correctly-set static param, confirmed
+via `Interface_Static.Items()` after constructing an `IGESControl_Writer`
+to trigger the controller's own param registration) -- no Type 186
+(Manifold Solid B-Rep) entity ever got written regardless. Tried every
+`FromIGES.FixShape.*` solid/shell-reconstruction flag on read -- still
+came back as a bare compound of faces. Matches IGES's real-world
+reputation as fundamentally a surface/curve exchange format. User's
+call: drop it entirely rather than build export-only or a
+sewing-based-solid-reconstruction reader ("abortamos el import y export
+a igs, era solo un extra si era fácil").
+
+**Per-material color, implemented for the occ engine.** User request:
+color every solid in a GEOReverse STEP export by its own `MAT` value, so
+cells sharing a material are visually identifiable -- same color for the
+same material, one standard default color when there's no material info
+to distinguish by (0 or 1 distinct value), otherwise a real palette.
+`Modules/_occ_impl.py::_material_colors`/`_build_tree`: colors go on via
+`XCAFDoc_DocumentTool.ColorTool().SetColor(cell_label, Quantity_Color(r,
+g, b, Quantity_TOC_RGB), XCAFDoc_ColorGen)`, same XCAF tree the STEP
+export already builds for naming/nesting. Verified directly against a
+real written `.stp`'s raw text (not guessed): `SetColor` on a label
+writes real `STYLED_ITEM`/`COLOUR_RGB` (or `DRAUGHTING_PRE_DEFINED_COLOUR`
+for an exact primary color) entities. **A real, separate binding quirk
+found and left unfixed** (not on this feature's critical path): the
+label-based read-side overload,
+`color_tool.GetColor(label, XCAFDoc_ColorType, Quantity_Color&)`, raises
+a SWIG `TypeError` ("wrong number or type of arguments") despite
+matching one of the documented C++ prototypes exactly -- confirmed with a
+minimal single-shape reproduction, not just the assembly case. The
+shape-based overload, `GetColor(TopoDS_Shape const&, ...)`, works fine.
+Nothing in this codebase currently reads colors back, so this was
+flagged in `_occ_impl.py`'s own docstring rather than chased further.
+
+Color choice: `_MATERIAL_PALETTE` is matplotlib/D3's "tab10" (10 entries)
+-- the standard qualitative palette for maximally-distinguishable
+categories across visualization tooling generally, picked over a
+"realistic material" palette (steel-gray/copper/brass/...) because `MAT`
+is an arbitrary MCNP material ID with no physical-material semantics
+GEOUNED actually knows. `_DEFAULT_COLOR = (0.8, 0.8, 0.8)` for the
+0-or-1-material case matches FreeCAD's own default `ShapeColor`, chosen
+deliberately for continuity with this project's FreeCAD history.
+**User follow-up, fixed same session**: the initial version cycled the
+10-entry palette (`i % 10`) once material count exceeded 10, silently
+colliding two different materials onto one color -- defeated the whole
+point for any real model with more than 10 distinct materials (several
+of this project's own fixtures have that many). Fixed with
+`_extended_color`: golden-angle hue rotation
+(`hue = (index * 0.618033988749895) % 1.0`, fixed
+saturation/value=0.65/0.85 to stay visually consistent with tab10's own
+tone), the standard technique for generating N incrementally-maximally-
+distinct colors with no fixed upper bound. Verified with a synthetic
+15-material case: 15 distinct colors requested, 15 distinct colors
+actually found in the written STEP text, zero collisions.
+
+Verified end to end (both the color feature and the overflow fix):
+`tests/test_csgtocad.py` 2/2 under `GEOUNED_CAD_ENGINE=occ` (the fixture
+itself only has one real material, `MAT=0`, on all 4 cells -- correctly
+exercises the single-value default-gray branch, not the palette) and 2/2
+under the default FreeCAD engine (untouched by this change);
+`tests/geo/test_occ_impl.py` 39/39; a synthetic multi-material test built
+directly against the real `export_occ` (not a mock) confirming 3 cells
+across 3 distinct `MAT` values get exactly 3 distinct colors in the
+output, with the two same-`MAT` cells sharing one.
+
+**FreeCAD-side color, explicitly out of scope**: per-solid color for the
+FreeCAD engine's own STEP export (`_freecad_impl.py::export_freecad`/
+`makeTree`) was not attempted -- FreeCAD's shape-color API lives on
+`Gui.ViewProvider`, which the user confirmed (from a prior, separate
+investigation of their own) has no working headless path: it requires
+actually opening the FreeCAD application, not just importing the `App`
+module the way this project's whole FreeCAD backend does everywhere
+else. Matches this project's existing GEOReverse-export docstring
+framing (`.FCStd`/GUI-dependent things stay FreeCAD-only, `_occ_impl.py`
+gets the pure-`App`-level features) -- color joins that list.
+
+**Background/parallel work this session**: a real round-trip test
+(GEOUNED occ forward + GEOReverse occ reverse) against
+`Solidos/Big_model_reserved/hylife-v06.stp` was kicked off in the
+background while the color feature above was being built, after an
+earlier attempt on `divertor.step` was aborted -- that file turned out to
+already be a GEOReverse-reconstructed CAD (not an original design file),
+and the user explained such files are known to be geometrically "dirty"
+and expected to fail if re-run through GEOUNED's own forward pipeline
+(it did: a `ZeroDivisionError` in `cyl_plane_region_conf`, deliberately
+NOT investigated per the user's own explicit instruction -- not a new
+bug, just invalid input for this kind of test). `hylife-v06.stp`'s
+result isn't known yet as of this note.
+
 ### Environment notes for next time
 
 - `pyoccenv`'s python: `C:\Users\Patrick\Apps\Conda\envs\pyoccenv\
