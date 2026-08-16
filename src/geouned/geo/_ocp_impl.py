@@ -118,6 +118,7 @@ from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Pnt, gp_Pnt2d, gp_Trsf, gp
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeFix import ShapeFix_Shape
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+from OCP.StdFail import StdFail_NotDone
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_SOLID, TopAbs_VERTEX
 from OCP.TopExp import TopExp, TopExp_Explorer
@@ -1134,14 +1135,24 @@ class GSolid:
         some real, valid tangent geometry under pythonocc-core
         (Solidos/trier/ConeSphere.stp) -- not yet re-verified whether
         this specific hang reproduces under OCP too; don't assume either
-        way until checked."""
+        way until checked.
+
+        A second, distinct failure mode of the same underlying fragility
+        -- unify.Build() outright raising StdFail_NotDone rather than
+        hanging or silently mis-refining -- was hit on real geometry in
+        hylife-v06.stp (a >300-solid real model) under this engine.
+        Caught and treated the same way as the volume-mismatch case:
+        fall back to the untouched original shape."""
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
         unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
-        unify.Build()
-        refined = unify.Shape()
-        refined_volume = _volume_props(refined).Mass()
+        try:
+            unify.Build()
+            refined = unify.Shape()
+            refined_volume = _volume_props(refined).Mass()
+        except StdFail_NotDone:
+            return GSolid(native)
         if abs(refined_volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
             return GSolid(native)
         return GSolid(refined)

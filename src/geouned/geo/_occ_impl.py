@@ -1093,14 +1093,32 @@ class GSolid:
         Can secondary surface, `build_can_params`'s `cs` unpacking then
         fails). That authoritative suite is the higher-priority bar, so
         UnifyEdges stays on and ConeSphere.stp remains a known,
-        unresolved hang under the OCC engine specifically."""
+        unresolved hang under the OCC engine specifically.
+
+        A second, distinct failure mode of the same underlying fragility
+        -- unify.Build() outright raising a native OCCT StdFail_NotDone
+        failure rather than hanging or silently mis-refining -- was hit
+        on real geometry in hylife-v06.stp (a >300-solid real model,
+        under the ocp engine specifically, though the code path is
+        identical here). Caught and treated the same way as the
+        volume-mismatch case: fall back to the untouched original shape.
+        pythonocc-core (unlike OCP) doesn't expose StdFail_NotDone as a
+        distinct importable Python class -- confirmed empirically that
+        every native OCCT Standard_Failure surfaces here as a plain
+        RuntimeError, with the real exception name only embedded in the
+        message text -- so this catches RuntimeError broadly; the only
+        OCCT call in this block is unify.Build() itself, so there's
+        nothing else in scope this could mask."""
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
         unify = ShapeUpgrade_UnifySameDomain(copy, True, True, True)
-        unify.Build()
-        refined = unify.Shape()
-        refined_volume = _volume_props(refined).Mass()
+        try:
+            unify.Build()
+            refined = unify.Shape()
+            refined_volume = _volume_props(refined).Mass()
+        except RuntimeError:
+            return GSolid(native)
         if abs(refined_volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
             return GSolid(native)
         return GSolid(refined)
