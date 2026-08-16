@@ -1112,7 +1112,7 @@ class MetaSurfacesDict(dict):
                     pid, exist = self.primitive_surfaces.add_plane(cpp, True)
                     if exist:
                         p = self.get_primitive_surface(pid)
-                        if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        if is_opposite(cpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                             pid = -pid
                     ORregion = BoolSurface.add(ORregion, BoolSurface(0, pid))
                 plane_region = BoolSurface.mult(plane_region, ORregion)
