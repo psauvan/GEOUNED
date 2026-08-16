@@ -1481,6 +1481,22 @@ def Gmake_shell(faces: list[GFace]) -> GShell:
     return GShell(shell, faces=faces)
 
 
+def Gmake_solid(shell: GShell) -> "GSolid | None":
+    """Close a watertight shell into a real solid (a genuine enclosed
+    volume), for callers that built a shell face-by-face (e.g. clipping a
+    box by successive cutting planes) and need a proper GSolid out of it
+    -- as opposed to Gmake_shell's own callers, which only need the faces
+    addressable as a group, not a valid volume. Returns None if the shell
+    isn't actually closed/well-formed enough to bound a solid."""
+    try:
+        solid_maker = BRepBuilderAPI_MakeSolid(shell.__native__)
+        if solid_maker.IsDone():
+            return GSolid(solid_maker.Solid())
+    except Exception:
+        pass
+    return None
+
+
 def Gmake_compound(shapes: list[GSolid]) -> GSolid:
     builder = BRep_Builder()
     compound = TopoDS_Compound()

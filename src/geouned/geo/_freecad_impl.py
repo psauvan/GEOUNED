@@ -1241,6 +1241,22 @@ def Gmake_shell(faces: list[GFace]) -> GShell:
     return GShell(native, faces=faces)
 
 
+def Gmake_solid(shell: GShell) -> "GSolid | None":
+    """Close a watertight shell into a real solid (a genuine enclosed
+    volume), for callers that built a shell face-by-face (e.g. clipping a
+    box by successive cutting planes) and need a proper GSolid out of it
+    -- as opposed to Gmake_shell's own callers, which only need the faces
+    addressable as a group, not a valid volume. Returns None if the shell
+    isn't actually closed/well-formed enough to bound a solid (the
+    caller's own responsibility to fall back sensibly, matching the
+    None-for-degenerate-input convention used elsewhere in this module,
+    e.g. Gmake_polygon_face's own plane_polygon_from_box caller)."""
+    try:
+        return GSolid(Part.makeSolid(shell.__native__))
+    except Exception:
+        return None
+
+
 def Gmake_compound(shapes: list[GSolid]) -> GSolid:
     """Group `shapes` into a single compound shape, with no boolean operation applied (they may overlap or be disjoint). Used as a last-resort fallback when Gfuse fails or produces an invalid result."""
     return GSolid(Part.makeCompound([s.__native__ for s in shapes]))

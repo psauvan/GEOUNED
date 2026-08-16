@@ -11,6 +11,7 @@ from ...geo import (
     GVector,
     Gfirst_shell,
     Gmake_shell,
+    Gmake_solid,
     Gmake_polygon_face,
 )
 
@@ -38,7 +39,32 @@ def makeCone(axis: GVector, apex: GVector, tan: float, box: GBoundBox):
 
 
 def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True):
-    """build CAD object (FreeCAD Shell) of the multiplane surface"""
+    """Build the CAD object of the multiplane surface: a genuine closed
+    solid for .shape/Gsplit's own use (the box, clipped in turn by every
+    plane in plane_list -- the material region the multiplane composite
+    surface bounds, i.e. "fill between the planes, close the open parts
+    with the bounding box's own faces"), and the bare open shell of just
+    the cutting-plane faces (box faces stripped) for .shell.
+
+    The closed-solid construction is not a separate computation --
+    `cutfaces` (rebuilt at each loop iteration) already IS the fully-
+    closed, box-capped polyhedron: box faces trimmed by every plane
+    processed so far, plus one new face per plane. Only the .shell branch
+    (multibuild=True) explicitly strips those box-face caps back out via
+    remove_box_faces, for whatever purely-analytic-surface use .shell
+    serves elsewhere (Gdistance/Gin_contact-style checks in
+    boolean_solids.py).
+
+    Before this, .shape was set to the same open shell as .shell -- the
+    ONE type among Plane/Cylinder/Cone/Sphere/Torus/Can/TCone/RoundCorner/
+    MultiRoundCorner (all of which give .shape a real solid) that didn't.
+    Confirmed via a real reproduction (Solidos/BadCAD_decomposition/
+    series_solid2_complement.stp): re-applying the same MultiPlane surface
+    to one of its own resulting sub-pieces produced a 3-face, non-closed
+    shell as the Gsplit cutting tool, which Gcommon/Gcut against the
+    sub-piece confirmed was degenerate (0 common volume, "Null shape" on
+    cut) -- not a real Gsplit tangency limitation, just an under-built
+    tool."""
     boxlim = (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
     cutfaces = makeBoxFaces(boxlim)
 
@@ -57,8 +83,14 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
 
     if len(plane_points) == 0:
         return None  # multiplane doesn't cross box
-    else:
-        return Gmake_shell(makeBoxFaces(plane_points)).__native__
+
+    shell = Gmake_shell(makeBoxFaces(plane_points)).__native__
+    closed_solid = Gmake_solid(Gmake_shell(cutfaces))
+    # fall back to the (previous, still-valid-if-degraded) open shell if
+    # cutfaces somehow isn't watertight enough to close -- never worse
+    # than the old behavior, just not always improved
+    solid = closed_solid.__native__ if closed_solid is not None else shell
+    return (solid, shell)
 
 
 def makeRoundCorner(roundCorner, Box):

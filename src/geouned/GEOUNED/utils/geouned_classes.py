@@ -342,9 +342,12 @@ class GeounedSurface:
             Box = Box.enlarged(10)
             planes = self.Surf.Planes
             vertexes = self.Surf.Vertexes
-            multiplane = makeMultiPlanes(planes, vertexes, Box)
-            self.shape = multiplane
-            self.shell = multiplane
+            result = makeMultiPlanes(planes, vertexes, Box)
+            if result is None:
+                self.shape = None
+                self.shell = None
+            else:
+                self.shape, self.shell = result
 
         elif self.Type == "Can":
             self.shape, self.shell = makeCan(self, Box, forward=forward)
