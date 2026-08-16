@@ -14,12 +14,12 @@ except ImportError:
 
 # GEOReverse (CsgToCad)'s core geometry pipeline now follows GEOUNED_CAD_ENGINE
 # the same way GEOUNED's own forward pipeline does (see GEOReverse/Modules/
-# _geo_bridge.py) -- but its 6 exotic quadric surfaces (geo_quadrics/) and its
-# CAD export step (_freecad_impl.py/_occ_impl.py) are still FreeCAD-only in
-# practice: the pyOCC side of both is a stub pending a real port. Under
-# GEOUNED_CAD_ENGINE=occ a user may not have FreeCAD installed at all, so this
-# import must degrade gracefully instead of crashing CadToCsg (GEOUNED) along
-# with it.
+# __init__.py) -- but its 6 exotic quadric surfaces and its CAD export step
+# (both in GEOReverse/Modules/_freecad_impl.py/_occ_impl.py) are still
+# FreeCAD-only in practice: the pyOCC side of both is a stub pending a real
+# port. Under GEOUNED_CAD_ENGINE=occ a user may not have FreeCAD installed at
+# all, so this import must degrade gracefully instead of crashing CadToCsg
+# (GEOUNED) along with it.
 try:
     from .GEOReverse import *
 except ImportError as e:

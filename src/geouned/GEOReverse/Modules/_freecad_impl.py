@@ -1,58 +1,69 @@
 """
-GEOReverse/Modules/geo_quadrics/_freecad_impl.py
+GEOReverse/Modules/_freecad_impl.py
 
-FreeCAD implementation of the 6 exotic quadric surface types CsgToCad
-(GEOReverse) can encounter that GEOUNED's forward pipeline never
-produces and `geo` therefore has no classes for: elliptic cone,
-hyperboloid, ellipsoid, elliptic cylinder, hyperbolic cylinder,
-paraboloid. Kept local to GEOReverse rather than inside `geo` itself --
-see CLAUDE.md's GEOReverse migration section for the reasoning (`geo`
-stays scoped to surfaces GEOUNED's own decomposition can classify).
+The FreeCAD implementation of everything in GEOReverse that's specific
+to a CAD engine and isn't already covered by `geo` itself -- mirrors the
+role `geo/_freecad_impl.py` plays for `geo`. `Modules/__init__.py`
+resolves to this module (or `_occ_impl.py`) based on `CAD_ENGINE`; no
+other file in GEOReverse imports this module directly. Centralizes what
+used to be split across two small packages (`cad_export/`,
+`geo_quadrics/`) into the one file/sibling-pair shape `geo` itself
+already uses.
 
-The ONLY file in this package allowed to `import Part`/`FreeCAD` --
-mirrors `geo/_freecad_impl.py`'s own role exactly. `Objects.py` (the
-"programa principal" for GEOReverse's own build step) never imports this
-file directly: it goes through `geo_quadrics/__init__.py`'s
-`Gmake_elliptic_cone`/`Gmake_hyperboloid`/... dispatch, which resolves to
-this module or `_occ_impl.py` depending on `CAD_ENGINE`.
+Two unrelated concerns share this file for that reason, kept in their
+own clearly-marked sections below:
 
-The dataclasses below (`GEllipticCone`, `GHyperboloid`, ...) follow the
-same conventions as `geo`'s own analytic descriptors (`from_values(...)`
-constructor, `.is_inside(point) -> bool`, `.transform(matrix)` taking a
-native `FreeCAD.Matrix` and returning a new instance) -- kept as this
-module's own internal representation; the `Gmake_*` functions at the
-bottom of this file are the only names `geo_quadrics/__init__.py`
-re-exports.
+1. **CAD export** (`SUPPORTED_FORMATS`, `makeTree`, `export_freecad`) --
+   builds the FreeCAD document tree (Universe/Material `App::Part`
+   grouping, one `Part::FeaturePython` per solid cell) and writes each
+   requested output format. FreeCAD-document-specific through and
+   through (no pyOCC equivalent -- pyOCC has no document/label-tree
+   concept).
 
-Ported faithfully from `Objects.py`'s pre-migration
-`makeHyperboloid`/`makeHyperbolicCylinder`/`makeEllipticCylinder`/
-`makeEllipsoid`/`makeEllipticCone`/`makeParaboloid`/`ortoVect` (shape
-construction) and `splitFunction.py::surface_side`'s
-`cone_elliptic`/`hyperboloid`/`ellipsoid`/`cylinder_elliptic`/
-`cylinder_hyperbolic`/`paraboloid` branches (in/out test) -- including
-known, NOT-fixed-here bugs, each flagged with a comment (per explicit
-instruction: bugs found during this migration get resolved in a later,
-separate pass, not silently while porting).
+2. **The 6 exotic quadric surfaces** (elliptic cone, hyperboloid,
+   ellipsoid, elliptic cylinder, hyperbolic cylinder, paraboloid)
+   CsgToCad can encounter that GEOUNED's forward pipeline never produces
+   and `geo` therefore has no classes for -- kept local to GEOReverse
+   rather than inside `geo` itself (see CLAUDE.md's GEOReverse migration
+   section for the reasoning; `geo` stays scoped to surfaces GEOUNED's
+   own decomposition can classify). The dataclasses (`GEllipticCone`,
+   `GHyperboloid`, ...) follow the same conventions as `geo`'s own
+   analytic descriptors (`from_values(...)` constructor,
+   `.is_inside(point) -> bool`, `.transform(matrix)` taking a native
+   `FreeCAD.Matrix` and returning a new instance) but are this file's own
+   internal representation -- the `Gmake_*` functions at the bottom are
+   the only names `Modules/__init__.py` re-exports from this section.
 
-KNOWN, CONFIRMED-PRE-EXISTING GAPS (not fixed here, verified against the
-original, unmigrated `Objects.py` before concluding this):
-- `GEllipsoid.build_shape()` fails with `RuntimeError: ... No shells or
-  compsolids found in shape` in `Part.makeSolid` -- confirmed the exact
-  original `Objects.py::makeEllipsoid` fails identically, in BOTH its own
-  branches (revolve about the major axis and about the minor axis alike),
-  on this FreeCAD version. `.is_inside()`/`.transform()` are unaffected
-  (pure GVector math, verified independently) -- only the native shape
-  construction is broken.
-- `GHyperboloid.build_shape(one_sheet=True)` fails the same way, for a
-  different underlying reason: `Part.makeShell` silently falls back to
-  returning a `Compound` (not a real `Shell`) when the two independently
-  -built end-cap circle faces don't sew exactly onto the revolved
-  hyperbola face's own boundary edges -- a tolerance/precision issue in
-  this specific "build 3 separate faces, hope they sew" construction
-  technique, not something introduced by this port (confirmed: reaching
-  this exact failure point already requires a fix to a separate, earlier
-  bug in `makeHyperboloid` -- see `GHyperboloid.build_shape`'s own
-  docstring -- so the pristine original never even got this far).
+   Ported faithfully from `Objects.py`'s pre-migration
+   `makeHyperboloid`/`makeHyperbolicCylinder`/`makeEllipticCylinder`/
+   `makeEllipsoid`/`makeEllipticCone`/`makeParaboloid`/`ortoVect` (shape
+   construction) and `splitFunction.py::surface_side`'s
+   `cone_elliptic`/`hyperboloid`/`ellipsoid`/`cylinder_elliptic`/
+   `cylinder_hyperbolic`/`paraboloid` branches (in/out test) -- including
+   known, NOT-fixed-here bugs, each flagged with a comment (per explicit
+   instruction: bugs found during this migration get resolved in a
+   later, separate pass, not silently while porting).
+
+   KNOWN, CONFIRMED-PRE-EXISTING GAPS (not fixed here, verified against
+   the original, unmigrated `Objects.py` before concluding this):
+   - `GEllipsoid.build_shape()` fails with `RuntimeError: ... No shells
+     or compsolids found in shape` in `Part.makeSolid` -- confirmed the
+     exact original `Objects.py::makeEllipsoid` fails identically, in
+     BOTH its own branches (revolve about the major axis and about the
+     minor axis alike), on this FreeCAD version. `.is_inside()`/
+     `.transform()` are unaffected (pure GVector math, verified
+     independently) -- only the native shape construction is broken.
+   - `GHyperboloid.build_shape(one_sheet=True)` fails the same way, for
+     a different underlying reason: `Part.makeShell` silently falls
+     back to returning a `Compound` (not a real `Shell`) when the two
+     independently-built end-cap circle faces don't sew exactly onto
+     the revolved hyperbola face's own boundary edges -- a
+     tolerance/precision issue in this specific "build 3 separate
+     faces, hope they sew" construction technique, not something
+     introduced by this port (confirmed: reaching this exact failure
+     point already requires a fix to a separate, earlier bug in
+     `makeHyperboloid` -- see `GHyperboloid.build_shape`'s own
+     docstring -- so the pristine original never even got this far).
 """
 
 from __future__ import annotations
@@ -61,10 +72,75 @@ import math
 from dataclasses import dataclass
 
 import FreeCAD
+import Import
 import Part
 
-from ....geo.vector_geometry import GVector
-from ....geo._freecad_impl import GSolid, to_native_vector
+from ...geo.vector_geometry import GVector
+from ...geo._freecad_impl import GSolid, to_native_vector
+
+# ---------------------------------------------------------------------------
+# CAD export
+# ---------------------------------------------------------------------------
+
+SUPPORTED_FORMATS = {"stp", "step", "fcstd"}
+
+
+def makeTree(CADdoc, CADCells):
+    """Builds the FreeCAD document tree (Universe/Material `App::Part`
+    grouping, one `Part::FeaturePython` per solid cell) that `export_freecad`
+    writes out. FreeCAD-document-specific through and through (no
+    pyOCC equivalent -- pyOCC has no document/label-tree concept), so this
+    lives here rather than in `buildCAD.py`, which is otherwise
+    CAD-engine-agnostic."""
+
+    label, universeCADCells = CADCells
+    groupObj = CADdoc.addObject("App::Part", "Materials")
+
+    groupObj.Label = f"Universe_{label[1]}_Container_{label[0]}"
+
+    CADObj = {}
+    for i, c in enumerate(universeCADCells):
+        if isinstance(c, (tuple, list)):
+            groupObj.addObject(makeTree(CADdoc, c))
+        else:
+            featObj = CADdoc.addObject("Part::FeaturePython", f"solid{i}")
+            featObj.Label = f"Cell_{c.name}_{c.MAT}"
+            featObj.Shape = c.shape.__native__
+            if c.MAT not in CADObj.keys():
+                CADObj[c.MAT] = [featObj]
+            else:
+                CADObj[c.MAT].append(featObj)
+
+    for mat, matGroup in CADObj.items():
+        groupMatObj = CADdoc.addObject("App::Part", "Materials")
+        groupMatObj.Label = f"Material_{mat}_{label[0]}{label[1]}"
+        groupMatObj.addObjects(matGroup)
+        groupObj.addObject(groupMatObj)
+
+    return groupObj
+
+
+def export_freecad(buildCAD_list, formats, output_filename, barename):
+    """Builds the FreeCAD document tree via `makeTree` and writes each
+    requested format."""
+    CADdoc = FreeCAD.newDocument("converted_with_geouned")
+
+    CADobj = CADdoc.addObject("App::Part", "Universes")
+    CADobj.Label = barename
+
+    for CAD in buildCAD_list:
+        CADobj.addObject(makeTree(CADdoc, CAD))
+
+    for fmt in formats:
+        if fmt in ("stp", "step"):
+            Import.export(CADdoc.Objects[0:1], f"{output_filename}.{fmt}")
+        elif fmt == "fcstd":
+            CADdoc.saveAs(f"{output_filename}.FCStd")
+
+
+# ---------------------------------------------------------------------------
+# Exotic quadric surfaces
+# ---------------------------------------------------------------------------
 
 
 def ortoVect(axis: GVector) -> GVector:
@@ -600,10 +676,10 @@ def to_gvector_(fc_vector) -> GVector:
 
 
 # ---------------------------------------------------------------------------
-# Generic Gmake_* entry points -- the only names `geo_quadrics/__init__.py`
-# re-exports. `Objects.py` calls these, never the dataclasses above
-# directly, so the FreeCAD/pyOCC choice stays entirely inside this
-# package.
+# Generic Gmake_* entry points -- the only names `Modules/__init__.py`
+# re-exports from this section. `Objects.py` calls these, never the
+# dataclasses above directly, so the FreeCAD/pyOCC choice stays entirely
+# inside this file/its `_occ_impl.py` sibling.
 # ---------------------------------------------------------------------------
 
 

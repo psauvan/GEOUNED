@@ -4791,6 +4791,57 @@ that only a real `import geouned` surfaces.
 Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2, only
 after the depth fix), `tests/test_cadtocsg.py` (50/50).
 
+### GEOReverse's own engine-specific code fully centralized: one
+`_freecad_impl.py`/`_occ_impl.py` pair, matching `geo`'s own shape exactly
+
+User's next request, direct: GEOUNED centralizes all its FreeCAD/pyOCC
+code in one `_freecad_impl.py`/`_occ_impl.py` pair under `geo/`; GEOReverse
+had the same *kind* of code (CAD export, the 6 exotic quadric surfaces)
+scattered across two small packages (`cad_export/`, `geo_quadrics/`),
+each with their own `_freecad_impl.py`/`_occ_impl.py`. Before doing this,
+investigated `geo/_freecad_impl.py` itself for a parallel question --
+whether it mixes GEOUNED-only functions in with what GEOReverse actually
+uses. It does (confirmed by grepping every `from ...geo import` across
+all of GEOReverse): roughly 20 names are genuinely shared
+(`GVector`/`GBoundBox`/`GMatrix`/`GPlane`/`GLine`/`GSolid`/the primitive
+`Gmake_*` constructors/`Gcommon`/`Gfuse`/`Gsplit`/the native-conversion
+pair), against ~25 GEOUNED-only-by-current-usage (the classification
+machinery -- `GCylinder`/`GCone`/`GSphere`/`GTorus`/`GCircle`/`GEllipse`/
+`GBSpline`/`GEdge`/`GWire`/`GFace`/`GShell`/`Gclassify_surface`/
+`_curve`/`pick_outer_wire`, plus `Gload_step`/`_labels`/`Gexport_step`/
+`Gfirst_shell`/`Gmake_half_space`/`_shell`/`_wire`/`Gcut`/`Gin_contact`/
+`Gdistance`/`kernel_version`). But this split is by *usage*, not
+structure -- `Gexport_step`/`GFace` are already earmarked for GEOReverse's
+own future pyOCC export, so physically separating `geo/_freecad_impl.py`
+now would just drift stale the moment usage shifts, for no consumer
+benefit (`geo/__init__.py` already is the one abstraction boundary either
+side needs). Recommended against splitting that file; user agreed, scope
+narrowed to GEOReverse's own side only.
+
+Centralized `cad_export/`'s and `geo_quadrics/`'s FreeCAD implementations
+into one `GEOReverse/Modules/_freecad_impl.py` (two clearly-banner-separated
+sections, "CAD export" and "Exotic quadric surfaces" -- no naming
+collisions between the two original files, confirmed before merging) and
+their pyOCC stubs into one `Modules/_occ_impl.py`. Added `GEOReverse/
+Modules/__init__.py` as the dispatcher -- byte-for-byte the same shape as
+`geo/__init__.py` (reads `CAD_ENGINE`, imports only the resolved module's
+names). `Modules/` had never had an `__init__.py` before (worked as an
+implicit Python 3 namespace package) -- giving it one is safe here since
+nothing it needs to import (`geo`, its own `_freecad_impl`/`_occ_impl`
+siblings) creates a cycle with anything under `Modules/*` that would run
+its `__init__.py` first. `core.py` now does `from .Modules import
+SUPPORTED_FORMATS, export as export_cad_engine`; `Objects.py` (itself a
+submodule of `Modules`) does `from . import Gmake_ellipsoid, ...` --
+resolving to the package's own already-initialized namespace, not a
+subpackage. Deleted `cad_export/`/`geo_quadrics/` entirely; fixed one
+stale `geo_quadrics`/`_geo_bridge.py` reference left in `geouned/__init__.py`'s
+own top-level comment from an earlier pass.
+
+Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2),
+`tests/test_cadtocsg.py` (50/50), a bare `import geouned`, and the
+`GEOUNED_CAD_ENGINE=occ` dispatch path resolving to the (still-stub)
+`_occ_impl.py` correctly.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

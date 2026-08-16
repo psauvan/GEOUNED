@@ -6,7 +6,7 @@ from .buildSolidCell import BuildSolid
 from .remh import Cline
 from .Utils.booleanFunction import BoolSequence, outer_terms
 from .Utils.boundBox import solid_plane_box, myBox, BoxSettings, makePlane
-from .geo_quadrics import (
+from . import (
     Gmake_elliptic_cone,
     Gmake_elliptic_cylinder,
     Gmake_ellipsoid,

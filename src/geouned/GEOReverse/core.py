@@ -9,7 +9,7 @@ from .Modules.Objects import CadCell
 from .Modules.MCNPinput import McnpInput
 from .Modules.XMLinput import XmlInput
 from ..geo import CAD_ENGINE
-from .Modules.cad_export import SUPPORTED_FORMATS, export as export_cad_engine
+from .Modules import SUPPORTED_FORMATS, export as export_cad_engine
 
 
 class CsgToCad:
