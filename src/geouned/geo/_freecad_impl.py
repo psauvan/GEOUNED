@@ -1005,7 +1005,11 @@ class GSolid:
         """
         native = self.__native__
         original_volume = native.Volume
-        refined = native.copy().removeSplitter()
+        try:
+            refined = native.copy().removeSplitter()
+        except Exception:
+            refined = native
+            
         if abs(refined.Volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
             return GSolid(native)
         return GSolid(refined)
