@@ -3,8 +3,18 @@ import re
 
 from ..utils import q_form as q_form
 from ..utils.basic_functions_part1 import is_opposite, is_parallel
-from ...geo import GVector
+from ...geo import CAD_ENGINE, GVector
 from .string_functions import remove_redundant
+
+_ENGINE_LABELS = {"freecad": "FreeCAD", "occ": "pythonocc-core", "ocp": "OCP"}
+
+
+def engine_label() -> str:
+    """Human-readable name of the currently-resolved geo.CAD_ENGINE, for
+    the "<engine> Version" provenance line in output file headers --
+    replaces what used to be a hardcoded "FreeCAD Version" label
+    regardless of which engine actually produced the conversion."""
+    return _ENGINE_LABELS.get(CAD_ENGINE, CAD_ENGINE)
 
 
 class CardLine:

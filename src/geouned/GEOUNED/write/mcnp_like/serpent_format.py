@@ -7,7 +7,7 @@ from pathlib import Path
 from importlib.metadata import version
 
 from ....geo import kernel_version
-from ..functions import serpent_surface, write_serpent_cell_def
+from ..functions import engine_label, serpent_surface, write_serpent_cell_def
 from .common_format import CommonInputWriter
 
 logger = logging.getLogger("general_logger")
@@ -105,14 +105,14 @@ class SerpentInput(CommonInputWriter):
 
     def write_header(self):
 
-        freeCAD_Version = kernel_version()
+        kernel_version_str = kernel_version()
 
         Header = f"""{self.Title}
-%   ______ _______  _____      _     _ __   _ _______ ______  
-%  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\ 
+%   ______ _______  _____      _     _ __   _ _______ ______
+%  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\
 %  |_____| |______ |_____|     |_____| |  \\_| |______ |_____/
 % Version : {version('geouned')}
-% FreeCAD Version : {freeCAD_Version} 
+% {engine_label()} Version : {kernel_version_str}
 """
 
         Information = f"""%

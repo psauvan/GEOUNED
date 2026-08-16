@@ -9,7 +9,7 @@ from importlib.metadata import version
 
 from ...utils.basic_functions_part1 import is_opposite, points_to_coeffs
 from ....geo import kernel_version
-from ..functions import CardLine, mcnp_surface, write_mcnp_cell_def
+from ..functions import CardLine, engine_label, mcnp_surface, write_mcnp_cell_def
 from .common_format import CommonInputWriter
 
 logger = logging.getLogger("general_logger")
@@ -109,16 +109,15 @@ C ##########################################################
 
     def write_header(self):
 
-        freeCAD_Version = kernel_version()
+        kernel_version_str = kernel_version()
 
         Header = f"""{self.Title}
-C   ______ _______  _____      _     _ __   _ _______ ______  
-C  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\ 
+C   ______ _______  _____      _     _ __   _ _______ ______
+C  |  ____ |______ |     | ___ |     | | \\  | |______ |     \\
 C  |_____| |______ |_____|     |_____| |  \\_| |______ |_____/
+C Version : {version('geouned')}
+C {engine_label()} Version : {kernel_version_str}
 """
-        # C Version : {version('geouned')}
-        # C FreeCAD Version : {freeCAD_Version}
-        # """
 
         Information = f"""C
 C *************************************************************

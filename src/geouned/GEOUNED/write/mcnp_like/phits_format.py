@@ -20,6 +20,7 @@ from importlib.metadata import version
 from ....geo import kernel_version
 from ..functions import (
     CellString,
+    engine_label,
     phits_surface,
     write_phits_cell_def,
 )
@@ -149,15 +150,17 @@ $
 
     def write_phits_header(self):
 
-        freeCAD_Version = kernel_version()
+        kernel_version_str = kernel_version()
 
         Header = "$ " """{}
-$   ______ _______  _____      _     _ __   _ _______ ______  
-$  |  ____ |______ |     | ___ |     | | \  | |______ |     \ 
+$   ______ _______  _____      _     _ __   _ _______ ______
+$  |  ____ |______ |     | ___ |     | | \  | |______ |     \
 $  |_____| |______ |_____|     |_____| |  \_| |______ |_____/
 $ Version : {}
-$ FreeCAD Version : {} 
-$ PHITSFormat Version :  0.0.2.3     06/03/2024\n""".format(self.Title, version("geouned"), freeCAD_Version)
+$ {} Version : {}
+$ PHITSFormat Version :  0.0.2.3     06/03/2024\n""".format(
+            self.Title, version("geouned"), engine_label(), kernel_version_str
+        )
 
         Information = f"""$
 $ *************************************************************
