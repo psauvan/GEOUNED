@@ -668,6 +668,12 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             face2.tessellate(0.1)
             UVNode_min = face2.getUVNodes()
         except RuntimeError:
+            UVNode_min = ()
+        if not UVNode_min:
+            # tessellate() can succeed (no RuntimeError) yet still return
+            # zero UV nodes on some healed/degenerate faces -- treat that
+            # the same as the tessellation-failed case rather than leaving
+            # the min/max search loop below with nothing to iterate.
             PR = face2.ParameterRange
             UVNode1 = (PR[0], PR[2])
             UVNode2 = (PR[1], PR[3])
@@ -679,6 +685,8 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             face2min.tessellate(0.1)
             UVNode_min = face2min.getUVNodes()
         except RuntimeError:
+            UVNode_min = ()
+        if not UVNode_min:
             PR = face2min.ParameterRange
             UVNode_min = ((PR[0], PR[2]),)
 
@@ -687,26 +695,23 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
             face2max.tessellate(0.1)
             UVNode_max = face2max.getUVNodes()
         except RuntimeError:
+            UVNode_max = ()
+        if not UVNode_max:
             PR = face2max.ParameterRange
             UVNode_max = ((PR[1], PR[3]),)
 
-    dmin = twoPi
     Uminr = twoPimod(Umin)
     Umaxr = twoPimod(Umax)
-    for i, node in enumerate(UVNode_min):
-        nd = twoPimod(node[0])
-        d = abs(nd - Uminr)
-        if d < dmin:
-            dmin = d
-            indmin = i
-
-    dmax = twoPi
-    for i, node in enumerate(UVNode_max):
-        nd = twoPimod(node[0])
-        d = abs(nd - Umaxr)
-        if d < dmax:
-            dmax = d
-            indmax = i
+    # min()-based search, not a hand-rolled "if d < best" loop: UVNode_min/
+    # UVNode_max are now guaranteed non-empty (see the fallback above), but
+    # a strict-less-than loop starting from a fixed twoPi bound can still
+    # leave indmin/indmax undefined if no candidate distance ever comes out
+    # below that bound -- min() always returns *some* index (the true
+    # closest one), with the same first-occurrence-wins tie-break a strict
+    # "<" loop has, so this is behavior-preserving for every case that
+    # already worked and merely removes the possibility of a crash.
+    indmin = min(range(len(UVNode_min)), key=lambda i: abs(twoPimod(UVNode_min[i][0]) - Uminr))
+    indmax = min(range(len(UVNode_max)), key=lambda i: abs(twoPimod(UVNode_max[i][0]) - Umaxr))
 
     V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], UVNode_min[indmin][1])
     V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
@@ -738,6 +743,12 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
             face2.tessellate(0.1)
             UVNode_min = face2.getUVNodes()
         except RuntimeError:
+            UVNode_min = ()
+        if not UVNode_min:
+            # tessellate() can succeed (no RuntimeError) yet still return
+            # zero UV nodes on some healed/degenerate faces -- treat that
+            # the same as the tessellation-failed case rather than leaving
+            # the min/max search loop below with nothing to iterate.
             PR = face2.ParameterRange
             UVNode1 = (PR[0], PR[2])
             UVNode2 = (PR[1], PR[3])
@@ -749,6 +760,8 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
             face2min.tessellate(0.1)
             UVNode_min = face2min.getUVNodes()
         except RuntimeError:
+            UVNode_min = ()
+        if not UVNode_min:
             PR = face2min.ParameterRange
             UVNode_min = ((PR[0], PR[2]),)
 
@@ -757,24 +770,33 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
             face2max.tessellate(0.1)
             UVNode_max = face2max.getUVNodes()
         except RuntimeError:
+            UVNode_max = ()
+        if not UVNode_max:
             PR = face2max.ParameterRange
             UVNode_max = ((PR[1], PR[3]),)
 
-    dmin = twoPi
-    for i, node in enumerate(UVNode_min):
-        nd = twoPimod(node[0])
-        d = abs(nd - Umin)
-        if d < dmin:
-            dmin = d
-            indmin = i
-
-    dmax = twoPi
-    for i, node in enumerate(UVNode_max):
-        nd = twoPimod(node[0])
-        d = abs(nd - Umax)
-        if d < dmax:
-            dmax = d
-            indmax = i
+    # min()-based search, not a hand-rolled "if d < best" loop -- see the
+    # identical comment in gen_plane_cylinder just above this function for
+    # why (UVNode_min/UVNode_max are guaranteed non-empty, but a
+    # strict-less-than loop from a fixed twoPi bound can still leave
+    # indmin/indmax undefined; min() always returns the true closest index,
+    # same tie-break, so this is crash-safe).
+    #
+    # Umin/Umax ARE wrapped via twoPimod before comparison (confirmed a
+    # real, previously-dormant bug via live reproduction, 2026-08-16,
+    # placa2.stp under the occ engine: a face whose native U range spans
+    # past 2*pi -- e.g. ~7.12 to ~11.72 rad -- combined with comparing that
+    # unwrapped Umin/Umax against an always-wrapped `nd` made both the
+    # indmin and indmax searches independently converge on the *same*
+    # index, giving V1 == V2 exactly and a degenerate (zero-length) cross
+    # product a few lines below. gen_plane_cylinder already wraps both
+    # sides of this exact comparison (Uminr/Umaxr) -- this was a plain
+    # omission here, not an intentional difference; verified fixed against
+    # the real reproduction, not just pattern-matched from the sibling.
+    Uminr = twoPimod(Umin)
+    Umaxr = twoPimod(Umax)
+    indmin = min(range(len(UVNode_min)), key=lambda i: abs(twoPimod(UVNode_min[i][0]) - Uminr))
+    indmax = min(range(len(UVNode_max)), key=lambda i: abs(twoPimod(UVNode_max[i][0]) - Umaxr))
 
     V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], UVNode_min[indmin][1])
     V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
@@ -1270,10 +1292,27 @@ def merge_same_surface_faces(cylkne, solidFaces):
     (same_faces), and returns a ShellGu of the merged group -- or `cylkne`
     itself, unchanged, if no such piece exists. Shared by closed_cylinder_cone
     (Can/TCone closure) and get_roundcorner_surfaces (RoundCorner corner-plane
-    search)."""
+    search).
+
+    Residual sliver faces (area below Tolerances().min_area -- the same
+    degenerate, near-zero-area boolean-cut artifact `other_face_edge`'s
+    `skip_slivers` mode treats as transparent noise, not a real feature)
+    are excluded from the same-surface group entirely before the O(n^2)
+    same_faces adjacency walk: on a solid with many such slivers on one
+    analytic surface, comparing them pairwise via native distToShape can
+    be catastrophically slow or, on select near-degenerate pairs, hang
+    outright in pyOCC's BRepAlgoAPI_Common/BRepExtrema_DistShapeShape
+    (confirmed live, hylife-v06.stp solid 17, 2026-08-16 -- FreeCAD's own
+    OCCT build handles the identical face pairs quickly). A sliver's
+    negligible area means dropping it from the merged group doesn't
+    change the group's real geometry (closure angle, corner-plane
+    adjacency) in any way that matters."""
+    min_area = Tolerances().min_area
     CylKne_faces = [cylkne]
     for ckface in solidFaces:
         if ckface.Index == cylkne.Index:
+            continue
+        if ckface.Area < min_area:
             continue
         if is_same_surface(cylkne.Surface, ckface.Surface):
             CylKne_faces.append(ckface)

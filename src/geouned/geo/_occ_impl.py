@@ -565,11 +565,29 @@ class GEllipse:
 
 class GBSpline:
     def __init__(self, geom_curve):
-        from OCC.Core.Geom import Geom_BSplineCurve
-
-        geom_bspline = Geom_BSplineCurve.DownCast(geom_curve)
-        self.Poles = [_to_gvector(geom_bspline.Pole(i)) for i in range(1, geom_bspline.NbPoles() + 1)]
         self.__native__ = geom_curve
+        self._poles = None
+
+    @property
+    def Poles(self) -> list[GVector]:
+        """Lazy, cached. Real, measured cost on this backend specifically
+        (2026-08-16, hylife-v06.stp): pyOCC's Geom_BSplineCurve has no
+        bulk pole->Python-list conversion the way FreeCAD's getPoles()
+        does (confirmed empirically -- even the nominally "bulk"
+        Poles(array) overload doesn't help, since reading each gp_Pnt
+        back out of the filled array still costs the same per-element
+        Python<->C++ round trip as calling .Pole(i) directly). Eagerly
+        building this for every BSpline-classified edge in GSolid's
+        constructor -- most of which (only decom_utils_generator.py::
+        spline_wires reads .Poles at all) never need it -- was measured
+        contributing real, avoidable overhead to solid decomposition on
+        BSpline-heavy geometry."""
+        if self._poles is None:
+            from OCC.Core.Geom import Geom_BSplineCurve
+
+            geom_bspline = Geom_BSplineCurve.DownCast(self.__native__)
+            self._poles = [_to_gvector(geom_bspline.Pole(i)) for i in range(1, geom_bspline.NbPoles() + 1)]
+        return self._poles
 
     def value(self, u: float) -> GVector:
         return _to_gvector(self.__native__.Value(u))
@@ -1146,6 +1164,27 @@ def Gfirst_shell(native_shape):
 
 
 def Gload_step(filename: str) -> list[GSolid]:
+    """Loads a STEP file's solids and heals each one (GSolid.fix(1e-6),
+    ShapeFix_Shape) before returning it.
+
+    FreeCAD's own STEP importer (Part.Shape.read, _freecad_impl.py's
+    Gload_step) does this kind of cleanup implicitly as part of its
+    translation pipeline; pyOCC's raw STEPControl_Reader does not -- a
+    solid loaded this way can carry small tolerance/topology issues
+    invisible to BRepCheck_Analyzer.IsValid() but severe enough to make
+    later native BOP calls (BOPAlgo_Splitter, BRepAlgoAPI_Common, even
+    the "reliable" BRepExtrema_DistShapeShape fallback) pathologically
+    slow or hang outright on otherwise simple, valid-looking geometry.
+    Confirmed live (2026-08-16, hylife-v06.stp solid 17 -- a simple
+    solid FreeCAD converts without any issue): unhealed, decompose_solids()
+    never returned (traced via py-spy to 3 different native hangs across
+    repeated attempts); healed via .fix(1e-6) right after load (volume
+    shift ~0.003%, real cleanup not corruption), the exact same solid
+    decomposes cleanly in ~23s. GeounedSolid.__init__ already calls
+    .refine() (ShapeUpgrade_UnifySameDomain) on every loaded solid, but
+    that alone was not sufficient here -- refine() has no ShapeFix_Shape
+    step of its own; only .fix() does, which is why the healing has to
+    happen here, not left to rely on that later call."""
     reader = STEPControl_Reader()
     status = reader.ReadFile(filename)
     if status != IFSelect_RetDone:
@@ -1155,7 +1194,7 @@ def Gload_step(filename: str) -> list[GSolid]:
     solids = []
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     while explorer.More():
-        solids.append(GSolid(topods.Solid(explorer.Current())))
+        solids.append(GSolid(topods.Solid(explorer.Current())).fix(1e-6))
         explorer.Next()
     return solids
 

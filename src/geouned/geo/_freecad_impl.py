@@ -516,8 +516,20 @@ class GEllipse:
 
 class GBSpline:
     def __init__(self, native):
-        self.Poles = [to_gvector(pole) for pole in native.getPoles()]
         self.__native__ = native
+        self._poles = None
+
+    @property
+    def Poles(self) -> list[GVector]:
+        """Lazy, cached -- most BSpline-classified edges in GEOUNED never
+        read their poles at all (only decom_utils_generator.py::spline_wires
+        does), so eagerly converting every one on every GEdge/GSolid build
+        was pure waste. See _occ_impl.py's own GBSpline for why this
+        matters far more there (a real, measured per-call cost on pyOCC's
+        binding, not just an avoidable no-op here)."""
+        if self._poles is None:
+            self._poles = [to_gvector(pole) for pole in self.__native__.getPoles()]
+        return self._poles
 
     def value(self, u: float) -> GVector:
         """Point on the B-spline at parametric coordinate `u` (radians)."""

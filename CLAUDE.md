@@ -5061,6 +5061,274 @@ result isn't known yet as of this note.
   `GEOUNED_CAD_ENGINE=occ` (and use `pyoccenv`'s own python.exe) for any
   pyOCC-side testing, never mix in the same invocation.
 
+### `hylife-v06.stp` solid 17: a real pyOCC hang, root-caused with `py-spy`,
+and a real bug found *because of* the fix
+
+Follow-up to the abandoned `divertor.step` round-trip test (already-
+GEOReverse-reconstructed CAD, known-dirty, correctly abandoned per the
+user's own diagnosis -- see above). Retried the same GEOUNED-forward
+round-trip idea against a real, original design file instead:
+`Solidos/Big_model_reserved/hylife-v06.stp` (372 solids). Under
+`GEOUNED_CAD_ENGINE=occ`, `decompose_solids()` reliably stalled at solid
+index 17 -- confirmed genuinely stuck (not just slow) by watching real
+elapsed time with no log progress for 15+ minutes, then confirmed the
+process was still burning real CPU (`Get-Process` showing continuous CPU
+accrual), ruling out a simple deadlock/idle hang.
+
+**New tool for this investigation: `py-spy`**, installed into `pyoccenv`
+(`pip install py-spy`) specifically to get a live Python stack trace of a
+*running, not-yet-killed* process (`py-spy dump --pid N --locals`) --
+this project's first use of live process introspection rather than
+after-the-fact log/traceback analysis, and turned out to be decisive:
+static reasoning about "where must this be stuck" was wrong more than
+once this session (see below), while `py-spy` gave the real answer
+directly, repeatedly, including real local-variable values (face
+indices/areas/bounding boxes, UV node lists, actual native shape
+pointers) at each hang.
+
+**Isolating solid 17 wasn't as simple as re-exporting it once.**
+Sequence of findings, each contradicting the previous hypothesis until
+verified live:
+- Exporting solid 17 alone to its own `.stp` and testing standalone:
+  FreeCAD fails fast (~1s) with a genuinely different error
+  (`Part.OCCError: Bnd_Box is void` inside `GSolid.refine()`); pyOCC
+  succeeds in ~10s. Neither reproduces the original hang -- a real
+  reminder (matching this project's own `placa3` precedent) that
+  re-exporting a solid through STEP is not a perfectly faithful
+  reproduction of "the same geometry read from the original file."
+- Loading the *original* multi-solid file with `skip_solids` keeping
+  only indices 0-16 (the "first 17", 0-indexed): both engines succeed
+  cleanly. This *looked* contradictory (solid 17 should be in there --
+  it isn't: indices 0-16 are 17 solids, but the actual hang is at index
+  17, the 18th solid, one further than that slice reached) -- resolved
+  by direct clarification with the user mid-session, not a real
+  contradiction, just an off-by-one in how the slice was described.
+- Per-solid instrumentation (print "STARTING solid N" *before* each
+  `_decompose_target` call, not just "N completed") pinned the real
+  index precisely: solid 17 (0-indexed), confirmed by watching it
+  finish quickly for 0-16 and then never print "FINISHED" for 17.
+- `py-spy dump` on the live full-model run: stuck inside
+  `my_distToshape` (`geo/_occ_impl.py`) -> `BRepAlgoAPI_Common(shape1,
+  shape2).Shape()` -- a real native OCC boolean-common construction,
+  called from `contiguous_face`/`same_faces`/`merge_same_surface_faces`/
+  `closed_cylinder_cone`/`get_can_surfaces` (Can-candidate adjacency
+  detection). Locals showed `same_faces`'s own `Couples` list already
+  had 28 entries accumulated (`i=0`, comparing against couple #28 when
+  it hung) -- an O(n^2) pairwise face-adjacency walk over a face group
+  with at least 29 members.
+- Temporary debug prints in `contiguous_face` (reverted after use, this
+  project's standard discipline) confirmed *why*: dozens of the compared
+  faces have areas around 0.0008-0.01 -- residual sliver faces, the
+  exact same artifact class already documented extensively in this file
+  under "SCDR_90_piece1_roundcorner_badvolume.stp" -- but `same_faces`
+  (used by `merge_same_surface_faces`, feeder to Can/RoundCorner
+  detection) had never received the `skip_slivers` treatment
+  `other_face_edge` already has for exactly this pattern.
+
+**Fix 1 -- sliver filter in `merge_same_surface_faces`**
+(`utils/meta_surfaces_utils.py`): exclude any candidate face with
+`Area < Tolerances().min_area` from the same-analytic-surface group
+*before* the O(n^2) `same_faces` walk, not just from individual
+adjacency lookups the way `other_face_edge`'s `skip_slivers` already
+did. A sliver's negligible area means dropping it from the merged
+group's own membership doesn't change the group's real geometry
+(closure angle, corner-plane adjacency) -- it was never going to be a
+meaningfully "real" piece of the merged surface anyway. Verified:
+`tests/geo` 156/156, `tests/test_cadtocsg.py` 89/89 (occ), no
+regressions -- but did NOT fully resolve the hang; `py-spy` on a rerun
+found a second, deeper hang.
+
+**Fix 2 -- healing on load, `Gload_step` (occ)**: with fix 1 in place,
+`py-spy` found the *next* hang genuinely inside `BOPAlgo_Splitter.Perform()`
+itself (`Gsplit`'s own native split algorithm, nested at nested-split
+`loop=2`) -- this time not an O(n^2) Python-level pattern at all, the
+actual native OCC boolean-split algorithm stuck on this solid's real
+geometry. The user's own hypothesis, stated directly and confirmed
+before any code was written: "FreeCAD probably has a solid cleanup step
+on load that OCC doesn't." Verified true, precisely: FreeCAD's
+`Part.Shape().read()` implicitly heals on import; pyOCC's raw
+`STEPControl_Reader` does not. A manual test -- `GSolid.fix(1e-6)`
+(`ShapeFix_Shape`) applied to the loaded solid *before* decomposition --
+resolved the hang completely (volume shift ~0.003%, real cleanup not
+corruption; `decompose_solids()` then completed in ~23s). Notably,
+`GeounedSolid.__init__` already calls `.refine()`
+(`ShapeUpgrade_UnifySameDomain`) on every loaded solid unconditionally --
+that alone was *not* sufficient, since `.refine()` has no `ShapeFix_Shape`
+step of its own; only `.fix()` does. Wired permanently into
+`geo/_occ_impl.py::Gload_step` (every solid healed immediately after
+load, before any caller ever sees it) rather than left as a manual,
+easy-to-forget step at each call site.
+
+**Timing after the fix, same isolated solid**: FreeCAD 2.3s vs pyOCC
+19-23s (~8-10x slower) -- the hang is gone, but a real, large constant-
+factor gap remains, investigated next (per direct user pushback: "no
+tiene sentido que tarde 8 veces mas... no puede haber tanta diferencia
+entre versiones tan próximas de OCCT").
+
+### Why pyOCC is still ~8-10x slower on this solid even after the hang fix:
+confirmed root cause, not the one first guessed
+
+**OCCT version difference confirmed but ruled out as the explanation**:
+FreeCAD 1.1.1 bundles OCCT 7.8.1 (`FreeCAD.ConfigGet('OCC_VERSION')`);
+`pyoccenv` uses OCCT 7.9.3 (`conda list -n pyoccenv | grep occt`) --
+genuinely different versions, but the user correctly pushed back that a
+minor-version gap this close wouldn't plausibly explain an 8-10x
+regression on its own (would be a well-known, documented regression if
+so) -- right call; the real cause is architectural, not a version bug.
+
+**`py-spy`'s flamegraph mode** (`py-spy record -o out.svg --rate 200 --
+python script.py`) used for the first time this session, on the healed
+solid-17 decomposition (~4200 samples over ~20s): no single function
+above ~3% of samples -- cost spread broadly across `Gsplit`,
+`get_surfaces`, `GSolid`/`GFace`/`GEdge` construction, `makeCan`/
+`build_surface`, `remove_solids`. This ruled out "one fixable hot path"
+and pointed toward a distributed, per-call overhead difference instead.
+
+**First hypothesis (partially right, not the full story): raw SWIG
+binding overhead.** A direct, controlled micro-benchmark (same op count,
+both engines): constructing/reading a point 200k times -- pyOCC (`gp_Pnt`)
+0.44s vs FreeCAD (`FreeCAD.Vector`) 0.09s, ~4.8x gap. But box construction
+(20k) was roughly equal, and exploring 6 faces + computing area (20k) was
+actually *faster* under pyOCC (2.03s vs 2.92s) -- so "SWIG is just
+slower" doesn't hold uniformly; the comparison itself was also flagged
+by the user as not apples-to-apples (confirmed correct: `FreeCAD.Vector`
+isn't a wrapped `gp_Pnt` at all, it's FreeCAD's own independent
+lightweight `Base::Vector` C++ type, converted to/from real OCCT types
+only at the topology boundary -- so this measured two different
+implementations, not "the same operation via two bindings").
+
+**Real, verified root cause: bulk vs per-element native calls, not a
+binding speed difference in general.** Traced directly from source:
+`_freecad_impl.py`'s `GBSpline.__init__` does
+`self.Poles = [to_gvector(pole) for pole in native.getPoles()]` -- ONE
+native call (`getPoles()`) that loops over every pole *inside* FreeCAD's
+own hand-written C++ and hands back a ready Python list of already-
+converted `FreeCAD.Vector`s. `_occ_impl.py`'s equivalent did
+`[_to_gvector(geom_bspline.Pole(i)) for i in range(1, NbPoles()+1)]` --
+N separate `.Pole(i)` SWIG calls from a Python loop, each returning a raw
+`gp_Pnt` needing 3 more SWIG calls (`.X()/.Y()/.Z()`) to extract floats:
+4N cross-language round trips instead of 1. Confirmed via `py-spy dump`
+during a live hang investigation earlier in this same session (caught
+mid-execution inside exactly this per-pole extraction loop) -- not
+guessed. Tested whether pythonocc-core's own "bulk" alternative
+(`Geom_BSplineCurve.Poles(array)`, filling a `TColgp_Array1OfPnt` in one
+call) actually helps: **it doesn't** -- 0.39s vs 0.34s for the existing
+loop (5000 reps, 25-pole curve) -- because reading the filled array back
+out into Python floats still costs the same N `arr.Value(i)` + 3N
+`.X()/.Y()/.Z()` round trips; the "bulk" call only saves the N
+`.Pole(i)` calls, not the dominant per-element float-extraction cost.
+**Conclusion, stated plainly for the user's own "es como si..." framing
+and confirmed correct**: FreeCAD ships a hand-written, compiled C++
+convenience layer between the raw OCCT API and what Python sees, doing
+bulk conversions (array of native points -> Python list) entirely on the
+C++ side; pythonocc-core, by design, is a much more literal SWIG
+exposure of the *raw* OCCT API with no equivalent convenience layer --
+every element-level access genuinely has to cross the Python/C++
+boundary on its own, and that cost, multiplied by however many BSpline
+poles/vertices/samples a solid's geometry has, is what dominates.
+
+**Three options discussed for a systemic fix, one chosen**: (1) write a
+custom C++ convenience layer, mirroring FreeCAD's own approach -- real,
+but with the portability/build/maintenance cost the user explicitly
+flagged as a concern, and now *two* engines' worth of it; (2) switch to
+a different, less-raw OCCT binding (`OCP`, the pybind11-based binding
+CadQuery/build123d use) -- a real, legitimate alternative to investigate,
+but explicitly flagged as unverified: it's still a fairly direct OCCT
+exposure architecturally, not confirmed to have FreeCAD-style bulk
+convenience methods, and would need the same empirical verification
+discipline as everything else in this project rather than being assumed
+better for being newer; (3, chosen) **lazy evaluation** -- stop paying
+the bulk-vs-per-element cost *at all* for data that's eagerly computed
+but rarely read, the same technique already proven in this exact
+project for `GFace.wires()`/`.outer_wire()` (real ~26% suite-time cut,
+documented earlier in this file). Grepped every `.Poles` read in
+`GEOUNED`: exactly one call site,
+`decom_utils_generator.py::spline_wires` -- every other BSpline-classified
+`GEdge` built anywhere in the pipeline was paying this cost for data
+nothing ever reads.
+
+**Implemented**: `GBSpline.Poles` became a lazy, cached `@property` in
+*both* `_freecad_impl.py` and `_occ_impl.py` (symmetric change for
+interface consistency between the two backends, even though the benefit
+is pyOCC-specific -- FreeCAD's own `getPoles()` is already cheap
+regardless of eager/lazy timing). Fully transparent to the one real call
+site (`for p in edge.Curve.Poles:`) -- a property reads exactly like the
+old plain attribute, no call-site changes needed anywhere, unlike the
+`.wires()`/`.outer_wire()` precedent (which changed to explicit method
+calls -- not needed here, since `.Poles` is genuinely data, not a
+heuristic computation).
+
+**A real, previously-dormant bug found *because* the `Gload_step`
+healing fix (above) changed geometry slightly enough to trigger it** --
+running the *full* `tests/test_cadtocsg.py` corpus (not just the
+hylife-v06.stp reproduction) after landing the healing fix surfaced a
+new failure on an unrelated fixture, `placa2.stp`
+(`input_step_file5`), that had never failed before:
+- First symptom: `UnboundLocalError: cannot access local variable
+  'indmax'` in `gen_plane_cone`/`gen_plane_cylinder`
+  (`meta_surfaces_utils.py`) -- a hand-rolled "if d < best-so-far" min-
+  search loop that never initializes its index variable if the loop body
+  never runs (an empty `UVNode_min`/`UVNode_max` -- `tessellate()`
+  succeeding, no `RuntimeError`, but returning zero UV nodes on the
+  now-slightly-different healed geometry). Fixed by treating an empty
+  tessellation result the same as the already-handled
+  `except RuntimeError` case (fall back to `ParameterRange`-derived
+  corner UV values), in both `gen_plane_cylinder` and `gen_plane_cone`
+  (byte-for-byte duplicated blocks).
+- That surfaced a second, different failure at the *same* line on a
+  full-suite rerun: not an empty list this time, but a loop that
+  legitimately never finds any element satisfying `d < dmax`. Replaced
+  the hand-rolled loop with `min(range(len(...)), key=...)` in both
+  functions -- provably behavior-preserving (same distance metric, same
+  first-occurrence-wins tie-break as a strict `<` loop) while
+  guaranteeing *some* index always gets picked, since the list is
+  already guaranteed non-empty by the first fix.
+- That, in turn, surfaced a *third*, real geometric bug -- this one
+  actually root-caused with live data rather than patched defensively,
+  per the user's own explicit request to look at `gen_plane_cone`
+  specifically once it kept surfacing new symptoms: a `ZeroDivisionError`
+  in `dir2.cross(dir1).normalized()`, traced with temporary debug prints
+  (reverted after use) to `ifacemin == ifacemax == 3` (both search targets
+  on the *same* face) with `V1 == V2` exactly. Real cause: `gen_plane_cone`
+  compared its wrapped node angles (`nd = twoPimod(node[0])`) against
+  *unwrapped* `Umin`/`Umax`, while its sibling `gen_plane_cylinder`
+  already wraps both sides of the identical comparison
+  (`Uminr = twoPimod(Umin)`, `Umaxr = twoPimod(Umax)`) -- a real,
+  previously-dormant omission, not an intentional difference: this
+  particular face's native U-parameter range spans past `2*pi` (~7.12 to
+  ~11.72 rad), and comparing that raw against an always-wrapped `nd`
+  made both the "closest to Umin" and "closest to Umax" searches
+  independently converge on the *same* wrong index, so the two sampled
+  points ended up collinear with the cone's apex -- a zero-length cross
+  product. Fixed by wrapping `Umin`/`Umax` in `gen_plane_cone` the same
+  way its sibling already does -- verified against the real captured
+  data (not just pattern-matched from the sibling function blindly, the
+  kind of mistake this project's own history warns against repeatedly):
+  the correctly-wrapped target values land near two genuinely different
+  UV nodes (indices ~44 and ~0 in the captured list), no longer
+  colliding.
+
+**Final verification**: `tests/geo` 156/156 (FreeCAD), `tests/geo/
+test_occ_impl.py` + `tests/test_cadtocsg.py` 89/89 (occ) -- both clean
+after all four fixes (sliver filter, `Gload_step` healing, lazy
+`GBSpline.Poles`, `gen_plane_cone`'s `twoPimod` wrap) landed together;
+solid 17 (hylife-v06.stp), isolated, end to end: 19.5s, success, no
+hang, no crash.
+
+**Not yet done**: the ~8-10x pyOCC-vs-FreeCAD constant-factor gap on
+this solid is reduced only insofar as the lazy-`Poles` fix removes one
+real contributor (unmeasured how much, since the flamegraph showed
+distributed cost across many operations, not dominated by pole
+extraction alone) -- no attempt yet to quantify the *remaining* gap or
+find further lazy-evaluation candidates the same way. `OCP` (option 2
+above) not investigated at all. The full 372-solid `hylife-v06.stp`
+round-trip (GEOUNED occ forward -> GEOReverse occ reverse, the original
+motivating test for this whole investigation) was never actually
+completed this session -- only solid 17's own decomposition was
+isolated and fixed; picking the full-model run back up (with `minVoidSize=100`
+per the user's own instruction for future runs, not the `20` used in
+earlier attempts) is the natural next step.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
