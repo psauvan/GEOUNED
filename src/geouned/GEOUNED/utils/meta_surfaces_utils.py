@@ -625,7 +625,14 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
                 new_adjacent1 = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent1.Surface, GPlane):
-                normal1 = adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else -adjacent1.Surface.Axis
+                # material-pointing normal, same Orientation-correction
+                # convention as gen_plane()/build_multip_params() elsewhere
+                # in this codebase -- was inverted here (Axis if Forward
+                # else -Axis), a real, isolated sign bug confirmed via a
+                # real interior point of a reconstructed RevCC solid
+                # (Solidos/BadCAD_decomposition/series_solid2_complement.stp)
+                # failing this exact term.
+                normal1 = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
@@ -633,7 +640,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
                 new_adjacent2 = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
         elif multiplanes:
             if isinstance(adjacent2.Surface, GPlane):
-                normal2 = adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else -adjacent2.Surface.Axis
+                normal2 = -adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else adjacent2.Surface.Axis
 
     if type(face.Surface) is GCylinder:
         cylOnly = gen_cylinder(face)
