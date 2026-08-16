@@ -5566,6 +5566,115 @@ post-creation dependency installs `pyoccenv` also needed
 (`tqdm`, `pytest`, plus an editable `pip install -e . --no-deps` of
 `geouned` itself) and the identical MKL-to-OpenBLAS fix documented above.
 
+## The ~8-10x hylife-v06.stp gap, root-caused: not the binding at all --
+`splitTolerance`'s implicit-zero default, and an OCCT 7.9.x-vs-7.8.1
+BOP sensitivity difference
+
+Direct continuation of the OCP-evaluation section above -- the user
+pushed back on "OCP is a modest win, gap not fully explained" and asked
+for a genuine step-by-step comparison, not another micro-benchmark:
+for *every* real split attempt during solid 17's decomposition, compare
+the exact solid being cut, the exact cutting surface, and the time, side
+by side between FreeCAD and pyOCC.
+
+**Built a small, engine-agnostic instrumentation script** (monkeypatches
+`decom_one_generators.generic_split`'s module-level `get_surfaces`/
+`Gsplit` names, which Python resolves dynamically at call time -- so the
+same patch works identically under either engine, no per-engine code
+needed) that logs, per `Gsplit` call: which candidate surface type
+triggered it, the base solid's volume/face count, the tool's volume, how
+long the call took, and the resulting piece volumes. Ran it against the
+identical `hylife_solid17.stp` under both engines.
+
+**The real picture, finally concrete**: only 2 candidate surfaces are
+ever tried (`generic_split` is called exactly once, `loop=0` -- never
+recurses, since neither candidate ever produces a real split -- an
+earlier hypothesis this session that recursion depth explained the cost
+was wrong). Both are type `"Can"`.
+- **FreeCAD**: candidate 1 -> 1 piece (no-op) in 1.24s; candidate 2 ->
+  1 piece in 0.10s. Total: 2.11s. Final: solid stays whole (correctly --
+  neither candidate is a real cut).
+- **OCP, unmodified**: candidate 1 -> **15 pieces** in **17.2s**
+  (`degenerate_case_handled=True`, the non-manifold repair path fired);
+  candidate 2 -> 1 piece in 0.22s. Total: 18.3s. Final result: **still
+  just 1 piece** -- `remove_solids` correctly discards all 15 fragments
+  from candidate 1 as junk, so the *geometric answer* is identical to
+  FreeCAD's, just reached at ~9x the cost.
+
+**The 15 "pieces" tell the whole story**: sorted volumes
+`[-7267.065, -0.003, 0.0, 0.0, 0.0, 0.0, 0.0, -0.0, 0.0, 0.0, 0.0, 0.0,
+0.0, 0.0, 3990139370.316]` -- 13 of 15 are genuinely near-zero volume,
+one is negative (a reversed sliver), and one is the real bulk. OCCT
+7.9.3's `BOPAlgo_Splitter` (used by both `occ` and `ocp` -- this is not
+an OCP-specific issue, pythonocc-core would show the identical pattern,
+same OCCT version) is finding a real, non-fictitious near-tangency in
+this candidate tool that FreeCAD's bundled OCCT 7.8.1 doesn't detect at
+all -- computing an actual (if junk) 15-fragment split plus running
+non-manifold repair on it, all of which then gets thrown away. Directly
+the same *class* of problem this whole file's own "Motivating problem"
+section opens with (tangency-sensitive BOP behavior differing between
+OCCT builds) -- just the opposite direction from the original bug (here
+newer OCCT is *more* sensitive and does *extra*, wasted work, rather
+than *less* sensitive and silently merging two solids that should split).
+
+**Confirmed it's a tolerance question, not a deeper geometry mismatch**,
+by testing the identical base+tool pair through `Gsplit` at explicit
+fuzzy tolerances: 0.0/1e-9/1e-8/1e-7 all still gave 15 pieces (14-17s);
+1e-6 gave 13 pieces (14.6s); 1e-5 gave 4 pieces (4.8s); **1e-4 gave
+exactly 1 piece in 0.2s** -- faster than FreeCAD's own 1.24s for the
+same conceptual result. A clean, monotonic transition, not a cliff or a
+fluke.
+
+**Root cause, plainly**: `Gsplit`'s own code only calls
+`splitter.SetFuzzyValue(tolerance)` when `tolerance` is truthy -- and
+`Options.splitTolerance` defaults to `0.0`. Neither engine has ever been
+given an explicit fuzzy tolerance by GEOUNED itself; both have always
+fallen back to whatever their own kernel's internal default is. FreeCAD
+bundles OCCT 7.8.1; both `occ` and `ocp` link OCCT 7.9.3. The two
+versions' own internal BOP defaults are not equally forgiving of
+near-tangent geometry -- confirmed empirically, not from any OCCT
+changelog (none consulted; the *effect* is what was verified, repeatedly,
+against real geometry).
+
+**Fix**: `Options.splitTolerance`'s default changed from a fixed `0.0`
+to `None`, resolved inside `__init__` per the already-resolved
+`geo.CAD_ENGINE`: `0.0` under `freecad` (unchanged), `1e-4` under `occ`/
+`ocp` (new). An explicit value passed by the caller (e.g.
+`tests/test_cadtocsg.py`'s own `splitTolerance=0`) is never touched --
+this only changes what happens when the caller doesn't specify one at
+all, matching the existing "sensible per-engine default, explicit
+override always wins" pattern already used for `GEOUNED_CAD_ENGINE`
+itself. `data_classes.py` (previously with zero dependency on `geo`)
+gained one new import, `from ...geo import CAD_ENGINE` -- safe, no
+circular-import risk, since `geo` never depends on `GEOUNED`.
+
+**Verified**: `hylife_solid17.stp`'s full decomposition, `Options()`
+with no explicit `splitTolerance` at all (the real-world call pattern,
+not a hand-tuned test): **1.19s under `ocp`** (was 18.3s), matching the
+manually-tuned result exactly. Full 50-file `tests/test_cadtocsg.py`
+corpus re-run with `splitTolerance=1e-4` explicitly (a scratch copy of
+the test, before landing the default-resolution change) -- 50/50, zero
+regressions, and total corpus runtime *unchanged* (~60s either way --
+this fixture set doesn't happen to contain hylife's specific pathology,
+so the tolerance bump is free insurance for corpus files that don't need
+it and a ~15x fix for the one real case found that does). After landing
+the actual code change: all three engines' full suites re-verified
+green -- FreeCAD 156/156 (2 skips), `occ` 89/89, `ocp` 91/91 (`test_ocp_impl.py`
+39 + `test_cadtocsg.py` 50 + `test_csgtocad.py` 2).
+
+**Not yet done**: only tested against `testing/inputSTEP`'s 50-file
+corpus, not the larger/more varied `Solidos/` corpus this project's
+history otherwise leans on heavily for exactly this kind of
+tolerance-sensitive change -- the user's own third option
+("verify against Solidos/ before trusting the default") wasn't needed to
+land this (the fix is narrowly scoped, engine-conditional, and backward-
+compatible for anyone already passing an explicit value), but would add
+confidence if this default is ever revisited. `1e-4` itself was not
+tuned/swept beyond the single confirmed-good point on this one case
+(1e-5 still showed spurious fragments, 1e-4 was clean) -- a smaller
+value closer to the transition, or a larger one for more headroom, was
+not explored.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

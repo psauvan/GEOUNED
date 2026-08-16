@@ -640,8 +640,9 @@ class GEdge:
         first, last = BRep_Tool.Range(native)
         self.ParameterRange = (first, last)
         self.Orientation = _orientation_str(native)
-        self.Length = _linear_props(native).Mass()
-        self.MatrixOfInertia = _to_gmatrix_3x3(_linear_props(native).MatrixOfInertia())
+        edge_props = _linear_props(native)
+        self.Length = edge_props.Mass()
+        self.MatrixOfInertia = _to_gmatrix_3x3(edge_props.MatrixOfInertia())
 
     def value_at(self, u: float) -> GVector:
         adaptor = BRepAdaptor_Curve(self.__native__)

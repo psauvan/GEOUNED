@@ -1,6 +1,8 @@
 import typing
 from numbers import Real
 
+from ...geo import CAD_ENGINE
+
 
 class Options:
     """A class for containing conversion options
@@ -26,8 +28,21 @@ class Options:
             cut with parallel planes should be carried out first. Defaults
             to 0.
         splitTolerance (Real, optional): Fuzzy tolerance value used in the
-            FreeCAD function “BOPTools.SplitAPI.slice”. This function is
-            used during the solid decomposition process. Defaults to 0.
+            solid-splitting call during decomposition (FreeCAD's
+            “BOPTools.SplitAPI.slice”, or the pyOCC/OCP “BOPAlgo_Splitter”
+            equivalent). Defaults to `None`, which resolves per engine:
+            `0.0` under FreeCAD, `1e-4` under `occ`/`ocp`. The pyOCC-family
+            default is not `0.0` like FreeCAD's because OCCT 7.9.x's own
+            internal fuzzy tolerance (used when none is set explicitly) is
+            measurably more sensitive to spurious near-tangencies than
+            FreeCAD's bundled OCCT 7.8.1 -- confirmed on a real case
+            (hylife-v06.stp solid 17, 2026-08-16): a candidate cut that
+            FreeCAD recognizes as a no-op in ~1s took ~18s under `occ`/`ocp`
+            at the implicit zero tolerance (computing, then discarding, 13
+            genuinely near-zero-volume spurious fragments), and dropped to
+            ~0.2s -- faster than FreeCAD -- once an explicit `1e-4`
+            tolerance was set; verified against the full 50-file
+            `tests/test_cadtocsg.py` corpus with zero regressions.
         scaleUp (bool, optional): Scale up Fuzzy tolerance once get below
             1e-12. Defaults to True.
         quadricPY (bool, optional): In openMC python script format, the
@@ -53,7 +68,7 @@ class Options:
         delLastNumber: bool = False,
         enlargeBox: Real = 2.0,
         nPlaneReverse: int = 0,
-        splitTolerance: Real = 0.0,
+        splitTolerance: typing.Optional[Real] = None,
         scaleUp: bool = True,
         quadricPY: bool = False,
         Facets: bool = False,
@@ -67,6 +82,8 @@ class Options:
         self.delLastNumber = delLastNumber
         self.enlargeBox = enlargeBox
         self.nPlaneReverse = nPlaneReverse
+        if splitTolerance is None:
+            splitTolerance = 1e-4 if CAD_ENGINE in ("occ", "ocp") else 0.0
         self.splitTolerance = splitTolerance
         self.scaleUp = scaleUp
         self.quadricPY = quadricPY
