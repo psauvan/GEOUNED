@@ -4842,6 +4842,126 @@ Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2),
 `GEOUNED_CAD_ENGINE=occ` dispatch path resolving to the (still-stub)
 `_occ_impl.py` correctly.
 
+### GEOReverse genuinely functional under pyOCC: a real `pyoccenv` session,
+a broken-MKL environment bug fixed, and the XCAF STEP export implemented
+
+User had a `pyoccenv` conda environment already set up
+(`C:\Users\Patrick\Apps\Conda\envs\pyoccenv\python.exe` -- non-standard
+location, not on PATH, must be invoked by full path; see the `reference-
+pyoccenv-path` memory) but this session's own Bash tool couldn't run it
+at all (exit 127, no output, for both `-c` and script-file invocations)
+-- same class of issue as FreeCAD's own documented Bash-segfaults-use-
+PowerShell gotcha. **PowerShell works.**
+
+**A real, pre-existing environment bug found and fixed before any of
+GEOReverse's own code could be tested**: `numpy.linalg.eigh` alone (no
+OCC involved at all) crashed the process with an access violation
+(`0xC06D007F`) in this `pyoccenv`. Root cause, confirmed via `conda-meta`
+inspection: numpy's LAPACK was linked against the environment's `_mkl`
+build variant (`libblas`/`liblapack` 3.11.0-8, MKL 2026.1.0) --
+suspected conflict between MKL's own threading layer and `occt`
+7.9.3/`tbb` 2023.0.0 both live in the same process (`occt` depends on
+TBB for parallelism; MKL can also route through TBB). `KMP_DUPLICATE_
+LIB_OK=TRUE` did NOT fix it (ruled out the simple "duplicate OpenMP
+runtime" case). Fixed by switching the environment's BLAS/LAPACK
+provider from MKL to OpenBLAS (`conda install -n pyoccenv -c
+conda-forge --override-channels "libblas=*=*openblas"
+"liblapack=*=*openblas" "libcblas=*=*openblas"` -- needed
+`--override-channels`, the bare command failed since it defaulted to
+the `defaults` channel and none of these packages/build variants exist
+there). Confirmed fixed directly (`eigh` after `import OCC`, real
+values returned) before touching anything else. This was blocking
+`MCNPinput.py::gq2cyl`'s own `numpy.linalg.eigh` call specifically --
+i.e. any MCNP file with `GQ`/`SQ` (general/simplified-quadric) surfaces,
+which `tests/csg_files/cylinder_box.mcnp` (this project's own main
+GEOReverse fixture) has 2 of.
+
+**With the environment fixed, confirmed the ENTIRE GEOReverse core
+pipeline this session's earlier migration built (`Objects.py`/
+`buildSolidCell.py`/`splitFunction.py`/`buildCAD.py`/`MCNPinput.py`/
+`matrix_utils.py`) already works correctly against real pyOCC** --
+`geo.build_universe()` on `cylinder_box.mcnp` under
+`GEOUNED_CAD_ENGINE=occ` produced 4 real cells (`GSolid`s wrapping real
+`TopoDS_Compound`/`TopoDS_Solid`), first genuine end-to-end validation
+of this whole session's work against actual pyOCC, not just structural/
+import-level checks.
+
+**`Modules/_occ_impl.py::export_occ` implemented for real** (was a stub
+raising `NotImplementedError`), using OCC's XCAF framework to replicate
+`_freecad_impl.py::makeTree`'s exact naming/nesting
+(`Universe_{U}_Container_{name}` -> `Material_{mat}_{U}{name}` ->
+`Cell_{name}_{MAT}`), built and verified incrementally against the real
+`pyoccenv` session rather than written blind (this project's own
+established discipline throughout the whole pyOCC migration):
+- `TDataStd_Name.Set(label, name)` needs a plain Python `str` -- passing
+  an already-constructed `TCollection_ExtendedString` raises `TypeError:
+  Wrong number or type of arguments` (SWIG overload resolution doesn't
+  like an already-typed argument here, confirmed by testing both forms
+  directly).
+- `shape_tool.AddShape(shape, False)` on a `TopoDS_Compound` -- the
+  common case, since most real `GSolid`s GEOReverse builds via
+  `fuse_solids`'s fallback path are compounds, not single
+  `TopoDS_Solid`s -- does NOT keep it as one label with N solids inside:
+  `Gload_step_labels` reads it back as N separate same-named labels, one
+  per solid. Confirmed via a direct write/read-back round trip. A real,
+  harmless difference from the FreeCAD path (which keeps a compound as
+  one `Part::FeaturePython`/one label) -- every solid stays correctly
+  traceable to its cell/material by name, just at finer label
+  granularity for compound cells. Not fixed (would need
+  `AddComponent`-based manual sub-shape handling); documented in
+  `_occ_impl.py`'s own docstring instead.
+- The assembly-nesting pattern (`shape_tool.NewShape()` for each
+  container level, `shape_tool.AddComponent(parent_label, child_label,
+  TopLoc_Location())` to nest) verified with a real 2-level
+  Universe->Material->Cell hierarchy, round-tripped through STEP and
+  back via the already-verified `geo.Gload_step_labels`, confirming both
+  names and full ancestor-chain nesting survive.
+
+**Full end-to-end verification against the real fixture**: `geo.
+build_universe()` + `geo.export_cad(format="stp")` under
+`GEOUNED_CAD_ENGINE=occ` on both `cylinder_box.mcnp` (4 solids) and
+`cylinder_box.xml` (5 solids) produced STEP files whose volumes match
+the FreeCAD-engine baseline already recorded in `tests/test_csgtocad.py`
+to ~1e-8 relative precision (cross-kernel noise between FreeCAD's own
+OCCT build and pythonocc-core's, not a real discrepancy) -- and whose
+XCAF labels correctly show the full `Cell_N_0 < Material_0_None0 <
+Universe_0_Container_None < <barename>` chain.
+
+**`tests/test_csgtocad.py` made engine-aware** so it's a real, permanent
+regression test under either engine rather than a one-off manual check:
+reads `CAD_ENGINE`, only requests `"fcstd"` (and only asserts the
+`.FCStd` file exists) under `"freecad"`, and reads back the exported
+`.stp` via `geo.Gload_step` (already engine-dispatched) instead of the
+old FreeCAD-only `Part.Shape().read(...)`. Same `_EXPECTED_VOLUMES`
+dict reused for both engines -- confirmed the existing `1e-6` tolerance
+already comfortably covers the observed ~1e-8 cross-kernel volume
+noise, no separate expected-value set needed. Verified: 2/2 under
+`GEOUNED_CAD_ENGINE=occ` (real `pyoccenv` run) and 2/2 under the
+default FreeCAD engine, both from the same test file.
+
+**Still not implemented**: the 6 exotic quadric surfaces'
+`Gmake_elliptic_cone`/`Gmake_hyperboloid`/etc. under `_occ_impl.py`
+remain stubs (unrelated to CAD export, a separate follow-up phase per
+this file's own earlier notes).
+
+### Environment notes for next time
+
+- `pyoccenv`'s python: `C:\Users\Patrick\Apps\Conda\envs\pyoccenv\
+  python.exe` -- use the PowerShell tool to invoke it, not Bash (Bash
+  gives exit 127 with zero output, even for trivial scripts -- not yet
+  root-caused, just worked around).
+- `conda` itself: `C:\Users\Patrick\Apps\Conda\Scripts\conda.exe` (also
+  not on PATH in the Bash shell). `conda install -n pyoccenv ...` needs
+  `-c conda-forge --override-channels` explicitly, or the solver
+  defaults to the `defaults` channel and fails to find conda-forge-only
+  packages (which is everything in this environment: `occt`,
+  `pythonocc-core`, `mkl`, etc.).
+- FreeCAD and pyOCC still can't coexist in one process (`ImportError:
+  Module use of python311.dll conflicts with this version of Python` --
+  FreeCAD bundles Python 3.11, `pyoccenv` is Python 3.12) -- always set
+  `GEOUNED_CAD_ENGINE=occ` (and use `pyoccenv`'s own python.exe) for any
+  pyOCC-side testing, never mix in the same invocation.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
