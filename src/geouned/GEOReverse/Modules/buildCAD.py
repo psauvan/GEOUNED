@@ -1,7 +1,8 @@
 import numpy as np
 from tqdm import tqdm
 
-from ._geo_bridge import Gcommon, Gsplit, fuse_solids, to_gmatrix_from_np
+from ...geo import Gcommon, Gsplit
+from .matrix_utils import fuse_solids, to_gmatrix_from_np
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import myBox
 

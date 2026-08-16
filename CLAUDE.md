@@ -4720,6 +4720,36 @@ this file).
   fixture set was explicitly deferred back when `test_csgtocad.py` was
   first hardened, and remains deferred.
 
+### `_geo_bridge.py` retired: GEOReverse now imports `geo` directly, matching
+GEOUNED's own pattern
+
+User pushback, next session: having every GEOReverse file funnel through
+`_geo_bridge.py` (which mostly just re-exported `geo` names unchanged)
+was a real asymmetry against GEOUNED's own style, where every file
+imports `from ...geo import (...)` directly and keeps its own
+file-local logic alongside that import — there is no equivalent
+"GEOUNED_bridge.py" middleman on the forward-pipeline side.
+
+Fix: deleted `_geo_bridge.py`; every former consumer (`Objects.py`,
+`MCNPinput.py`, `XMLinput.py`, `buildCAD.py`, `splitFunction.py`,
+`Utils/boundBox.py`, `geo_quadrics/__init__.py`, `core.py`) now imports
+`geo` names directly, at whatever relative-import depth its own location
+needs (`...geo` from `Modules/*.py`, `....geo` from `Modules/Utils/*.py`
+and `Modules/geo_quadrics/*.py`, `..geo` from `core.py`). The handful of
+names that were genuinely GEOReverse-specific (not `geo` re-exports) —
+`to_np_matrix`/`to_gmatrix_from_np`/`transform_solid`/`matrix_multVec`/
+`matrix_rotate_vec` (the numpy-transform bridge) and `fuse_solids` — moved
+to a new `GEOReverse/Modules/matrix_utils.py`, which itself imports `geo`
+directly rather than acting as a second middleman. `Utils/boundBox.py::makePlane`'s
+own inline, deferred `from .._geo_bridge import Gmake_polygon_face` (no
+real circular-import reason for it being local) was hoisted to the
+file's top-level import alongside the rest.
+
+Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2),
+`tests/test_cadtocsg.py` (50/50), plus a bare `import geouned` — all
+unaffected, confirming this was a pure import-path reshuffle with zero
+behavior change.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

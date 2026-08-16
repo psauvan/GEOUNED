@@ -8,7 +8,7 @@ from numpy import linalg as LA
 
 from .Objects import CadCell, Cone, Cylinder, Plane, Sphere, Torus
 from .XMLParser import get_cards
-from ._geo_bridge import GVector
+from ...geo import GVector
 
 
 def _gvec(values) -> GVector:

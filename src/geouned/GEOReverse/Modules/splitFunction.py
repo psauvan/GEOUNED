@@ -1,6 +1,7 @@
 import math
 
-from ._geo_bridge import GSolid, Gsplit, fuse_solids
+from ...geo import GSolid, Gsplit
+from .matrix_utils import fuse_solids
 
 
 class SplitBase:

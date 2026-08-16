@@ -2,7 +2,7 @@ import math
 import numpy
 import typing
 
-from .._geo_bridge import GVector, GBoundBox, GPlane, GLine
+from ....geo import GVector, GBoundBox, GPlane, GLine, Gmake_polygon_face
 from .booleanFunction import BoolSequence
 
 twoPi = math.pi * 2
@@ -970,8 +970,6 @@ def makePlane(normal, position, Box):
     (already exists in `geo`) instead of the original's own
     `Part.Face(Part.makePolygon(...))` call.
     """
-    from .._geo_bridge import Gmake_polygon_face
-
     p0 = normal.dot(position)
 
     pointEdge = []

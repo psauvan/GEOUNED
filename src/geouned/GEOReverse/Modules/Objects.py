@@ -15,7 +15,7 @@ from .geo_quadrics import (
     Gmake_paraboloid,
     Gmake_torus_elliptic,
 )
-from ._geo_bridge import (
+from ...geo import (
     GBoundBox,
     Gmake_box,
     Gmake_cone,
@@ -24,11 +24,8 @@ from ._geo_bridge import (
     Gmake_cylinder,
     Gmake_sphere,
     Gmake_torus,
-    fuse_solids,
-    matrix_multVec,
-    matrix_rotate_vec,
-    transform_solid,
 )
+from .matrix_utils import fuse_solids, matrix_multVec, matrix_rotate_vec, transform_solid
 
 
 class CadCell:

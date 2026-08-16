@@ -6,7 +6,7 @@ pyOCC-engine-specific implementation of CAD export -- sibling to
 here (via `_EXPORTERS["occ"]`) when `CAD_ENGINE == "occ"`.
 
 Unlike `geo`'s own STEP export (`Gexport_step`, already engine-agnostic
-and usable as-is once `_geo_bridge.py`'s `GSolid`s are genuinely pyOCC
+and usable as-is once GEOReverse's `GSolid`s are genuinely pyOCC
 native), this file still needs real work: `_freecad_impl.py`'s
 `export_freecad` doesn't just dump solids to STEP, it first builds a
 FreeCAD *document* tree (`makeTree` -- Universe/Material `App::Part`

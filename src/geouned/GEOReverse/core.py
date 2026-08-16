@@ -8,7 +8,7 @@ from .Modules.Utils.boundBox import BoxSettings
 from .Modules.Objects import CadCell
 from .Modules.MCNPinput import McnpInput
 from .Modules.XMLinput import XmlInput
-from .Modules._geo_bridge import CAD_ENGINE
+from ..geo import CAD_ENGINE
 from .Modules._freecad_impl import SUPPORTED_FORMATS as _freecad_formats, export_freecad
 from .Modules._occ_impl import SUPPORTED_FORMATS as _occ_formats, export_occ
 
@@ -223,9 +223,8 @@ class CsgToCad:
 
         This method itself is CAD-engine-independent: it validates the
         requested format(s) against what the currently-active engine
-        (`geouned.GEOReverse.Modules._geo_bridge.CAD_ENGINE`) can produce,
-        then dispatches to that engine's own exporter. It never builds a
-        native document itself.
+        (`geouned.geo.CAD_ENGINE`) can produce, then dispatches to that
+        engine's own exporter. It never builds a native document itself.
 
         Args:
             output_filename (str, optional): The filename stem and path of the output file(s) created.

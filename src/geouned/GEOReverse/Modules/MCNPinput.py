@@ -23,7 +23,7 @@ from .Objects import (
 from .Parser import parser as mp
 from .remh import CellCardString, remove_hash, hash_sequence
 from .Objects import CadCell
-from ._geo_bridge import GVector
+from ...geo import GVector
 
 
 def _gvec(values) -> GVector:
