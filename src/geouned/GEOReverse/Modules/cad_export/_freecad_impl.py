@@ -1,13 +1,12 @@
 """
-GEOReverse/Modules/_freecad_impl.py
+GEOReverse/Modules/cad_export/_freecad_impl.py
 
 The FreeCAD-engine-specific implementation of CAD export -- mirrors the
 role `geo/_freecad_impl.py` plays for `geo` itself, and
-`geo_quadrics/_freecad_impl.py` for that package. `core.py::export_cad`
-is CAD-engine-independent and only ever calls `export_freecad` indirectly,
-through the `_EXPORTERS` dispatch table -- it never imports `FreeCAD`/
-`Import` itself. `_occ_impl.py` is this module's sibling for the pyOCC
-case (currently a stub -- see its own docstring for why).
+`geo_quadrics/_freecad_impl.py` for that package. `cad_export/__init__.py`
+resolves to this module (or `_occ_impl.py`) based on `CAD_ENGINE` --
+`core.py::export_cad` itself never imports `FreeCAD`/`Import`, or either
+of these two modules, directly.
 """
 
 import FreeCAD

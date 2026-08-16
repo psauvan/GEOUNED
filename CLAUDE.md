@@ -4750,6 +4750,47 @@ Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2),
 unaffected, confirming this was a pure import-path reshuffle with zero
 behavior change.
 
+### `core.py`'s own remaining asymmetry closed: `cad_export/` package,
+mirroring `geo_quadrics/` exactly
+
+User caught one more instance of the same problem: `core.py` still
+imported *both* `Modules/_freecad_impl.py` and `Modules/_occ_impl.py`
+(the export-side pair) unconditionally at module load time, with its own
+`_SUPPORTED_FORMATS`/`_EXPORTERS` dicts doing the `CAD_ENGINE` lookup at
+*call* time instead of at *import* time. Harmless today only because
+`_occ_impl.py` is a pure-Python stub with no `import OCC` of its own yet
+-- the moment it gets a real implementation (needs `import OCC.Core...`
+at module level, per that file's own docstring), `core.py` importing it
+unconditionally would crash on a FreeCAD-only machine, exactly the
+failure mode `geo/__init__.py`'s conditional-import dispatch already
+exists to avoid.
+
+Fix: moved `_freecad_impl.py`/`_occ_impl.py` into a new
+`GEOReverse/Modules/cad_export/` package with an `__init__.py` dispatcher
+-- byte-for-byte the same pattern as `geo_quadrics/__init__.py` (reads
+`CAD_ENGINE`, imports *only* the resolved module's `SUPPORTED_FORMATS`/
+`export_*`, re-exported under the generic name `export`). `core.py` now
+does `from .Modules.cad_export import SUPPORTED_FORMATS, export as
+export_cad_engine` and calls `export_cad_engine(...)` directly -- the
+`_SUPPORTED_FORMATS`/`_EXPORTERS` dicts are gone entirely, since the
+resolution already happened once, at import time, the same as every
+other engine-switch point in this project.
+
+Caught one real mistake while building this: `cad_export/__init__.py`'s
+own `from ...geo import CAD_ENGINE` (3 dots) was one level too shallow --
+`cad_export/` sits at the same depth as `geo_quadrics/`
+(`GEOReverse/Modules/cad_export/`), so it needs 4 dots
+(`from ....geo import CAD_ENGINE`) to match. Caught immediately by the
+same `import geouned`/`tests/test_csgtocad.py` smoke test this whole
+migration has leaned on throughout -- `CsgToCad` silently became `None`
+(the `try/except ImportError` guard in `geouned/__init__.py` swallowed
+the real `ModuleNotFoundError`), a good reminder that a "worked in
+isolation" module can still break the guarded top-level import in a way
+that only a real `import geouned` surfaces.
+
+Verified: `tests/geo` (106/106), `tests/test_csgtocad.py` (2/2, only
+after the depth fix), `tests/test_cadtocsg.py` (50/50).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

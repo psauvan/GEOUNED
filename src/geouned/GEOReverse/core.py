@@ -9,22 +9,7 @@ from .Modules.Objects import CadCell
 from .Modules.MCNPinput import McnpInput
 from .Modules.XMLinput import XmlInput
 from ..geo import CAD_ENGINE
-from .Modules._freecad_impl import SUPPORTED_FORMATS as _freecad_formats, export_freecad
-from .Modules._occ_impl import SUPPORTED_FORMATS as _occ_formats, export_occ
-
-# `export_cad` itself is CAD-engine-independent -- it never imports FreeCAD/
-# pyOCC directly, only dispatches through these two tables. A future third
-# engine would add its own sibling module (`_freecad_impl.py`/`_occ_impl.py`
-# pattern) and one entry in each dict here.
-_SUPPORTED_FORMATS = {
-    "freecad": _freecad_formats,
-    "occ": _occ_formats,
-}
-
-_EXPORTERS = {
-    "freecad": export_freecad,
-    "occ": export_occ,
-}
+from .Modules.cad_export import SUPPORTED_FORMATS, export as export_cad_engine
 
 
 class CsgToCad:
@@ -237,15 +222,11 @@ class CsgToCad:
         formats = [format] if isinstance(format, str) else list(format)
         formats = [f.lower().lstrip(".") for f in formats]
 
-        supported = _SUPPORTED_FORMATS.get(CAD_ENGINE)
-        if supported is None:
-            raise ValueError(f"Unknown CAD engine '{CAD_ENGINE}'")
-
-        unsupported = [f for f in formats if f not in supported]
+        unsupported = [f for f in formats if f not in SUPPORTED_FORMATS]
         if unsupported:
             raise ValueError(
                 f"format(s) {unsupported} are not supported by the '{CAD_ENGINE}' CAD engine. "
-                f"Supported formats: {sorted(supported)}"
+                f"Supported formats: {sorted(SUPPORTED_FORMATS)}"
             )
 
         if output_filename == "":
@@ -261,4 +242,4 @@ class CsgToCad:
         else:
             barename = fullname
 
-        _EXPORTERS[CAD_ENGINE](self.buildCAD_list, formats, output_filename, barename)
+        export_cad_engine(self.buildCAD_list, formats, output_filename, barename)
