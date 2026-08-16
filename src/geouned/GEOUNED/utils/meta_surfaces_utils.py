@@ -887,7 +887,30 @@ def adjust_range(U0, U1):
 
 #   Check if to faces are joint
 def contiguous_face(face1, face2, tolerances):
-    return face1.distToShape(face2)[0] < tolerances.distance
+    """True if face1 and face2 touch, tested via their boundary edges
+    rather than a full face-to-face distance/boolean query.
+
+    Both of same_faces()'s own callers (this function's only caller)
+    already restrict `Faces` to fragments of one single analytic surface
+    (is_same_surface-filtered) before ever reaching here -- non-overlapping
+    fragments of the same surface can only touch along their shared
+    boundary, never via interior tangency, so an edge-vs-edge test is a
+    sound characterization of "contiguous" for this specific use, even
+    though it would NOT be a valid general "do these two faces touch
+    anywhere" test.
+
+    Edge-to-edge distance (GEdge.my_distToshape, a BoundBox-prefiltered
+    curve-curve extrema query) replaces the previous whole-face
+    distToShape/boolean-common call -- found, via py-spy profiling on
+    hylife-v06.stp, to be the dominant cost of same_faces()'s O(n^2)
+    face-pair walk on real, large split-face groups (BRepAlgoAPI_Common
+    between two general trimmed surfaces is far more expensive than a
+    curve-curve query between their -- typically few -- boundary edges)."""
+    for e1 in face1.Edges:
+        for e2 in face2.Edges:
+            if e1.my_distToshape(e2) < tolerances.distance:
+                return True
+    return False
 
 
 def same_faces(Faces, tolerances):

@@ -746,6 +746,36 @@ class GEdge:
         u = proj.LowerDistanceParameter()
         return (first - tolerance) <= u <= (last + tolerance)
 
+    def distance_to(self, other: "GEdge") -> float:
+        """Minimum distance between this edge and `other` (0 if they
+        touch or overlap). Native curve-curve extrema query -- no
+        GVector equivalent, and much cheaper than a face-level boolean
+        since there's no surface/BOP algorithm involved."""
+        return BRepExtrema_DistShapeShape(self.__native__, other.__native__).Value()
+
+    def my_distToshape(self, other: "GEdge") -> float:
+        """BoundBox-prefilter fast path, mirroring GFace.my_distToshape's
+        shape -- but simpler: two 1D curves have no "interior"/volume to
+        intersect, so there's no boolean-common step here, only "boxes
+        overlap -> ask the real distance" or "boxes clearly separate ->
+        the (necessarily coarser, but sufficient for a tolerance
+        comparison) BoundBox-center distance," skipping the native call
+        entirely for pairs that are obviously far apart."""
+        shape1 = self.__native__
+        shape2 = other.__native__
+        box1 = _bnd_box(shape1)
+        box2 = _bnd_box(shape2)
+        intersect = (
+            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -1e-6
+            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -1e-6
+            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -1e-6
+        )
+        if intersect:
+            return self.distance_to(other)
+        c1 = GVector((box1.XMin + box1.XMax) / 2, (box1.YMin + box1.YMax) / 2, (box1.ZMin + box1.ZMax) / 2)
+        c2 = GVector((box2.XMin + box2.XMax) / 2, (box2.YMin + box2.YMax) / 2, (box2.ZMin + box2.ZMax) / 2)
+        return (c2 - c1).length
+
     def export_step(self, filename: str) -> None:
         _export_shapes_step([self.__native__], filename)
 

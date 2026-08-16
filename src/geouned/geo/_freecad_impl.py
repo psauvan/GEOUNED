@@ -650,6 +650,31 @@ class GEdge:
         """
         return self.__native__.isInside(to_native_vector(point), tolerance, True)
 
+    def distance_to(self, other: "GEdge") -> float:
+        """Minimum distance between this edge and `other` (0 if they
+        touch or overlap). Native curve-curve extrema query -- no
+        GVector equivalent, and much cheaper than a face-level boolean
+        since there's no surface/BOP algorithm involved."""
+        return self.__native__.distToShape(other.__native__)[0]
+
+    def my_distToshape(self, other: "GEdge") -> float:
+        """BoundBox-prefilter fast path, mirroring GFace.my_distToshape's
+        shape -- but simpler: two 1D curves have no "interior"/volume to
+        intersect, so there's no boolean-common step here, only "boxes
+        overlap -> ask the real distance" or "boxes clearly separate ->
+        the (necessarily coarser, but sufficient for a tolerance
+        comparison) BoundBox-center distance," skipping the native call
+        entirely for pairs that are obviously far apart."""
+        shape1 = self.__native__
+        shape2 = other.__native__
+        Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
+        intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
+        if intersect:
+            return self.distance_to(other)
+        c1 = shape1.BoundBox.Center
+        c2 = shape2.BoundBox.Center
+        return (c2 - c1).Length
+
     def export_step(self, filename: str) -> None:
         Part.makeCompound([self.__native__]).exportStep(filename)
 
