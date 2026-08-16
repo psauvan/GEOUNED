@@ -5329,6 +5329,243 @@ isolated and fixed; picking the full-model run back up (with `minVoidSize=100`
 per the user's own instruction for future runs, not the `20` used in
 earlier attempts) is the natural next step.
 
+## A third `geo` engine: OCP (pybind11), added alongside FreeCAD and
+pythonocc-core -- not a replacement
+
+Direct follow-up to the `_to_gvector`/binding-overhead investigation
+above. Once the root cause (pythonocc-core's SWIG bindings costing more
+per native call than FreeCAD's own hand-written convenience layer, or
+than a pybind11-based binding) was confirmed and OCP was benchmarked as
+faster than pythonocc-core on every operation tested -- see that
+section's own comparison table -- the user made the call directly: yes,
+port to OCP, but **do not delete or overwrite the existing pythonocc-core
+implementation.** `geo` already runs FreeCAD and pythonocc-core side by
+side with zero incompatibility (`GEOUNED_CAD_ENGINE=freecad`/`"occ"`);
+OCP becomes a third, equally independent option --
+`GEOUNED_CAD_ENGINE=ocp` -- not a replacement for `"occ"`. Per the
+user's own framing: pythonocc-core stays as **legacy** for now (kept,
+not actively re-verified going forward as part of this or future work,
+unless/until a later session decides it's genuinely no longer needed).
+
+This was planned before implementation (`EnterPlanMode`, given the
+scope -- a ~1600-line file to port plus a smaller GEOReverse one), after
+2 Explore-agent passes cataloged every `OCC.Core` import and method call
+across both `_occ_impl.py` files (confirmed: those two files are the
+*only* places in the whole codebase that import `OCC.Core` at all --
+everything else already goes through `geouned.geo`'s engine-agnostic
+dispatch) and a `ocpenv` conda environment
+(`python=3.12 ocp`, same OCCT 7.9.3 as `pyoccenv`) was created for live
+verification.
+
+### Phase 1: a real go/no-go validation before committing to the full port
+
+Mirrored this whole migration's own original Phase-1 discipline
+("prove the riskiest algorithm works on a real hard case before writing
+1600 lines against a new binding"): re-derived `rev_pipe.stp`'s real
+base solid + an actual solid-splitting tool (a `RoundCorner` candidate
+surface, found by running `generic_split`'s real candidate-surface loop
+under FreeCAD and exporting the first one that genuinely produced a
+2-piece split -- not the specific `MultiRoundCorner` case referenced in
+this file's much earlier Phase-1 notes, which no longer reproduces
+identically after this session's many intervening fixes; volumes
+459117.14 + 53220.47 = 512337.61 is the new FreeCAD ground truth for
+this exact base/tool pair), then ran `BOPAlgo_Splitter` directly against
+it under OCP.
+
+**First attempt looked like a real failure, and wasn't one.** A minimal,
+from-scratch `BOPAlgo_Splitter` script (not going through `geo` at all)
+gave only 1 piece (53220 -- the smaller half only), marked invalid, with
+real `BOPAlgo_AlertAcquiredSelfIntersection`/`AlertSolidBuilderUnusedFaces`
+warnings. Ran the *identical* minimal script against pythonocc-core too
+(same OCCT 7.9.3) -- **byte-identical wrong result** -- which correctly
+redirected the investigation away from "is OCP broken" and onto "what is
+my minimal script missing that the real `Gsplit` does." Two real gaps,
+found by diffing against `Gsplit`'s actual source rather than guessing:
+(1) the minimal script called `SetFuzzyValue(0.0)` unconditionally, while
+real `Gsplit` only calls it `if tolerance:` -- turned out NOT to be the
+fix (still wrong with the guard added) but worth noting since it looked
+plausible; (2) the real fix: `Gload_step` heals every loaded solid
+(`.fix(1e-6)`, this exact session's own earlier finding), and the
+minimal script's own `load_solids()` skipped that entirely. Adding the
+same `ShapeUpgrade_UnifySameDomain`+`ShapeFix_Shape` healing before the
+split fixed it completely: 2 pieces, 459117.21 + 53220.47 = 512337.68,
+matching FreeCAD to ~0.01%. Confirmed again through the real `Gsplit`
+function once ported (not just the minimal script) -- identical result,
+0.018s. **Lesson reinforced, not new**: always verify against the real,
+already-working code path, not a hand-rolled reproduction that looks
+equivalent -- this project has hit this exact trap before (`gen_plane_cone`
+earlier this same session, `placa3`'s stale-outp artifact, others) and
+will again.
+
+### Phase 2: the full port, `geo/_ocp_impl.py`
+
+Built as a close structural copy of `_occ_impl.py`, mechanically
+retargeted to `OCP.*`, verified live (never guessed) against a series of
+small scripts in `ocpenv` before writing the real file. Concrete,
+confirmed API differences from pythonocc-core, all load-bearing and
+documented in the new file's own module docstring:
+- **The `_s`-suffix pattern is real but not universal.** OCP suffixes
+  *static/namespace-style utility* methods with `_s`
+  (`BRepGProp.SurfaceProperties_s`, `BRepTools.UVBounds_s`,
+  `BRep_Tool.Pnt_s`/`.Range_s`/`.Curve_s`/`.Surface_s`/`.IsClosed_s`/
+  `.Triangulation_s`, `TopExp.Vertices_s`/`.MapShapesAndAncestors_s`,
+  `BRepBndLib.Add_s`/`.AddOptimal_s`, `XCAFApp_Application.GetApplication_s`,
+  `XCAFDoc_DocumentTool.ShapeTool_s`/`.ColorTool_s`,
+  `XCAFDoc_ShapeTool.IsReference_s`/`.GetReferredShape_s`/`.IsAssembly_s`/
+  `.GetComponents_s`/`.IsSimpleShape_s`/`.GetShape_s`) -- but `TopoDS`'s
+  shape-casting methods (`TopoDS.Face(x)`/`.Edge(x)`/`.Solid(x)`/etc) are
+  *not* suffixed, matching pythonocc-core's own `topods.Face(x)` shape
+  exactly, and `XCAFDoc_ShapeTool.GetFreeShapes` is *not* suffixed either
+  despite being right next to several that are -- every individual call
+  site had to be checked live (`dir(Class)`, then a real call), a blanket
+  find-replace would have been wrong in both directions.
+- **`BRep_Tool.Curve_s(edge, first, last)` does NOT return `(curve,
+  first, last)` as one tuple** the way pythonocc-core's `BRep_Tool.Curve(edge)`
+  does -- confirmed live that the `first`/`last` positional arguments are
+  required but their *values* are discarded (passing `0.0, 0.0`
+  placeholders is safe and returns the real curve). `first`/`last` must
+  be read via a separate `BRep_Tool.Range_s(edge)` call, which *does*
+  return a clean `(first, last)` tuple on its own. Restored the original
+  3-tuple convenience as one new helper, `_edge_curve_and_range()`, so
+  every call site that used to do
+  `curve_and_range = BRep_Tool.Curve(edge)` needed only that one
+  function swapped in, not individual rewrites.
+- **No `.DownCast()` in OCP at all** (`Geom_BSplineCurve.DownCast(curve)`
+  in the pythonocc-core version) -- confirmed live that pybind11 already
+  returns the most-derived Python type directly (a curve that really is
+  a `Geom_BSplineCurve` comes back typed as one), unlike SWIG, which
+  always returns the statically-declared C++ return type and needs an
+  explicit downcast. Every `DownCast` call became just using the value
+  directly.
+- **`TopExp.Vertices_s(edge, v1, v2)` and `BRep_Tool.Triangulation_s(face,
+  loc)` DO mutate their output-parameter objects in place** (pass a
+  freshly-constructed `TopoDS_Vertex()`/`TopLoc_Location()`, read it back
+  after the call) -- the opposite convention from `Curve_s` above, so
+  this had to be checked per-function too, not assumed consistent.
+- **`ShapeUpgrade_UnifySameDomain`'s constructor argument order is
+  swapped**: OCP is `(aShape, UnifyEdges, UnifyFaces, ConcatBSplines)`
+  vs pythonocc-core's `(shape, unify_faces, unify_edges,
+  concat_bsplines)`. Both real call sites (`GSolid.fix`, `.refine`) pass
+  all-`True` either way (harmless today) but were ported with explicit
+  keyword arguments so this can never silently break if that ever
+  changes.
+- **`kernel_version()` reads `OCP.__version__`**, not `OCC.VERSION` (OCP
+  has no top-level `VERSION` attribute) -- confirmed `7.9.3.1`.
+
+**Result: `tests/geo/test_ocp_impl.py` (a new file, copied from
+`test_occ_impl.py` with only the engine name/import-guard changed) --
+39/39 on the very first run, zero fixes needed.**
+
+### Phase 3: the full `tests/test_cadtocsg.py` corpus surfaced the one
+real gap -- `Gload_step_labels`'s XCAF walk
+
+The 50-file corpus failed universally at first (`Load.load_cad` calls
+`Gload_step_labels` unconditionally, matching this project's own
+earlier-documented finding for pythonocc-core's port) -- but the *whole*
+gap turned out to be confined to that one function's XCAF-specific API
+calls, fixed one live traceback at a time, each a `_s`-suffix or
+string-type correction from the list above:
+`XCAFApp_Application.GetApplication_s()`; `TDocStd_Document`/
+`app.NewDocument(...)` both need a real `TCollection_ExtendedString`,
+not a plain Python `str` (confirmed the opposite of GEOReverse's own
+`_occ_impl.py`-documented pythonocc-core quirk, which wanted a plain
+`str` and rejected a pre-built `TCollection_ExtendedString` -- the two
+bindings disagree in opposite directions on this exact call, so neither
+convention could have been assumed from the other); **`TDF_Label` has no
+`GetLabelName()` convenience method in OCP at all** (a pythonocc-core-only
+addon, not standard OCCT) -- replaced with the real standard pattern,
+finding the `TDataStd_Name` attribute directly
+(`label.FindAttribute(TDataStd_Name.GetID_s(), name_attr)`) and reading
+`name_attr.Get().ToExtString()` (confirmed live: pybind11 converts the
+`TCollection_ExtendedString` result to a real Python `str`); the 6
+`shape_tool.*` XCAF walk methods (`IsReference`/`GetReferredShape`/
+`IsAssembly`/`GetComponents`/`IsSimpleShape`/`GetShape`) all needed the
+`_s` suffix. **Result: 50/50 on the second full run**, after fixing only
+that one function.
+
+### Phase 4: `GEOReverse/Modules/_ocp_impl.py`
+
+Same structural-copy-then-retarget approach, applied to the smaller
+XCAF-export module (`_material_colors`/`_extended_color`/palette logic
+carried over byte-for-byte unchanged -- pure Python, no native calls).
+Applied every `_s`-suffix/`TCollection_ExtendedString` correction already
+confirmed in Phase 3 up front, rather than rediscovering them one at a
+time again. `tests/test_csgtocad.py` needed **zero changes at all**
+(already fully engine-agnostic, dispatching off `CAD_ENGINE` generically)
+-- but hit the *same* MKL/LAPACK `numpy.linalg.eigh` crash this file's
+own "MCNP stochastic volume check" section already documented and fixed
+for `pyoccenv`, this time in the freshly-created `ocpenv` (same root
+cause: MKL-linked LAPACK conflicting with `occt`/`tbb` in-process;
+identical fix: `conda install -n ocpenv -c conda-forge
+--override-channels libblas=*=*openblas liblapack=*=*openblas
+libcblas=*=*openblas`). **Result: 2/2 on the first run after the BLAS
+fix**, zero code changes needed in `_ocp_impl.py` itself (the
+instance-method calls on `shape_tool`/`color_tool` -- `NewShape`/
+`AddComponent`/`AddShape`/`UpdateAssemblies`/`SetColor` -- turned out not
+to need the `_s` suffix, correctly guessed by analogy with the
+already-confirmed "instance methods don't get suffixed" pattern rather
+than re-verified individually first).
+
+### Dispatch: `geo/__init__.py` and `GEOReverse/Modules/__init__.py`
+
+Both gained a third `elif _engine == "ocp": from ._ocp_impl import
+(...)` branch, same 40/8-name import lists as the `"occ"` branch,
+inserted between the existing `"occ"` branch and the FreeCAD `else` --
+default engine is still `"freecad"` when `GEOUNED_CAD_ENGINE` is unset,
+`"ocp"` is a new explicit opt-in exactly like `"occ"` already was.
+`geo/__init__.py`'s own module docstring (previously stale -- it still
+described `_occ_impl.py` as "a Phase 1 validation slice... not yet
+suitable for real use", long out of date by this point in the project's
+history) was corrected at the same time to describe all three engines
+accurately and note `"ocp"` as the now-recommended choice for new
+pyOCC-backed work.
+
+### Final verification
+
+`tests/geo/test_ocp_impl.py` 39/39, `tests/test_cadtocsg.py` 50/50,
+`tests/test_csgtocad.py` 2/2 -- all under `GEOUNED_CAD_ENGINE=ocp` in
+`ocpenv`. Re-ran every other engine's own suite too, confirming the
+addition is purely additive: `tests/geo` 156/156 + `tests/test_cadtocsg.py`
+50/50 under the default FreeCAD engine (2 skips now, one more than
+before -- the new `test_ocp_impl.py` correctly self-skipping in a
+FreeCAD-resolved process, matching `test_occ_impl.py`'s own established
+pattern, not a regression); `tests/geo/test_occ_impl.py` 39/39 +
+`tests/test_cadtocsg.py` 50/50 still passing under `GEOUNED_CAD_ENGINE=occ`
+in `pyoccenv`, confirmed byte-for-byte untouched
+(`git diff src/geouned/geo/_occ_impl.py
+src/geouned/GEOReverse/Modules/_occ_impl.py` empty throughout).
+
+**The headline number, reported honestly**: hylife-v06.stp solid 17, the
+case that originally motivated this whole investigation -- FreeCAD 2.3s,
+pythonocc-core 19.2s, **OCP 18.4s**. OCP is *not* a dramatic win here
+(~4% faster than pythonocc-core, nowhere near the 2-6x gap the isolated
+`_to_gvector`/point-conversion micro-benchmarks showed) -- consistent
+with the earlier flamegraph finding that this solid's cost is spread
+broadly across many different operation types (`Gsplit`, `get_surfaces`,
+`GSolid`/`GFace`/`GEdge` construction, `makeCan`/`build_surface`,
+`remove_solids`), not dominated by point/vector conversion alone, so a
+faster binding for *that one specific operation* doesn't translate into
+a proportional whole-pipeline speedup. OCP was still worth adding --
+strictly faster or equal on every isolated benchmark, a real (if modest)
+win here, and a technically cleaner/more actively-maintained binding
+than SWIG going forward -- but the numbers don't support "OCP solves the
+performance gap" as a claim. Closing the remaining ~8x gap to FreeCAD, if
+that's ever pursued further, needs a different lever than the binding
+swap alone (see the "reduce the number of calls" / lazy-evaluation
+avenues discussed earlier in this same investigation).
+
+### Environment: `ocpenv`
+
+`C:\Users\Patrick\Apps\Conda\envs\ocpenv\python.exe` -- created this
+session (`conda create -n ocpenv -c conda-forge --override-channels
+python=3.12 ocp`, matching `pyoccenv`'s own OCCT 7.9.3). Same
+PowerShell-not-Bash invocation gotcha as `pyoccenv` (untested whether
+Bash fails identically here, but no reason to expect otherwise -- used
+PowerShell throughout from the start this time). Needed the same
+post-creation dependency installs `pyoccenv` also needed
+(`tqdm`, `pytest`, plus an editable `pip install -e . --no-deps` of
+`geouned` itself) and the identical MKL-to-OpenBLAS fix documented above.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
