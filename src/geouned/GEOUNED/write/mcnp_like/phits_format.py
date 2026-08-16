@@ -158,9 +158,7 @@ $  |  ____ |______ |     | ___ |     | | \  | |______ |     \
 $  |_____| |______ |_____|     |_____| |  \_| |______ |_____/
 $ Version : {}
 $ {} Version : {}
-$ PHITSFormat Version :  0.0.2.3     06/03/2024\n""".format(
-            self.Title, version("geouned"), engine_label(), kernel_version_str
-        )
+$ PHITSFormat Version :  0.0.2.3     06/03/2024\n""".format(self.Title, version("geouned"), engine_label(), kernel_version_str)
 
         Information = f"""$
 $ *************************************************************

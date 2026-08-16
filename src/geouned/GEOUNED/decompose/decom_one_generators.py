@@ -29,7 +29,7 @@ def generic_split(solid, options, tolerances, loop=0):
     omitfaces = set()
 
     for surf in get_surfaces(solid, omitfaces, tolerances):
-        surf.build_surface(bbox, forward=False)
+        surf.build_surface(bbox, forward=True)
         try:
             result = Gsplit(
                 solid,

@@ -496,7 +496,7 @@ def build_can_params(cs):
     cylOnly.bVar = BoolVariable(sid)
     gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
-    return (gcyl, bsurf[0], bsurf[1])
+    return (gcyl, bsurf[0], bsurf[1], cyl.Orientation)
 
 
 def build_tcone_params(ks):
