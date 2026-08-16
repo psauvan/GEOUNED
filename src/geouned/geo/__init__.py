@@ -7,16 +7,18 @@ outside this package (and, symmetrically, never `import OCC`/`OCP`
 outside this package either).
 
 The geometry engine is chosen once, here, via the GEOUNED_CAD_ENGINE
-environment variable ("freecad", the default; "occ" for pythonocc-core;
-"ocp" for OCP) -- read at import time because this module is reached
-well before any Settings/CadToCsg object could exist (see CLAUDE.md's
-pyOCC migration section for the full import-chain trace). All three are
-complete, production implementations. "occ" (pythonocc-core, SWIG-based)
-is kept for backward compatibility; "ocp" (pybind11-based, the binding
-CadQuery/build123d use) is the recommended choice for new pyOCC-backed
-work -- a live benchmark found pythonocc-core's SWIG bindings cost
-measurably more per native call than OCP's (see CLAUDE.md's OCP
-evaluation section).
+environment variable ("freecad", the default; "occ" for pythonocc-core,
+SWIG-based; "ocp" for OCP, pybind11-based, the binding CadQuery/build123d
+use) -- read at import time because this module is reached well before
+any Settings/CadToCsg object could exist (see CLAUDE.md's pyOCC
+migration section for the full import-chain trace). All three are
+complete, production implementations, developed **in parallel** -- "occ"
+is not legacy/deprecated relative to "ocp": both are actively
+maintained, a fix found in one pyOCC backend should be ported to the
+other too (see CLAUDE.md's OCP-evaluation section for why: the two cost
+about the same in practice once engine-aware defaults like
+Options.splitTolerance are set correctly, and it's plausible either one
+ends up handling some future case better than the other).
 """
 
 import os

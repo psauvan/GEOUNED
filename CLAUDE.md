@@ -5342,10 +5342,26 @@ port to OCP, but **do not delete or overwrite the existing pythonocc-core
 implementation.** `geo` already runs FreeCAD and pythonocc-core side by
 side with zero incompatibility (`GEOUNED_CAD_ENGINE=freecad`/`"occ"`);
 OCP becomes a third, equally independent option --
-`GEOUNED_CAD_ENGINE=ocp` -- not a replacement for `"occ"`. Per the
-user's own framing: pythonocc-core stays as **legacy** for now (kept,
-not actively re-verified going forward as part of this or future work,
-unless/until a later session decides it's genuinely no longer needed).
+`GEOUNED_CAD_ENGINE=ocp` -- not a replacement for `"occ"`.
+
+**Status update, same session, after the `splitTolerance` fix below**:
+pythonocc-core was initially kept as "legacy" (not actively
+re-verified going forward). That framing is now retired -- once the
+`splitTolerance` fix put `occ` and `ocp` within ~4% of each other
+(1.23s vs 1.18s on the hylife-v06.stp solid-17 case, both now *faster*
+than FreeCAD's 2.06s), the user's own call was to develop **both in
+parallel going forward**, not treat one as primary: they're both fully
+implemented already, cost about the same today, and it's plausible one
+will end up handling some future case better than the other (matching
+this session's own experience -- OCP consistently won or tied on raw
+micro-benchmarks, but the real hylife bottleneck turned out to be
+identical on both, an engine-independent tolerance default). Practical
+effect: bug fixes and improvements found in one pyOCC-family backend
+(e.g. the `GEdge` double-`_linear_props`-call fix below) should be
+ported to the other too, not left as a `_occ_impl.py`-only or
+`_ocp_impl.py`-only fix -- both `tests/geo/test_occ_impl.py` and
+`tests/geo/test_ocp_impl.py` remain live, both-must-pass suites, not
+one primary and one best-effort.
 
 This was planned before implementation (`EnterPlanMode`, given the
 scope -- a ~1600-line file to port plus a smaller GEOReverse one), after
