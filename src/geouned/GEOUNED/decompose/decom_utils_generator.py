@@ -345,6 +345,13 @@ def omit_isolated_planes(Faces, omitfaces):
             continue
         if not isinstance(f.Surface, GPlane):
             continue
+        if f.OuterWire is None:
+            # a face whose only wire(s) are degenerate (zero-length/
+            # edgeless) has no meaningful outer boundary to walk --
+            # pick_outer_wire() returns None for this case rather than
+            # crashing; nothing useful can be inferred about isolation
+            # from such a face, so skip it.
+            continue
 
         for e in f.OuterWire.Edges:
             adjacent_face = other_face_edge(e, f, Faces)
