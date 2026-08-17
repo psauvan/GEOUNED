@@ -118,7 +118,6 @@ from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Pnt, gp_Pnt2d, gp_Trsf, gp
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeFix import ShapeFix_Shape
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
-from OCP.StdFail import StdFail_NotDone
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_SOLID, TopAbs_VERTEX
 from OCP.TopExp import TopExp, TopExp_Explorer
@@ -1168,11 +1167,22 @@ class GSolid:
         way until checked.
 
         A second, distinct failure mode of the same underlying fragility
-        -- unify.Build() outright raising StdFail_NotDone rather than
-        hanging or silently mis-refining -- was hit on real geometry in
-        hylife-v06.stp (a >300-solid real model) under this engine.
-        Caught and treated the same way as the volume-mismatch case:
-        fall back to the untouched original shape."""
+        -- unify.Build() outright raising rather than hanging or silently
+        mis-refining -- was hit on real geometry in hylife-v06.stp (a
+        >300-solid real model) under this engine as StdFail_NotDone, and
+        separately on SCDR_90.stp (Solidos/BadCAD_decomposition -- a
+        long-documented, pre-existing tangency/non-manifold case, see
+        CLAUDE.md's own extensive history on this file) as a plain
+        OCP.Standard.Standard_Failure ("Courbes non jointives") --
+        confirmed live that StdFail_NotDone is NOT a Python subclass of
+        Standard_Failure in OCP's bindings (issubclass() is False despite
+        the C++ inheritance), so catching only one does not catch the
+        other. OCCT can raise any number of Standard_* failure subtypes
+        for a genuinely malformed unify attempt; caught broadly here
+        (matching the sibling occ/freecad implementations' own equally
+        broad catches for this exact function) and treated the same way
+        as the volume-mismatch case: fall back to the untouched original
+        shape."""
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
@@ -1181,7 +1191,7 @@ class GSolid:
             unify.Build()
             refined = unify.Shape()
             refined_volume = _volume_props(refined).Mass()
-        except StdFail_NotDone:
+        except Exception:
             return GSolid(native)
         if abs(refined_volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
             return GSolid(native)
