@@ -391,6 +391,36 @@ def is_same_cone_surface(cone_1, cone_2) -> bool:
     return abs(cone_1.Axis.dot(cone_2.Axis)) >= 0.99999
 
 
+def is_coaxial_cone_pair(
+    cone_1, cone_2, angle_tol: float = 1e-6, axis_dot_tol: float = 1e-5, apex_line_tol: float = 1e-5
+) -> bool:
+    """True when two cones share the same axis *line* (their axis vectors
+    may be parallel or anti-parallel -- direction is not constrained) and
+    the same `SemiAngle`, but sit at *different* apexes along that line.
+
+    This is the exact "two coaxial cones pointing toward or away from each
+    other" configuration whose analytic intersection degenerates into a
+    single circle instead of a generic space curve, which is what makes it
+    a hard case for a general quadric-quadric BOP solver (see `Gsplit`'s
+    coaxial-cone fallback in `_occ_impl.py`/`_ocp_impl.py`).
+
+    The complement of `is_same_cone_surface` (which additionally requires
+    a matching apex *and* matching axis direction, i.e. literally the same
+    infinite cone): this predicate explicitly requires the apex to differ
+    and tolerates either axis direction along the shared line.
+    """
+    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > angle_tol:
+        return False
+    if abs(cone_1.Axis.dot(cone_2.Axis)) < 1.0 - axis_dot_tol:
+        return False
+    apex_offset = cone_2.Apex - cone_1.Apex
+    if apex_offset.length < apex_line_tol:
+        return False  # same apex -> the same cone entirely, not a pair
+    along = apex_offset.dot(cone_1.Axis)
+    radial = (apex_offset - cone_1.Axis * along).length
+    return radial < apex_line_tol
+
+
 def is_same_sphere_surface(sphere_1, sphere_2) -> bool:
     """Direct port of the former `SphereGu.isSameSurface`, same fixed tolerance."""
     if abs(sphere_1.Radius - sphere_2.Radius) > 1e-5:
