@@ -1133,7 +1133,7 @@ class MetaSurfacesDict(dict):
                 p = self.get_primitive_surface(pid)
                 if is_opposite(cp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
-            plane_region = BoolSurface.add(plane_region, BoolSurface(0, pid))
+            plane_region = BoolSurface.mult(plane_region, BoolSurface(0, pid))
 
         reversedCC_region = reversedCC_region * plane_region
 

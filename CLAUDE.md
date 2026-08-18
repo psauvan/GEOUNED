@@ -5691,6 +5691,272 @@ tuned/swept beyond the single confirmed-good point on this one case
 value closer to the transition, or a larger one for more headroom, was
 not explored.
 
+## `SCDR_90_piece0_badvolume.stp`: the original motivating tangency bug,
+reproduced fresh on a minimal fixture, pyOCC confirmed NOT to fix it,
+and a promising-but-unfinished analytic-reconstruction lead
+
+Direct follow-up to the `SCDR_90.stp` investigation earlier in this
+file (the section ending "...the same class of bug the eventual pyOCC
+migration is meant to address"). User's own question, now that `geo`
+has 3 real, working engines: does `Gsplit` under `occ`/`ocp` actually
+solve this specific, already-identified tangency case, or not?
+
+**Reproduction**: `Solidos/BadCAD_decomposition/SCDR_90_piece0_badvolume.stp`
+(98886.17 mm^3) -- already-decomposed piece from the earlier investigation.
+`generic_split`'s first real candidate that should cut it is a `ConeOnly`
+surface (candidate #5 in call order, after 2 `Can`-adjacent planes fail
+harmlessly). Traced with the same `Gsplit`-wrapping instrumentation used
+throughout this file: **`Gsplit` returns exactly 1 solid, volume
+unchanged, under FreeCAD AND under `ocp` (`BOPAlgo_Splitter`, OCCT
+7.9.3)** -- identical failure on both engines. This directly answers the
+question: swapping to pyOCC's own splitter does **not**, by itself, fix
+this class of case. `degenerate_case_handled=False` in both -- `Gsplit`
+doesn't even recognize this as an ambiguous/retry-worthy split; it
+returns a confident, wrong answer.
+
+**Root cause, confirmed precisely** (not assumed): the cutting cone tool
+is geometrically **identical** to a real face already on the solid's own
+boundary -- faces 1 and 2 of the base solid are literal fragments of the
+exact same infinite cone (same Axis, Apex distance 0.000000, SemiAngle
+diff 0.000000) the tool is built from. `Gcommon(solid, [tool])` reports
+the *entire* solid volume as common (98886.17, matching base exactly);
+`Gcut(solid, [tool])` reports 0. Both are wrong: a 5000-point Monte Carlo
+sample of real material (`base.is_inside`) against the tool's own
+`is_inside()` found 64/1397 real-material points (4.6%) genuinely
+**outside** the tool -- a direct, real contradiction with `Gcommon`'s
+"fully contained" claim. This is the same failure mode as the original
+`SCDR_90.stp` finding (`Gcommon`/`Gcut` on the *whole* model, not this
+isolated piece) but now reproduced on a minimal, single-solid fixture
+and confirmed identical under a fresh OCCT major version (7.9.3 vs
+FreeCAD's bundled 7.8.1) -- so this is not an OCCT-version-specific bug,
+it's inherent to how BOP kernels of this whole generation handle an
+exactly-coincident cutting surface.
+
+**A second, genuinely new piece of the puzzle, from the user's own
+manual FreeCAD-GUI investigation**: attempting the same cut interactively
+in FreeCAD, the kernel *can* compute the intersection curve between the
+cutting cone and every ordinary planar face bounding the solid, but
+*cannot* compute the intersection curve between the cutting cone and
+**a different real cone face** also on the solid's boundary -- the face
+produced by the *earlier* decomposition step that created this exact
+piece in the first place (a coaxial "symmetric cone" cut, not repeated
+in this investigation but baked into this fixture's own geometry).
+Confirmed by inspecting the solid's own faces: a second cone family
+exists (apex Y=-4.4997..., vs. the cutting tool's own apex Y=104.4997),
+sharing the *exact same axis line* and, critically, the **same SemiAngle**
+(0.785398163397 rad = 45 deg exactly) as the cutting cone, just pointing
+in the opposite axial direction. Two coaxial cones with equal half-angle
+pointing toward each other have an intersection that is NOT a generically
+hard freeform curve -- it is a single, exact circle (elementary
+trigonometry: for apex-to-apex axial distance D and shared semi-angle
+theta, the crossing radius is D/2, at the axial midpoint between the two
+apexes). Computed directly for this case: center at the axial midpoint
+(Y=49.9997, matching the axis exactly), radius 54.5. This is very
+plausibly *the specific curve OCCT's own general surface-surface
+intersection algorithm is failing to resolve numerically* -- an
+analytically exact case that a general numerical BOP solver can still
+stumble on when the two input surfaces are this exactly coincident/
+symmetric, matching this whole file's running theme (exact coincidence,
+not near-miss, is what breaks these algorithms).
+
+**First reconstruction attempt (bypassing OCCT's boolean engine via face
+partitioning) failed -- superseded, see below.** Added `Gmake_solid(shell)
+-> GSolid | None` to all 3 `geo` backends this session (`Part.makeSolid` /
+`BRepBuilderAPI_MakeSolid`, mirroring the already-existing `Gmake_shell`).
+Classifying each of the solid's own faces into an "inside the tool"/
+"outside the tool" group (probing off each face via `GFace.normal_at` +
+tiny offset, with a tessellation-sampled fallback since **this solid's
+own center of mass is itself outside its material** -- confirmed
+genuinely non-convex/non-star-shaped, so a centroid-direction fallback is
+unsafe here) and capping each group with the shared coincident cone
+face(s) worked for classification, but the resulting solids came out
+**invalid** (one with negative volume -- an orientation/sewing mistake).
+Paused at this point in an earlier pass of this session; picked back up
+and resolved differently, described next.
+
+### Resolution: closed-form circle + a single well-conditioned face
+pre-split, retried through the *ordinary* BOP splitter
+
+The user's own question reframed the fix: rather than reconstructing the
+whole cut face and sewing two full solids by hand (the failed attempt
+above), what if only the *one* genuinely degenerate piece -- the circular
+arc where the tool's cone crosses the other, coaxial cone -- gets
+resolved analytically, and everything else is left to OCCT's own,
+already-working machinery?
+
+Recipe, verified end-to-end in scratchpad before being ported to
+production:
+1. The circle is exact and closed-form: center = midpoint of the two
+   cones' apexes, radius = half their distance, axis = the shared axis
+   (already established above).
+2. The circle's real, *bounded* arc (not the full 360 degrees) is found
+   generically -- not by guessing a fixed face/edge topology -- by
+   picking any one point on the theoretical circle, reading its own V
+   parameter on the second cone's real surface (`ShapeAnalysis_Surface.
+   ValueOfUV`), then walking that face's outer-wire edges and bisecting
+   for where each edge's own V crosses that same value. This works for
+   any edge curve type (line, circle, BSpline...) and needs no assumption
+   about how many boundary edges the face has -- confirmed against this
+   fixture's real geometry to sub-micron agreement with the earlier
+   hand-picked reference points.
+3. **The key simplification, found by testing the idea directly rather
+   than assuming it wouldn't work**: instead of building the whole new
+   cut face and re-trimming every neighboring face by hand, split *only*
+   the second cone's own face at this one arc (`BRepAlgoAPI_Splitter`,
+   ordinary and well-conditioned -- no degenerate curve needs discovering
+   here, the arc is already known), rebuild `base` as a new solid with
+   that one face replaced by its two pieces (`Gmake_shell`/`Gmake_solid`),
+   and retry the *plain* `BOPAlgo_Splitter` on this presplit solid against
+   the *original, unperturbed* tool. Once the arc already exists as real
+   topology, the tool no longer needs to discover it via the degenerate
+   solver, and the ordinary 3D split succeeds on its own -- confirmed:
+   2 valid solids, volumes summing to the original to ~2e-7 relative
+   precision, with zero perturbation of the tool at all.
+
+Two real gotchas, both load-bearing for the production port: (a) an edge
+built directly in a surface's own (U,V) parameter space needs
+`BRepLib.BuildCurve3d_s(edge)` (`breplib.BuildCurve3d(edge)` under
+pythonocc-core) forced before being used as a splitting tool -- otherwise
+`BRepAlgoAPI_Splitter` crashes the *process* natively (exit code 5, no
+Python traceback), not a catchable exception; (b) an edge lying on two
+different surfaces (both cones, here) needs a *separate* edge instance
+built with its own pcurve for each surface it's tested against -- the
+same 3D edge built for one surface's parametrization is invalid on the
+other.
+
+**Also tried and confirmed unhelpful, ruling out the two obvious
+alternatives before committing to this approach**: `GeomAPI_IntSS`
+called directly on the two cone surfaces (bypassing `BOPAlgo_Splitter`'s
+own internal dispatch) "succeeds" (`IsDone=True`) but silently returns a
+*wrong* curve -- confined to a single meridian plane, oscillating between
+the two apexes, touching the real circle only at 2 isolated points --
+confirming the degeneracy is inherent to the coaxial-equal-angle
+configuration itself, not specific to which OCCT routine is asked to
+resolve it. Patching OCCT's own C++ solver was explicitly ruled out of
+scope (would mean maintaining a permanent OCCT fork).
+
+### Ported to production: `Gsplit`'s coaxial-cone fallback
+
+Added to `geo/_occ_impl.py` and `geo/_ocp_impl.py` (FreeCAD not
+attempted -- no equivalent for the raw `Geom2d_Line`/`ShapeAnalysis_
+Surface.ValueOfUV`/`BRepLib.BuildCurve3d_s` calls this needs; left as
+documented future work). New pure-math predicate
+`vector_geometry.is_coaxial_cone_pair(cone1, cone2, ...)` -- same axis
+*line* (parallel or anti-parallel direction both count, per a real
+correction from the user: this fixture's own tool/other-cone axes point
+in opposite directions) and same `|SemiAngle|`, but a *different* apex
+(the complement of the already-existing `is_same_cone_surface`, which
+requires matching apex and axis direction both).
+
+Per explicit user redesign (the initial version tried the generic BOP
+split first and only fell back to this on a suspicious "1 unchanged
+solid" result): `Gsplit` now checks *up front* whether `tool` has a cone
+face at all (`_find_cone_face`, a cheap loop, true for only a small
+fraction of real calls) -- if so, `_try_coaxial_cone_split` is tried
+*before* the generic path, avoiding wastefully running `BOPAlgo_Splitter`
+once on geometry already known to defeat it and then again after the
+presplit fix. `_try_coaxial_cone_split` groups `base`'s own cone faces by
+`is_coaxial_cone_pair`-candidacy (further grouped by shared exact
+surface, since a solid can have the "other cone" split into several
+fragments by an earlier cut), and for each candidate runs the recipe
+above. Finding a coaxial-cone pair is a **candidate, not a guarantee** --
+confirmed by the user with a real counterexample (the first cut of the
+un-decomposed `SCDR_90.stp` has this kind of coincidental, irrelevant
+match elsewhere in the model, where the generic split already works
+fine) -- so every step that doesn't pan out (not exactly 2 arc crossings,
+the face doesn't actually split, the presplit solid doesn't rebuild
+validly, or the retried split doesn't produce a volume-conserving
+multi-solid result within `1e-6 * max(|base.Volume|, 1.0)`, matching
+`GSolid.refine()`'s own existing tolerance) falls through silently to
+today's unchanged-solid behavior -- this fix can only ever help or be a
+no-op, never make an already-working case worse.
+
+Verified: `tests/geo` (156/156 FreeCAD, 39/39 occ, 39/39 ocp) and
+`tests/test_cadtocsg.py` (50/50 under all 3 engines); a 100-file
+`Solidos/` corpus differential scan (excluding `Big_model_reserved`) --
+**only the 2 targeted files change** (`SCDR_90_piece0_badvolume.stp`
+1->2 pieces, `SCDR_90_piece1_badvolume.stp` 1->2 pieces; the full,
+un-decomposed `SCDR_90.stp` itself goes from 5 to 7 pieces as a direct
+consequence), every other file byte-for-byte identical including the 2
+already-known-broken files (`Chapuza_mal_construido/origSolid_45.stp`,
+`trier/ConeSphere.stp`, both fail identically before/after); a real MCNP
+stochastic volume check (`volSDEF=True`, via d1suned) on both fixed
+pieces in isolation: `piece0` 0.28 sigma, `piece1` 1.35 sigma -- clean.
+
+### `SCDR_90_piece4_lost_particles.stp`: a second, unrelated, real bug
+found by isolating d1suned per decomposed piece of the full `SCDR_90.stp`
+
+With the coaxial-cone fix landed, decomposing the *full* `SCDR_90.stp`
+(now 7 pieces, was 5) and running the MCNP stochastic volume check
+end-to-end hit d1suned's lost-particle abort (10 lost, "no cell found in
+subroutine newcel") within the first ~500 histories, at any requested
+NPS -- confirmed, by running the *pre-fix* 5-piece version through the
+identical check, that this lost-particle gap is **pre-existing and
+unrelated to the coaxial-cone fix**: both the 5-piece and 7-piece
+versions lose exactly 10 particles at nearly identical history numbers.
+
+Per the user's own direction ("haz un chequeo uno por uno de cada
+componente"), isolated each of the 7 decomposed pieces individually
+(`meta_list = [GeounedSolid(0, [piece])]`, skipping `decompose_solids()`,
+the same technique used throughout this file's history) and ran d1suned
+on each: 6 of 7 clean (0 lost particles, 0.04-1.6 sigma), and **piece4**
+(the largest, Volume=132923.39) reproduced the exact symptom in
+isolation (10 lost particles). Exported as
+`Solidos/lost_particles/SCDR_90_piece4_lost_particles.stp`.
+
+**Root cause, found by inspecting piece4's own written boolean
+definition directly** (`geo.Surfaces["RevCC"]`, `.Surf.PlaneSeq`/
+`.AddPlanes`): piece4's CSG is `many_AND_planes AND multiplane AND
+(reversed_cone AND (plane2 OR plane4 OR plane5))` -- a
+`ReversedConeCylinder` (RevCC) whose one cone segment closes against 3
+"additional" boundary planes. Of the 3, `plane4` is synthetic (no
+matching real face on the solid -- confirmed by tolerance-matching every
+candidate plane's Axis/Position against piece4's own faces; the other 2
+*do* match real faces). Per the user's direct correction, mid-
+investigation, of two side-hypotheses that turned out to be red herrings
+(the plane's own sign/position, and a `check_sign` dispatch gap for
+`"ReversedConeCylinder"` -- real, confirmed, but not the cause: RevCC
+never cuts anything during decomposition, so `check_sign` never needing
+to classify one is by design, not an oversight): 20000-point Monte Carlo
+sampling of piece4's real geometry (`is_inside()`) against the written
+expression showed the OR-combination of the 3 additional planes produces
+45 false positives (points wrongly classified as material) out of ~19960
+relevant samples; switching that single OR to AND (per the user's exact
+instruction: "la combinación del RevCC con el plano tiene que ser AND")
+eliminated all 45, at the cost of 6 new false negatives (99.78% ->
+99.97% match) -- a real, substantial improvement, confirmed empirically
+before being applied, not guessed.
+
+**Fix**: `MetaSurfacesDict.add_reversedCC` (`geouned_classes.py`) -- the
+loop building `plane_region` from `reversedCC.Surf.AddPlanes` used
+`BoolSurface.add` (OR) unconditionally; changed to `BoolSurface.mult`
+(AND), one line. `PlaneSeq`'s own existing Forward/Reversed AND-vs-OR
+logic (`build_RCC_params`) is untouched -- this was specifically about
+`AddPlanes` always defaulting to OR regardless of the group's own
+orientation.
+
+Verified: piece4 in isolation, d1suned, 0 lost particles (was 10), tally
+0.99507 +/- 0.30% (1.65 sigma, was un-measurable -- aborted before any
+useful statistics). Full `tests/geo` + `tests/test_cadtocsg.py`, all 3
+engines, green. A second 100-file `Solidos/` corpus differential scan --
+**zero count differences anywhere** (this fix only changes AND/OR
+*structure*, invisible to a composite-surface-count scan); the one
+already-broken file (`modelCell_670000.stp`) merely flips which failure
+mode it hits first (timeout vs. Python recursion limit), still broken
+either way, not a new regression.
+
+**Closing verification**: the full, un-decomposed `SCDR_90.stp` (both
+fixes applied), MCNP stochastic volume check, 1e8 histories: **zero lost
+particles** (previously aborted every attempt within ~500 histories) and
+a tally of 0.999346 +/- 0.02% (**~3.3 sigma** -- right at this project's
+own >3-sigma "real failure" threshold, but a night-and-day change from
+the original, long-documented 35-sigma failure at 0.91941 -- volume
+accuracy went from ~92% to ~99.93% of the true CAD volume). Whatever
+tiny residual this represents is a plausible candidate for a future
+session, but the two real, confirmed bugs behind the original failure
+(the coaxial-cone `Gsplit` degeneracy and the RevCC `AddPlanes` OR/AND
+bug) are both fixed and verified.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
