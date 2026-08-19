@@ -1099,15 +1099,34 @@ class GSolid:
         return BRepCheck_Analyzer(self.__native__).IsValid()
 
     def fix(self, tolerance: float) -> "GSolid":
-        unify = ShapeUpgrade_UnifySameDomain(self.__native__, True, True, True)
-        unify.Build()
-        shape = unify.Shape()
-        if not BRepCheck_Analyzer(shape).IsValid():
-            fixer = ShapeFix_Shape(BRepBuilderAPI_Copy(shape).Shape())
-            fixer.SetPrecision(tolerance)
-            fixer.Perform()
-            shape = fixer.Shape()
-        return GSolid(shape)
+        # UnifyEdges is only attempted when the input is already known-valid
+        # -- on an already-invalid solid it's a confirmed native crash/hang
+        # risk (see remove_solids._refine_if_valid's docstring for the real
+        # reproduction), not just a wasted simplification pass. ShapeFix_Shape
+        # is the actual repair step either way.
+        #
+        # UnifyEdges' own *output* can itself be invalid even when its input
+        # was valid (confirmed live, 2026-08-19, rev_pipe.stp's raw loaded
+        # solid: BRepCheck_Analyzer says valid=True going in, valid=False
+        # coming out of UnifyEdges alone) -- so the fallback ShapeFix_Shape
+        # repair below must run on the original, untouched `native`, never on
+        # UnifyEdges' own (possibly corrupted) result. An earlier version of
+        # this method reassigned `native` to UnifyEdges' output before this
+        # check, so the fallback repair silently worked on already-broken
+        # input and could never recover -- confirmed empirically: ShapeFix_
+        # Shape on the corrupted UnifyEdges output stayed invalid, while the
+        # identical call on the original raw solid came back valid.
+        native = self.__native__
+        if BRepCheck_Analyzer(native).IsValid():
+            unify = ShapeUpgrade_UnifySameDomain(native, True, True, True)
+            unify.Build()
+            unified = unify.Shape()
+            if BRepCheck_Analyzer(unified).IsValid():
+                return GSolid(unified)
+        fixer = ShapeFix_Shape(BRepBuilderAPI_Copy(native).Shape())
+        fixer.SetPrecision(tolerance)
+        fixer.Perform()
+        return GSolid(fixer.Shape())
 
     def reverse(self) -> "GSolid":
         return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape().Reversed())
