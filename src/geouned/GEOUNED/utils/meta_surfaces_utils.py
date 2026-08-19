@@ -1153,6 +1153,17 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     r1, r2, nt1, nc1, nc2 = sample(u1, u2b)
     if (r2 - r1).length < 1e-7:
         r1, r2, nt1, nc1, nc2 = sample(u1b, u2)
+        if (r2 - r1).length < 1e-7:
+            # Both boundary pairings land on (effectively) the same point --
+            # not the "split cylinder, shared seam" case the retry above
+            # targets (that always has a real, non-degenerate far end on
+            # *some* pairing). Confirmed via a real reproduction
+            # (Solidos/Big_one_cell/modelcell_cut1_1.stp and _2.stp): here
+            # ep1 and ep2 resolve to the exact same cylinder piece
+            # (cyl1 is cyl2), so there is no genuine second reference point
+            # to derive a corner direction from at all -- this isn't a
+            # valid round corner to classify, not a numerically-unlucky one.
+            return None
 
     if nc1.dot(r1 - cyl1_center) < 0:
         nc1 = -nc1
@@ -1160,7 +1171,15 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
         nc2 = -nc2
 
     ac1 = nt1.cross(nc1)
-    nd = ac1.cross(r2 - r1).normalized()
+    cross = ac1.cross(r2 - r1)
+    if cross.length < 1e-7:
+        # r1 != r2 but (r2 - r1) is parallel to the cylinder's own axis --
+        # a different degeneracy than the coincident-point case above
+        # (confirmed reachable on the same reproduction, via the retry
+        # branch), equally fatal for deriving a corner direction: there is
+        # no meaningful "which way around the cylinder" here either.
+        return None
+    nd = cross.normalized()
 
     u1 = (r1 - e1.Vertexes[0]).normalized()
     u2 = (r2 - e1.Vertexes[0]).normalized()

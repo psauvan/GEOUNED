@@ -290,6 +290,8 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     # computations (commonEdge/most_outer_faces against the original face,
     # only the closure/adjacency search itself uses the merged shell).
     configuration = cyl_plane_region_conf(cylinder, ep1, ep2)
+    if configuration is None:
+        return None, None
     # check if not degenerated round corner
     # if degenerated discard it
     AND_cyl_p1 = configuration & mask.p1_cyl == mask.p1_cyl
