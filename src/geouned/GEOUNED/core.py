@@ -276,6 +276,7 @@ class CadToCsg:
         filename: typing.Union[str, typing.Sequence[str]],
         skip_solids: typing.Sequence[int] = [],
         spline_surfaces: str = "stop",
+        invalid_solids: str = "remove",
     ):
         """
         Load STEP file(s) and extract solid volumes and enclosure volumes.
@@ -285,6 +286,9 @@ class CadToCsg:
             skip_solids (Sequence[int], optional): A sequence (list or tuple) of indexes of solids to not load for conversion.
             spline_surfaces (str): Behavior of the code if solids with spline surface are considered: 'stop' execution, 'remove' solid,
                                    'ignore' solid is included for translation (may lead to translation errors)
+            invalid_solids (str): Behavior of the code for solids that are topologically invalid (BRepCheck_Analyzer) right after
+                                   loading, once a repair attempt has failed to fix them: 'stop' execution, 'remove' solid,
+                                   'ignore' solid is included for translation as-is (may lead to translation errors)
         Returns:
             tuple: A tuple containing the solid volumes list and enclosure volumes list extracted from the STEP files.
         """
@@ -308,6 +312,11 @@ class CadToCsg:
         if spline_surfaces.lower() not in ("stop", "remove", "ignore"):
             raise TypeError(f'available values for spline_surfaces are: "stop", "remove" or "ignore" ')
 
+        if not isinstance(invalid_solids, str):
+            raise TypeError(f"invalid_solids should be a str, not a {type(invalid_solids)}")
+        if invalid_solids.lower() not in ("stop", "remove", "ignore"):
+            raise TypeError(f'available values for invalid_solids are: "stop", "remove" or "ignore" ')
+
         self.filename = filename
         self.skip_solids = skip_solids
 
@@ -324,7 +333,7 @@ class CadToCsg:
         EnclosureChunk = []
         for step_file in tqdm(step_files, desc="Loading CAD files"):
             logger.info(f"read step file : {step_file}")
-            Meta, Enclosure = Load.load_cad(step_file, spline_surfaces, self.settings, self.options)
+            Meta, Enclosure = Load.load_cad(step_file, spline_surfaces, self.settings, self.options, invalid_solids)
             MetaChunk.append(Meta)
             EnclosureChunk.append(Enclosure)
         self.meta_list = join_meta_lists(MetaChunk)

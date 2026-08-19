@@ -28,7 +28,7 @@ def extract_materials(filename):
     return m_dict
 
 
-def load_cad(filename, spline_surf, settings, options):
+def load_cad(filename, spline_surf, settings, options, invalid_solids="remove"):
 
     if settings.matFile != "":
         if os.path.exists(settings.matFile):
@@ -42,14 +42,44 @@ def load_cad(filename, spline_surf, settings, options):
     Solids = Gload_step(filename)
     meta_list = []
     spline_solids = []
+    bad_solids = []
     loop = spline_surf.lower() in ("remove", "stop")
+    loop_invalid = invalid_solids.lower() in ("remove", "stop")
     for i, s in enumerate(Solids):
+        # Same integrity check GEOUNED already applies for spline surfaces,
+        # but for topological validity: a solid that's still invalid right
+        # after loading (Gload_step's own load-time healing already tried
+        # and failed, or -- for the FreeCAD backend, which doesn't call
+        # fix() at load -- never got a repair attempt at all) is exactly
+        # the class of geometry that silently corrupts later Gsplit/BOP
+        # operations. A second, explicit repair attempt here is cheap (runs
+        # once per solid, right at load) and, unlike repairing mid-
+        # decomposition on intermediate BOP fragments (tried and reverted
+        # earlier this session after it reproduced a stack overflow), is
+        # safe: GSolid.fix() only risks the native UnifyEdges crash path
+        # when its OWN input is valid, which by construction it isn't here.
+        if not s.is_valid():
+            repaired = s.fix(1e-6)
+            if repaired.is_valid():
+                s = repaired
+            else:
+                bad_solids.append(str(i))
+                if loop_invalid:
+                    meta_list.append(LF.GeounedSolid(i + 1))
+                    continue
         if LF.spline(s):
             spline_solids.append(str(i))
             if loop:
                 meta_list.append(LF.GeounedSolid(i + 1))
                 continue
         meta_list.append(GeounedSolid(i + 1, s))
+
+    if len(bad_solids) > 0:
+        print("following solids are topologically invalid and could not be repaired:")
+        print(", ".join(bad_solids))
+        if invalid_solids.lower() == "stop":
+            print("invalid solids found. Exit.")
+            exit()
 
     if len(spline_solids) > 0:
         print("following solids have Spline surfaces:")
