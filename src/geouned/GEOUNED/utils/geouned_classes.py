@@ -39,7 +39,18 @@ from .build_shape_functions import (
     makeMultiRoundCorner,
 )
 from .basic_functions_part1 import is_parallel, is_opposite
-from ...geo import GBoundBox, GSolid, GVector, Gfirst_shell, Gmake_compound, Gmake_sphere, Gmake_torus, to_gboundbox
+from ...geo import (
+    GBoundBox,
+    GSolid,
+    GVector,
+    Gcommon,
+    Gdistance,
+    Gfirst_shell,
+    Gmake_compound,
+    Gmake_sphere,
+    Gmake_torus,
+    to_gboundbox,
+)
 
 
 def _empty_boundbox():
@@ -169,28 +180,27 @@ class GeounedSolid:
                   0 self.CADSolid intersect solid ;
                   1 self.CADSolid and solid fully disjoint"""
 
-        dist = 1e12
-        for sol1 in self.CADSolid.Solids:
-            for sol2 in solid.Solids:
-                try:
-                    distShape = sol1.distToShape(sol2)[0]
-                except:
-                    logger.info("Failed solid1.distToshape(solid2), try with inverted solids")
-                    distShape = sol2.distToShape(sol1)[0]
-                    logger.info(f"inverted disToShape OK {distShape}")
-                dist = min(dist, distShape)
-                if dist == 0:
-                    break
+        # self.CADSolid/solid are both native shapes (set_cad_solid() stores
+        # gcompound.__native__ deliberately, since callers elsewhere need a
+        # real native shape too) -- wrap once here rather than calling
+        # native-only conveniences (.Solids/.distToShape/.common/.Volume)
+        # directly, since only FreeCAD's own Part.Shape has those; OCC/OCP's
+        # native TopoDS_Compound has none of them. Gdistance already finds
+        # the true minimum distance between two arbitrary (possibly
+        # multi-solid) shapes on its own, so the manual per-sub-solid
+        # nested-loop distToShape scan below is no longer needed either.
+        g1 = GSolid(self.CADSolid)
+        g2 = GSolid(solid)
 
-        if dist > dtolerance:
+        if Gdistance(g1, g2) > dtolerance:
             return 1
 
-        common = self.CADSolid.common(solid)
-        if abs(common.Volume) < vtolerance:
+        common_volume = sum(c.Volume for c in Gcommon(g1, [g2]))
+        if abs(common_volume) < vtolerance:
             return 1
-        if abs(self.CADSolid.Volume - common.Volume) / common.Volume < vtolerance:
+        if abs(g1.Volume - common_volume) / common_volume < vtolerance:
             return -1
-        elif abs(solid.Volume - common.Volume) / common.Volume < vtolerance:
+        elif abs(g2.Volume - common_volume) / common_volume < vtolerance:
             return -2
         else:
             return 0
