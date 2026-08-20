@@ -502,9 +502,11 @@ class MultiRoundCornerParams:
 
 class ReversedConeCylParams:
     def __init__(self, params):
-        self.CylCones = params[0]
-        self.PlaneSeq = params[1]
-        self.AddPlanes = params[2]
+        # params is a plain list of Tier-2 "Cylinder"/"Cone" GeounedSurface
+        # objects, each already bundling its own additional plane (and, for
+        # a Cone, its own ApexPlane) -- see MetaSurfacesDict.add_reversedCC
+        # for how these combine into the RevCC's boolean region.
+        self.CylCones = params
 
 
 class SphereParams:

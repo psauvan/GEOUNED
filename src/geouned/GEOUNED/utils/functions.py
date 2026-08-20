@@ -280,57 +280,24 @@ def build_roundC_params(rc_list):
 
 
 def build_RCC_params(rc):
+    # Each chain segment (cylinder or cone) becomes a Tier-2 "Cylinder"/
+    # "Cone" GeounedSurface, bundling its own additional plane directly
+    # (and, for a cone, its own ApexPlane) -- MetaSurfacesDict.add_reversedCC
+    # reads these straight off each element to build the RevCC's boolean
+    # region (n=1: AND[s,p]; n>1: AND[OR[all p_i], AND(OR[s_i,-p_i])]),
+    # so no separate plane-grouping/orientation bookkeeping is needed here
+    # any more.
     cylcones = []
-    group_planes = []
-    add_planes = []
     for cc in rc:
         if cc.Type == "Cylinder":
-            gcylcone, plane, addP = cc.Params
+            cylOnly, plane, addP = cc.Params
+            gcylcone = GeounedSurface(("Cylinder", (cylOnly, plane)))
         else:
             cone, apexPlane, plane, addP = cc.Params
-            gcylcone = GeounedSurface(("Cone", (cone, apexPlane, None), "Reversed"))
-
-        add_planes.extend(addP)
-        group_planes.append(plane)
+            gcylcone = GeounedSurface(("Cone", (cone, apexPlane, plane)))
         cylcones.append(gcylcone)
 
-    # The group's own boundary/junction planes all lie roughly in a common
-    # plane (the joined cylinders/cones have nearly-parallel axes, by
-    # construction -- see get_reversed_cone_cylinder). Whether they combine
-    # via AND or OR is decided once for the whole group: material is a
-    # concave (OR) or convex (AND) corner depending on whether the planes'
-    # own normals point outward from, or inward toward, the group's own
-    # centroid -- exactly what convex_planes already computes for
-    # RoundCorner/MultiRoundCorner. Previously this was decided
-    # incrementally per connection, comparing each face's own UV-parameter
-    # traversal direction against the neighboring plane's axis -- not a
-    # geometrically invariant reference, so otherwise-identical instances
-    # of the same feature (e.g. repeated at different angular positions
-    # around the same model) could get inconsistent operators.
-    if len(group_planes) == 1:
-        planeSeq = group_planes
-    else:
-        # cylcones[0].Surf can be a Tier-1 CylinderOnlyParams/ConeOnlyParams
-        # (.Axis directly) or a Tier-2 CylinderParams/ConeParams (basic
-        # surface + bounding plane(s), wrapping its own primitive one level
-        # down as a further GeounedSurface, e.g. .Cone -- itself needing
-        # .Surf.Axis, not .Axis) -- which shape depends on how `cc.Params`
-        # unpacked above, not reliably on cc.Type's exact string, so walk
-        # down (.Cylinder/.Cone, unwrapping a nested GeounedSurface via
-        # .Surf each time) until a direct .Axis is found.
-        seed = cylcones[0].Surf
-        while not hasattr(seed, "Axis"):
-            seed = seed.Cylinder if hasattr(seed, "Cylinder") else seed.Cone
-            if type(seed).__name__ == "GeounedSurface":
-                seed = seed.Surf
-        axis = seed.Axis
-        convex, orientation = convex_planes(group_planes, axis)
-        if not convex:
-            logger.info("ReversedConeCylinder: plane group is not convex/concave as expected")
-        planeSeq = [group_planes] if orientation == "Forward" else group_planes
-
-    params = (cylcones, planeSeq, add_planes)
-    return params
+    return cylcones
 
 
 def _closing_plane(cyl, edges, kind, secondary):
@@ -629,6 +596,39 @@ def get_additional_corner_plane(ep1, ep2):
     # here) instead of on the sliver's own near-zero-area geometry, which
     # can have an arbitrary/wrong normal from its own degenerate
     # triangulation.
+    #
+    # NOTE 2026-08-19: two rewrites were tried here and both reverted, kept
+    # as a record so they aren't retried blindly:
+    #  1) an axis-based construction (supporting-plane normal taken from the
+    #     anchor's own contour, via 2 parallel straight edges or the
+    #     contour's inertia-tensor principal axis) -- caused a confirmed
+    #     infinite-recursion regression on cylBox.stp.
+    #  2) a "coplanar with e1/e2" construction (e1/e2 being the touching
+    #     edges where p1/p2 meet the cylinder -- real generatrix lines, so
+    #     parallel to each other; normal = cross(shared_direction,
+    #     connecting_vector), closed-form, no sampling) -- this one *did*
+    #     fix cylBox.stp and origSolid_0.stp, but caused a different,
+    #     confirmed infinite-recursion regression elsewhere in
+    #     Solidos/Big_one_cell/modelcell_cut1.stp's own decomposition tree
+    #     (a "CylinderOnly" candidate stuck at a constant volume across
+    #     960+ recursion levels) -- i.e. it changes which candidate
+    #     surfaces succeed/fail deep in the decomposition tree for OTHER,
+    #     unrelated corners in the same solid, not just the corner it's
+    #     computed for.
+    # Both attempts were motivated by a real, confirmed-wrong plane on
+    # modelcell_cut1.stp piece 66 (v1/v2 averaging pulled in an unrelated
+    # third face's own material direction, per direct user diagnosis) --
+    # that problem is still open. Direct numeric testing (sampling the wire
+    # and checking axis.dot(point - sample) for both candidates) confirmed
+    # BOTH the axis-based and the v1+v2 direction are valid supporting
+    # planes of the wire (no sample crosses to the negative side for
+    # either) -- i.e. "rests on the contour, nothing crosses it" does not
+    # uniquely determine the correct plane. Fixing piece 66 needs either a
+    # sharper criterion that provably can't perturb an unrelated corner's
+    # own candidate search elsewhere in the same solid, or a targeted fix
+    # to piece 66's own ep1/ep2 selection (which edge/face
+    # get_adjacent_cylplane picks) rather than a blanket formula change --
+    # not resumed yet.
     anchor1, cyl_edge1, e1, near1, plane1 = ep1
     anchor2, cyl_edge2, e2, near2, plane2 = ep2
 

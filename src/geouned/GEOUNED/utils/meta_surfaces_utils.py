@@ -611,11 +611,28 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
             du = d
             emax = e
 
-    adjacent1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces)
-    adjacent2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces)
+    # skip_slivers=True: a residual near-zero-area sliver face bridging the
+    # cylinder/cone's own Umin/Umax boundary to its real neighboring plane
+    # (confirmed live, Solidos/Big_one_cell/modelcell_cut1.stp piece 66) must
+    # not be treated as the real adjacent plane itself -- same class of fix
+    # already applied to multiplane()/eligible_plane(). The 3-tuple result
+    # additionally gives touching_edge: the real edge where the far face
+    # actually touches the sliver, used below (not the cylinder/cone's own
+    # Umin/Umax boundary point) to position the additional plane whenever a
+    # sliver was actually skipped -- see gen_plane_cylinder/gen_plane_cone's
+    # own comment for why mixing V1/V2 (the cylinder's real boundary, i.e.
+    # where it touches the *sliver*) with a normal read from the far face
+    # would put the additional plane at a position inconsistent with its
+    # own direction.
+    result1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces, skip_slivers=True)
+    result2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces, skip_slivers=True)
+    touching_edge1, near_face1, adjacent1 = result1 if result1 is not None else (None, None, None)
+    touching_edge2, near_face2, adjacent2 = result2 if result2 is not None else (None, None, None)
 
     normal1 = None
     normal2 = None
+    add_pos1 = None
+    add_pos2 = None
     new_adjacent1 = []
     new_adjacent2 = []
 
@@ -633,6 +650,8 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
                 # (Solidos/BadCAD_decomposition/series_solid2_complement.stp)
                 # failing this exact term.
                 normal1 = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
+                if near_face1.Index != GUFaces[ifacemin].Index:
+                    add_pos1 = 0.5 * (touching_edge1.Vertexes[0] + touching_edge1.Vertexes[-1])
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
@@ -641,10 +660,14 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
         elif multiplanes:
             if isinstance(adjacent2.Surface, GPlane):
                 normal2 = -adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else adjacent2.Surface.Axis
+                if near_face2.Index != GUFaces[ifacemax].Index:
+                    add_pos2 = 0.5 * (touching_edge2.Vertexes[0] + touching_edge2.Vertexes[-1])
 
     if type(face.Surface) is GCylinder:
         cylOnly = gen_cylinder(face)
-        cylcone_plane, add_planes = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
+        cylcone_plane, add_planes = gen_plane_cylinder(
+            ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2, add_pos1, add_pos2
+        )
 
         facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, add_planes))
         facein.Surf_index.update(sameface_index)
@@ -653,7 +676,9 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     else:
         coneOnly = gen_cone(face)
         apexPlane = cone_apex_plane(face, Tolerances())
-        cylcone_plane, add_planes = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2)
+        cylcone_plane, add_planes = gen_plane_cone(
+            ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2, add_pos1, add_pos2
+        )
 
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))
         facein.Surf_index.update(sameface_index)
@@ -667,7 +692,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None):
+def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None, add_pos1=None, add_pos2=None):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -728,13 +753,24 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
 
+    # add_pos1/add_pos2 (the touching_edge midpoint between a skipped sliver
+    # and the real face normal1/normal2 was read from) override V1/V2 only
+    # for the additional planes below, never for `plane` above -- V1/V2 are
+    # the cylinder's own real boundary point (where it touches the sliver,
+    # not the far face), so reusing them for an additional plane whose
+    # normal comes from the far face would mix position and direction from
+    # two different physical locations. See get_join_cone_cyl's own comment
+    # for the full account (found live, Solidos/Big_one_cell/
+    # modelcell_cut1.stp piece 66).
     add_planes = []
     if normal1:
-        plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
+        pos1 = add_pos1 if add_pos1 is not None else V1
+        plane1 = GeounedSurface(("Plane", (pos1, normal1, 1, 1)))
         add_planes.append(plane1)
 
     if normal2:
-        plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
+        pos2 = add_pos2 if add_pos2 is not None else V2
+        plane2 = GeounedSurface(("Plane", (pos2, normal2, 1, 1)))
         add_planes.append(plane2)
 
     return plane, add_planes
@@ -742,7 +778,7 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None):
+def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None, add_pos1=None, add_pos2=None):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -815,13 +851,18 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     plane = GeounedSurface(("Plane", (apex, normal, 1, 1)))
 
+    # See gen_plane_cylinder's identical comment -- add_pos1/add_pos2
+    # override V1/V2 only for the additional planes, never for `plane`
+    # (which is positioned at apex here anyway, not V1/V2).
     add_planes = []
     if normal1:
-        plane1 = GeounedSurface(("Plane", (V1, normal1, 1, 1)))
+        pos1 = add_pos1 if add_pos1 is not None else V1
+        plane1 = GeounedSurface(("Plane", (pos1, normal1, 1, 1)))
         add_planes.append(plane1)
 
     if normal2:
-        plane2 = GeounedSurface(("Plane", (V2, normal2, 1, 1)))
+        pos2 = add_pos2 if add_pos2 is not None else V2
+        plane2 = GeounedSurface(("Plane", (pos2, normal2, 1, 1)))
         add_planes.append(plane2)
 
     return plane, add_planes
@@ -989,6 +1030,17 @@ def most_outer_faces(cyl, faces):
 
 def eligible_plane(plane):
     """An eligible master plane is a plane where the adjacent concave planes make a convex shape"""
+    if plane.Area < Tolerances().min_area:
+        # A residual near-zero-area sliver face (left over from a boolean
+        # cut that grazed tangentially, same class of artifact
+        # other_face_edge's skip_slivers mode already treats as
+        # transparent elsewhere) is never a real plane of the solid --
+        # confirmed live on Solidos/Big_one_cell/modelcell_cut1.stp's
+        # piece 36, whose real 5-plane boundary was being read as 6
+        # planes because a 0.0021-area sliver kept qualifying as its own
+        # multiplane() master, producing a spurious MultiPlane grouping.
+        return False
+
     Edges = plane.OuterWire.Edges
 
     Vertexes = []

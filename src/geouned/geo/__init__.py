@@ -7,23 +7,25 @@ outside this package (and, symmetrically, never `import OCC`/`OCP`
 outside this package either).
 
 The geometry engine is chosen once, here, via the GEOUNED_CAD_ENGINE
-environment variable ("freecad", the default; "occ" for pythonocc-core,
-SWIG-based; "ocp" for OCP, pybind11-based, the binding CadQuery/build123d
-use) -- read at import time because this module is reached well before
-any Settings/CadToCsg object could exist (see CLAUDE.md's pyOCC
-migration section for the full import-chain trace). All three are
-complete, production implementations, developed **in parallel** -- "occ"
-is not legacy/deprecated relative to "ocp": both are actively
-maintained, a fix found in one pyOCC backend should be ported to the
-other too (see CLAUDE.md's OCP-evaluation section for why: the two cost
-about the same in practice once engine-aware defaults like
-Options.splitTolerance are set correctly, and it's plausible either one
-ends up handling some future case better than the other).
+environment variable ("ocp", the default -- pybind11-based, the binding
+CadQuery/build123d use; "occ" for pythonocc-core, SWIG-based; "freecad"
+for the original Part-API backend) -- read at import time because this
+module is reached well before any Settings/CadToCsg object could exist
+(see CLAUDE.md's pyOCC migration section for the full import-chain
+trace). All three are complete, production implementations, developed
+**in parallel** -- "occ"/"freecad" are not legacy/deprecated relative to
+"ocp": all three are actively maintained, a fix found in one backend
+should be ported to the others too. The default moved from "freecad" to
+"ocp" once real-world use confirmed cases where FreeCAD's own bundled
+OCCT (7.8.1) silently fails to split a solid (the project's original
+motivating tangency bug) where OCP's newer OCCT (7.9.3) succeeds --
+"freecad" remains a fully supported, explicit opt-in for anyone who
+needs it (e.g. GEOReverse's own .FCStd export).
 """
 
 import os
 
-_engine = os.environ.get("GEOUNED_CAD_ENGINE", "freecad").strip().lower()
+_engine = os.environ.get("GEOUNED_CAD_ENGINE", "ocp").strip().lower()
 
 CAD_ENGINE = _engine
 """Public name for the resolved engine ("freecad", "occ", or "ocp") --

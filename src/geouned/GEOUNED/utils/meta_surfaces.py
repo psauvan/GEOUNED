@@ -46,8 +46,18 @@ def multiplane(master_plane, planes, plane_index):
         if type(type_curve) is not GLine:
             continue
 
-        adjacent_plane = other_face_edge(e, master_plane, planes, outer_only=True)
-        if adjacent_plane is not None:
+        # skip_slivers=True: a residual near-zero-area sliver face bridging
+        # master_plane to its real neighbor (confirmed live on
+        # Solidos/Big_one_cell/modelcell_cut1.stp's piece 36 -- a genuine
+        # 5-real-plane solid where one sliver, Area=0.0021, was being read
+        # as a 6th "plane" with a material-pointing normal that doesn't
+        # actually point into real material) must not be treated as the
+        # real adjacent plane itself: walk across it to the real face
+        # beyond, matching get_adjacent_cylplane/get_adjacent_cylknesurfFace's
+        # own established use of this same parameter.
+        result = other_face_edge(e, master_plane, planes, outer_only=True, skip_slivers=True)
+        if result is not None:
+            _, _, adjacent_plane = result
             if adjacent_plane.Index in plane_index:
                 continue
             sign = region_sign(master_plane, adjacent_plane)

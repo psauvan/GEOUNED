@@ -238,8 +238,12 @@ def spline_wires(edges, face, pc=None):
 
 
 def get_axis_inertia(mat: GMatrix):
+    # The inertia tensor is always symmetric -- eigh (not eig) both avoids
+    # the complex-dtype/ComplexWarning noise eig produces on a matrix it
+    # doesn't know is symmetric, and is the numerically appropriate solver
+    # for this case.
     inertialMat = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
-    eigval, evect = numpy.linalg.eig(inertialMat)
+    eigval, evect = numpy.linalg.eigh(inertialMat)
     principal = evect.T[numpy.argmax(eigval)]
 
     return GVector(float(principal[0]), float(principal[1]), float(principal[2]))
