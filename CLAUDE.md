@@ -6196,6 +6196,135 @@ needs extending to MultiRoundCorner too -- not yet started; a memory note
 (`project_mrc_adjacent_multiplane_pending.md`) tracks this for the next
 session.
 
+### Open-items audit, 2026-08-21: compiled from the file's full history, then
+re-verified point by point against the current code/live runs
+
+User request, right after the RevCC chain-continuation fixes above: compile
+every "not yet done"/"deferred"/"still open" item scattered across this
+file's entire history into one list, then -- per explicit user pushback
+("creo que hay cosas que ya hemos solucionado") -- actually re-check each
+one against the current codebase or a live run rather than trusting the
+(often stale) prose each item was originally written under. Several turned
+out to already be fixed, silently, as a side effect of later unrelated
+work; one turned out to be only partially fixed; none were made worse.
+This section is the authoritative status as of this date -- prefer it over
+any single older section's own "not yet done" framing above.
+
+**Confirmed fixed (contradicts earlier "not yet done" text in this
+file)**:
+- **`SCDR_90.stp`'s `UnifyEdges` crash** (flagged repeatedly through the
+  pyOCC migration Phase 4 section and later) -- re-ran directly under
+  `ocp`: decomposes and translates cleanly (`RevCC:4`), no crash. Likely
+  fixed as a side effect of the coaxial-cone `Gsplit` fallback or one of
+  the many later `meta_surfaces_utils.py` changes; not root-caused to a
+  specific commit, just confirmed no longer reproducing.
+- **`Solidos/Enclosures/w_encl.stp`'s 10 lost particles** -- re-ran
+  end-to-end (convert + d1suned, `volSDEF=True`, full void generation):
+  **0 lost particles**, full 1,000,000-history run, tally `0.9994 +/-
+  0.18%`. Was previously the one file in a 111-file batch with any lost
+  particles at all (see the "MCNP stochastic volume check" section far
+  above) -- now clean.
+- **`Gcommon`'s multi-tool bug** (`solid.common([tool1, tool2])` not
+  computing the true intersection -- see the "SCDR_90 hidden-surface
+  decomposition" section) -- re-read the current implementation directly:
+  **`geo/_occ_impl.py` and `geo/_ocp_impl.py`'s own `Gcommon` already
+  chain `BRepAlgoAPI_Common` pairwise, one tool at a time** (`for tool in
+  tools: result = BRepAlgoAPI_Common(result, tool.__native__).Shape()`) --
+  the exact fix this file's own earlier section proposed but never
+  applied, evidently added independently while building these two
+  backends, with nothing in this file ever connecting the two facts.
+  **`geo/_freecad_impl.py`'s own `Gcommon` still has the original bug**
+  (`solid.__native__.common([tool.__native__ for tool in tools])`, the
+  whole list passed to native `.common()` at once) -- confirmed by direct
+  code reading, not yet fixed there specifically.
+- **`Gsplit`'s general non-manifold-solid reconstruction** (the
+  face-adjacency-graph-plus-duplicated-capping-face technique, named at
+  the very top of this file as the eventual proper fix for the project's
+  original motivating bug, and separately flagged mid-file as "reserved
+  for a future pyOCC implementation, not started") -- **is not just
+  started but fully implemented and already wired into `Gsplit`**:
+  `_repair_non_manifold_solid` exists in both `geo/_occ_impl.py` and
+  `geo/_ocp_impl.py`, doing exactly the documented technique (union-find
+  over faces excluding non-manifold edges, `BRepBuilderAPI_Copy` to cap
+  each component missing a boundary there). What this file's own pyOCC
+  Phase 1-4 sections got right is that it had never been *validated*
+  against a real case needing it (`rev_pipe.stp`'s go/no-go test never
+  exercised the repair path, since `BOPAlgo_Splitter` succeeded raw on
+  that specific base/tool pair). Re-run today with `Gsplit` instrumented
+  to log every call: **the repair path fires 3 times decomposing
+  `Solidos/RoundCorners/rev_pipe.stp`**, `degenerate_case_handled=True`
+  each time. The immediate per-call output includes some genuinely
+  garbage fragments (zero and even negative volume -- the technique isn't
+  clean on this input) but the *pipeline's* own downstream `remove_solids`
+  filtering already discards those, and the final decomposition (5 real
+  solids) sums to `512336.16`, matching the file's own documented true
+  volume (`512337.6683`) to ~0.0003% -- a correct, volume-conserving
+  result. So `rev_pipe.stp`'s own non-manifold case (documented at length,
+  "found, confirmed, not yet fixed") is, in practice, already resolved --
+  just never re-checked after the repair function was written.
+
+**Confirmed still broken, exactly as documented**:
+- **`ConeSphere.stp`'s segfault** (`UnifyEdges` inside `GSolid.refine()`/
+  `.fix()`, under `ocp`) -- re-ran directly: still crashes (native exit
+  code 5). `SCDR_90.stp` shared the same documented root cause and no
+  longer crashes (see above) -- these two files' fates have now diverged
+  under whatever changed since, worth another look if `ConeSphere.stp` is
+  ever revisited specifically.
+- **Enclosure solids duplicated into `meta_list`** (`TVA_final_allencl.stp`,
+  confirmed real but not the cause of that file's own lost particles,
+  which were separately fixed) -- confirmed by direct code reading:
+  `loadfile/load_step.py`'s own call to the already-existing fix,
+  `LF.remove_enclosure(meta_list)`, is still commented out (one line,
+  `# LF.remove_enclosure(meta_list)`) -- the function itself is complete
+  and correct, simply never invoked.
+- **The 6 exotic quadric surfaces under OCC/OCP**
+  (`Gmake_elliptic_cone`/`Gmake_hyperboloid`/`Gmake_ellipsoid`/
+  `Gmake_elliptic_cylinder`/`Gmake_hyperbolic_cylinder`/`Gmake_paraboloid`/
+  `Gmake_torus_elliptic`) -- confirmed still `_not_implemented(...)` stubs
+  in `GEOReverse/Modules/_occ_impl.py`.
+
+**Changed symptom, not actually fixed**:
+- **`Solidos/Torus/2_degen_torii.stp`** -- previously a hard MCNP fatal
+  error (`exit 152`, no tally section written at all). Re-ran end to end:
+  the fatal crash is gone (`d1suned` completes, `RC=0`, tally section
+  exists), but the run now hits the *ordinary* lost-particle abort (10
+  lost, "no cell found in subroutine newcel", stopping at `nps=18` instead
+  of the requested count) -- a real, still-open geometry gap, just a
+  different and more tractable one than before.
+
+**Not re-verified this pass (would need a live run/deeper trace not done
+today)**:
+- `TVA_final_allencl.stp`'s cells 1/2 (RPV upper right/left) -- the code
+  for the fix this file documents (`vector_geometry.find_can_plane`,
+  wired into `_closing_plane`) is confirmed present and in active use, and
+  a later section in this same file already reports the specific tally
+  numbers improving after it landed -- almost certainly closed, just not
+  re-run today to confirm the exact number again.
+- `check_sign` verification of RevCC from the conversion side (a
+  different methodology than every other composite type's, per the
+  decomposition-side scan this project used everywhere else -- never
+  attempted).
+- A full `Solidos/` corpus differential scan specifically under the raw
+  `occ` (pythonocc-core/SWIG) engine, as opposed to `ocp` (now the
+  default) or `freecad` -- extensive scans exist under the other two, none
+  recorded under `occ` specifically since it stopped being the primary
+  focus.
+- `Gload_step_labels`'s FreeCAD-style auto-suffix naming for multiple
+  solids sharing one XCAF label under `occ`/`ocp` -- documented as a
+  narrow, non-blocking gap; not re-checked.
+
+**Still pending, unrelated to the above (already tracked separately)**:
+`AdjacentMultiplanePlanes` needs extending from RevCC to MultiRoundCorner
+too -- see the section immediately above and
+`project_mrc_adjacent_multiplane_pending.md`. `gen_plane_cylinder`/
+`gen_plane_cone` (`meta_surfaces_utils.py`) still operate on a single raw
+face (`Faces[ifacemin]`/`Faces[ifacemax]`) rather than a merged
+same-surface shell when a RevCC segment's own cylinder/cone is split into
+several contiguous pieces -- confirmed today to not be the cause of
+`cyl_cone.stp`'s regression (none of its segments are actually split), but
+the architectural gap is real and matches the exact pattern already fixed
+once before in `cyl_plane_region_conf` -- no reproduction case found yet.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
