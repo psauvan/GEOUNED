@@ -5957,6 +5957,245 @@ session, but the two real, confirmed bugs behind the original failure
 (the coaxial-cone `Gsplit` degeneracy and the RevCC `AddPlanes` OR/AND
 bug) are both fixed and verified.
 
+### `Big_one_cell/modelCell_670000.stp` piece59: `convex_planes` was a red
+herring, the real bug is a razor-thin AND/OR sign in `cyl_plane_region_conf`
+
+User request: investigate why `Solidos/Big_one_cell/modelCell_670000.stp`'s
+piece59 (3 structurally identical R=6 round-corner cylinders) shows up as
+`MultiRoundC:1, RevCC:1` instead of `RoundC:3` -- i.e. why 2 of the 3
+cylinders get wrongly merged into one MultiRoundCorner (with an OR-combined
+plane pair) while the 3rd is left as a standalone RevCC, when the correct
+answer (confirmed by the user from the raw geometry, independent of any
+code) is 3 separate RoundCorners.
+
+**First hypothesis, built and fully validated, then reverted at the user's
+explicit request once it turned out to be the wrong target**: `convex_planes`
+(`functions.py`) -- the function deciding whether a MultiRoundCorner's own
+group of bounding planes forms a coherent AND-combined convex corner or an
+OR-combined open one -- was a rotational-consistency heuristic (sort plane
+positions angularly, check axes turn one consistent way), confirmed wrong
+in general (returns "convex" for provably unbounded plane sets). Built and
+validated, end to end, a real general-purpose replacement: a Sutherland-
+Hodgman convex-polyhedron-from-halfspaces clipper
+(`convex_polyhedron_from_halfspaces`, initially added to `geo/vector_geometry.py`
+as pure math with no GEOUNED coupling, per the user's explicit correction
+that the *general* function -- not a GEOUNED-specific inlined copy -- was
+what they'd asked for), verified against synthetic cases (cube, octant,
+tetrahedron, all exact) and 20 randomized 6-plane cases cross-checked
+against real CAD (OCP `BRepAlgoAPI_Common`, 14/14 bounded cases exact once
+the comparison box was sized large enough not to itself clip the true
+polyhedron -- the same "too-small comparison box" pitfall documented
+elsewhere in this file for the earlier `RevCC` random-case validation).
+
+**Then the user pointed out the real, structural defect this whole
+sub-investigation had missed**: `convex_planes` was never actually reaching
+its own new (correct) logic for piece59 at all -- `build_roundC_params`'s
+own plane list, after deduplication, collapses to only 2 unique planes for
+this file (not 3+), tripping a `len(plane_list) < 3` early-return shortcut
+that always returns `True` unconditionally. So the whole `convex_planes`
+investigation, however correct in isolation, was chasing the wrong target.
+**Per explicit user instruction, this entire piece of work was reverted**
+(`git checkout`/manual revert back to the original rotational-heuristic
+`convex_planes`, and the new `vector_geometry.py` function removed) --
+"volvamos al inicio de este problema."
+
+**The real root cause, found by tracing `get_roundcorner_surfaces`
+directly**: the 3rd cylinder (face Index 2) is rejected *before* any
+grouping/convexity logic ever runs, at `cyl_plane_region_conf`'s own
+`AND_p1_cyl`/`AND_p2_cyl` sign test (`basic_functions_part1.py`... no,
+`meta_surfaces_utils.py`). This is a razor-thin case: `cross1 =
+n1.cross(nc1)` (the cross product deciding the AND/OR sign between the
+cylinder and its own corner plane) comes out with magnitude ~4.5e-05 for
+this specific plane pairing -- comfortably *above* the function's existing
+degenerate-tangency guard (`cross1.length < 1e-8`, which would trust a
+default `True`) but still numerically meaningless: at this near-exact
+tangency, the plane's own "inside/outside" status as a function of angle
+around the cylinder is a sinusoid that *touches* zero at an extremum
+rather than *crossing* it transversally (confirmed directly: sweeping the
+angle ±30 degrees around the sampled tangency point showed the plane
+stayed on one side for the entire arc except a single point, ruling out
+any nearby first-order sign transition to lock onto).
+
+**User-guided fix**: rather than trying to patch the analytic sign formula
+further (this exact function's fragility around near-tangency has its own
+long, already-documented history in this file -- L1_S23 solid174, rc16),
+add a real-geometry point-sampling fallback, triggered only when
+`cross1`/`cross2`'s magnitude falls in the newly-identified fragile band
+(`1e-8` to `1e-3`, comfortably bracketing the observed ~4.5e-05 without
+touching the already-robust ~0.85-0.95 magnitudes seen on well-conditioned
+pairs elsewhere in the same file): `_and_or_by_material_sampling`
+(`meta_surfaces_utils.py`) samples ~600 random points in a local box
+around the cylinder (outside its radius, on the material side of the
+*other* corner plane, whose own sign resolution doesn't depend on the
+fragile cross product at all), and compares real solid membership
+(`solid.is_inside`) conditioned on whether each point is also on the
+material side of the plane being tested -- an AND relationship shows near-
+zero material when that condition fails; an OR relationship shows
+comparable material whether it holds or not. Validated directly against
+the user's own manually-derived ground truth for piece59's 3 corners (6
+cylinder-plane pairs, AND/OR dictated by the user from the real geometry
+independently of any code) -- the sampling test matched all 6, including
+the 4 that the analytic formula alone got wrong (3 wrong, 1 right by
+chance) and the 2 well-conditioned ones the analytic formula already had
+right. Required threading the enclosing solid (`SolidGu`/`GSolid`, needed
+for `is_inside`) down through `get_roundCorner`/`next_roundCorner`/
+`get_roundcorner_surfaces`/`cyl_plane_region_conf` -- all 4 already had it
+available at their own call sites, just weren't passing it through.
+
+Verified: piece59 now gives `RoundC:3, MultiRoundC:0, RevCC:0` (matching
+the user's own independent determination); `tests/geo` (78 under ocp) +
+`tests/test_cadtocsg.py` (50 under ocp) green; a real d1suned run
+(`volSDEF=True`, full void generation) on the actual translated piece59:
+**0 lost particles**, tally `0.9888 +/- 0.65%` (~1.7 sigma), all 10
+statistical checks passed.
+
+### Regression discovered mid-corpus-scan on `cyl_cone.stp`: an earlier
+same-session fix (`_is_straight_edge`) was fundamentally wrong for the
+general near-parallel case, replaced with a real topological criterion
+
+The 482-file `Solidos/` differential corpus scan run after the piece59 fix
+(0 new failures, 52 files with expected composite-surface-count shifts)
+included `Reversed_Cyl_Cones/cyl_cone.stp` -- the very fixture this file's
+own "ReversedConeCylinder's AND/OR grouping" section (above) had already
+used to validate a real, committed fix. The user immediately flagged this:
+"¡pero esto ya lo había arreglado!" -- prompting an MCNP re-check that
+confirmed a real regression: cell 1's tally, previously `0.996547`, now
+came back exactly `0.0` (the identical symptom the original fix had
+resolved).
+
+**Root cause, isolated by selectively disabling each of this session's own
+prior changes in turn**: not the `cyl_plane_region_conf` sampling fallback
+(disabling it left `RevCC` unchanged at the wrong count) -- it was
+`_is_straight_edge`, a guard added *earlier in this same session* (for an
+unrelated fix, chaining a `hylife-v06.stp` cylinder pair with genuinely
+perpendicular axes into one wrongly-merged RevCC group) that required the
+edge joining two chain segments to be a straight line or a collinear-pole
+BSpline. Forcing it to always return `True` restored `cyl_cone.stp`'s
+correct `RevCC:4`.
+
+**Why the premise was wrong, established empirically rather than assumed**
+-- a deliberate real-CAD experiment, at the user's own direction, building
+two overlapping cylinders (R=2, axes 2cm apart, H=8) and rotating one axis
+relative to the other around two different perpendicular pivots:
+- Rotating so the two axes stay *coplanar* (intersecting when extended):
+  the shared boundary is `GLine` only at exactly 0 degrees; for *any*
+  nonzero tilt (1 to 90 degrees tested) it's an exact `GEllipse` -- OCC
+  computes cylinder-cylinder intersections as exact conics when the axes
+  are coplanar, never a BSpline approximation. (A genuine topological
+  transition was also found and fully characterized here, between 28 and
+  30 degrees for H=8 -- the growing ellipse starts intersecting the
+  cylinders' own flat end caps; confirmed as a pure finite-height artifact,
+  not a property of the underlying analytic intersection, by showing the
+  critical angle scales as `~230/H` degrees across H=8/16/32/64.)
+- Rotating so the two axes go *skew* (the general, most realistic case for
+  real near-parallel RevCC data, since two independently-placed axes in a
+  real 3D model are essentially never exactly coplanar): the shared
+  boundary is a genuine `GBSpline` for *every* nonzero angle tested (1 to
+  90 degrees) -- confirming the real tangency/intersection curve between
+  two near-parallel (not coaxial) cylinder or cylinder/cone faces is
+  intrinsically curved, never straight, in the case that actually matters.
+
+So `_is_straight_edge` rejected every legitimate skew-axis chain junction
+it was ever tested against (`cyl_cone.stp`'s own real chain, confirmed via
+direct topology inspection: the edge joining its cylinder and cone pieces
+is a real `GBSpline`) while never being the thing that actually
+distinguished `hylife-v06.stp`'s genuine bad match from a good one in the
+first place.
+
+**Finding the real discriminator -- three more hypotheses tried and
+confirmed NOT to work, checked directly against both cases' real face
+topology (not synthetic geometry) before landing on the one that does**:
+1. Exact vertex convergence -- do the two faces' own "other" boundary
+   edges (the ones touching each endpoint of the shared edge) meet at a
+   common far vertex? Fails on `cyl_cone.stp`'s own genuine chain too
+   (real trim boundaries from independent CAD history don't coincide even
+   for a legitimate pair) -- confirmed by direct inspection of the real
+   edge/vertex data, not assumption.
+2. Same-neighbor-face -- do the two faces' own other-edges lead to the
+   same real neighboring face? Matches on *both* the good (`cyl_cone.stp`)
+   and the bad (`hylife-v06.stp`) case alike -- not discriminating.
+3. (User's own diagnosis, found by inspecting the bad case directly rather
+   than guessing further): on `hylife-v06.stp`'s bad match specifically,
+   one of the two faces (the R=5170 cylinder) has only 2 edges total for
+   the whole face -- meaning the edge touching one endpoint of the shared
+   boundary and the edge touching the other endpoint are literally the
+   *same* edge (a degenerate 2-edge "bigon" face), not two distinct edges
+   as an ordinary quad-shaped chain-junction face would have. Confirmed
+   directly: `cyl_cone.stp`'s own genuine chain has 2 *distinct* edges at
+   each end on both faces; `hylife-v06.stp`'s bad match has the same edge
+   at both ends on the R=5170 face.
+
+**Fix**: `_is_straight_edge` replaced by `_valid_chain_junction`
+(`meta_surfaces_utils.py`) -- for each of the two candidate faces, find
+the edge (other than the shared one) touching each of the shared edge's 2
+endpoints; reject the junction if, on either face, those two edges turn
+out to be the same edge object (`is_same`). Purely topological, no curve-
+shape or tolerance-sensitive position comparison involved.
+
+**A second, independent real bug found and fixed while root-causing this**:
+the `emin`/`emax` nearest-boundary-edge search in `get_join_cone_cyl` compares
+each candidate edge's own midpoint parameter `u` against the group's own
+`umin`/`umax` (already reduced into `[0, 2*pi)` via `twoPimod`) using a
+"wraparound-aware" correction, `d = min(d, twoPi - d)` -- but `u` itself
+was never reduced the same way first, and a face's own raw `ParameterRange`
+can genuinely exceed `2*pi` (confirmed live: `cyl_cone.stp`'s own face9,
+`ParameterRange=(5.284, 9.281, ...)`, the second bound past `2*pi`). When
+`u` isn't reduced, `d` can itself exceed `2*pi`, making `twoPi - d` go
+*negative* -- and since `min()` then picks that negative pseudo-distance
+as the smallest value in the comparison regardless of the true angular
+distance, the search silently locks onto the wrong candidate edge
+(confirmed numerically on this exact face: the true closest edge, at true
+distance 0.012 rad, lost to an unrelated one that produced a bogus -1.14
+"distance"). This is what caused `get_join_cone_cyl`'s own adjacency
+search to be asymmetric on one of `cyl_cone.stp`'s 3 chains: cylinder-to-
+cone found the connection correctly, but cone-to-cylinder (searching from
+the cone's own, past-`2*pi` parameter range) silently landed on an
+unrelated real plane instead, fragmenting a 3-element chain into 2. Fixed
+by reducing `u` via `twoPimod(u)` before computing `d`, in both the
+`umin` and `umax` search loops.
+
+**A third, separate gap found by the user testing a different real
+file** (`Solidos/lost_particles/modelcell_cut1_piece51_lost_particles.stp`):
+two genuinely perpendicular-axis cylinders passed `_valid_chain_junction`'s
+topological test (both had 2 distinct edges per end) but still aren't a
+real chain member -- confirming the topological test alone isn't
+sufficient on its own. Fixed by adding a direct floor on the axis
+alignment: `abs(face.Surface.Axis.dot(adjacent.Surface.Axis)) > 0.1`
+(permissive -- rejects only the last ~6 degrees approaching exactly
+perpendicular, not a tight "must be near-parallel" bound), alongside
+`_valid_chain_junction`, not replacing it.
+
+**Verification, each fix isolated and confirmed via real d1suned runs
+against the specific fixture that motivated it**: `cyl_cone.stp` (the
+`_valid_chain_junction` + `twoPimod` fixes together) -- `RevCC` back to
+the correct 4 (was 9 immediately after the regression, briefly 4-but-still-
+wrong-content once only `_valid_chain_junction` was fixed, matching the
+historical formula byte-for-byte only once the `twoPimod` fix landed too)
+-- tally `0.996542 +/- 0.29%`, exactly reproducing the originally-documented
+`0.996547`, 0 lost particles. `modelcell_cut1_piece51_lost_particles.stp`
+(the axis-dot-product floor) -- `RevCC` from 1 wrongly-merged group to 2
+correctly-separate ones, tally `0.998693 +/- 0.45%`, 0 lost particles --
+this was one of the original 6 lost-particle files identified at the very
+start of this investigation. Full `tests/geo` (78 ocp / 156+2skip freecad)
++ `tests/test_cadtocsg.py` (50 ocp / 50 freecad) green throughout. A final
+482-file `Solidos/` differential scan (excluding `Big_model_reserved`)
+against the pre-session git HEAD: 0 new failures (one file,
+`modelCell_670000.stp`, needed longer than the scan driver's own 180s
+per-file timeout -- confirmed via a direct, untimed rerun to be a genuine
+~1.85x slowdown from the added real-geometry checks, not a hang: 261s,
+correct/consistent result) and 39 files with composite-surface-count
+shifts, all consistent with RevCC chains now grouping/ungrouping
+correctly.
+
+**Deferred, not yet done**: the `AdjacentMultiplanePlanes` OR-escape
+mechanism (limiting a RevCC's own additional plane to its local side when
+a real MultiPlane component plane borders it -- see the section above)
+was built and wired up for RevCC only. The user explicitly flagged, right
+before the commit closing this session's work, that the same mechanism
+needs extending to MultiRoundCorner too -- not yet started; a memory note
+(`project_mrc_adjacent_multiplane_pending.md`) tracks this for the next
+session.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
