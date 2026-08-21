@@ -5,6 +5,7 @@ from collections import OrderedDict
 from .geometry_gu import ShellGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
+from .basic_functions_part2 import is_same_plane
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
@@ -540,6 +541,96 @@ def convex_face_cyl(cyl, edge, otherface):
     return v1.dot(v2) < 0
 
 
+def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
+    """Real MultiPlane component planes physically adjacent to this RevCC
+    segment's own cylinder/cone (`face`, possibly merged into a ShellGu of
+    several same-analytic-surface pieces via merge_same_surface_faces --
+    a boolean cut can split what's really one cylinder/cone into several
+    contiguous fragments). Found via get_adjacent_cylplane's own
+    established curved-edge walk (cornerPlanes=False): every OuterWire
+    edge of the face/shell that is NOT a straight line is tried, since a
+    straight (GLine) edge marks an angular/rotational boundary between
+    wedge fragments of the very same cylinder/cone, never a real transverse
+    closing plane -- only a curved boundary edge (the cylinder/cone's own
+    circular/elliptical rim) can border a real closing plane.
+
+    Needed because a MultiPlane can make the irreducible solid non-convex,
+    which is exactly the configuration where the RevCC's own additional
+    plane p -- correct only locally, near its own cylinder/cone -- must
+    not be applied as an unrestricted global cut; identifying which real
+    faces actually border this segment is the first step toward limiting
+    it there. Matched against each MultiPlane's own component planes via
+    is_same_plane (component planes are fresh GeounedSurface objects with
+    no face .Index of their own, so geometric comparison, not index
+    matching, is the only way to tell)."""
+    if not multiplanes:
+        return []
+
+    shell_or_face = merge_same_surface_faces(face, GUFaces)
+    adjacent_planes = get_adjacent_cylplane(shell_or_face, GUFaces, cornerPlanes=False)
+
+    found = []
+    for adj in adjacent_planes:
+        for mp in multiplanes:
+            for mpp in mp.Surf.Planes:
+                if is_same_plane(adj.Surface, mpp.Surf, tolerances=tolerances):
+                    found.append(mpp)
+                    break
+    return found
+
+
+def _valid_chain_junction(shared_edge, faceA, faceB, tol=1e-6):
+    """True if `shared_edge` (already known to be the boundary between
+    faceA and faceB) represents a genuine near-parallel RevCC chain
+    junction rather than a spurious/incidental edge-sharing between two
+    unrelated cylinder/cone faces.
+
+    This replaces an earlier attempt at this same test based on the
+    curve shape of `shared_edge` (straight vs curved) -- confirmed wrong
+    empirically: for two near-parallel (not coaxial) cylinder/cone faces,
+    the real tangency/intersection curve is *never* straight (a genuine
+    space curve -- an exact ellipse when the two axes happen to be
+    coplanar, a GBSpline in the general skew-axis case), so requiring
+    "straight" rejected every legitimate chain junction it was tested
+    against (confirmed live on Solidos/Reversed_Cyl_Cones/cyl_cone.stp,
+    whose own real chain regressed to fragments once this shape-based
+    test was added). Several other shape/position-based alternatives were
+    also tried and confirmed NOT to discriminate the real bad case
+    (Big_model_reserved/hylife-v06.stp solid358, a R=250 cylinder wrongly
+    chained to a R=5170 one with a *perpendicular* axis) from cyl_cone.stp's
+    real one: exact convergence of the two faces' own "other" edges to a
+    common vertex (fails on cyl_cone.stp too -- real trim boundaries don't
+    coincide even for a genuine chain member), and "do the two faces' own
+    other-edges lead to the same neighboring face" (matches on both the
+    good and the bad case alike).
+
+    The test that does discriminate them, found empirically by directly
+    comparing both cases' real topology: a genuine chain junction's shared
+    edge has exactly 2 vertices, and on EACH of the two faces, the edge
+    touching the first vertex and the edge touching the second vertex are
+    two *distinct* edges (an ordinary quad-like face boundary). The real
+    hylife-v06 false match instead has, on the R=5170 face specifically,
+    only 2 edges total (a degenerate "bigon": the shared edge plus a
+    single other edge that touches *both* endpoints of the shared edge) --
+    confirmed by direct inspection, and absent on cyl_cone.stp's own real
+    chain (every face there has 2 genuinely distinct "other" edges)."""
+    verts = shared_edge.Vertexes
+    if len(verts) != 2:
+        return True
+    V0, V1 = verts[0], verts[-1]
+
+    for face in (faceA, faceB):
+        e_at_V0 = [
+            e for e in face.Edges if not e.is_same(shared_edge) and any((v - V0).length < tol for v in e.Vertexes)
+        ]
+        e_at_V1 = [
+            e for e in face.Edges if not e.is_same(shared_edge) and any((v - V1).length < tol for v in e.Vertexes)
+        ]
+        if len(e_at_V0) == 1 and len(e_at_V1) == 1 and e_at_V0[0].is_same(e_at_V1[0]):
+            return False
+    return True
+
+
 def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     face_index = [face.Index]
     faces = [face]
@@ -594,6 +685,13 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     for e in GUFaces[ifacemin].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemin].parameter(pnt)
+        u = twoPimod(u)  # u itself can exceed 2*pi (e.g. a face's own
+        # ParameterRange spanning past a full turn) -- reduce it first, or
+        # the "d, twoPi - d" wraparound correction below can go negative
+        # and win the "closest edge" comparison outright regardless of the
+        # real angular distance (confirmed live on Reversed_Cyl_Cones/
+        # cyl_cone.stp: this silently picked a real but unrelated plane
+        # instead of the true adjacent cylinder, breaking the RevCC chain).
         d = abs(umin - u)
         d = min(d, twoPi - d)  # wraparound-aware: umin==0 must also match u near twoPi
         if d < du:
@@ -605,6 +703,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     for e in GUFaces[ifacemax].OuterWire.Edges:
         pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
         u, v = GUFaces[ifacemax].parameter(pnt)
+        u = twoPimod(u)  # see the matching comment in the umin loop above
         d = abs(umax - u)
         d = min(d, twoPi - d)  # wraparound-aware: umax==0 must also match u near twoPi
         if d < du:
@@ -615,72 +714,61 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
     # cylinder/cone's own Umin/Umax boundary to its real neighboring plane
     # (confirmed live, Solidos/Big_one_cell/modelcell_cut1.stp piece 66) must
     # not be treated as the real adjacent plane itself -- same class of fix
-    # already applied to multiplane()/eligible_plane(). The 3-tuple result
-    # additionally gives touching_edge: the real edge where the far face
-    # actually touches the sliver, used below (not the cylinder/cone's own
-    # Umin/Umax boundary point) to position the additional plane whenever a
-    # sliver was actually skipped -- see gen_plane_cylinder/gen_plane_cone's
-    # own comment for why mixing V1/V2 (the cylinder's real boundary, i.e.
-    # where it touches the *sliver*) with a normal read from the far face
-    # would put the additional plane at a position inconsistent with its
-    # own direction.
+    # already applied to multiplane()/eligible_plane().
     result1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces, skip_slivers=True)
     result2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces, skip_slivers=True)
-    touching_edge1, near_face1, adjacent1 = result1 if result1 is not None else (None, None, None)
-    touching_edge2, near_face2, adjacent2 = result2 if result2 is not None else (None, None, None)
+    adjacent1 = result1[2] if result1 is not None else None
+    adjacent2 = result2[2] if result2 is not None else None
 
-    normal1 = None
-    normal2 = None
-    add_pos1 = None
-    add_pos2 = None
     new_adjacent1 = []
     new_adjacent2 = []
 
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface, (GCone, GCylinder)):
-            if adjacent1.Index not in omitFaces and adjacent1.Orientation == "Reversed":
+            if (
+                adjacent1.Index not in omitFaces
+                and adjacent1.Orientation == "Reversed"
+                # near-parallel means near-parallel: the two axes must not
+                # be too close to perpendicular. The topological
+                # _valid_chain_junction test alone isn't sufficient --
+                # confirmed live on Solidos/lost_particles/
+                # modelcell_cut1_piece51_lost_particles.stp, where two
+                # genuinely perpendicular-axis cylinders passed the
+                # topological test but still aren't a real RevCC chain
+                # member. 0.1 is a permissive floor (rejects only the
+                # ~last 6deg approaching exactly perpendicular), not a
+                # tight "must be small angle" bound.
+                and abs(face.Surface.Axis.dot(adjacent1.Surface.Axis)) > 0.1
+                and _valid_chain_junction(result1[0], result1[1], adjacent1)
+            ):
                 new_adjacent1 = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
-        elif multiplanes:
-            if isinstance(adjacent1.Surface, GPlane):
-                # material-pointing normal, same Orientation-correction
-                # convention as gen_plane()/build_multip_params() elsewhere
-                # in this codebase -- was inverted here (Axis if Forward
-                # else -Axis), a real, isolated sign bug confirmed via a
-                # real interior point of a reconstructed RevCC solid
-                # (Solidos/BadCAD_decomposition/series_solid2_complement.stp)
-                # failing this exact term.
-                normal1 = -adjacent1.Surface.Axis if adjacent1.Orientation == "Forward" else adjacent1.Surface.Axis
-                if near_face1.Index != GUFaces[ifacemin].Index:
-                    add_pos1 = 0.5 * (touching_edge1.Vertexes[0] + touching_edge1.Vertexes[-1])
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
-            if adjacent2.Index not in omitFaces and adjacent2.Orientation == "Reversed":
+            if (
+                adjacent2.Index not in omitFaces
+                and adjacent2.Orientation == "Reversed"
+                and abs(face.Surface.Axis.dot(adjacent2.Surface.Axis)) > 0.1
+                and _valid_chain_junction(result2[0], result2[1], adjacent2)
+            ):
                 new_adjacent2 = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
-        elif multiplanes:
-            if isinstance(adjacent2.Surface, GPlane):
-                normal2 = -adjacent2.Surface.Axis if adjacent2.Orientation == "Forward" else adjacent2.Surface.Axis
-                if near_face2.Index != GUFaces[ifacemax].Index:
-                    add_pos2 = 0.5 * (touching_edge2.Vertexes[0] + touching_edge2.Vertexes[-1])
+
+    mp_planes = _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances)
 
     if type(face.Surface) is GCylinder:
         cylOnly = gen_cylinder(face)
-        cylcone_plane, add_planes = gen_plane_cylinder(
-            ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2, add_pos1, add_pos2
-        )
+        cylcone_plane = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces)
 
-        facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, add_planes))
+        facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, mp_planes))
         facein.Surf_index.update(sameface_index)
         facein.Index = face.Index
 
     else:
         coneOnly = gen_cone(face)
         apexPlane = cone_apex_plane(face, Tolerances())
-        cylcone_plane, add_planes = gen_plane_cone(
-            ifacemin, ifacemax, Umin, Umax, GUFaces, normal1, normal2, add_pos1, add_pos2
-        )
+        cylcone_plane = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces)
 
-        facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, add_planes))
+        facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, mp_planes))
         facein.Surf_index.update(sameface_index)
         facein.Index = face.Index
 
@@ -692,7 +780,7 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None, add_pos1=None, add_pos2=None):
+def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -753,32 +841,12 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, norm
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
 
-    # add_pos1/add_pos2 (the touching_edge midpoint between a skipped sliver
-    # and the real face normal1/normal2 was read from) override V1/V2 only
-    # for the additional planes below, never for `plane` above -- V1/V2 are
-    # the cylinder's own real boundary point (where it touches the sliver,
-    # not the far face), so reusing them for an additional plane whose
-    # normal comes from the far face would mix position and direction from
-    # two different physical locations. See get_join_cone_cyl's own comment
-    # for the full account (found live, Solidos/Big_one_cell/
-    # modelcell_cut1.stp piece 66).
-    add_planes = []
-    if normal1:
-        pos1 = add_pos1 if add_pos1 is not None else V1
-        plane1 = GeounedSurface(("Plane", (pos1, normal1, 1, 1)))
-        add_planes.append(plane1)
-
-    if normal2:
-        pos2 = add_pos2 if add_pos2 is not None else V2
-        plane2 = GeounedSurface(("Plane", (pos2, normal2, 1, 1)))
-        add_planes.append(plane2)
-
-    return plane, add_planes
+    return plane
 
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=None, add_pos1=None, add_pos2=None):
+def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces):
 
     if ifacemin == ifacemax:
         face2 = Faces[ifacemin]
@@ -851,21 +919,7 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces, normal1=None, normal2=
 
     plane = GeounedSurface(("Plane", (apex, normal, 1, 1)))
 
-    # See gen_plane_cylinder's identical comment -- add_pos1/add_pos2
-    # override V1/V2 only for the additional planes, never for `plane`
-    # (which is positioned at apex here anyway, not V1/V2).
-    add_planes = []
-    if normal1:
-        pos1 = add_pos1 if add_pos1 is not None else V1
-        plane1 = GeounedSurface(("Plane", (pos1, normal1, 1, 1)))
-        add_planes.append(plane1)
-
-    if normal2:
-        pos2 = add_pos2 if add_pos2 is not None else V2
-        plane2 = GeounedSurface(("Plane", (pos2, normal2, 1, 1)))
-        add_planes.append(plane2)
-
-    return plane, add_planes
+    return plane
 
 
 def sort_range(Urange):
@@ -1157,7 +1211,66 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     return edges
 
 
-def cyl_plane_region_conf(cylinder, ep1, ep2):
+def _and_or_by_material_sampling(center, radius, z, pos_this, axis_this, pos_other, axis_other, solid, n_samples=600, margin_factor=2.0):
+    """Robust fallback for `cyl_plane_region_conf`'s AND_p1_cyl/AND_p2_cyl
+    sign test, used only when the cylinder and the corner plane are so
+    close to exactly tangent that the analytic cross-product sign is pure
+    numerical noise (confirmed live on
+    Solidos/Big_one_cell/modelCell_670000.stp piece 59, where 3
+    structurally-identical R=6 round corners have this exact degeneracy on
+    2 of their 3 corner planes).
+
+    Samples random points in a local square around the cylinder's own
+    axis, keeping only those that are (a) outside the cylinder radius and
+    (b) on the material side of the *other* corner plane (via its own
+    already-reliable resolved normal `axis_other`/`pos_other` -- this
+    doesn't depend on any cross-product sign, so it stays trustworthy even
+    when the plane being tested is degenerate). Among those, compares real
+    solid membership (`solid.is_inside`) conditioned on whether each point
+    is also on the material side of the plane being tested
+    (`axis_this`/`pos_this`):
+      - AND signature: material only appears when `axis_this`'s condition
+        also holds (material fraction collapses when it doesn't).
+      - OR signature: material appears comparably either way (the
+        cylinder/other-plane already account for it on their own).
+
+    Returns True (AND), False (OR), or None if too few samples landed on
+    one side to decide reliably -- the caller falls back to the analytic
+    sign test in that case, so this can only ever improve or match
+    today's behavior, never make it worse.
+    """
+    import random
+
+    margin = margin_factor * radius
+    rng = random.Random(0)
+    true_total = true_material = 0
+    false_total = false_material = 0
+    for _ in range(n_samples):
+        x = center.x + rng.uniform(-margin, margin)
+        y = center.y + rng.uniform(-margin, margin)
+        pt = GVector(x, y, z)
+        dx, dy = pt.x - center.x, pt.y - center.y
+        if (dx * dx + dy * dy) ** 0.5 <= radius:
+            continue
+        if axis_other.dot(pt - pos_other) <= 0:
+            continue
+        real = solid.is_inside(pt)
+        if axis_this.dot(pt - pos_this) > 0:
+            true_total += 1
+            true_material += real
+        else:
+            false_total += 1
+            false_material += real
+
+    if true_total < 15 or false_total < 15:
+        return None
+
+    frac_true = true_material / true_total
+    frac_false = false_material / false_total
+    return (frac_true - frac_false) > 0.15
+
+
+def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
 
     # ep1[0]/ep2[0] (cyl1/cyl2) are each end's own real adjacent cylinder
     # piece -- normally the same object as `cylinder` (the seed), but when
@@ -1264,15 +1377,38 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     AND_p2_pd = -ac1.dot(n2xnd) > 0
 
     OR_p12_bracket = ac1.dot(n1.cross(n2)) > 0
+
+    # AND_p1_cyl/AND_p2_cyl decide whether the cylinder combines with each
+    # corner plane via AND or OR -- normally a first-order sign test
+    # (cross1/cross2, the cross product of the plane's material normal with
+    # the cylinder's own radial direction at the sampled boundary point).
+    # That test is only reliable when the plane genuinely crosses the
+    # cylinder at a real angle. When the plane is instead (near-)exactly
+    # tangent to the cylinder there, the cross product's magnitude collapses
+    # toward zero *for a real geometric reason* (a tangent plane touches the
+    # cylinder's circle at an extremum, not a transversal crossing -- see
+    # the piece59/modelCell_670000 investigation this fallback was built
+    # from), and its sign becomes pure floating-point noise, well above the
+    # old degenerate guard (1e-8) but still numerically meaningless.
+    # `_and_or_by_material_sampling` resolves this case directly from real
+    # solid geometry instead of trusting that noisy sign.
+    _DEGENERATE_CROSS_THRESHOLD = 1e-3
+
     cross1 = n1.cross(nc1)
     if cross1.length < 1e-8:
         AND_p1_cyl = True
+    elif cross1.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+        result = _and_or_by_material_sampling(cyl1_center, cyl1.Surface.Radius, r1.z, p1.Surface.Position, n1, p2.Surface.Position, n2, solid)
+        AND_p1_cyl = result if result is not None else (ac1.dot(cross1) > 0)
     else:
         AND_p1_cyl = ac1.dot(cross1) > 0
 
     cross2 = n2.cross(nc2)
     if cross2.length < 1e-8:
         AND_p2_cyl = True
+    elif cross2.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+        result = _and_or_by_material_sampling(cyl2_center, cyl2.Surface.Radius, r2.z, p2.Surface.Position, n2, p1.Surface.Position, n1, solid)
+        AND_p2_cyl = result if result is not None else (-ac1.dot(cross2) > 0)
     else:
         AND_p2_cyl = -ac1.dot(cross2) > 0
 

@@ -232,7 +232,7 @@ def next_roundCorner(solid, cornerface_index):
         if isinstance(f.Surface, GCylinder):
             if f.Index in cornerface_index:
                 continue
-            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
+            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid)
             if rc is not None:
                 cornerface_index.update(surfindex)
                 rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)

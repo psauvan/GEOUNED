@@ -120,7 +120,7 @@ def get_TCone(solidFaces, Tconeface_index=None):
         return tcone_list, Tconeface_index
 
 
-def get_roundCorner(solidFaces, cornerface_index=None):
+def get_roundCorner(solidFaces, cornerface_index=None, solid=None):
     """identify and return all roundcorner type in the solid."""
     if cornerface_index is None:
         cornerface_index = set()
@@ -133,7 +133,7 @@ def get_roundCorner(solidFaces, cornerface_index=None):
         if isinstance(f.Surface, GCylinder):
             if f.Index in cornerface_index:
                 continue
-            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index})
+            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid)
             if rc is not None:
                 cornerface_index.update(surfindex)
                 rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)
@@ -287,17 +287,31 @@ def build_RCC_params(rc):
     # region (n=1: AND[s,p]; n>1: AND[OR[all p_i], AND(OR[s_i,-p_i])]),
     # so no separate plane-grouping/orientation bookkeeping is needed here
     # any more.
+    #
+    # mp_planes (from get_join_cone_cyl's _find_adjacent_multiplane_planes,
+    # a real curved-edge topological-adjacency walk, not a coincident-point
+    # heuristic) lists the real MultiPlane component planes physically
+    # bordering each segment's own cylinder/cone -- since the RevCC's
+    # cylinders/cones are all near-coaxial, the same real multiplane plane
+    # can genuinely be found adjacent to more than one segment.
+    # _find_adjacent_multiplane_planes always returns the same GeounedSurface
+    # object reference for the same real match, so a plain identity check is
+    # enough to dedupe, no geometric comparison (is_same_plane) needed here.
     cylcones = []
+    adjacent_mp_planes = []
     for cc in rc:
         if cc.Type == "Cylinder":
-            cylOnly, plane, addP = cc.Params
+            cylOnly, plane, mp_planes = cc.Params
             gcylcone = GeounedSurface(("Cylinder", (cylOnly, plane)))
         else:
-            cone, apexPlane, plane, addP = cc.Params
+            cone, apexPlane, plane, mp_planes = cc.Params
             gcylcone = GeounedSurface(("Cone", (cone, apexPlane, plane)))
         cylcones.append(gcylcone)
+        for mpp in mp_planes:
+            if not any(mpp is existing for existing in adjacent_mp_planes):
+                adjacent_mp_planes.append(mpp)
 
-    return cylcones
+    return cylcones, adjacent_mp_planes
 
 
 def _closing_plane(cyl, edges, kind, secondary):

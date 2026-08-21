@@ -502,11 +502,19 @@ class MultiRoundCornerParams:
 
 class ReversedConeCylParams:
     def __init__(self, params):
-        # params is a plain list of Tier-2 "Cylinder"/"Cone" GeounedSurface
+        # params[0] is a plain list of Tier-2 "Cylinder"/"Cone" GeounedSurface
         # objects, each already bundling its own additional plane (and, for
         # a Cone, its own ApexPlane) -- see MetaSurfacesDict.add_reversedCC
         # for how these combine into the RevCC's boolean region.
-        self.CylCones = params
+        #
+        # params[1] (AdjacentMultiplanePlanes) is at most 2 real-face Plane
+        # GeounedSurfaces (one per end of the whole chain) identifying which,
+        # if any, of the chain's own 2 ends actually borders a MultiPlane --
+        # a MultiPlane can make the irreducible solid non-convex, which is
+        # exactly the configuration where the RevCC's own additional plane
+        # (correct only locally) must not act as an unrestricted global cut.
+        self.CylCones = params[0]
+        self.AdjacentMultiplanePlanes = params[1]
 
 
 class SphereParams:

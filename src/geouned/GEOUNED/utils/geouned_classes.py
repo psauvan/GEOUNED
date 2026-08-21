@@ -1179,6 +1179,23 @@ class MetaSurfacesDict(dict):
                 terms_region = BoolSurface.mult(terms_region, s_region + (-p_region))
             reversedCC_region = plane_region * terms_region
 
+        # A MultiPlane can make the irreducible solid non-convex -- exactly
+        # the configuration where the RevCC's own additional plane, correct
+        # only locally near its own cylinder/cone, must not act as an
+        # unrestricted global cut. For each real MultiPlane component plane
+        # found sitting on this RevCC's own boundary (AdjacentMultiplanePlanes,
+        # at most one per chain end), OR it in -- direction opposite to its
+        # own stored (material-pointing) axis -- so the RevCC's restriction
+        # only applies on its own local side of that boundary, and stops
+        # applying (reads True, non-restrictive) beyond it.
+        for mpp in reversedCC.Surf.AdjacentMultiplanePlanes:
+            pid, exist = self.primitive_surfaces.add_plane(mpp, True)
+            if exist:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(mpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            reversedCC_region = reversedCC_region + (-BoolSurface(0, pid))
+
         add_cc = True
         for cs_surf in self["RevCC"]:
             boundary = reversedCC_region.isSameInterface(cs_surf.region)

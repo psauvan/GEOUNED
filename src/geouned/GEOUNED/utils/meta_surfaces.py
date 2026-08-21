@@ -274,7 +274,7 @@ def get_tcone_surfaces(cone, solidFaces):
         return surfaces, faceindex
 
 
-def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
+def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None):
 
     rc_list = []
     face_index = set()
@@ -299,7 +299,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     # shell) -- same pattern get_can_surfaces uses for its own per-endpoint
     # computations (commonEdge/most_outer_faces against the original face,
     # only the closure/adjacency search itself uses the merged shell).
-    configuration = cyl_plane_region_conf(cylinder, ep1, ep2)
+    configuration = cyl_plane_region_conf(cylinder, ep1, ep2, solid=solid)
     if configuration is None:
         return None, None
     # check if not degenerated round corner
@@ -347,7 +347,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
             if is_same_cylinder(f.Surface, cylinder.Surface):
                 continue
 
-            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set, level + 1)
+            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set, level + 1, solid=solid)
             if rc is None:
                 cylinders_set.remove(f.Index)
                 continue

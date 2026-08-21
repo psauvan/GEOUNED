@@ -51,7 +51,6 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
-    multiplane_surface = False
     if meta_surfaces:
         RFCan, omitFaces = get_Can(solid_gu.Faces)
         for cs in RFCan:
@@ -71,7 +70,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(cs_region)
         omit_isolated_planes(solid_gu.Faces, omitFaces)
 
-        roundCorner = get_roundCorner(solid_gu.Faces, omitFaces)
+        roundCorner = get_roundCorner(solid_gu.Faces, omitFaces, solid=solid_gu)
         for rc in roundCorner:
             if rc.Type == "MultiRoundCorner":
                 rc_region = Surfaces.add_multiRoundCorner(rc)
@@ -87,9 +86,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             component_definition.append(mp_region)
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
-            multiplane_surface = True
 
-        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
+        # `multiplanes` is threaded through as the real MultiPlane list, not
+        # just a boolean gate -- get_join_cone_cyl needs it to identify
+        # *which* of a RevCC's own 2 chain ends (if any) borders one of
+        # these, not just whether any exist in the solid.
+        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplanes, omitFaces)
         for cs in reversedCC:
             cc_region = Surfaces.add_reversedCC(cs)
             component_definition.append(cc_region)
