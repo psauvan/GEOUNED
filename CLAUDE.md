@@ -6325,6 +6325,22 @@ several contiguous pieces -- confirmed today to not be the cause of
 the architectural gap is real and matches the exact pattern already fixed
 once before in `cyl_plane_region_conf` -- no reproduction case found yet.
 
+**Added to the pending list, 2026-08-21 (user request, not yet started)**:
+- Re-run the full RevCC-on-irreducible-solids corpus scan (the same
+  `Solidos/RevCC_corpus_scan` set this whole session's fixes were tested
+  against piece by piece) as one complete pass now that all 3
+  `get_join_cone_cyl` fixes (the `cyl_plane_region_conf` sampling
+  fallback, `_valid_chain_junction`, the `twoPimod` wraparound fix, and
+  the axis-dot-product floor) are committed together -- today's
+  verification was per-fixture, not a fresh full sweep with everything
+  landed at once.
+- Reorganize the `Solidos/` STEP test fixture tree -- too many files
+  accumulated across many sessions, almost certainly with real
+  duplicates (the same physical case exported under different names in
+  different triage folders) -- per the user's own observation while the
+  482-file corpus scan was running: "son muchos sólidos y seguro que
+  muchos serán duplicados."
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
