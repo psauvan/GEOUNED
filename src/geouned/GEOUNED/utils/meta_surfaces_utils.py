@@ -104,7 +104,7 @@ def convex_wire(p):
     return Edges
 
 
-def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
+def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
     if type(cyl) is ShellGu:
         # cyl is several contiguous pieces of the same analytic surface
         # (see merge_same_surface_faces) -- a corner plane may only be
@@ -115,7 +115,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         planes = []
         seen = set()
         for f in cyl.Faces:
-            for item in get_adjacent_cylplane(f, Faces, cornerPlanes):
+            for item in get_adjacent_cylplane(f, Faces, cornerPlanes, axial_bounds):
                 p = item[4] if cornerPlanes else item
                 if p.Index in seen:
                     continue
@@ -149,6 +149,24 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True):
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is GLine:
                 continue
+            if axial_bounds is not None:
+                # Not every curved boundary edge of cyl's own OuterWire is
+                # a real axial end cap -- a hole/notch/step cut through the
+                # middle of the cylinder/cone also leaves a curved edge,
+                # and a real plane found across *that* one is not a
+                # legitimate closing plane for the surface as a whole.
+                # Confirmed live (Big_model_reserved/TVA_final_allencl.stp
+                # solid8 piece0): the RevCC's own cylinder segment spans
+                # Z=[-1000, 6500], but this unfiltered walk picked up an
+                # unrelated real plane at Z=4000 -- restricting to edges
+                # actually sitting at the surface's own axial extreme
+                # (Vmin/Vmax) excludes it.
+                pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
+                _, v = cyl.parameter(pnt)
+                vmin, vmax = axial_bounds
+                tol = 1e-3 * max(abs(vmax - vmin), 1.0)
+                if abs(v - vmin) > tol and abs(v - vmax) > tol:
+                    continue
             result = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True)
             if result is None:
                 continue
@@ -567,7 +585,12 @@ def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
         return []
 
     shell_or_face = merge_same_surface_faces(face, GUFaces)
-    adjacent_planes = get_adjacent_cylplane(shell_or_face, GUFaces, cornerPlanes=False)
+    pieces = shell_or_face.Faces if type(shell_or_face) is ShellGu else [shell_or_face]
+    axial_bounds = (
+        min(f.ParameterRange[2] for f in pieces),
+        max(f.ParameterRange[3] for f in pieces),
+    )
+    adjacent_planes = get_adjacent_cylplane(shell_or_face, GUFaces, cornerPlanes=False, axial_bounds=axial_bounds)
 
     found = []
     for adj in adjacent_planes:
@@ -620,12 +643,8 @@ def _valid_chain_junction(shared_edge, faceA, faceB, tol=1e-6):
     V0, V1 = verts[0], verts[-1]
 
     for face in (faceA, faceB):
-        e_at_V0 = [
-            e for e in face.Edges if not e.is_same(shared_edge) and any((v - V0).length < tol for v in e.Vertexes)
-        ]
-        e_at_V1 = [
-            e for e in face.Edges if not e.is_same(shared_edge) and any((v - V1).length < tol for v in e.Vertexes)
-        ]
+        e_at_V0 = [e for e in face.Edges if not e.is_same(shared_edge) and any((v - V0).length < tol for v in e.Vertexes)]
+        e_at_V1 = [e for e in face.Edges if not e.is_same(shared_edge) and any((v - V1).length < tol for v in e.Vertexes)]
         if len(e_at_V0) == 1 and len(e_at_V1) == 1 and e_at_V0[0].is_same(e_at_V1[0]):
             return False
     return True
@@ -1211,7 +1230,9 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
     return edges
 
 
-def _and_or_by_material_sampling(center, radius, z, pos_this, axis_this, pos_other, axis_other, solid, n_samples=600, margin_factor=2.0):
+def _and_or_by_material_sampling(
+    center, radius, z, pos_this, axis_this, pos_other, axis_other, solid, n_samples=600, margin_factor=2.0
+):
     """Robust fallback for `cyl_plane_region_conf`'s AND_p1_cyl/AND_p2_cyl
     sign test, used only when the cylinder and the corner plane are so
     close to exactly tangent that the analytic cross-product sign is pure
@@ -1398,7 +1419,9 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     if cross1.length < 1e-8:
         AND_p1_cyl = True
     elif cross1.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
-        result = _and_or_by_material_sampling(cyl1_center, cyl1.Surface.Radius, r1.z, p1.Surface.Position, n1, p2.Surface.Position, n2, solid)
+        result = _and_or_by_material_sampling(
+            cyl1_center, cyl1.Surface.Radius, r1.z, p1.Surface.Position, n1, p2.Surface.Position, n2, solid
+        )
         AND_p1_cyl = result if result is not None else (ac1.dot(cross1) > 0)
     else:
         AND_p1_cyl = ac1.dot(cross1) > 0
@@ -1407,7 +1430,9 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     if cross2.length < 1e-8:
         AND_p2_cyl = True
     elif cross2.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
-        result = _and_or_by_material_sampling(cyl2_center, cyl2.Surface.Radius, r2.z, p2.Surface.Position, n2, p1.Surface.Position, n1, solid)
+        result = _and_or_by_material_sampling(
+            cyl2_center, cyl2.Surface.Radius, r2.z, p2.Surface.Position, n2, p1.Surface.Position, n1, solid
+        )
         AND_p2_cyl = result if result is not None else (-ac1.dot(cross2) > 0)
     else:
         AND_p2_cyl = -ac1.dot(cross2) > 0

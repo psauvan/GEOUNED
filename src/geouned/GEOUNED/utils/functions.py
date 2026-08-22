@@ -177,6 +177,7 @@ def build_roundC_params(rc_list):
 
     roundcorner_list = []
     plane_list = []
+    extra_planes = []
     var_id = 0
 
     for cyl, p1, p2, config_orientation, ep1, ep2 in rc_list:
@@ -200,6 +201,7 @@ def build_roundC_params(rc_list):
             else:
                 var_id += 1
                 gpa.bVar = BoolVariable(var_id)
+            extra_planes.append(gpa)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
         p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
@@ -245,7 +247,23 @@ def build_roundC_params(rc_list):
             i += 1
 
         if len(plane_list) > 1:
-            multi_round, orientation = convex_planes(plane_list, cyl.Surface.Axis)
+            # convex_planes needs every plane actually bounding the group,
+            # not just the shared corner planes (plane_list): each
+            # cylinder's own closing plane (gpa/extra_planes, already used
+            # per-corner as `pcid` in multi_round_corner_region) also
+            # constrains the group's real shape. With only the 2-3 shared
+            # corner planes, the convexity/turning-consistency check can be
+            # too under-determined to ever fail (confirmed on a real
+            # fixture: 3 shared planes alone always passed as "convex",
+            # while the same 3 planes plus their 3 per-cylinder closing
+            # planes correctly failed) -- plane_list itself (the group's
+            # own top-level AND/OR terms) is left untouched, only the
+            # convexity/orientation *test* sees the richer set.
+            convexity_planes = list(plane_list)
+            for p in extra_planes:
+                if not any(p == q for q in convexity_planes):
+                    convexity_planes.append(p)
+            multi_round, orientation = convex_planes(convexity_planes, cyl.Surface.Axis)
 
         if multi_round:
             if len(plane_list) > 1:
@@ -575,7 +593,7 @@ def convex_planes(plane_list, zaxis):
         cosa = ref.dot(rp)
         cross = ref.cross(rp)
         sina = cross.length
-        if cross.dot(ref) < 0:
+        if cross.dot(zaxis) < 0:
             sina = -sina
         angles.append((math.atan2(sina, cosa), i))
 

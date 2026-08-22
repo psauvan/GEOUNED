@@ -1674,7 +1674,28 @@ def _raw_bop_split(base_native, tool_native, tolerance: float) -> tuple[list, bo
             final_native_solids.append(s)
             continue
         repaired = _repair_non_manifold_solid(s)
-        if len(repaired) > 1 or (len(repaired) == 1 and not repaired[0].IsEqual(s)):
+        changed = len(repaired) > 1 or (len(repaired) == 1 and not repaired[0].IsEqual(s))
+        if changed:
+            # Never trust the face-adjacency-graph reconstruction blindly:
+            # every piece must be a genuinely valid solid AND their summed
+            # volume must match the invalid input's own volume (same
+            # discipline as _try_coaxial_cone_split's own safety net) --
+            # otherwise the reconstruction can silently invent or lose
+            # material. Confirmed on a real fixture (modelcell_cut1
+            # piece70): a single-plane cut's invalid fragment got
+            # "repaired" into 3 pieces summing to ~30% more volume than
+            # the original, 2 of them themselves still invalid.
+            all_valid = all(BRepCheck_Analyzer(r).IsValid() for r in repaired)
+            if all_valid:
+                original_volume = abs(_volume_props(s).Mass())
+                repaired_volume = sum(abs(_volume_props(r).Mass()) for r in repaired)
+                volume_ok = abs(repaired_volume - original_volume) <= 1e-6 * max(original_volume, 1.0)
+            else:
+                volume_ok = False
+            if not (all_valid and volume_ok):
+                repaired = [s]
+                changed = False
+        if changed:
             repaired_any = True
         final_native_solids.extend(repaired)
     return final_native_solids, repaired_any, False

@@ -6341,6 +6341,307 @@ once before in `cyl_plane_region_conf` -- no reproduction case found yet.
   482-file corpus scan was running: "son muchos sólidos y seguro que
   muchos serán duplicados."
 
+## RevCC corpus re-run session (2026-08-22): folder reorg, 3 corrupt fixtures
+retired, 3 independent real bugs fixed, and `add_reversedCC`'s own conceptual
+redesign
+
+Picked up from the pending list's first item: re-ran the full RevCC corpus
+(the batch of already-decomposed irreducible solids, standard `convert_one.py`
+settings, no special instrumentation) end to end through GEOUNED + d1suned.
+283 files converted (283/283 OK), 283/283 d1suned runs completed (no crashes).
+Result: 95.8% within 2σ, 1.1% marginal (2-3σ), 3.2% (9 tallies) real failures
+beyond 3σ; 6 files with lost particles. Investigated one by one; every real
+finding below is a *separate*, independently-verified bug -- not one fix
+explaining everything.
+
+**Workshop folder convention established, per explicit user request** (see
+[[reference_workshop_folder_layout]] memory): `Solidos/` holds STP files
+only; `Solidos/test_models/` is now the curated regression-fixture set (used
+for this and future differential corpus scans, superseding the older ad-hoc
+`RevCC_corpus_scan/` collection for that purpose); `../calculos_CLAUDE/`
+(sibling of `Solidos/`, i.e. `GEOUNED_workshop/calculos_CLAUDE/`) holds every
+calculation run (MCNP conversion, d1suned) -- never STP files. All of this
+session's scratch STEP exports and diagnostic scripts live under
+`calculos_CLAUDE/hylife113_angle_test/` and `calculos_CLAUDE/*_test/`.
+
+**3 fixtures confirmed genuinely corrupt CAD, moved to `Solidos/BadCAD_decomposition/`**
+(not GEOUNED bugs, per the same standing convention documented earlier in
+this file): `Big_one_cell__modelcell_cut1__solid0_piece5__revcc2.stp` and its
+duplicate (10 lost particles each, badly-cut decomposition fragment);
+`DoubleCylinder__pieza__solid0_piece1__revcc1.stp` (5 lost particles, tally
+52.458 -- badly-cut fragment); `Big_model_reserved__TVA_final_allencl__solid10_piece1__revcc3.stp`
+(tally exactly 0.0) -- confirmed a genuinely degenerate sliver, 15,019 mm³
+volume spread over a 3.87m × 3.87m × **22 micron** BoundBox (Volume/Area
+ratio 0.011mm, well past `valid_solid`'s own `1e-3` rejection threshold in
+absolute terms but the face itself is real, not a boolean-split artifact --
+matching the family of `Solidos/BadCAD_decomposition/` fixtures already
+documented earlier in this file).
+
+**4 duplicate STP pairs found and moved to `Solidos/RevCC_corpus_scan/duplicates_removed/`**
+(same physical piece, exported twice under different names/folders -- e.g.
+from a `_noencl` vs `_allencl` variant of the same parent model, or a
+`_v2`/`_all_pieces` re-export): confirmed via **direct comparison of the
+written MCNP cell/surface cards** (per explicit user instruction -- not
+volume alone), not just numeric volume/BoundBox similarity. 3 of the 4 pairs
+are byte-for-byte identical cell/surface text (only header/timestamp/STEP-
+translator-subversion differ); the 4th (`modelcell_cut1` piece70 vs
+`all_pieces` piece_30) looked different at first glance but is the *same*
+physical cell with surfaces 1↔2/3↔5/4↔6 simply permuted (confirmed by
+cross-checking that the permutation is self-consistent across both the
+surface list and the cell's own boolean signs) -- a numbering-order artifact
+from a slightly different face-processing order between the two source
+exports, not a real geometric difference.
+
+### Bug 1: `_repair_non_manifold_solid`'s own reconstruction was never
+validated -- confirmed via `modelcell_cut1_piece70`
+
+The face-adjacency-graph non-manifold repair (`geo/_occ_impl.py` and
+`_ocp_impl.py`, both engines identically affected) never checked its own
+output before trusting it -- unlike `_try_coaxial_cone_split`'s already-
+established "every piece must be BRepCheck_Analyzer-valid AND the summed
+volume must match the input" safety net. Confirmed live on `piece70`
+(`Big_one_cell__modelcell_cut1__solid0_piece70__revcc2.stp`): the very first
+`Gsplit` call (base solid cut by a single plane) produced a raw, invalid
+BOP fragment; the repair "fixed" it into **3 pieces summing to 3045.9 --
+~30% more volume than the 2330.1 input**, and 2 of those 3 pieces were
+*themselves* still topologically invalid. This is the concrete mechanism
+behind a class of decomposition artifact this project has repeatedly hit
+(a real, correct-looking piece plus a spurious extra fragment). Fixed with
+the exact same discipline `_try_coaxial_cone_split` already established:
+after `_repair_non_manifold_solid` runs, verify every resulting piece is
+independently valid AND that their summed volume matches the pre-repair
+invalid solid's own volume (1e-6 relative tolerance, matching
+`GSolid.refine()`'s own guard) -- if either check fails, discard the
+reconstruction and keep the original, unrepaired (still-invalid) solid
+instead of fabricating volume. Discussed directly with the user whether a
+partial accept (keep only the individually-valid pieces from the repair)
+would be safer than all-or-nothing revert: no -- confirmed on this exact
+fixture that *all 3* repaired pieces were invalid, so partial-accept would
+have kept zero volume (worse than reverting to the original). The
+volume-conservation check on the *whole* reconstructed set, not per-piece
+validity alone, is the right invariant in general (a partial accept can
+silently drop real material even when the kept pieces are individually
+valid).
+
+Verified: `piece70`'s own decomposition no longer fabricates the spurious
+extra fragment (now correctly stays as 1 unresolved piece for that specific
+cut, matching the "no worse than before" design goal -- the underlying
+inability to cleanly split this exact plane cut is a separate, still-open
+tangency question, but the silent corruption is gone). `tests/geo` (all 3
+engines) and `tests/test_cadtocsg.py` unaffected.
+
+### Bug 2: `convex_planes`'s own angular sort had a dead sign test, and
+`build_roundC_params` was starving it of points -- confirmed via
+`Big_one_cell/modelCell_670000.stp` piece59's sibling, `piece52`
+
+Same file (`modelCell_670000.stp`), same physical feature (3 R=6mm
+round-corner cylinders) as the already-fixed `piece59` -- but `piece52`
+still wrongly merged them into one `MultiRoundC` (flat `AND` of all 9
+components, matching zero of 300 real interior points -- tally=0.0 in the
+corpus batch) instead of 3 separate `RoundC` like `piece59` gives.
+
+Two independent bugs, found by tracing the exact code path, not guessed:
+
+1. **`convex_planes`'s own convexity/turning-consistency test had a dead
+   sign check**: `if cross.dot(ref) < 0: sina = -sina` -- but `cross =
+   ref.cross(rp)` is *always* perpendicular to `ref` by construction, so
+   `cross.dot(ref)` is exactly `0.0` every time (confirmed numerically:
+   `0.0000000000` to 10 decimal places on real data), never negative. This
+   silently broke the angular sort the convexity check depends on (`sina`
+   never flips sign, so `atan2` never distinguishes clockwise from
+   counter-clockwise around the group). Should have been `cross.dot(zaxis)`
+   (the same reference the function's own turning-sign test a few lines
+   below already uses) -- fixed.
+2. **Even with the sign fixed, 3 points alone can never fail the turning-
+   consistency test** (too few pairwise turns to detect a real
+   inconsistency) -- confirmed directly: re-running `convex_planes` on
+   `piece52`'s real 3 shared corner planes still gave `convex=True` after
+   fix 1 alone. `build_roundC_params` was passing only the shared corner
+   planes (`plane_list`, deduplicated -- 3 for this file) into
+   `convex_planes`, discarding each cylinder's own additional closing
+   plane (`gpa`, already computed a few lines earlier for a different
+   purpose and silently dropped on the floor here). Extending the
+   convexity/orientation *test's own* input to `plane_list + gpa`s (6
+   points total for this file; `plane_list` itself, used for the group's
+   real top-level AND/OR terms, is untouched) makes `convex_planes`
+   correctly return `False` -- confirmed live.
+
+With both fixes, `piece52` gives `RoundC: 4` (this file's real corner count,
+different from `piece59`'s 3 -- not a discrepancy, just a different real
+solid) and matches **300/300 real interior + 300/300 real exterior points**
+against direct CAD ground truth (`solid.is_inside`). d1suned on the isolated
+piece: tally `0.99892 ± 0.50%` (was `0.0` exactly), 0 lost particles.
+
+### Bug 3: `get_adjacent_cylplane`'s curved-edge walk had no axial-extreme
+check -- confirmed via `Big_model_reserved/TVA_final_allencl.stp` solid8
+piece0
+
+`_find_adjacent_multiplane_planes` (feeding `ReversedConeCylParams.AdjacentMultiplanePlanes`,
+the RevCC/MultiPlane-boundary escape mechanism documented earlier in this
+file) calls `get_adjacent_cylplane(..., cornerPlanes=False)`, which walks
+*every* curved boundary edge of a cylinder/cone segment's own OuterWire and
+accepts whatever real `GPlane` it finds across each one -- with no check
+that the edge is actually at the surface's own axial extreme (V=Vmin or
+V=Vmax). A hole, notch, or unrelated mid-height feature also leaves a
+curved boundary edge, and a real plane found across *that* one is not a
+legitimate closing plane for the segment as a whole. Confirmed live: this
+RevCC's own cylinder segment spans Z=[-999.98, 6500.0] (its real axial
+extent), but the unfiltered walk picked up a genuinely real, unrelated
+plane sitting at **Z=4000** -- squarely inside the segment's own span, not
+at either end -- as if it were a closing boundary. Combined via `AND` at
+the top level of the RevCC's own `AdjacentMultiplanePlanes` mechanism, this
+wrongly chopped off most of the real solid's own axial extent.
+
+Fixed by adding an optional `axial_bounds=(vmin, vmax)` parameter to
+`get_adjacent_cylplane` -- when given, only accepts a curved edge whose own
+sampled V-parameter lands within a small tolerance of one of the two
+bounds (computed, for a merged multi-piece shell, as the true min/max
+across every piece's own `ParameterRange`, not each piece's local range,
+which would wrongly treat internal seams between pieces as if they were
+real ends). Threaded through only at `_find_adjacent_multiplane_planes`'s
+own call site -- the two *other* `cornerPlanes=False`/`True` callers
+(`get_can_surfaces`'s own end-cap search, `multiplane()`'s corner-plane
+search) default `axial_bounds=None`, unchanged behavior, since this defect
+is specific to searching for a segment's own *axial* closing plane, not
+the *corner* planes those other callers look for.
+
+Verified: `TVA_final_allencl` solid8 piece0's `mp_planes` search now
+correctly returns 0 candidates (the Z=4000 plane excluded, and no real
+end-cap plane exists for this segment at its own true extremes) instead of
+the wrong Z=4000 one. d1suned: tally `0.99582 ± 0.32%` (was `2.17844`,
+σ=346.6), 0 lost particles.
+
+### Bug 4 (the deep one): `add_reversedCC`'s own `plane_region` -- a real
+conceptual defect, not a sign bug, found via extensive live derivation with
+the user and finally fixed by the user directly
+
+Confirmed via `Big_model_reserved/hylife-v06.stp` solid113/114 piece0 and
+`inputSTEP/dientes3.stp` solid0 piece2 -- all three share the same RevCC
+topology: 2 cone segments + 1 cylinder segment, each with its own
+"additional plane" (`pk1`, `pk2`, `pc` respectively). All three originally
+gave real, large tally deviations (1.119σ≈52, 1.1215σ≈53, 1.368σ≈51).
+
+**What was ruled out first, methodically, before finding the real cause**:
+- `check_sign` had no dispatch branch for `"ReversedConeCylinder"` at all
+  (fell through to an implicit `None`) -- added one (mirroring Can/TCone's
+  own `.components`/`.region.evaluate()` pattern, with `.components`
+  correspondingly populated in `_reversedCC_component`/`add_reversedCC`)
+  purely to make this verifiable at all. Confirmed the RevCC's own internal
+  region, evaluated this way, already matched real geometry correctly at
+  every sampled point -- the bug was NOT in the composite surface's own
+  formula being wrong in isolation.
+- Hand-derived, with the user, a from-scratch "recursive line-segment
+  decomposition" algorithm for combining N boundary planes via nested
+  AND/OR based on local convexity (mirroring `generic_split`'s own real
+  3D recursive-cut algorithm, applied to a 2D projection of the RevCC's
+  own additional planes) -- a genuinely rigorous derivation (confirmed via
+  a concrete "step" test case, `M = (LA AND LB) OR (LC AND -LB)`,
+  matching ground truth 5/5 test points) that correctly resolved the
+  "sequential chaining is order-dependent and therefore wrong" flaw a
+  simpler first attempt had. Started implementing this against the real
+  RevCC data (projecting the additional planes onto a plane perpendicular
+  to the chain's own shared axis, finding real 2-point segments via
+  where this plane crosses each segment's own real face edges) and it
+  *did* produce a valid, real solid once the right projection height and
+  face-to-CylCone identity mapping were found -- but was abandoned
+  ("cambio de estrategia, esto no nos lleva a ningún sitio") once it
+  became clear the full general algorithm wasn't going to be needed.
+- **"Apply GEOUNED to itself"**: built a box, ran the real `Gsplit`
+  (matching `generic_split`'s own recursive splitting exactly) using
+  `pc`/`pk1`/`pk2` as the only 3 candidate cutting tools, and checked each
+  resulting piece's own material status via `Gcommon` against the real
+  solid (not a single point sample -- the full boolean intersection).
+  Found empirically: material = `pk1 OR pk2` (with `pc` not appearing at
+  all), verified to 0.0005% volume match. Cross-verified independently:
+  flipping the *sign* of `pk1`/`pk2` (their raw, uncorrected
+  `gen_plane_cone`-computed axis has no material-direction correction the
+  way `find_can_plane`/`cks_edge_plane` already apply -- a real, separate,
+  not-yet-fixed defect in `gen_plane_cone`/`gen_plane_cylinder`) while
+  keeping the *original* `plane_region = OR[pc,pk1,pk2]` structure
+  produced the exact same tally (`0.99938`) via a completely different
+  code path -- strong independent confirmation.
+- A GEOReverse (CsgToCad) round-trip of the *original, unfixed* cell 1
+  found a separate, real, still-unresolved discrepancy: the reconstructed
+  CAD volume was 1.401× the true solid's volume, while d1suned's own
+  tally for the same unfixed file was only 1.119× -- the two don't agree,
+  and the reconstructed solid's own BoundBox (Z:[3981.7, 4465.6])
+  genuinely exceeds the cell's own explicit bounding planes 6/7
+  (Z:[4050.8, 4396.5]). Not pursued further once the user found the real
+  fix via the boolean-formula route instead -- flagged here as a distinct,
+  open GEOReverse-side question for a future session.
+
+**The real fix, found by the user directly, after all of the above**: the
+original code paired each segment's own primitive term with its own
+*individual* closing plane (`terms_region = AND[(s_i OR -p_i) for each
+segment i]`, `plane_region = OR[p_1, ..., p_n]`,
+`reversedCC_region = plane_region * terms_region`). The fix instead pairs
+every segment's own primitive term with the *global* union of every
+closing plane (`AND[(s_i OR -plane_region) for each segment i]`) --
+algebraically, since the final expression is already AND'd with
+`plane_region` itself, this simplifies to
+**`plane_region AND (s_1 AND s_2 AND ... AND s_n)`**: material requires
+being on the correct side of *at least one* closing plane (OR, unchanged),
+AND satisfying *every* segment's own primitive surface simultaneously
+(AND) -- a materially different, and evidently correct, physical
+statement from the original per-segment pairing. `geouned_classes.py`:
+
+```python
+plane_region = None
+surf_components = []
+for cc in cylcones:
+    s_region, p_region = self._reversedCC_component(cc)
+    plane_region = BoolSurface.add(plane_region, p_region)
+    surf_components.append(s_region)
+
+surf_region = None
+for s_region in surf_components:
+    surf_region = BoolSurface.mult(surf_region, s_region + (-plane_region))
+
+surf_region.region.simplify(None)
+reversedCC_region = plane_region * surf_region
+```
+
+(The exploratory `.components`/`check_sign` RevCC-verification scaffolding
+added earlier in this same investigation was reverted once no longer
+needed -- `boolean_solids.py` and `geouned_classes.py`'s `.components`
+tracking are both back to their pre-session state; only the `plane_region`
+fix above remains.)
+
+Verified via the real end-to-end pipeline (`decompose_solids` →
+`build_solid_definition` → `build_void` → `export_csg` → d1suned, standard
+settings) on all 3 originally-failing solids: `hylife-v06` solid113
+`0.99938 ± 0.24%`, solid114 `1.00220 ± 0.24%`, `dientes3` piece2
+`1.00332 ± 0.81%` -- all 0 lost particles, all within ~1σ of 1.0 (were
+51-53σ).
+
+### Combined verification and a large, expected differential (not yet
+independently isolated)
+
+All 3 bugs (piece70's repair-validation, piece52's `convex_planes`, TVA
+solid8's `get_adjacent_cylplane`) plus the `add_reversedCC` fix landed
+together. `tests/geo` (156+2skip FreeCAD, 78+1skip occ, 39 ocp) and
+`tests/test_cadtocsg.py` (50/50, all 3 engines) all green.
+
+A differential corpus scan across the new `Solidos/test_models/` set (109
+files, excluding `Big_model_reserved`, Can/TCone/RoundCorner/
+MultiRoundCorner/MultiPlane/RevCC counts, `git stash` before/after) found
+**24 files differ** -- but the great majority (everything under
+`RoundCorners/`, e.g. `rc10.stp`/`rrc10.stp`/etc.) show `RevCC` completely
+unchanged (0→0) and only `RoundC`/`MultiRoundC` shift, in a very
+consistent `MultiRoundC:1 → RoundC:2`-shaped pattern -- matching exactly
+the *already independently 300/300-validated* `convex_planes`/
+`build_roundC_params` fix (bug 2 above) spreading to files far beyond the
+one that originally motivated it, not a side effect of the `add_reversedCC`
+fix. This is the first time that fix's full corpus-wide blast radius has
+been observed (previously validated only on `piece52`/`piece59`
+specifically) -- consistent with, but not yet independently confirmed
+against, real CAD ground truth the way `piece52` itself was. **Not done
+this session**: isolating bug 2's and bug 4's own differential contributions
+separately (re-run the scan with only one fix active at a time) to confirm
+neither is masking a problem in the other -- flagged as the natural next
+step if this corpus's behavior ever needs deeper trust beyond the 3
+specific d1suned-verified solids above.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

@@ -1172,12 +1172,19 @@ class MetaSurfacesDict(dict):
             reversedCC_region = s_region * p_region
         else:
             plane_region = None
-            terms_region = None
+
+            surf_components = []
             for cc in cylcones:
                 s_region, p_region = self._reversedCC_component(cc)
                 plane_region = BoolSurface.add(plane_region, p_region)
-                terms_region = BoolSurface.mult(terms_region, s_region + (-p_region))
-            reversedCC_region = plane_region * terms_region
+                surf_components.append(s_region)
+
+            surf_region = None
+            for s_region in surf_components:
+                surf_region = BoolSurface.mult(surf_region, s_region + (-plane_region))
+
+            surf_region.region.simplify(None)
+            reversedCC_region = plane_region * surf_region
 
         # A MultiPlane can make the irreducible solid non-convex -- exactly
         # the configuration where the RevCC's own additional plane, correct
