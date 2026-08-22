@@ -5527,14 +5527,27 @@ than re-verified individually first).
 Both gained a third `elif _engine == "ocp": from ._ocp_impl import
 (...)` branch, same 40/8-name import lists as the `"occ"` branch,
 inserted between the existing `"occ"` branch and the FreeCAD `else` --
-default engine is still `"freecad"` when `GEOUNED_CAD_ENGINE` is unset,
-`"ocp"` is a new explicit opt-in exactly like `"occ"` already was.
-`geo/__init__.py`'s own module docstring (previously stale -- it still
-described `_occ_impl.py` as "a Phase 1 validation slice... not yet
-suitable for real use", long out of date by this point in the project's
-history) was corrected at the same time to describe all three engines
-accurately and note `"ocp"` as the now-recommended choice for new
-pyOCC-backed work.
+at the time this branch was added, the default engine was still
+`"freecad"` when `GEOUNED_CAD_ENGINE` was unset, with `"ocp"` a new
+explicit opt-in exactly like `"occ"` already was. `geo/__init__.py`'s
+own module docstring (previously stale -- it still described
+`_occ_impl.py` as "a Phase 1 validation slice... not yet suitable for
+real use", long out of date by this point in the project's history) was
+corrected at the same time to describe all three engines accurately and
+note `"ocp"` as the now-recommended choice for new pyOCC-backed work.
+
+**Update, later session**: the default itself was changed --
+`geo/__init__.py`'s `_engine = os.environ.get("GEOUNED_CAD_ENGINE",
+"ocp").strip().lower()` now defaults to `"ocp"`, not `"freecad"`, when
+the env var is unset (confirmed live: `GEOUNED.geo.CAD_ENGINE` resolves
+to `"ocp"` with zero environment configuration in a plain shell).
+`"freecad"` and `"occ"` remain available as explicit opt-ins
+(`GEOUNED_CAD_ENGINE=freecad` / `=occ`) exactly as before -- only the
+unset-variable fallback changed. Every "default engine" reference
+elsewhere in this file that predates this change (the pyOCC-migration
+Phase 1-4 sections, the OCP go/no-go section, etc.) describes the state
+*as of when it was written*, not the current default -- this note is
+the authoritative current status.
 
 ### Final verification
 

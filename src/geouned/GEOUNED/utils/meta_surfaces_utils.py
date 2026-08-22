@@ -144,7 +144,33 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
                     # any curve type) are what get_additional_corner_plane
                     # evaluates at, since that's the real boundary.
                     planes.append((cyl, e, touching_edge, near_face, otherface))
-        return planes
+
+        # If both of the cylinder's own corner edges close against the
+        # *same* real face (same Index -- the identical physical plane
+        # closing both ends, not just two geometrically-coincident faces on
+        # opposite sides), that's not a valid RoundCorner: a real round
+        # corner needs two distinct closing planes. Deduplicating here
+        # collapses that case down to a single entry, so the caller's own
+        # existing `len(adjacent_planes) != 2` check rejects it naturally --
+        # no special-case needed downstream. Confirmed concretely
+        # (Solidos/working_solids/rc1_decomp.stp): when the same face closes
+        # both ends, the "additional plane" pd (through both e1 and e2) *is*
+        # that same face, so cyl_plane_region_conf's p1_pd/p2_pd angle test
+        # sits at an exact, meaningless 0-degree singularity, producing an
+        # unconditional AND_p1_pd/AND_p2_pd disagreement -- not a tangency
+        # or numerical-noise issue, a genuinely invalid RoundCorner premise.
+        # The legitimate "p1 == p2 geometrically, but from 2 disjoint real
+        # faces" case (round_corner_region's own p1id == p2id branch) is
+        # unaffected -- those are different Index values here.
+        seen_index = set()
+        deduped = []
+        for item in planes:
+            idx = item[4].Index
+            if idx in seen_index:
+                continue
+            seen_index.add(idx)
+            deduped.append(item)
+        return deduped
     else:
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is GLine:
