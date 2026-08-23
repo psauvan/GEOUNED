@@ -7822,6 +7822,32 @@ this pass)**:
   stop here for now** -- `GEOReverse` investigation is deliberately
   deferred until `GEOUNED`'s own forward pipeline is fully clean of
   known bugs; this item stays open, picked up only once that's true.
+- `Mixed/multiplane_add_plane_cyl.stp`'s own residual ~1.8 sigma gap
+  (was ~4.5 sigma, fixed by `_find_adjacent_multiplane_planes`'s inverted
+  search -- see that section above) -- not investigated further this
+  session; the fix landed a real, verified improvement, but the file
+  isn't perfectly at tally 1.0 yet.
+
+## Session close, 2026-08-23 (evening) -- GEOUNED-side status for the
+next session
+
+Per the user's own explicit priority ordering (stated twice this
+session): finish `GEOUNED` (the forward CAD-to-CSG pipeline) before
+picking `GEOReverse` back up. As of this commit, the concrete `GEOUNED`-side
+punch list (excluding anything already marked `GEOReverse`-only above) is:
+`Big_complex_cell/modelcell_cut1.stp` (lost particles, not root-caused),
+`Enclosures/w_encl.stp` cells 4-5 (zero tally, tied to the still-commented-out
+`LF.remove_enclosure` call), `Big_complex_cell/modelCell_670000.stp`
+(lost particles, not investigated), `Solidos/Torus/2_degen_torii.stp`
+(lost-particle abort, was a harder fatal error before), `multiplane_add_plane_cyl.stp`'s
+own residual ~1.8 sigma (just above), `AdjacentMultiplanePlanes` needing
+the same RevCC-to-MultiRoundCorner extension flagged since 2026-08-21, and
+the still-unexercised `occ`-engine-specific full corpus scan. Everything
+in this session's own work (piece5/coaxial-cone fix, `CharacteristicWidth`
+cross-engine port, the `gen_plane_cylinder`/`gen_plane_cone` investigation
+closed as not-a-bug, and this last `_find_adjacent_multiplane_planes` fix)
+is committed and pushed to `origin/georeverse-migration` -- working tree
+clean.
 
 ## Code style preference
 
