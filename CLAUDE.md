@@ -6991,6 +6991,89 @@ class of crash under either engine -- this session only confirms
 files that might hit the now-still-enabled flag (`UnifyEdges` under `ocp`,
 `UnifyFaces` under `occ`) on some other real geometry was not attempted.
 
+## Pending tasks, 2026-08-23 (consolidated)
+
+Compiled from every open item scattered across this file's history plus
+this session's own findings, superseding the 2026-08-21 audit above where
+they overlap. Not independently re-verified item by item this pass (that
+full-discipline re-check is itself listed as a pending item, below) --
+treat as a compiled index, not a guarantee every line still reproduces.
+
+**Closed since the 2026-08-21 audit (no longer pending)**:
+- `ConeSphere.stp`'s native segfault (`ShapeUpgrade_UnifySameDomain`) --
+  fixed both engines, this session (see "Two crashes found" above).
+- `multiplane_add_plane_cone.stp`'s `ZeroDivisionError` -- fixed, this
+  session.
+- The full RevCC-on-irreducible-solids corpus re-run -- done, 2026-08-22
+  (283 files, 4 real bugs found and fixed: `_repair_non_manifold_solid`'s
+  own unvalidated reconstruction, `convex_planes`'s dead sign test +
+  `build_roundC_params` point-starving, `get_adjacent_cylplane`'s missing
+  axial-extreme check, `add_reversedCC`'s `plane_region` redesign).
+- `rc9.stp`'s `MultiRoundCorner` misclassification -- fixed, 2026-08-23 (3
+  bugs: `get_adjacent_cylplane` dedup, `is_same_plane_surface` antiparallel
+  bug, `convex_planes` unnormalized-angle bug).
+
+**New, not yet written up anywhere else in this file** (found during this
+session's `Solidos/test_models` batch conversion + d1suned run, before the
+rc9.stp deep dive -- characterized/triaged but left unfixed when the
+session redirected to rc9.stp, then to the 2 crashes above):
+- `Cans/pipe.stp` -- d1suned tally ~27.6 sigma off. Not root-caused.
+- `Big_complex_cell/modelcell_cut1.stp` -- was a bad-tally failure
+  (~45.5 sigma, per the 2026-08-21 audit's own "Changed symptom" note),
+  now loses particles at runtime instead. Not root-caused either way.
+- `Decomposed/SCDR_90_piece2.stp` -- d1suned tally ~23.5 sigma off. Not
+  root-caused.
+- `Mixed/multiplane_add_plane_cyl.stp` -- d1suned tally ~4.5 sigma off
+  (the cylinder sibling of the now-fixed `multiplane_add_plane_cone.stp`
+  -- worth checking whether `gen_plane_cylinder` has the same apex-style
+  degeneracy `gen_plane_cone` just had, or a different bug).
+- `Enclosures/w_encl.stp` cells 4-5 -- zero tally, tied to the
+  already-documented, still-unfixed enclosure-duplication bug
+  (`LF.remove_enclosure(meta_list)` commented out in `load_step.py`) --
+  note this is a *different* symptom from the same file's own
+  already-confirmed-fixed 10-lost-particles case documented in the
+  2026-08-21 audit above; the two may not be the same finding.
+- `Big_complex_cell/modelCell_670000.stp` -- now converts (slow, ~230s)
+  but loses 10 particles at runtime. Not investigated.
+
+**Carried forward from the 2026-08-21 audit, still open (not re-verified
+this pass)**:
+- `AdjacentMultiplanePlanes` needs extending from RevCC to
+  MultiRoundCorner too (`project_mrc_adjacent_multiplane_pending.md`).
+- `gen_plane_cylinder`/`gen_plane_cone` still operate on a single raw face
+  rather than a merged same-surface shell when a RevCC segment's own
+  cylinder/cone is split into several contiguous pieces -- no reproduction
+  case found yet.
+- Isolating the RevCC-corpus differential scan's bug-2 vs bug-4
+  contributions separately (109-file `Solidos/test_models` scan, 24 files
+  differed after the 2026-08-22 fixes landed together) -- not yet split
+  apart to confirm neither fix is masking a problem in the other.
+- `check_sign` verification of RevCC from the conversion side (never
+  attempted -- decomposition-side scanning structurally can't reach it,
+  per this file's own earlier explanation).
+- A full `Solidos/` corpus differential scan specifically under the raw
+  `occ` (pythonocc-core) engine (as opposed to `ocp`, now the default, or
+  `freecad`) -- never run.
+- `Gload_step_labels`'s FreeCAD-style auto-suffix naming gap for multiple
+  solids sharing one XCAF label, under `occ`/`ocp` -- narrow, non-blocking.
+- Enclosure solids duplicated into `meta_list` -- the fix
+  (`LF.remove_enclosure`) exists and is correct but its call is still
+  commented out in `load_step.py`.
+- The 6 exotic quadric surfaces (`Gmake_elliptic_cone`/`Gmake_hyperboloid`/
+  etc.) remain `_not_implemented(...)` stubs in `GEOReverse`'s pyOCC
+  backends.
+- `Solidos/Torus/2_degen_torii.stp` -- the hard MCNP fatal error is gone,
+  but it now hits the ordinary 10-lost-particle abort instead. Still open.
+- `Solidos/` STEP fixture tree reorganization/dedup -- only partially
+  done (`test_models/` + a couple of `duplicates_removed/` moves); the
+  user's own "son muchos sólidos y seguro que muchos serán duplicados"
+  concern is still largely unaddressed.
+- The GEOReverse (CsgToCad) round-trip discrepancy on `hylife-v06.stp`
+  cell 1 (reconstructed CAD volume 1.401x the true solid vs. d1suned's own
+  1.119x tally on the same unfixed file -- the two don't agree) --
+  surfaced during the `add_reversedCC` investigation, not pursued once the
+  real fix was found via the boolean-formula route instead. Still open.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
