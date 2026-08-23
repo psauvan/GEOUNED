@@ -7276,10 +7276,11 @@ list.
   `testing/inputSTEP`'s 50-file corpus, not `Solidos/test_models` (where
   the regression was actually found) -- the 109-file scan is the real
   regression net here, not the committed test suite.
-- `Big_complex_cell/modelcell_cut1.stp`, `Mixed/multiplane_add_plane_cyl.stp`,
-  `Enclosures/w_encl.stp` cells 4-5, `Big_complex_cell/modelCell_670000.stp`'s
-  own lost-particles issue -- all still open from the prior pending list,
-  untouched this session.
+- `Big_complex_cell/modelcell_cut1.stp`, `Enclosures/w_encl.stp` cells 4-5,
+  `Big_complex_cell/modelCell_670000.stp`'s own lost-particles issue --
+  still open from the prior pending list. `Mixed/multiplane_add_plane_cyl.stp`
+  is no longer open -- see "`_find_adjacent_multiplane_planes`... " further
+  down this file (improved, not fully resolved: 4.5 sigma -> 1.8 sigma).
 
 ## `SCDR_90_hollow.stp` piece5 resolved: a real cone-cylinder coaxial
 degeneracy `_try_coaxial_cone_split` never searched for, plus a retry
@@ -7659,10 +7660,41 @@ session redirected to rc9.stp, then to the 2 crashes above):
 - `Big_complex_cell/modelcell_cut1.stp` -- was a bad-tally failure
   (~45.5 sigma, per the 2026-08-21 audit's own "Changed symptom" note),
   now loses particles at runtime instead. Not root-caused either way.
-- `Mixed/multiplane_add_plane_cyl.stp` -- d1suned tally ~4.5 sigma off
-  (the cylinder sibling of the now-fixed `multiplane_add_plane_cone.stp`
-  -- worth checking whether `gen_plane_cylinder` has the same apex-style
-  degeneracy `gen_plane_cone` just had, or a different bug).
+- ~~`Mixed/multiplane_add_plane_cyl.stp` -- d1suned tally ~4.5 sigma off~~
+  -- **investigated and improved, 2026-08-23 (later session)**. Turned out
+  unrelated to `gen_plane_cone`'s already-fixed apex degeneracy -- the real
+  cause was `_find_adjacent_multiplane_planes` (`meta_surfaces_utils.py`)
+  finding **zero** adjacent MultiPlane planes for either of this file's 2
+  RevCC segments, when it should have found real ones. Root cause,
+  confirmed live: the old implementation delegated to
+  `get_adjacent_cylplane(..., cornerPlanes=False, axial_bounds=...)`,
+  which only accepts a *curved* boundary edge whose own midpoint sits
+  within a `1e-3 * range`-scaled tolerance of the segment's true V-extreme
+  -- correct for a cylinder/cone cut by a *perpendicular* plane (circular
+  rim, midpoint exactly at the extreme), but this file's cylinder is cut
+  by a *non-perpendicular* plane, giving an *elliptical* rim whose own
+  midpoint sits ~0.05-0.06 off the true extreme against a tolerance of
+  only ~0.003 -- silently excluding both of the file's real end-cap edges.
+  **Fixed per explicit user-directed strategy change** ("vamos a invertir
+  la busquedad"): rather than first guessing which edges could plausibly
+  border a closing plane via a shape/position heuristic and only then
+  checking whether the result happens to match a known MultiPlane
+  component, `_find_adjacent_multiplane_planes` now walks *every* edge of
+  the segment's own shell directly and checks whether its real neighbor
+  (via `other_face_edge`, sliver-tolerant) is already one of `multiplanes`'
+  own component planes -- no shape/position heuristic to get subtly wrong,
+  since the candidate set is already fully known in advance.
+  `get_adjacent_cylplane` itself is untouched (still used by `meta_surfaces.py`
+  for Can/RoundCorner detection) -- only this one caller was rewired to
+  stop using it. Verified: d1suned tally 0.980107 (±0.44%, ~4.5 sigma) ->
+  **0.991981 (±0.44%, ~1.8 sigma)** -- a real, substantial improvement,
+  though not perfectly at 1.0 (a residual ~1.8 sigma gap remains, not
+  investigated further this pass). `tests/geo` + `tests/test_cadtocsg.py`
+  128/128 under `ocp`; a 109-file `Solidos/test_models` differential
+  corpus scan (composite-surface counts, excluding `Big_model_reserved`)
+  shows **zero differences** anywhere -- the fix only improves this one
+  file's own RevCC accuracy, without changing classification counts
+  anywhere else in the corpus.
 - `Enclosures/w_encl.stp` cells 4-5 -- zero tally, tied to the
   already-documented, still-unfixed enclosure-duplication bug
   (`LF.remove_enclosure(meta_list)` commented out in `load_step.py`) --

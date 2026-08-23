@@ -590,40 +590,60 @@ def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
     segment's own cylinder/cone (`face`, possibly merged into a ShellGu of
     several same-analytic-surface pieces via merge_same_surface_faces --
     a boolean cut can split what's really one cylinder/cone into several
-    contiguous fragments). Found via get_adjacent_cylplane's own
-    established curved-edge walk (cornerPlanes=False): every OuterWire
-    edge of the face/shell that is NOT a straight line is tried, since a
-    straight (GLine) edge marks an angular/rotational boundary between
-    wedge fragments of the very same cylinder/cone, never a real transverse
-    closing plane -- only a curved boundary edge (the cylinder/cone's own
-    circular/elliptical rim) can border a real closing plane.
+    contiguous fragments).
 
     Needed because a MultiPlane can make the irreducible solid non-convex,
     which is exactly the configuration where the RevCC's own additional
     plane p -- correct only locally, near its own cylinder/cone -- must
     not be applied as an unrestricted global cut; identifying which real
     faces actually border this segment is the first step toward limiting
-    it there. Matched against each MultiPlane's own component planes via
-    is_same_plane (component planes are fresh GeounedSurface objects with
-    no face .Index of their own, so geometric comparison, not index
-    matching, is the only way to tell)."""
+    it there.
+
+    Search direction is inverted from an earlier version of this function
+    (per direct user instruction, 2026-08-23): rather than first guessing
+    *which* boundary edges could plausibly border a closing plane (a
+    curved-edge-only, axial-bounds-with-a-fixed-tolerance heuristic borrowed
+    from get_adjacent_cylplane) and only then checking whether what's found
+    happens to be a known MultiPlane component, this walks *every* edge of
+    the segment's own shell and checks directly whether its real neighbor
+    (via other_face_edge, tolerant of residual slivers) is already known to
+    be one of `multiplanes`' own component planes -- if so, it's added,
+    full stop. This sidesteps the earlier heuristic's real, confirmed
+    failure mode: a cylinder/cone cut by a non-perpendicular plane has an
+    *elliptical* rim edge whose own midpoint does not sit at the face's own
+    true V-extreme the way a perpendicular cut's circular rim does (off by
+    ~0.05-0.06 against a tolerance of ~0.003 -- confirmed live,
+    Solidos/test_models/Mixed/multiplane_add_plane_cyl.stp -- so the old
+    heuristic silently found nothing at all for a real, adjacent MultiPlane
+    plane). Checking every edge against the already-known candidate set is
+    both more direct (no shape/position heuristic to get subtly wrong) and
+    strictly no more expensive than it looks: `multiplanes` is normally a
+    handful of planes at most, and a MultiPlane-adjacent RevCC segment is
+    already a narrow, uncommon case."""
     if not multiplanes:
         return []
 
+    candidates = [mpp for mp in multiplanes for mpp in mp.Surf.Planes]
+
     shell_or_face = merge_same_surface_faces(face, GUFaces)
     pieces = shell_or_face.Faces if type(shell_or_face) is ShellGu else [shell_or_face]
-    axial_bounds = (
-        min(f.ParameterRange[2] for f in pieces),
-        max(f.ParameterRange[3] for f in pieces),
-    )
-    adjacent_planes = get_adjacent_cylplane(shell_or_face, GUFaces, cornerPlanes=False, axial_bounds=axial_bounds)
 
     found = []
-    for adj in adjacent_planes:
-        for mp in multiplanes:
-            for mpp in mp.Surf.Planes:
-                if is_same_plane(adj.Surface, mpp.Surf, tolerances=tolerances):
+    seen_planes = set()
+    for piece in pieces:
+        for e in piece.OuterWire.Edges:
+            result = other_face_edge(e, piece, GUFaces, outer_only=False, skip_slivers=True)
+            if result is None:
+                continue
+            _, _, otherface = result
+            if not isinstance(otherface.Surface, GPlane):
+                continue
+            for mpp in candidates:
+                if id(mpp) in seen_planes:
+                    continue
+                if is_same_plane(otherface.Surface, mpp.Surf, tolerances=tolerances):
                     found.append(mpp)
+                    seen_planes.add(id(mpp))
                     break
     return found
 
