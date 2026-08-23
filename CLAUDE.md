@@ -7849,6 +7849,101 @@ closed as not-a-bug, and this last `_find_adjacent_multiplane_planes` fix)
 is committed and pushed to `origin/georeverse-migration` -- working tree
 clean.
 
+## Full `Solidos/test_models` batch conversion + d1suned scan, 2026-08-23
+(night) -- 106 files, new findings not yet investigated
+
+Ran the full conversion pipeline (standard settings: `voidGen=True,
+startCell=1, startSurf=1, simplify="no", compSolids=False,
+minVoidSize=20.0`, `volSDEF=True` MCNP export) over every STEP file under
+`Solidos/test_models`, excluding `Big_complex_cell/` and
+`Big_model_reserved/` (106 files, 0 conversion errors), then ran d1suned
+on every resulting `model.mcnp` (WSL, standard methodology -- see "MCNP
+stochastic volume check" earlier in this file). Batch driver ran
+**sequentially** (one d1suned invocation at a time, not parallelized
+across WSL's 32 available cores) -- worth fixing for any future batch
+this size, but this run had already progressed too far to be worth
+restarting once the question came up.
+
+**Aggregate**: 112 individual cell tallies parsed across 106 files --
+87.5% within 2 sigma, 6.2% marginal (2-3 sigma), 6.2% real failures
+(>3 sigma). Diagnostic scripts (scratchpad only): `batch_convert.py`
+(conversion driver, writes `convert_results.json`), `run_d1suned_batch.sh`
+(sequential d1suned driver), `parse_d1suned_results.sh` (awk-based outp
+parser -- pairs each `cell N` line with the tally/error line 2 lines
+below it, since d1suned's own cell-tally block has no single-line
+`cell value error` format), `analyze_batch_results.py` (sigma
+computation + bucketing).
+
+**2 fatal MCNP errors (no tally at all)**:
+- `Hollow_plates/placa.stp` -- **new finding**, not previously documented
+  for this specific fixture path (the `placa.stp` name is shared with an
+  already-investigated `Reversed_Cyl_Cones/placa.stp` history elsewhere
+  in this file -- confirm this is the same physical file or a distinct
+  one before assuming prior findings transfer).
+- `Torus/2_degen_torii.stp` -- matches its already-documented
+  lost-particle-abort history, but this run hit a **harder fatal error**
+  (no tally section at all) rather than the previously-observed
+  10-lost-particle abort with a partial tally. Not yet reconciled with
+  the earlier, milder symptom.
+
+**6 files with lost particles** (10 lost-particle-report lines = MCNP's
+default abort threshold, so these runs aborted early and any tally shown
+is on reduced statistics): `Complex_cell/SCDR_90.stp`,
+`Decomposed/modelcell_cut1_v2_piece66.stp`,
+`Hollow_plates/cylcone_exact_placa3_pos.stp`, `Mixed/SCDR_90_hollow.stp`
+(9 lines, not 10), `RevCC_regression/cyl_cone.stp`,
+`Reversed_Cyl_Cones/cyl_cone.stp`. The 2 `cyl_cone.stp` entries are the
+same physical file present in both folders (a known corpus-duplication
+pattern per `reference_workshop_folder_layout.md`) -- **this directly
+contradicts `cyl_cone.stp`'s own extensively-documented fixed state
+earlier in this file** (`ReversedConeCylinder`'s AND/OR grouping fix,
+verified 0 lost particles / tally 0.996547, re-confirmed multiple times
+since including the `_valid_chain_junction`/`twoPimod` regression-fix
+session). **Not yet reconciled -- possible real regression, needs
+checking first before anything else in this list.**
+
+**Real >3 sigma failures**:
+- `Enclosures/w_encl.stp` cells 4-5: exactly 0.0 -- matches the
+  already-documented, still-open enclosure-duplication bug
+  (`LF.remove_enclosure(meta_list)` call still commented out in
+  `load_step.py`). Not new.
+- `Decomposed/modelcell_cut1_v2_piece66.stp`: tally 1878.16 (~9777 sigma)
+  -- **new, severe, not previously documented**. Also one of the 6
+  lost-particle files above.
+- `RevCC_regression/.../Big_model_reserved__TVA_final_allencl__solid8_piece0__revcc1.stp`:
+  tally 11.4383 (~4175 sigma) -- **possible regression**: this exact
+  fixture is the one used to verify Bug 3 in the "RevCC corpus re-run
+  session" above (`get_adjacent_cylplane`'s missing axial-extreme check),
+  previously confirmed at tally 0.99582 +/- 0.32%. A result this far off
+  in the same fixture needs checking before trusting anything else in
+  this RevCC family.
+- `Mixed/rev_pipe.stp` and `RoundCorners/rev_pipe.stp` (same physical
+  file in 2 folders -- another corpus duplicate): tally 0.95238
+  (~23.8 sigma). This is the already-documented non-manifold `rev_pipe.stp`
+  case (the `_repair_non_manifold_solid` reconstruction, previously
+  reported as volume-conserving to ~0.0003% via a summed-piece-volume
+  check only -- never independently verified via d1suned before now).
+  A 23.8 sigma deviation here is the first real MCNP-level check of that
+  reconstruction's correctness, and it fails -- the volume-sum check
+  apparently wasn't sufficient to catch a real shape defect.
+- `RoundCorners/rc3.stp`: tally 1.14697 (~22.3 sigma) -- **new, not
+  previously documented**.
+
+**Marginal (2-3 sigma), not investigated**: `Mixed/fwd_pipe.stp`,
+`RoundCorners/rc24.stp`, `RoundCorners/rrc1.stp`, `RoundCorners/rrc4.stp`,
+`Decomposed/SCDR_solid19_solid26.stp`, `RoundCorners/rrc12.stp`,
+`Mixed/SCDR_90_hollow.stp` (also in the lost-particles list above, so its
+partial tally here is on reduced statistics -- not directly comparable
+to a full run).
+
+**Priority for next session, per this scan's own findings**: the
+`cyl_cone.stp` and `TVA_final_allencl__solid8_piece0__revcc1.stp` results
+directly contradict prior, extensively-verified fixes documented
+elsewhere in this file -- these should be re-checked FIRST (stale-`outp`
+artifact? settings mismatch vs. the original verification run? a genuine
+regression from something later in the session history?) before treating
+any of the other, genuinely-new findings above as trustworthy leads.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
