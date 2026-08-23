@@ -6655,6 +6655,230 @@ neither is masking a problem in the other -- flagged as the natural next
 step if this corpus's behavior ever needs deeper trust beyond the 3
 specific d1suned-verified solids above.
 
+## `rc9.stp` MultiRoundCorner investigation: 3 real bugs found and fixed --
+`is_same_plane_surface`'s antiparallel-axis bug (foundational), `convex_planes`'s
+unsorted-negative-angle bug, and a genuinely-invalid "same face closes both
+ends" RoundCorner premise
+
+Follow-up session (2026-08-23) to the RevCC corpus re-run above. Picking up
+the pending "isolate Bug 2's differential contribution" item led instead to
+a fresh, real bug: `Solidos/test_models/RoundCorners/rc9.stp` (a small,
+deliberately simple 2-cylinder "stadium" shape: 2 round posts connected by
+2 flat parallel walls) gave tally=2.83 (3x the real volume) via d1suned --
+a genuinely new finding, not a re-surfacing of any previously-documented
+issue.
+
+### Duplicate found and moved: `rrc9.stp`
+
+`rc9.stp` and `rrc9.stp` (both in `RoundCorners/`) turned out to be
+byte-identical MCNP output except for the source-face comment
+(`/Fusion0021` vs `/Slice.0011`) -- confirmed the same duplication pattern
+already established for the `RevCC_corpus_scan/duplicates_removed/` set
+earlier in this project's history. Moved to a new
+`Solidos/test_models/RoundCorners/duplicates_removed/rrc9.stp`, `rc9.stp`
+kept as canonical.
+
+### Bug 1: same real face closing both ends of a RoundCorner's cylinder is
+a genuinely invalid premise, not a fixable sign case
+
+`Solidos/working_solids/rc1_decomp.stp` (a fragment the user isolated by
+hand from a different model, `rc1`) surfaced the *other* end of the
+already-documented "p1 and p2 identical" special case (see the RoundCorner
+theoretical definition, `composite_surface_definitions.md`): the doc
+already distinguished "2 disjoint faces of the same coincident plane"
+(valid) from "genuinely only 1 real face closing both ends" -- but the code
+never actually enforced that distinction. `cyl_plane_region_conf`'s
+`AND_p1_pd`/`AND_p2_pd` came out as *unconditional logical opposites*
+whenever `p1 is p2` (the literal same Python face object, not just
+geometrically coincident) -- not tangency noise, an exact 0-degree angular
+singularity: when the same face closes both ends, the "additional plane"
+`pd` (through both touching edges) *is* that same face, so testing p1/p2's
+relation to `pd` is testing the face against itself.
+
+Two fix attempts tried and reverted first (kept as a caution): skipping the
+degeneracy-rejection check when `p1 is p2` -- rejected by the user as
+"displacing the problem," not fixing the invalid premise itself; and
+forcing `AND_p2_pd`'s own sign to agree with `AND_p1_pd` when `n1==n2` --
+**broke `Big_one_cell/modelCell_670000_solid0_piece59` outright** (10 lost
+particles via d1suned, confirmed a previously-fixed real p1!=p2 RoundCorner
+case where that exact sign convention is load-bearing) -- reverted
+immediately.
+
+**Actual fix, per explicit user direction ("lo tiene que poner en
+get_adjacent_plane")**: `get_adjacent_cylplane`'s `cornerPlanes=True`
+branch (`meta_surfaces_utils.py`) now deduplicates its own found corner
+planes by real face `Index` before returning -- when both of a cylinder's
+corner edges close against the *same* real face, that collapses to a
+single entry, and the caller's own pre-existing `len(adjacent_planes) != 2`
+check rejects it naturally, no new rejection logic needed downstream.
+Verified: `rc1_decomp.stp` falls back to ordinary per-face reconstruction
+(d1suned tally 1.0165 +/- 1.74%, was misclassified before); `piece59` fully
+unaffected; full `tests/geo` + `tests/test_cadtocsg.py` 128/128 under ocp.
+Committed as `2722ad6`.
+
+### The "4 configurations" worked example -- RoundCorner's `p1_cyl` valid
+range, dictated and saved to memory
+
+Investigating `rc9.stp` itself (p1 != p2, a real 2-plane corner, unrelated
+to Bug 1 above) surfaced a second candidate issue: `AND_p1_cyl`/`AND_p2_cyl`
+came out wrong (OR when real material sampling showed AND) at a
+*well-conditioned* cross product (`0.484`, nowhere near the existing
+`1e-3` degenerate-tangency threshold) -- a different class of bug than the
+already-fixed piece59 near-tangency case. The user walked through a
+from-scratch geometric derivation (a unit circle, 4 concrete half-plane
+configurations hinged at an arc endpoint) to pin down exactly when a
+round-corner bounding plane's own hinge-angle configuration is degenerate
+-- fully dictated and saved to `composite_surface_definitions.md`'s
+RoundCorner section (config 4: the half-plane's own chosen ray direction
+travels toward the plane's *other* circle-crossing point, and that second
+crossing lies *inside* the round corner's own arc -- both conditions must
+hold together). A code fix attempt based on this (`_plane_recrosses_arc`
+in `meta_surfaces_utils.py`, rejecting when both p1 and p2 hit this
+pattern) was built, verified against a hand-derived criterion, and **wired
+in -- then found to make `rc9.stp` *worse* (introduced 10 lost particles
+that weren't there before)** once tested end-to-end, because rejecting a
+decomposition-time *candidate* surface can silently steer
+`generic_split` down a different cutting path entirely (the same risk
+class as the `get_can_surfaces`/`outer2_only` precedent documented earlier
+in this file) -- reverted in full, including the now-dead
+`_plane_recrosses_arc` helper.
+
+**This whole thread turned out to be chasing a symptom, not the root
+cause** -- see Bug 3 below, which independently fixed the *actual*
+degeneracy this investigation was working around. The 4-configuration
+derivation and its degeneracy criterion remain saved in memory as a
+correct, dictated piece of theory (confirmed by the user, "sí es
+correcto") even though the specific code fix built from it was reverted.
+
+### Bug 2 (the real root cause): `is_same_plane_surface`'s antiparallel-axis
+offset comparison
+
+Direct user request: verify the pristine, undecomposed `rc9.stp` (before
+any cut) classifies correctly. It does -- `get_roundCorner` on the raw
+solid finds **2 independent, valid RoundCorners** (`Configuration=7`,
+i.e. `fwd_cyl + AND_p1_cyl + AND_p2_cyl`, all-AND -- the natural
+classification for a post bounded by 2 parallel walls, per the MRC
+"Definability condition": both real corners here independently confirm
+the *same* AND relationship with both walls, exactly the precondition an
+MRC needs). But `build_roundC_params`'s own `is_same_surface(p1.Surface,
+p2.Surface)` check -- meant to detect the legitimate "p1==p2 geometrically"
+special case -- came back **True** for `rc9.stp`'s 2 real, genuinely
+different, parallel walls (3.5 units apart, antiparallel normals), forcing
+`gpa` (the additional/closing plane) to `None` for both corners and
+corrupting `multi_round_corner_region`'s formula downstream (the
+originally-observed 2.83x-volume over-inclusion, a real, standalone bug
+independent of anything this file's earlier RevCC sessions covered).
+
+Root cause: `is_same_plane_surface` (`geo/vector_geometry.py`) --
+```python
+if abs(plane_1.Axis.dot(plane_2.Axis)) < 0.99999:
+    return False
+return abs(plane_1.Axis.dot(plane_1.Position) - plane_2.Axis.dot(plane_2.Position)) <= 1e-5
+```
+Each plane's own offset is measured *along its own axis* -- correct for
+same-direction axes, but when the two axes are *antiparallel* (still a
+legitimate "same infinite plane" case, e.g. the same real plane reached
+via opposite Face Orientations, which the function's own docstring
+explicitly says should count as equal), the two offsets are measured in
+*opposite* directions and must be compared via `d1 == -d2`, not
+`d1 == d2`. For `rc9.stp`'s 2 real, different, parallel walls (y=+1.75
+axis=(0,-1,0), y=-1.75 axis=(0,1,0)): `d1 = axis1.dot(pos1) = -1.75`,
+`d2 = axis2.dot(pos2) = -1.75` -- equal by coincidence of the antiparallel
+convention, wrongly matching. **Fix**: branch on the sign of the axis dot
+product -- `d1 == d2` when parallel (unchanged), `d1 == -d2` when
+antiparallel. Single, foundational function (only one definition in the
+whole codebase, shared by all 3 engines via `geo/vector_geometry.py`).
+
+Verified: `rc9.stp` tally 0.999274 +/- 0.61%, 0 lost particles (was 2.83,
+before any of this session's other fixes were even in place). `piece59`
+unaffected (0.98880 +/- 0.65%, byte-identical). Full `tests/geo` +
+`tests/test_cadtocsg.py` green under both ocp (128/128) and freecad
+(156/156). A 108-file `Solidos/test_models/` differential scan (excluding
+`Big_model_reserved`) found **exactly 2 diffs, both `rc9.stp`/its moved
+duplicate**, going from `MultiRoundC:1` to `RoundC:2` -- zero regressions
+elsewhere in the corpus.
+
+### Bug 3: `convex_planes`'s angle sort silently corrupted by unnormalized
+negative `atan2` output
+
+While root-causing why `rc9.stp`'s cylinder1 face was arriving at
+conversion time *already fragmented* into 3 pieces (a 241.6-volume bulk
+piece missing its own real x=+0.968 touching edge, plus 2 small 3.27-volume
+slivers) -- confirmed via `decompose_solids()` alone (before any
+conversion-phase code runs) that `rc9.stp`, despite the pristine-solid
+check above showing it's a valid, irreducible 2-RoundCorner shape, was
+genuinely being **cut into 5 pieces** by `generic_split` -- the user found
+and fixed the real cause directly, in `convex_planes` (`functions.py`):
+```python
+angles.append((math.atan2(sina, cosa), i))
+```
+`math.atan2` returns values in `(-pi, pi]` -- mixing negative and positive
+angles before the subsequent `angles.sort()`, which assumes a single,
+monotonically-comparable circular ordering starting from a consistent
+reference. An unnormalized negative angle sorts *before* all positive
+ones instead of at its true position further around the circle, corrupting
+the convexity/orientation classification this function feeds into
+`ReversedConeCylinder`'s AND/OR grouping and `MultiRoundCorner`'s own
+plane-list convexity test (both already documented at length elsewhere in
+this file) -- and, per this session's finding, apparently also feeding
+into whatever candidate-surface classification led `generic_split` to
+accept an incorrect cutting candidate for `rc9.stp` specifically. **Fix**:
+normalize into `[0, 2*pi)` before appending --
+```python
+angle = math.atan2(sina, cosa)
+while angle < 0:
+    angle += 2 * math.pi
+angles.append((angle, i))
+```
+Verified: `decompose_solids()` alone now leaves `rc9.stp` as a single,
+whole, 1-piece solid (matching the pristine-solid classification exactly,
+cylinder1's face keeping both real x=+0.968 edges intact) -- the
+fragmentation is gone entirely. Final tally after all 3 fixes combined:
+unchanged from Bug 2 alone, 0.999274 +/- 0.61%, 0 lost particles -- Bug 2
+was already sufficient to fix `rc9.stp`'s own tally, but Bug 3 fixes the
+*decomposition* itself (the shape should never have been split to begin
+with) and very plausibly explains other, unrelated `convex_planes`-driven
+regressions elsewhere in the corpus not specifically chased down this
+session.
+
+A full 109-file `Solidos/test_models/` batch conversion + d1suned rerun
+(all 3 fixes combined, per explicit user request, no differential
+composite-count scan needed this time) confirmed: 107/109 convert (same 2
+pre-existing, already-documented failures -- `ConeSphere.stp` segfault,
+`multiplane_add_plane_cone`'s zero-division bug); `rc9.stp` and its moved
+duplicate both give the fixed 0.999 tally; every previously-marginal
+(2-3 sigma) file is byte-for-byte the same set as before these fixes,
+confirming no new regressions among previously-working files. Two files'
+*failure mode* changed without being a regression in the "previously fine,
+now broken" sense: `Big_complex_cell/modelCell_670000.stp` previously
+failed to convert at all, now converts (slowly, ~230s) but loses 10
+particles at runtime -- partial progress, not a regression, since there
+was no tally to compare against before; `modelcell_cut1.stp` previously
+gave a bad tally (45.5 sigma, a real pre-existing bug), now loses 10
+particles instead -- same underlying complex-geometry issue, different
+symptom. Both remain open, not investigated further this session. One
+real, transient methodology trap hit and resolved during this same
+verification: a stale `RoundCorners__rrc9` output directory (from before
+`rrc9.stp` was moved into `duplicates_removed/`) was re-scanned by
+d1suned's own directory-sweep script and briefly looked like a real
+regression (tally back to 2.83) -- confirmed as leftover stale data (not
+the actual, freshly-converted `RoundCorners__duplicates_removed__rrc9`,
+which correctly shows the fixed 0.999 tally) and deleted, matching this
+project's own established `placa3`-stale-`outp` precedent.
+
+Diagnostic scripts this session (scratchpad only, not committed):
+`check_rc9_configs.py`/`check_rc9_cross_magnitude.py` (the material-sampling
+verification of `AND_p1_cyl`/`AND_p2_cyl` against real geometry),
+`verify_config4_criterion.py` (the geometric "other circle crossing"
+criterion check, part of the reverted Bug-1-adjacent thread),
+`check_rc1_n1_n2.py`/`instrument_cyl_plane_region_conf.py` (the p1==p2
+n1/n2 sign-resolution trace), `check_rc9_original_config.py` (the
+pristine-solid, uncontaminated `get_roundCorner` call that first revealed
+`is_same_plane_surface`'s bug via a correct `gpa` position),
+`check_post_decompose_wire.py`/`trace_get_adjacent_cylplane.py` (the
+5-piece-fragmentation trace that led to Bug 3), `check_refine_corruption.py`
+(ruling out `GSolid.refine()` as the fragmentation's cause).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

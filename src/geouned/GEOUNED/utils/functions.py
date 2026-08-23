@@ -595,7 +595,10 @@ def convex_planes(plane_list, zaxis):
         sina = cross.length
         if cross.dot(zaxis) < 0:
             sina = -sina
-        angles.append((math.atan2(sina, cosa), i))
+        angle = math.atan2(sina, cosa)
+        while angle < 0:
+            angle += 2 * math.pi    
+        angles.append((angle, i))
 
     angles.sort()
 

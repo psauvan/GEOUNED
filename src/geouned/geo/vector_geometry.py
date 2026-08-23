@@ -362,10 +362,29 @@ def is_same_plane_surface(plane_1, plane_2) -> bool:
     `basic_functions_part2.py`, which compares already-built output
     surfaces with user-configurable tolerances for a different purpose
     (surface-list deduplication).
+
+    Each plane's own offset (`Axis.dot(Position)`) is measured along its
+    *own* axis -- when the two axes are antiparallel (opposite direction,
+    still the same infinite plane, e.g. the same real plane reached via
+    two different Face Orientations), those two offsets are measured in
+    opposite directions and must be compared via `d1 == -d2`, not
+    `d1 == d2` (confirmed as a real bug via `Solidos/test_models/
+    RoundCorners/rc9.stp`, 2026-08-23: two genuinely different, parallel
+    planes 3.5 units apart with antiparallel axes have equal-magnitude
+    offsets of the same sign, which `d1 == d2` alone wrongly matched --
+    `MetaSurfacesDict`/`build_roundC_params` then treated one cylinder's
+    own 2 distinct bounding planes as a single coincident one, losing its
+    real additional/closing plane entirely).
     """
-    if abs(plane_1.Axis.dot(plane_2.Axis)) < 0.99999:
+    axis_dot = plane_1.Axis.dot(plane_2.Axis)
+    if abs(axis_dot) < 0.99999:
         return False
-    return abs(plane_1.Axis.dot(plane_1.Position) - plane_2.Axis.dot(plane_2.Position)) <= 1e-5
+    d1 = plane_1.Axis.dot(plane_1.Position)
+    d2 = plane_2.Axis.dot(plane_2.Position)
+    if axis_dot > 0:
+        return abs(d1 - d2) <= 1e-5
+    else:
+        return abs(d1 + d2) <= 1e-5
 
 
 def is_parallel_plane_surface(plane_1, plane_2) -> bool:
