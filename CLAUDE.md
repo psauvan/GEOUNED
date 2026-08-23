@@ -7676,10 +7676,50 @@ session redirected to rc9.stp, then to the 2 crashes above):
 this pass)**:
 - `AdjacentMultiplanePlanes` needs extending from RevCC to
   MultiRoundCorner too (`project_mrc_adjacent_multiplane_pending.md`).
-- `gen_plane_cylinder`/`gen_plane_cone` still operate on a single raw face
-  rather than a merged same-surface shell when a RevCC segment's own
-  cylinder/cone is split into several contiguous pieces -- no reproduction
-  case found yet.
+- ~~`gen_plane_cylinder`/`gen_plane_cone` still operate on a single raw face
+  rather than a merged same-surface shell~~ -- **investigated and closed,
+  2026-08-23 (later session), NOT a bug.** `get_join_cone_cyl`'s own
+  `ifacemin = face_index[UValmin.index(Umin)]` (and `ifacemax` likewise)
+  looked, by direct reading, like an indexing mismatch: `UValmin`/`UValmax`
+  are built by iterating `sameface_index` (the real, contiguity-filtered
+  merge group from `same_faces()`), so the position `UValmin.index(Umin)`
+  finds is a position *within* `sameface_index`, not `face_index` (the
+  wider, unfiltered candidate list `same_faces()` started from) --
+  indexing into the wrong list whenever `same_faces()` actually excludes a
+  candidate. Confirmed live on `Solidos/test_models/Reversed_Cyl_Cones/cyl_cone.stp`
+  (already a trusted, d1suned-verified-clean fixture, tally 0.996547):
+  `face_index=[0,20,22]` but `sameface_index=[0,22]` (face 20 excluded as
+  non-contiguous with seed face 0), and the "buggy" line does pick face 20
+  instead of 22. **Changing it to `sameface_index[...]` (the seemingly
+  "correct" fix) breaks the file outright -- 10 lost particles, tally
+  0.908±14%** -- confirmed twice, independently, on 2 different affected
+  seed calls (`seed=0`: `ifacemin` 20 vs 22; `seed=4`: `ifacemin` 12 vs
+  14; both regress independently when "fixed" alone). Root cause of why
+  the "buggy" choice is actually necessary, found by tracing execution
+  directly rather than reasoning from the code: `ifacemin`/`ifacemax`
+  aren't just used to build the bounding plane's own V1/V2 reference
+  points -- they're also used to select *which face's own boundary edges*
+  get searched to find `adjacent1`/`adjacent2`, the faces the recursive
+  chain-following (`new_adjacent1 = get_join_cone_cyl(adjacent1, ...)`)
+  continues into. For `cyl_cone.stp`'s seed=0: `ifacemin=20` (the
+  "wrong"/non-contiguous face) is exactly the face whose own edge search
+  finds `adjacent1=2`, a real, valid chain continuation
+  (`chain-continue=True`) -- `ifacemin=22` (the "correct"/contiguous face)
+  would search a *different* face's edges instead, finding whatever
+  adjacent face is really next to face 22, which does not continue this
+  same real chain. So the wider, unfiltered `face_index` list is the
+  *intentionally* correct one to index into here: `same_faces()`'s own
+  contiguity filter is right for deciding which faces belong to the
+  literal merged same-surface patch (used correctly, elsewhere, for
+  `omitFaces.update(sameface_index)`), but the specific face used to
+  *continue the chain* needs the wider candidate set, since the true next
+  segment can be reached through a same-cylinder-identity face that isn't
+  itself part of the immediate contiguous patch. **Explicit user
+  decision, once this was understood: leave the code exactly as it is.**
+  No fix applied; item closed, not because it's provably optimal, but
+  because two independent, direct regression tests confirm the current
+  behavior is what the model actually needs, and no alternative was found
+  that doesn't break it.
 - Isolating the RevCC-corpus differential scan's bug-2 vs bug-4
   contributions separately (109-file `Solidos/test_models` scan, 24 files
   differed after the 2026-08-22 fixes landed together) -- not yet split
