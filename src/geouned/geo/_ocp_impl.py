@@ -1165,7 +1165,19 @@ class GSolid:
         # identical call on the original raw solid came back valid.
         native = self.__native__
         if BRepCheck_Analyzer(native).IsValid():
-            unify = ShapeUpgrade_UnifySameDomain(native, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
+            # UnifyFaces=True is ALSO a confirmed native-crash source (access
+            # violation, not a catchable Python exception -- see refine()'s
+            # own docstring below for the full story), independent of the
+            # already-documented UnifyEdges risk: reproduced live,
+            # 2026-08-23, on Solidos/test_models/Mixed/ConeSphere.stp's own
+            # valid, loaded solid -- UnifyEdges=True/UnifyFaces=False
+            # completes cleanly (same volume, still valid) while
+            # UnifyEdges=False/UnifyFaces=True crashes the process
+            # deterministically, both via keyword and positional arguments.
+            # Kept off here for the same reason UnifyEdges is already
+            # conditioned on validity above: no Python-level guard can
+            # recover from this once triggered.
+            unify = ShapeUpgrade_UnifySameDomain(native, UnifyEdges=True, UnifyFaces=False, ConcatBSplines=True)
             unify.Build()
             unified = unify.Shape()
             if BRepCheck_Analyzer(unified).IsValid():
@@ -1183,12 +1195,27 @@ class GSolid:
         volume-invariance guard, using ShapeUpgrade_UnifySameDomain as
         the removeSplitter() equivalent.
 
-        KNOWN GAP, inherited from _occ_impl.py: UnifyEdges=True can
-        genuinely hang (not raise, not slow -- truly never return) on
-        some real, valid tangent geometry under pythonocc-core
-        (Solidos/trier/ConeSphere.stp) -- not yet re-verified whether
-        this specific hang reproduces under OCP too; don't assume either
-        way until checked.
+        UnifyFaces=True is a confirmed native-crash source (access
+        violation, not a catchable Python exception -- no try/except
+        below can recover from it, unlike the Standard_Failure cases
+        further down): reproduced live, 2026-08-23, on
+        Solidos/test_models/Mixed/ConeSphere.stp's own valid, loaded
+        solid, deterministically, both via keyword and positional
+        arguments. UnifyEdges=True/UnifyFaces=False completes cleanly on
+        the identical input (same volume, still valid) -- this directly
+        contradicts an earlier note in this same docstring (and in
+        CLAUDE.md's own Phase-4 history) that isolated the crash to
+        UnifyEdges specifically; that isolation was not reproduced this
+        session and was very likely a stale/reversed finding from an
+        earlier OCCT build or a keyword-argument mixup (this
+        constructor's own argument order is confirmed swapped relative
+        to pythonocc-core -- see this file's module docstring). Kept off
+        here unconditionally, matching fix()'s own identical change.
+
+        KNOWN GAP: a hang (not a crash) under UnifyEdges=True was also
+        historically reported for this same file under pythonocc-core
+        (not OCP) -- not re-verified this session, left as-is since
+        UnifyEdges stays enabled here.
 
         A second, distinct failure mode of the same underlying fragility
         -- unify.Build() outright raising rather than hanging or silently
@@ -1210,7 +1237,7 @@ class GSolid:
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
-        unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
+        unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=False, ConcatBSplines=True)
         try:
             unify.Build()
             refined = unify.Shape()
@@ -1281,19 +1308,32 @@ def Gfirst_shell(native_shape):
 
 
 def Gload_step(filename: str) -> list[GSolid]:
-    """Loads a STEP file's solids and heals each one (GSolid.fix(1e-6),
-    ShapeFix_Shape) before returning it -- see _occ_impl.py's own
-    Gload_step docstring for the full account of why this healing step
-    is required (confirmed live, 2026-08-16, hylife-v06.stp solid 17):
-    a raw STEPControl_Reader load can carry small tolerance/topology
-    issues invisible to BRepCheck_Analyzer.IsValid() but severe enough
-    to make later native BOP calls pathologically slow or hang outright
-    on otherwise simple, valid-looking geometry. Re-verified true for
-    OCP specifically during this file's own Phase-1 validation (rev_pipe.stp,
-    2026-08-16): unhealed, BOPAlgo_Splitter silently dropped a whole
-    output solid (self-intersection/unused-faces warnings, no hard
-    error); healed via .fix(1e-6) right after load, the same cut
-    reproduces FreeCAD's own clean 2-piece split to ~0.01%."""
+    """Loads a STEP file's solids and heals each one (`GSolid.fix(1e-6)`)
+    before returning it -- see _occ_impl.py's own Gload_step docstring
+    for the full account of why this healing step is required (confirmed
+    live, 2026-08-16, hylife-v06.stp solid 17): a raw STEPControl_Reader
+    load can carry small tolerance/topology issues invisible to
+    BRepCheck_Analyzer.IsValid() but severe enough to make later native
+    BOP calls pathologically slow or hang outright on otherwise simple,
+    valid-looking geometry. Re-verified true for OCP specifically during
+    this file's own Phase-1 validation (rev_pipe.stp, 2026-08-16):
+    unhealed, BOPAlgo_Splitter silently dropped a whole output solid
+    (self-intersection/unused-faces warnings, no hard error); healed via
+    ShapeFix_Shape right after load, the same cut reproduces FreeCAD's
+    own clean 2-piece split to ~0.01%.
+
+    Previously called a narrower `_heal_on_load` helper (ShapeFix_Shape
+    only, deliberately bypassing `GSolid.fix()`'s own UnifyEdges/UnifyFaces
+    attempt) because `fix()` itself used to crash the process on
+    Solidos/test_models/Mixed/ConeSphere.stp -- see `fix()`'s own
+    docstring above for the real cause (UnifyFaces=True, now disabled
+    there) and the 2026-08-23 fix. With `fix()` itself no longer crashing
+    on that case, the narrower bypass was redundant (and strictly weaker
+    -- it skipped the UnifyEdges healing step too) and was removed, so
+    this now calls the ordinary `GSolid.fix()` directly, matching
+    `_occ_impl.py`'s own equivalent Gload_step exactly. Re-verified
+    against ConeSphere.stp directly (GSolid(native).fix(1e-6) succeeds,
+    same volume, still valid)."""
     reader = STEPControl_Reader()
     status = reader.ReadFile(filename)
     if status != IFSelect_RetDone:

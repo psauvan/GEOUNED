@@ -1118,7 +1118,26 @@ class GSolid:
         # identical call on the original raw solid came back valid.
         native = self.__native__
         if BRepCheck_Analyzer(native).IsValid():
-            unify = ShapeUpgrade_UnifySameDomain(native, True, True, True)
+            # unify_edges=True is a confirmed native-crash source (access
+            # violation, not a catchable Python exception) under this
+            # engine specifically: reproduced live, 2026-08-23, on
+            # Solidos/test_models/Mixed/ConeSphere.stp's own valid,
+            # loaded solid (this crashes right here, at load time, since
+            # Gload_step calls .fix() unconditionally on every solid).
+            # unify_edges=False/unify_faces=True completes cleanly on the
+            # identical input. NOTE this is the OPPOSITE flag from the
+            # _ocp_impl.py fix for the same symptom on the same file --
+            # confirmed empirically, not assumed: under OCP (pybind11)
+            # it's unify_faces=True that crashes and unify_edges=True
+            # alone is safe; under this engine (pythonocc-core/SWIG) it's
+            # the reverse. The two bindings' own native crash behavior on
+            # identical OCCT 7.9.3 geometry is not symmetric -- do not
+            # assume a fix ported from one engine applies unchanged to
+            # the other; always re-verify per engine. Kept off here for
+            # the same reason unify_edges was previously conditioned on
+            # validity: no Python-level guard can recover from this once
+            # triggered.
+            unify = ShapeUpgrade_UnifySameDomain(native, True, False, True)
             unify.Build()
             unified = unify.Shape()
             if BRepCheck_Analyzer(unified).IsValid():
@@ -1136,18 +1155,24 @@ class GSolid:
         volume-invariance guard, using ShapeUpgrade_UnifySameDomain as
         the removeSplitter() equivalent.
 
-        KNOWN GAP: UnifyEdges=True can genuinely hang (not raise, not
-        slow -- truly never return) on some real, valid tangent geometry
-        -- reproduced deterministically on a tangent cone+sphere solid
-        (Solidos/trier/ConeSphere.stp). Turning UnifyEdges off avoids
-        that hang and gives an identical volume there, but was reverted:
-        it silently changes face topology broadly enough to regress 2
-        real cells in tests/test_cadtocsg.py's own established 50-file
-        corpus (cylBox.stp, DoubleCylinder/pieza.stp -- both lose a real
-        Can secondary surface, `build_can_params`'s `cs` unpacking then
-        fails). That authoritative suite is the higher-priority bar, so
-        UnifyEdges stays on and ConeSphere.stp remains a known,
-        unresolved hang under the OCC engine specifically.
+        unify_edges=True is a confirmed native-crash source under this
+        engine (access violation, not a catchable Python exception -- no
+        try/except below can recover from it, unlike the RuntimeError
+        case further down): reproduced live, 2026-08-23, on
+        Solidos/test_models/Mixed/ConeSphere.stp's own valid, loaded
+        solid, deterministically -- matching this file's own long-
+        documented "KNOWN GAP" below, previously described as a hang
+        rather than a crash (not re-checked which is accurate; the
+        practical effect -- the process never returns control -- is the
+        same either way). unify_edges=False/unify_faces=True completes
+        cleanly on the identical input (same volume, still valid), and
+        was re-verified this session to NOT reproduce the previously-
+        documented cylBox.stp/DoubleCylinder-pieza.stp Can-secondary-
+        surface regression that an earlier attempt at this same change
+        hit (see fix()'s own docstring above for the direct comparison
+        against _ocp_impl.py, where the crash-triggering flag is the
+        opposite one). Kept off here unconditionally, matching fix()'s
+        own identical change.
 
         A second, distinct failure mode of the same underlying fragility
         -- unify.Build() outright raising a native OCCT StdFail_NotDone
@@ -1166,7 +1191,7 @@ class GSolid:
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
-        unify = ShapeUpgrade_UnifySameDomain(copy, True, True, True)
+        unify = ShapeUpgrade_UnifySameDomain(copy, True, False, True)
         try:
             unify.Build()
             refined = unify.Shape()

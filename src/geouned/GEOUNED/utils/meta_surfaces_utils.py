@@ -958,6 +958,26 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces):
     V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
     apex = Faces[ifacemin].Surface.Apex
+
+    # A cone face's own V=0 boundary is the apex itself -- for a face
+    # whose real ParameterRange reaches all the way to V=0 (confirmed live,
+    # Solidos/test_models/Mixed/multiplane_add_plane_cone.stp: Vmin=0.0),
+    # the tessellation-based UV-node search above picks the node closest
+    # in U alone, with no regard for V, and can land exactly on the apex
+    # node -- (V1 - apex) then has zero length, a real ZeroDivisionError,
+    # not a tangency/numerical-noise case. A cone's own generatrix (fixed
+    # U, increasing V) is a straight line through the apex, so any V > 0
+    # at the *same* U gives a direction identical (up to normalization) to
+    # whatever a non-degenerate node at that U would have given -- fixed
+    # by re-evaluating at a small positive V nudge instead of the
+    # apex-coincident one, rather than trusting the tessellated V as-is.
+    if (V1 - apex).length < 1e-7:
+        _, _, _, vmax1 = Faces[ifacemin].ParameterRange
+        V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], 1e-3 * vmax1)
+    if (V2 - apex).length < 1e-7:
+        _, _, _, vmax2 = Faces[ifacemax].ParameterRange
+        V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], 1e-3 * vmax2)
+
     dir1 = (V1 - apex).normalized()
     dir2 = (V2 - apex).normalized()
     normal = dir2.cross(dir1).normalized()

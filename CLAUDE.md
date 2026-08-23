@@ -6879,6 +6879,118 @@ pristine-solid, uncontaminated `get_roundCorner` call that first revealed
 5-piece-fragmentation trace that led to Bug 3), `check_refine_corruption.py`
 (ruling out `GSolid.refine()` as the fragmentation's cause).
 
+## Two crashes found while resolving "GEOUNED doesn't finish" cases
+
+Follow-up session, working through the standing pending-list item of STEP
+files where GEOUNED itself crashes rather than mis-converts.
+
+### `Mixed/multiplane_add_plane_cone.stp`: `gen_plane_cone`'s cone-apex
+degeneracy
+
+Crashed with `ZeroDivisionError` inside `gen_plane_cone`
+(`meta_surfaces_utils.py`). Root cause: this function finds each of 2
+UV-node candidates by matching on U only (ignoring V), and one of this
+file's 2 cone faces has `ParameterRange` with `Vmin=0.0` -- i.e. the face's
+own V=0 boundary IS the apex. When the matched node happens to land at
+V=0, `(V1 - apex)` is a genuine zero vector, so `.normalized()` divides by
+zero. Fixed by detecting the apex-degenerate case directly (`(V1 -
+apex).length < 1e-7`) and, when it fires, re-sampling the same face at a
+tiny nonzero V fraction (`1e-3 * vmax`) instead of the apex itself --
+applied symmetrically to both `V1`/`ifacemin` and `V2`/`ifacemax`, since
+either candidate can independently land on an apex. Verified via d1suned:
+tally `0.9912 +/- 0.45%`, 0 lost particles.
+
+### `Mixed/ConeSphere.stp`: a genuine native process crash (access
+violation) in `ShapeUpgrade_UnifySameDomain`, opposite crash-triggering
+flags between OCP and pythonocc-core on identical OCCT 7.9.3 geometry
+
+Crashed the whole process (no Python traceback, exit code matching
+`0xC0000005`) under both pyOCC engines -- first noticed as a load-time
+crash (`Gload_step`'s own healing call), then, once worked around there, a
+*second*, structurally identical crash resurfaced at decomposition time
+(`GSolid.refine()`, called unconditionally on every loaded solid from
+`GeounedSolid.__init__`). A genuine access violation cannot be caught by
+Python `try`/`except` -- confirmed directly, matching this project's own
+established understanding of the difference between this class of crash
+and the `StdFail_NotDone`/`Standard_Failure`/`RuntimeError` cases
+`refine()`'s existing exception handling already does catch.
+
+**First isolated which `ShapeUpgrade_UnifySameDomain` flag actually
+triggers it, per engine, by direct construction-flag sweep (keyword and
+positional both cross-checked) against the file's own loaded solid --
+not assumed from either engine's own pre-existing docstring, both of
+which turned out to describe the wrong flag**:
+
+- **Under `ocp` (pybind11)**: `UnifyFaces=True` crashes (whether alone or
+  combined with `UnifyEdges`); `UnifyEdges=True` alone (`UnifyFaces=False`)
+  completes cleanly, identical volume, still valid.
+- **Under `occ` (pythonocc-core/SWIG)**: the exact opposite --
+  `unify_edges=True` crashes (whether alone or combined);
+  `unify_faces=True` alone (`unify_edges=False`) completes cleanly,
+  identical volume, still valid.
+
+**The two bindings' native crash behavior on identical OCCT 7.9.3
+geometry is not symmetric.** This contradicts what each engine's own
+`refine()`/`fix()` docstring previously claimed (`_ocp_impl.py`'s said
+"isolated to the UnifyEdges flag specifically (UnifyFaces alone... returns
+promptly)"; `_occ_impl.py`'s said UnifyEdges hangs and was kept on,
+implying UnifyFaces was safe) -- both were either stale (an earlier OCCT
+build behaved differently) or a keyword/positional mixup (both
+constructors' own argument order is confirmed swapped between the two
+bindings, an easy place to get flipped, and already flagged as a gotcha in
+`_ocp_impl.py`'s own module docstring). Trust the fresh, direct
+per-engine verification over either old docstring claim.
+
+**Fix, applied independently per engine** (`GSolid.fix()` and
+`GSolid.refine()`, both files): disable the crash-triggering flag for that
+engine specifically, keep the other one on. Re-verified against the
+*specific* precedent regression this kind of change has broken before
+(`tests/test_cadtocsg.py`'s `cylBox.stp`/`DoubleCylinder/pieza.stp`, which
+lost a real Can secondary surface the one time `UnifyEdges` was disabled
+under `occ` previously) -- **no regression found this time**, on either
+file, under either engine (`cylBox.stp`: `FwdCan:3, RoundC:1` unchanged;
+`pieza.stp`: `MultiP:1, RevCan:3, RoundC:1, RevCC:1` unchanged) -- the
+disabled flag this session is the *other* one from what regressed before
+in each case, so this is a different, narrower change than the one that
+previously failed, not a retry of the same thing.
+
+`_ocp_impl.py`'s `Gload_step` had grown a separate, narrower `_heal_on_load`
+helper (`ShapeFix_Shape` only, deliberately bypassing `GSolid.fix()`
+entirely) as a first, more conservative attempt at working around the
+load-time crash, built before the exact crash-triggering flag had been
+isolated. Once `fix()` itself no longer crashes on this file,
+`_heal_on_load` became redundant (and strictly weaker -- it skipped the
+`UnifyEdges` healing step too) -- removed, `Gload_step` now calls
+`GSolid(...).fix(1e-6)` directly, matching `_occ_impl.py`'s own equivalent
+exactly (engine symmetry restored).
+
+Verified: `tests/geo/test_ocp_impl.py` + `tests/test_cadtocsg.py` (89/89,
+`ocp`) and `tests/geo/test_occ_impl.py` + `tests/test_cadtocsg.py` (89/89,
+`occ`); the real end-to-end pipeline (load -> decompose -> build -> void ->
+export) on `ConeSphere.stp` under both engines, no crash, `OK`; a real
+d1suned MCNP stochastic volume check on the `ocp`-converted output: tally
+`0.9949 +/- 0.28%`, 0 lost particles -- confirms the fix produces
+geometrically correct output, not just a crash-free run.
+
+Diagnostic scripts this session (scratchpad only, not committed):
+`test_unifyedges_variants.py`/`test_unify_minimal.py`/`test_unify_positional.py`
+(the `ocp` flag-isolation sweep), `test_occ_conesphere_unify.py`/
+`test_occ_load_conesphere.py`/`test_occ_fix_isolated.py`/`test_occ_fix_variants.py`
+(the identical sweep under `occ`, which revealed the opposite-flag
+finding), `check_unifyfaces_regression.py`/`check_occ_regression.py` (the
+`cylBox.stp`/`pieza.stp` precedent-regression re-check, per engine),
+`test_refine_unifyedges_only.py`/`test_ocp_fix_at_load.py` (volume/validity
+confirmation of the fixed flag combination).
+
+**Not yet done**: FreeCAD engine not affected (uses `Part.Shape.removeSplitter()`,
+a completely different code path) and not re-checked here, matching this
+project's own convention that these two pyOCC-family fixes don't
+necessarily transfer to FreeCAD. No sweep of *other* files for the same
+class of crash under either engine -- this session only confirms
+`ConeSphere.stp` specifically; a `Solidos/` corpus-wide scan for other
+files that might hit the now-still-enabled flag (`UnifyEdges` under `ocp`,
+`UnifyFaces` under `occ`) on some other real geometry was not attempted.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
