@@ -6991,6 +6991,83 @@ class of crash under either engine -- this session only confirms
 files that might hit the now-still-enabled flag (`UnifyEdges` under `ocp`,
 `UnifyFaces` under `occ`) on some other real geometry was not attempted.
 
+## `Cans/pipe.stp` fixed: `get_can_surfaces`'s same-radius-cylinder branch
+required `is_parallel`, making it dead code for a genuine "broken cylinder"
+
+`pipe.stp` is a single tube bent through 2 kinks: 3 straight cylinder
+segments of the *same radius* whose axes meet at an angle at each kink
+(not parallel -- the user's own definition of a "cilindro quebrado"),
+closed at the 2 true open ends by flat planes. d1suned confirmed ~27.6
+sigma off before this fix.
+
+**Methodology, user-directed step by step, not guessed**: first built
+`Cans/pipe1.stp` (same solid, same volume, `BRepAlgoAPI_Splitter` used to
+split *only* the central cylinder face -- not the solid -- at the plane
+X=-9600, producing 2 face pieces of the same analytic cylinder) as a
+deliberate test fixture, to check `closed_cylinder_cone`'s own merging
+behavior with a known-in-advance "this must merge" case before touching
+any Can-detection code.
+
+1. `closed_cylinder_cone` on `pipe.stp`'s own 3 real (unsplit) segments:
+   confirmed no merging happens between segments (different axes, real
+   kink) -- each stays its own single-face result, as expected.
+2. `closed_cylinder_cone` on `pipe1.stp`'s artificially-split central
+   segment: confirmed it *does* correctly re-merge the 2 pieces back into
+   one `ShellGu` (same radius, same axis *line* -- `is_same_cylinder`'s
+   real criterion, not just parallel direction) regardless of which piece
+   is used as the seed.
+3. `get_adjacent_cylknesurf` on that merged shell: found the 2 real
+   kink-neighbor cylinder faces (not the 2 end-cap planes, which turned
+   out to be one hop further away -- correcting an initial assumption
+   about `pipe.stp`'s own topology: the cylinders touch each other
+   *directly* at each kink via a real curved (elliptical) edge, with no
+   separating plane in between; the 2 planes only close the 2 true open
+   ends of the whole bent tube).
+4. Direct trace of `get_can_surfaces`'s own per-neighbor branch
+   (`meta_surfaces.py:148`) on those 2 real kink-neighbors: **`same_rad`
+   was always `True`, `is_parallel` was always `False`** -- confirmed the
+   user's own prediction live, not just by reading the code: since
+   `get_adjacent_cylknesurf` already excludes anything `is_same_surface`
+   to the shell's own surface (same radius + same axis *line*), the only
+   way a face reaching this `if` could ever have `is_parallel==True` is a
+   separate, laterally-offset (non-collinear) parallel cylinder of the
+   same radius -- never a real kink neighbor, whose axis is by definition
+   not parallel. So the branch meant to handle "adjacent same-radius
+   cylinder, treat as pass-through" was unreachable dead code for exactly
+   the "broken cylinder" scenario it needed to cover, and execution fell
+   through to the generic `commonEdge`/`region_sign`-based closing-surface
+   path instead -- treating each kink neighbor as if it were an ordinary
+   Can end cap rather than a continuation of the same composite body.
+
+**Fix** (`meta_surfaces.py`, `get_can_surfaces`): dropped the
+`is_parallel(...)` condition from the `if` at line 148, keeping only the
+radius check -- per the user's own direct instruction, once the dead-code
+diagnosis above was confirmed live. Every face reaching this branch has
+already passed `get_adjacent_cylknesurf`'s `is_same_surface` exclusion, so
+same-radius alone is now sufficient to route it into the pass-through
+(`(s, None, True)`, `omit=True`) mechanism -- whether the neighbor is a
+laterally-offset parallel cylinder (the branch's original, narrower
+target) or a genuine kinked-axis neighbor (the case this fix actually
+unblocks).
+
+**Verified**: `get_can_surfaces` on `pipe1.stp` now returns both kink
+neighbors via the pass-through mechanism instead of falling through.
+d1suned on `pipe.stp`: tally `0.99185 +/- 0.55%` (was ~27.6 sigma), 0 lost
+particles. `tests/geo/test_ocp_impl.py` + `tests/test_cadtocsg.py`, 89/89
+under `ocp`. A 109-file differential corpus scan (`Solidos/test_models`,
+excluding `Big_model_reserved`, composite-surface counts, `git stash`
+before/after) -- **only the 2 targeted files differ, 0 regressions
+elsewhere**: `pipe.stp` `FwdCan:2 -> FwdCan:3`, `pipe1.stp` `{Cyl:2,
+FwdCan:2, RevCC:1} -> FwdCan:3` -- and `pipe.stp`/`pipe1.stp` now give the
+*identical* result, confirming the artificial face split (a pure
+topology-only change, zero volume/geometry difference) no longer perturbs
+the classification at all, as it should.
+
+**Not yet done this pass**: re-verification under `occ`/`freecad` engines
+(only `ocp` checked); `Big_one_cell/modelCell_670000.stp`'s own "converts
+but loses 10 particles" symptom was flagged earlier this file as
+possibly a `RevCC`-adjacent case -- not re-checked against this fix.
+
 ## Pending tasks, 2026-08-23 (consolidated)
 
 Compiled from every open item scattered across this file's history plus
@@ -7012,12 +7089,14 @@ treat as a compiled index, not a guarantee every line still reproduces.
 - `rc9.stp`'s `MultiRoundCorner` misclassification -- fixed, 2026-08-23 (3
   bugs: `get_adjacent_cylplane` dedup, `is_same_plane_surface` antiparallel
   bug, `convex_planes` unnormalized-angle bug).
+- `Cans/pipe.stp`'s ~27.6 sigma tally -- fixed, 2026-08-23 (see "`Cans/pipe.stp`
+  fixed" above: `get_can_surfaces`'s same-radius-cylinder branch required
+  `is_parallel`, dead code for a genuine kinked "broken cylinder").
 
 **New, not yet written up anywhere else in this file** (found during this
 session's `Solidos/test_models` batch conversion + d1suned run, before the
 rc9.stp deep dive -- characterized/triaged but left unfixed when the
 session redirected to rc9.stp, then to the 2 crashes above):
-- `Cans/pipe.stp` -- d1suned tally ~27.6 sigma off. Not root-caused.
 - `Big_complex_cell/modelcell_cut1.stp` -- was a bad-tally failure
   (~45.5 sigma, per the 2026-08-21 audit's own "Changed symptom" note),
   now loses particles at runtime instead. Not root-caused either way.

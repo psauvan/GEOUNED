@@ -145,14 +145,31 @@ def get_can_surfaces(cylinder, solidFaces):
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
-            if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6 and is_parallel(
-                s.Surface.Axis, cylinder.Surface.Axis, Tolerances().angle
-            ):
+            if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
+                # Same-radius adjacent cylinder -- deliberately NOT also
+                # requiring is_parallel(s.Axis, cylinder.Axis) here: any s
+                # reaching this point already passed get_adjacent_cylknesurf's
+                # own is_same_surface exclusion, which (for a cylinder) means
+                # same radius + same axis *line*, not just parallel direction.
+                # So an is_parallel check here could only ever pass for a
+                # separate, laterally-offset (non-collinear) parallel
+                # cylinder of the same radius -- never for a "broken
+                # cylinder" (2 straight segments of the same radius meeting
+                # at a real kink, where the segments' axes are NOT parallel
+                # by definition), which is exactly the case this branch is
+                # meant to handle. Confirmed live, 2026-08-23, on
+                # Solidos/test_models/Cans/pipe1.stp (3 straight segments,
+                # same radius, kinked at 2 joints): the real kink-neighbor
+                # cylinder always has is_parallel=False, so the old
+                # is_parallel-gated condition was unreachable dead code for
+                # this scenario, falling through to the generic
+                # commonEdge/region_sign path below instead.
                 result = commonEdge(cylinder_shell, s, outer1_only=True, outer2_only=False)
                 edges = result[0] if is_shell else result
                 if edges is not None:
                     if planar_edges(edges):
-                        # adjacent cylinder has same radius and is parallel to cylinder.
+                        # adjacent cylinder has same radius (parallel or,
+                        # for a broken-cylinder kink, at an angle).
                         # build_can_params's r is None branch never reads omit -- True
                         # here only keeps this a 3-tuple like every other entry.
                         surfaces.append((s, None, True))
