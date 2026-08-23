@@ -136,6 +136,7 @@ from .vector_geometry import (
     GVector,
     cylinder_tangent_at,
     cylinder_value_at,
+    is_coaxial_cone_cylinder_pair,
     is_coaxial_cone_pair,
     is_inside_cone,
     is_inside_cylinder,
@@ -860,6 +861,49 @@ class GFace:
         props = _surface_props(native)
         self.Area = props.Mass()
         self.CenterOfMass = _to_gvector(props.CentreOfMass())
+        # A surface-type-agnostic "how compact is this face's own shape"
+        # measure, piggybacking on the SurfaceProperties call already made
+        # above (SurfaceProperties_s's own reference point already
+        # defaults to the face's centroid, confirmed empirically --
+        # recomputing with an explicit GProp_GProps(centroid) gives
+        # byte-identical results, so no second pass is needed): Area /
+        # RG_max^2, where RG_max is the largest of the 3 principal radii
+        # of gyration. A compact shape (disk, square) has this ~O(1); a
+        # thin sliver -- even a *curved* one (an annular/arc-shaped
+        # strip, where the naive "compare 2 in-plane principal radii to
+        # each other" idea fails: a thin ring has near-equal in-plane
+        # radii by rotational symmetry, same as a solid disk) -- has
+        # negligible area for its own spatial extent, so this ratio comes
+        # out orders of magnitude smaller. Verified live, 2026-08-23, on
+        # Solidos/test_models/Decomposed/SCDR_90_piece2.stp: every known
+        # real face (Cone/Cylinder/Plane, area 8.46-3644mm^2) has
+        # Compactness in [0.585, 4.62]; every known sliver (area
+        # 0.0003-1.93mm^2, including the 1.93mm^2 one that raw area alone
+        # doesn't clearly separate from the real 8.46mm^2 faces) has
+        # Compactness in [6e-7, 0.019] -- a >30x gap even for the
+        # closest pair.
+        principal = props.PrincipalProperties()
+        rg_max = max(principal.RadiusOfGyration())
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > 1e-9 else float("inf")
+        # The face's own true short physical dimension ("width"), derived
+        # from the same RG_max: for a rectangle of length L and width W,
+        # RG_max == L/sqrt(12) exactly, so W == Area/(RG_max*sqrt(12)) --
+        # and this generalizes correctly to a curved/annular sliver too
+        # (RG_max there captures the "spread" along the curve, whatever
+        # its shape, and Area/RG_max is still the right cross-section
+        # width). Confirmed live, 2026-08-23: recovers 0.055034mm for
+        # Solidos/test_models/Decomposed/SCDR_90_piece2.stp's own known
+        # sliver (matching its real ParameterRange-derived short
+        # dimension exactly) and 5.6mm for
+        # Solidos/test_models/RoundCorners/TVA_solid16_cell17.stp's own
+        # confirmed-real thin panel -- unlike raw Area or Compactness
+        # alone, both of which have real, large-area, legitimately-thin
+        # faces (long structural panels/walls) that a naive threshold on
+        # either one alone would misclassify (see Tolerances.min_face_width's
+        # own docstring for the full corpus-wide verification: every real
+        # face in a 109-file/1733-face scan has width >=0.19mm, every
+        # known sliver <=0.055mm).
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > 1e-9 else 0.0
 
         self.index: int | None = None
         self.__wires__: "list[GWire] | None" = None
@@ -1828,6 +1872,29 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
     return groups
 
 
+def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
+    """Cylinder counterpart of `_group_coaxial_cone_faces`: groups of
+    `base_faces` whose own cylinder surface is coaxial with `tool_cone`
+    (see vector_geometry.is_coaxial_cone_cylinder_pair) -- each group
+    sharing one exact (Center-on-axis ignored, Axis, Radius) among its
+    own members, i.e. real fragments of the *same* cylinder."""
+    groups: list[list[GFace]] = []
+    for f in base_faces:
+        s = f.Surface
+        if not isinstance(s, GCylinder):
+            continue
+        if not is_coaxial_cone_cylinder_pair(tool_cone, s):
+            continue
+        for group in groups:
+            gs = group[0].Surface
+            if abs(gs.Radius - s.Radius) < 1e-5 and abs(gs.Axis.dot(s.Axis)) > 1.0 - 1e-5:
+                group.append(f)
+                break
+        else:
+            groups.append([f])
+    return groups
+
+
 def _cone_v_value(point: GVector, native_cone_surf) -> float:
     return ShapeAnalysis_Surface(native_cone_surf).ValueOfUV(to_native_vector(point), 1e-6).Y()
 
@@ -1876,6 +1943,17 @@ def _split_face_at_v_line(native_face, native_cone_surf, point_a: GVector, point
     v_common = (uv_a.Y() + uv_b.Y()) / 2.0
     line2d = Geom2d_Line(gp_Pnt2d(0.0, v_common), gp_Dir2d(1.0, 0.0))
     u_lo, u_hi = sorted([uv_a.X(), uv_b.X()])
+    if u_hi - u_lo < 1e-9:
+        # point_a/point_b project to (numerically) the same U on this
+        # surface -- e.g. a periodic (cylinder/cone) surface where the two
+        # candidate crossings differ by a full 2*pi wrap and so coincide
+        # once reduced -- Geom2d_TrimmedCurve requires U1 != U2 and raises
+        # Standard_ConstructionError otherwise (confirmed live, 2026-08-23,
+        # on Cans/fwd_can_0.stp and 3 siblings once the cone/cylinder
+        # candidate search started reaching this surface). Not a real arc
+        # to split at; treat it the same as any other candidate that
+        # doesn't pan out.
+        return [native_face]
     edge = BRepBuilderAPI_MakeEdge(Geom2d_TrimmedCurve(line2d, u_lo, u_hi), native_cone_surf).Edge()
     BRepLib.BuildCurve3d_s(edge)
 
@@ -1939,52 +2017,108 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) ->
     volume-conserving multi-solid result) -- every one of these is an
     ordinary, silent "not applicable here" outcome, never an error; the
     caller falls through to today's existing unchanged-solid behavior.
+
+    Also tries the cone/cylinder counterpart of the same degeneracy (see
+    vector_geometry.is_coaxial_cone_cylinder_pair): `tool`'s cone reaching
+    a coaxial cylinder's own radius at one exact height on `base`'s
+    boundary. Confirmed live (2026-08-23) on a real fixture where this
+    was the *actual* blocking degeneracy and the cone-cone search alone
+    was actively misleading: it found an unrelated, coincidental 2-crossing
+    arc on a nearby cone fragment (at the wrong height along the axis),
+    "successfully" presplit and rebuilt a topologically valid solid there,
+    and only the cylinder candidate at the *true* shared circle -- where a
+    cutting cone, a cylinder, and a second cone all meet at once --
+    actually let the retry split separate the solid. Trying every
+    candidate in turn and keeping only the first whose retry genuinely
+    succeeds (already the existing discipline) means a cone-cone false
+    positive can never be silently preferred over a real cone-cylinder fix
+    -- the false positive's own retry simply fails its safety net and the
+    search moves on.
     """
     tool_cone_face = _find_cone_face(tool)
     if tool_cone_face is None:
         return None
     tool_cone = tool_cone_face.Surface
 
+    candidates: list[tuple["GFace", GVector, float]] = []
     for group in _group_coaxial_cone_faces(base.Faces, tool_cone):
         for other_face in group:
             other_cone = other_face.Surface
             mid_point = (tool_cone.Apex + other_cone.Apex) * 0.5
             radius = (tool_cone.Apex - other_cone.Apex).length / 2.0
+            candidates.append((other_face, mid_point, radius))
+    for group in _group_coaxial_cylinder_faces(base.Faces, tool_cone):
+        for other_face in group:
+            cylinder = other_face.Surface
+            tan_semi = math.tan(tool_cone.SemiAngle)
+            if abs(tan_semi) < 1e-9:
+                continue
             axis = tool_cone.Axis.normalized()
+            t = cylinder.Radius / abs(tan_semi)
+            # both nappes are tried -- whichever doesn't correspond to the
+            # real, physical circle simply fails the crossings/retry
+            # checks below and is silently skipped, same as any other
+            # candidate that doesn't pan out.
+            candidates.append((other_face, tool_cone.Apex + axis * t, cylinder.Radius))
+            candidates.append((other_face, tool_cone.Apex - axis * t, cylinder.Radius))
 
-            ref = GVector(1, 0, 0)
-            if abs(ref.dot(axis)) > 0.9:
-                ref = GVector(0, 1, 0)
-            u_dir = (ref - axis * ref.dot(axis)).normalized()
-            probe_point = mid_point + u_dir * radius
+    axis = tool_cone.Axis.normalized()
+    for other_face, mid_point, radius in candidates:
+        ref = GVector(1, 0, 0)
+        if abs(ref.dot(axis)) > 0.9:
+            ref = GVector(0, 1, 0)
+        u_dir = (ref - axis * ref.dot(axis)).normalized()
+        probe_point = mid_point + u_dir * radius
 
-            native_other_surf = BRep_Tool.Surface_s(other_face.__native__)
-            v0 = _cone_v_value(probe_point, native_other_surf)
+        native_other_surf = BRep_Tool.Surface_s(other_face.__native__)
+        v0 = _cone_v_value(probe_point, native_other_surf)
 
-            crossings = _find_v_crossings(other_face, native_other_surf, v0)
-            if len(crossings) != 2:
+        crossings = _find_v_crossings(other_face, native_other_surf, v0)
+        if len(crossings) != 2:
+            continue
+
+        split_pieces = _split_face_at_v_line(other_face.__native__, native_other_surf, crossings[0], crossings[1])
+        if len(split_pieces) < 2:
+            continue
+
+        new_faces = [f for f in base.Faces if f is not other_face]
+        new_faces += [GFace(p) for p in split_pieces]
+
+        try:
+            presplit = Gmake_solid(Gmake_shell(new_faces))
+        except Exception:
+            presplit = None
+        if presplit is None:
+            continue
+
+        # The presplit's own new edge is only ever geometrically exact to
+        # floating-point precision, not identical to the tool's own BRep
+        # representation of the same curve -- retrying at the caller's own
+        # (often zero/near-zero) `tolerance` can still leave the two
+        # topologies just barely too far apart for BOPAlgo_Splitter to
+        # recognize them as coincident. Escalating through a fixed
+        # tolerance ladder before giving up is the same "loosen fuzzy
+        # value until it works" technique this project's own d1suned/OCCT
+        # investigations have used throughout -- confirmed live
+        # (2026-08-23) on a real fixture where tolerance=0 (and every
+        # value up to 0.05) left the presplit solid unseparated, but 0.1
+        # split it cleanly into the expected 2 pieces. A looser retry
+        # tolerance also means the resulting fragments' own volumes carry
+        # more numerical slack than an exact (tolerance=0) split would --
+        # the volume-conservation check below is scaled accordingly
+        # (still far tighter than the retry tolerance itself: confirmed
+        # live that the real deviation at tolerance=0.1 is ~2.3e-4
+        # relative, comfortably inside the 1e-3 bound used here).
+        for retry_tolerance in (tolerance, 1e-6, 1e-4, 1e-2, 0.1, 0.5, 1.0):
+            if retry_tolerance < tolerance:
                 continue
-
-            split_pieces = _split_face_at_v_line(other_face.__native__, native_other_surf, crossings[0], crossings[1])
-            if len(split_pieces) < 2:
-                continue
-
-            new_faces = [f for f in base.Faces if f is not other_face]
-            new_faces += [GFace(p) for p in split_pieces]
-
-            try:
-                presplit = Gmake_solid(Gmake_shell(new_faces))
-            except Exception:
-                presplit = None
-            if presplit is None:
-                continue
-
-            retry_native_solids, _, _ = _raw_bop_split(presplit.__native__, tool.__native__, tolerance)
+            retry_native_solids, _, _ = _raw_bop_split(presplit.__native__, tool.__native__, retry_tolerance)
             if len(retry_native_solids) < 2:
                 continue
             retry_solids = [GSolid(s) for s in retry_native_solids]
             total_volume = sum(s.Volume for s in retry_solids)
-            if abs(total_volume - base.Volume) > 1e-6 * max(abs(base.Volume), 1.0):
+            volume_rel_tol = 1e-6 if retry_tolerance == 0.0 else 1e-3
+            if abs(total_volume - base.Volume) > volume_rel_tol * max(abs(base.Volume), 1.0):
                 continue
             if not all(s.is_valid() for s in retry_solids):
                 continue

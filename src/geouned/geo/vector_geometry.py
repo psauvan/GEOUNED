@@ -440,6 +440,33 @@ def is_coaxial_cone_pair(
     return radial < apex_line_tol
 
 
+def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semiangle_min: float = 1e-6) -> bool:
+    """True when `cone` and `cylinder` share the same axis *line* (either
+    axis direction) and `cone`'s SemiAngle is non-degenerate (not exactly
+    0 or 90 degrees), so the cone genuinely reaches `cylinder.Radius` at
+    exactly one height along its own axis -- an analytic certainty for
+    any coaxial cone/cylinder pair, not a coincidence.
+
+    This is the cone/cylinder counterpart of `is_coaxial_cone_pair`: when
+    the real solid's own boundary is also *tangent* along that one circle
+    (e.g. a cone built to blend smoothly into a cylinder of the same
+    radius), the circle is the same kind of degenerate quadric-quadric
+    intersection a general BOP solver struggles with -- confirmed live on
+    a real fixture where a cutting cone, a cylinder, and a second cone all
+    shared one exact circle simultaneously (`Gsplit`'s coaxial-cone
+    fallback in `_occ_impl.py`/`_ocp_impl.py` only searched for a second
+    *cone*, missing this case entirely).
+    """
+    if abs(math.tan(cone.SemiAngle)) < semiangle_min:
+        return False
+    if abs(cone.Axis.dot(cylinder.Axis)) < 1.0 - 1e-5:
+        return False
+    offset = cylinder.Center - cone.Apex
+    along = offset.dot(cone.Axis)
+    radial = (offset - cone.Axis * along).length
+    return radial < radial_tol
+
+
 def is_same_sphere_surface(sphere_1, sphere_2) -> bool:
     """Direct port of the former `SphereGu.isSameSurface`, same fixed tolerance."""
     if abs(sphere_1.Radius - sphere_2.Radius) > 1e-5:

@@ -31,6 +31,8 @@ import math
 import uuid
 from dataclasses import dataclass
 
+import numpy
+
 import FreeCAD
 import Part
 import BOPTools.SplitAPI
@@ -725,6 +727,28 @@ class GFace:
         self.Orientation = native.Orientation
         self.Area = native.Area
         self.CenterOfMass = to_gvector(native.CenterOfMass)
+        # Ported from the `ocp`/`occ` engines' own GFace -- same
+        # surface-type-agnostic sliver-detection measures (see their
+        # docstrings for the full corpus-verified rationale/thresholds),
+        # computed here via FreeCAD's own `MatrixOfInertia` (area-based
+        # inertia tensor about the centroid) instead of a direct
+        # `PrincipalProperties()` call, since FreeCAD's Part API doesn't
+        # expose that OCCT method directly. Diagonalizing the matrix by
+        # hand (same numpy.linalg.eigh technique this file's own
+        # `get_axis_inertia` -- decompose/decom_utils_generator.py --
+        # already uses for edges) gives the same 3 principal moments of
+        # inertia OCCT's own PrincipalProperties diagonalizes internally;
+        # radius of gyration per axis is then sqrt(moment / Area).
+        # Verified live (2026-08-23): this reproduces the OCP-computed
+        # 0.055034mm CharacteristicWidth for
+        # Solidos/test_models/Decomposed/SCDR_90_piece2.stp's own known
+        # sliver face exactly.
+        mat = native.MatrixOfInertia
+        inertial = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
+        eigval = numpy.linalg.eigvalsh(inertial)
+        rg_max = max(math.sqrt(e / self.Area) if e > 0 else 0.0 for e in eigval)
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > 1e-9 else float("inf")
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > 1e-9 else 0.0
 
         # assigned later by whoever built the face list this face came
         # from (its position within the parent solid's face list, e.g.

@@ -72,6 +72,7 @@ The following example shows a usage with every attributes specified.
         tor_distance=0.0001,
         tor_angle=0.0001,
         min_area=0.01,
+        min_face_width=0.1,
     )
     my_numeric_format = geouned.NumericFormat(
         P_abc="14.7e",

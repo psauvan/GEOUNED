@@ -80,7 +80,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
         # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
         # pindex are all faces index used to produced multiplanes, do not count as standard planes
-        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces)
+        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces, Surfaces.tolerances)
         for mp in multiplanes:
             mp_region = Surfaces.add_multiPlane(mp)
             component_definition.append(mp_region)
@@ -107,6 +107,25 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         if abs(face.Area) < Surfaces.tolerances.min_area:
             logger.warning(
                 f"{str(face.Surface)} surface removed from cell definition. Face area < Min area ({face.Area} < {Surfaces.tolerances.min_area})"
+            )
+            continue
+        if getattr(face, "CharacteristicWidth", float("inf")) < Surfaces.tolerances.min_face_width:
+            # min_area alone doesn't catch a real, large-area but genuinely
+            # thin sliver face of ANY surface type (see
+            # Tolerances.min_face_width's own docstring, and
+            # order_plane_face's identical check on the decomposition
+            # side) -- confirmed live, 2026-08-23,
+            # Solidos/test_models/Decomposed/SCDR_90_piece2.stp: a
+            # 1.9262mm^2 sliver plane (area comfortably above the default
+            # min_area=0.01) still leaked into the written cell definition
+            # as a spurious extra bounding plane via this exact loop. Not
+            # restricted to GPlane -- a thin sliver Cylinder/Cone/Sphere/
+            # Torus patch is exactly the same class of artifact and
+            # CharacteristicWidth is already computed generically for
+            # every surface type.
+            logger.warning(
+                f"{str(face.Surface)} surface removed from cell definition. Face characteristic width < min_face_width "
+                f"({face.CharacteristicWidth} < {Surfaces.tolerances.min_face_width})"
             )
             continue
         if face.Area < 0:

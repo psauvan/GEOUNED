@@ -882,7 +882,19 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces):
     V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], UVNode_max[indmax][1])
 
     axis = Faces[ifacemin].Surface.Axis
-    normal = (V2 - V1).cross(axis).normalized()
+    cross = (V2 - V1).cross(axis)
+    if cross.length < 1e-9:
+        # V1 == V2 (or V2-V1 happens to lie exactly along axis) -- the
+        # closest-UV-node search picked the same point for both ends, a
+        # real degenerate case confirmed live (2026-08-23,
+        # Solidos/test_models/Big_complex_cell/modelcell_cut1.stp) rather
+        # than guessed. No well-defined bounding-plane normal exists here;
+        # falling back to an arbitrary perpendicular to axis is safer than
+        # crashing (this function's own header comment already flags it
+        # as a simplified approximation, not exact geometry).
+        normal = _perpendicular_axis(axis)
+    else:
+        normal = cross.normalized()
 
     plane = GeounedSurface(("Plane", (V1, normal, 1, 1)))
 
@@ -1147,9 +1159,19 @@ def most_outer_faces(cyl, faces):
     return (face1, face2), remove_surf
 
 
-def eligible_plane(plane):
+def eligible_plane(plane, tolerances=None):
     """An eligible master plane is a plane where the adjacent concave planes make a convex shape"""
-    if plane.Area < Tolerances().min_area:
+    # `tolerances=None` (rather than a `Tolerances()` default argument)
+    # deliberately keeps every existing call site working unchanged, but
+    # note that a bare default previously meant this ALWAYS silently used
+    # a fresh Tolerances() instance -- ignoring whatever min_area the
+    # caller had actually configured via CadToCsg(tolerances=...). Fixed,
+    # 2026-08-23: callers now thread their own real tolerances object
+    # through; only truly tolerances-agnostic call sites (if any remain)
+    # fall back to the class default here.
+    if tolerances is None:
+        tolerances = Tolerances()
+    if plane.Area < tolerances.min_area:
         # A residual near-zero-area sliver face (left over from a boolean
         # cut that grazed tangentially, same class of artifact
         # other_face_edge's skip_slivers mode already treats as
@@ -1158,6 +1180,11 @@ def eligible_plane(plane):
         # piece 36, whose real 5-plane boundary was being read as 6
         # planes because a 0.0021-area sliver kept qualifying as its own
         # multiplane() master, producing a spurious MultiPlane grouping.
+        return False
+    if getattr(plane, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
+        # min_area alone doesn't catch a real, large-area but genuinely
+        # thin sliver (see Tolerances.min_face_width's own docstring) --
+        # same reasoning as order_plane_face's identical check.
         return False
 
     Edges = plane.OuterWire.Edges
@@ -1277,7 +1304,7 @@ def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def _and_or_by_material_sampling(
-    center, radius, z, pos_this, axis_this, pos_other, axis_other, solid, n_samples=600, margin_factor=2.0
+    center, axis, radius, along, pos_this, axis_this, pos_other, axis_other, solid, n_samples=600, margin_factor=2.0
 ):
     """Robust fallback for `cyl_plane_region_conf`'s AND_p1_cyl/AND_p2_cyl
     sign test, used only when the cylinder and the corner plane are so
@@ -1305,20 +1332,38 @@ def _and_or_by_material_sampling(
     one side to decide reliably -- the caller falls back to the analytic
     sign test in that case, so this can only ever improve or match
     today's behavior, never make it worse.
+
+    `center`/`axis`/`radius`/`along` describe the cylinder's own real
+    geometry (`along` is the offset from `center` *along `axis`*, at
+    which the two corner planes actually meet the cylinder -- the plane
+    perpendicular to `axis` to sample in, not a fixed world-Z height).
+    An earlier version hardcoded sampling in the world X/Y plane at a
+    fixed world-Z, silently assuming every round-corner cylinder is
+    Z-axis-aligned -- confirmed live, 2026-08-23,
+    Solidos/test_models/Mixed/SCDR_90_hollow.stp's own decomposed piece
+    4: a real R=37mm round-corner cylinder with axis (0,1,0) (Y-aligned)
+    hit this exact fallback (cross1.length=6.8e-07, well inside the
+    degenerate-tangency range) and returned a wrong answer (False) where
+    the already-correct naive sign test said True, because "outside the
+    cylinder radius" was being decided from X/Y distance alone -- which
+    has no relationship to the real cylinder surface when the axis isn't
+    Z. Fixed to sample in the plane actually perpendicular to `axis`.
     """
     import random
 
+    u = _perpendicular_axis(axis)
+    v = axis.cross(u).normalized()
+    axis_n = axis.normalized()
     margin = margin_factor * radius
     rng = random.Random(0)
     true_total = true_material = 0
     false_total = false_material = 0
     for _ in range(n_samples):
-        x = center.x + rng.uniform(-margin, margin)
-        y = center.y + rng.uniform(-margin, margin)
-        pt = GVector(x, y, z)
-        dx, dy = pt.x - center.x, pt.y - center.y
-        if (dx * dx + dy * dy) ** 0.5 <= radius:
+        du = rng.uniform(-margin, margin)
+        dv = rng.uniform(-margin, margin)
+        if (du * du + dv * dv) ** 0.5 <= radius:
             continue
+        pt = center + axis_n * along + u * du + v * dv
         if axis_other.dot(pt - pos_other) <= 0:
             continue
         real = solid.is_inside(pt)
@@ -1455,29 +1500,56 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     # toward zero *for a real geometric reason* (a tangent plane touches the
     # cylinder's circle at an extremum, not a transversal crossing -- see
     # the piece59/modelCell_670000 investigation this fallback was built
-    # from), and its sign becomes pure floating-point noise, well above the
-    # old degenerate guard (1e-8) but still numerically meaningless.
-    # `_and_or_by_material_sampling` resolves this case directly from real
-    # solid geometry instead of trusting that noisy sign.
+    # from). `_and_or_by_material_sampling` resolves the *moderately*
+    # near-tangent band directly from real solid geometry instead of
+    # trusting a noisy sign.
+    #
+    # But per the theoretical RoundCorner model (composite_surface_
+    # definitions.md, "p1_cyl/p2_cyl" section): p1_cyl is AND for every
+    # angle strictly between the two tangent-boundary angles -a/+a, and
+    # cross1.length -> 0 happens *at* those tangent boundaries themselves
+    # -- i.e. an extremely small (not just "small") cross magnitude means
+    # the plane sits essentially exactly AT its own tangent limit, which
+    # is a real, meaningful geometric position, not numerical noise: the
+    # sign of ac1.dot(cross1) there is still the mathematically correct
+    # discriminant (continuous through the boundary), just evaluated very
+    # close to zero. Confirmed live, 2026-08-23,
+    # Solidos/test_models/Mixed/SCDR_90_hollow.stp's own piece4 (a real
+    # R=37mm round corner nearly exactly tangent at one end,
+    # cross1.length=6.8e-07): the naive sign there is correct (True,
+    # user-confirmed against the real solid) while
+    # _and_or_by_material_sampling -- even after fixing its own separate
+    # axis-alignment bug (see that function's docstring) -- gave the wrong
+    # answer (False), because sampling a tiny local patch this close to an
+    # exact tangency is inherently unreliable (too little real "outside
+    # material" signal to distinguish AND from OR statistically). Compare
+    # against the piece59/modelCell_670000 case this fallback was built
+    # for, where cross1.length was ~4.5e-05 -- 2 orders of magnitude
+    # *larger*, a genuinely different, moderately-ambiguous regime where
+    # sampling is actually needed and reliable. `_TRUST_NAIVE_THRESHOLD`
+    # separates the two: below it, trust the naive analytic sign (it's a
+    # real boundary position, not noise); between it and
+    # `_DEGENERATE_CROSS_THRESHOLD`, use the material-sampling fallback.
+    _TRUST_NAIVE_THRESHOLD = 1e-6
     _DEGENERATE_CROSS_THRESHOLD = 1e-3
 
     cross1 = n1.cross(nc1)
-    if cross1.length < 1e-8:
-        AND_p1_cyl = True
-    elif cross1.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+    if _TRUST_NAIVE_THRESHOLD <= cross1.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+        cyl1_axis = cyl1.Surface.Axis
+        along1 = (r1 - cyl1_center).dot(cyl1_axis)
         result = _and_or_by_material_sampling(
-            cyl1_center, cyl1.Surface.Radius, r1.z, p1.Surface.Position, n1, p2.Surface.Position, n2, solid
+            cyl1_center, cyl1_axis, cyl1.Surface.Radius, along1, p1.Surface.Position, n1, p2.Surface.Position, n2, solid
         )
         AND_p1_cyl = result if result is not None else (ac1.dot(cross1) > 0)
     else:
         AND_p1_cyl = ac1.dot(cross1) > 0
 
     cross2 = n2.cross(nc2)
-    if cross2.length < 1e-8:
-        AND_p2_cyl = True
-    elif cross2.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+    if _TRUST_NAIVE_THRESHOLD <= cross2.length < _DEGENERATE_CROSS_THRESHOLD and solid is not None:
+        cyl2_axis = cyl2.Surface.Axis
+        along2 = (r2 - cyl2_center).dot(cyl2_axis)
         result = _and_or_by_material_sampling(
-            cyl2_center, cyl2.Surface.Radius, r2.z, p2.Surface.Position, n2, p1.Surface.Position, n1, solid
+            cyl2_center, cyl2_axis, cyl2.Surface.Radius, along2, p2.Surface.Position, n2, p1.Surface.Position, n1, solid
         )
         AND_p2_cyl = result if result is not None else (-ac1.dot(cross2) > 0)
     else:

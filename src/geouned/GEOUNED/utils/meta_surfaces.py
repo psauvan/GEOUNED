@@ -30,7 +30,7 @@ def multiplane_loop(adjacents, multi_list, planes):
         multiplane_loop(new_adjacents, multi_list, planes)
 
 
-def multiplane(master_plane, planes, plane_index):
+def multiplane(master_plane, planes, plane_index, tolerances=None):
     """Found planes adjacent to "p". Region delimited by plane is concanve."""
     Edges = master_plane.OuterWire.Edges
 
@@ -67,9 +67,9 @@ def multiplane(master_plane, planes, plane_index):
 
     multiplane_list.extend(addplane)
     for p in addplane:
-        if not eligible_plane(p):
+        if not eligible_plane(p, tolerances):
             continue
-        multiplane_list.extend(multiplane(p, planes, plane_index))
+        multiplane_list.extend(multiplane(p, planes, plane_index, tolerances))
 
     return multiplane_list
 

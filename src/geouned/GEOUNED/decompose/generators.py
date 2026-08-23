@@ -37,7 +37,7 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
         omitfaces.update(extPlanes)
 
-        for multiplane in next_multiplanes(solid_GU.Faces, omitfaces):
+        for multiplane in next_multiplanes(solid_GU.Faces, omitfaces, tolerances):
             yield multiplane
     else:
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
@@ -46,16 +46,16 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
     for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
-    for surface in cylinder_generator(solid_GU.Faces, omitfaces):
+    for surface in cylinder_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
-    for surface in cone_generator(solid_GU.Faces, omitfaces):
+    for surface in cone_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
-    for surface in sphere_generator(solid_GU.Faces, omitfaces):
+    for surface in sphere_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
-    for surface in torus_generator(solid_GU.Faces):
+    for surface in torus_generator(solid_GU.Faces, tolerances):
         yield surface
 
     omitfaces = omitfaces - extPlanes
@@ -65,7 +65,7 @@ def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
 
 def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
     omit_isolated_planes(GUFaces, omitfaces)
-    cutting_plane_face = order_plane_face(GUFaces, omitfaces)
+    cutting_plane_face = order_plane_face(GUFaces, omitfaces, tolerances.min_area, tolerances.min_face_width)
     for p in cutting_plane_face:
         omitfaces.add(p.Index)
         normal = p.Surface.Axis
@@ -99,11 +99,17 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
                 yield p
 
 
-def cylinder_generator(GUFaces, omitfaces):
+def cylinder_generator(GUFaces, omitfaces, tolerances=None):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
         if type(face.Surface) is not GCylinder:
+            continue
+        if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
+            # a genuine sliver isn't limited to plane faces -- a thin
+            # residual Cylinder patch is exactly the same class of
+            # boolean-cut artifact (see Tolerances.min_face_width's own
+            # docstring); same check as plane_generator/order_plane_face.
             continue
 
         dir = face.Surface.Axis
@@ -114,11 +120,13 @@ def cylinder_generator(GUFaces, omitfaces):
         yield cylinder
 
 
-def cone_generator(GUFaces, omitfaces):
+def cone_generator(GUFaces, omitfaces, tolerances=None):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
         if type(face.Surface) is not GCone:
+            continue
+        if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
         dir = face.Surface.Axis
         apex = face.Surface.Apex
@@ -129,11 +137,13 @@ def cone_generator(GUFaces, omitfaces):
         yield cone
 
 
-def sphere_generator(GUFaces, omitfaces):
+def sphere_generator(GUFaces, omitfaces, tolerances=None):
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
         if type(face.Surface) is not GSphere:
+            continue
+        if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
 
         rad = face.Surface.Radius
@@ -142,9 +152,11 @@ def sphere_generator(GUFaces, omitfaces):
         yield sphere
 
 
-def torus_generator(GUFaces):
+def torus_generator(GUFaces, tolerances=None):
     for face in GUFaces:
         if type(face.Surface) is not GTorus:
+            continue
+        if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
 
         radMaj = face.Surface.MajorRadius
@@ -155,7 +167,7 @@ def torus_generator(GUFaces):
         yield torus
 
 
-def next_multiplanes(solidFaces, plane_index_set):
+def next_multiplanes(solidFaces, plane_index_set, tolerances=None):
     """identify and return all multiplanes in the solid."""
     planes = []
     for f in solidFaces:
@@ -168,10 +180,10 @@ def next_multiplanes(solidFaces, plane_index_set):
     for p in planes:
         if p.Index in used_plane:
             continue
-        if not eligible_plane(p):
+        if not eligible_plane(p, tolerances):
             continue
         mp_plane_index = set()
-        mplanes = multiplane(p, planes, mp_plane_index)
+        mplanes = multiplane(p, planes, mp_plane_index, tolerances)
         used_plane.update(mp_plane_index)
         if len(mplanes) != 1:
             if no_convex(mplanes):

@@ -7068,7 +7068,502 @@ the classification at all, as it should.
 but loses 10 particles" symptom was flagged earlier this file as
 possibly a `RevCC`-adjacent case -- not re-checked against this fix.
 
+## `SCDR_90_piece2.stp` sliver investigation: `CharacteristicWidth`, a
+robust general sliver detector -- implemented, wired everywhere found so
+far, but a real regression on a sibling file is NOT yet fixed. Session
+ends here with uncommitted changes -- resume by fixing the regression
+before committing.
+
+Follow-up to the `Cans/pipe.stp` fix above (same session). User-directed
+investigation of `Solidos/test_models/Decomposed/SCDR_90_piece2.stp`
+(pending list: d1suned tally ~23.5 sigma off / intermittently 10 lost
+particles), working test-first per the user's own established discipline
+this whole session.
+
+### Dead end 1: `min_area` was never actually wired into the candidate-plane
+generator at all
+
+Traced a specific unexplained cutting plane (Position/Axis given
+directly by the user) to a real face: `face[12]`, a genuine STEP face,
+Area=1.9262mm^2 -- a residual boolean-cut sliver, not a modeling error.
+Raising `Tolerances.min_area` (even to 3.0, comfortably above 1.9262) had
+**zero effect** on the actual translation. Root cause: `order_plane_face`
+(`decompose/decom_utils_generator.py`, the function that ranks/selects
+which real plane faces become decomposition cutting candidates) never
+read `min_area` -- or *any* area threshold -- at all; `plane_generator`
+computed `tolerances.min_area` but never passed it through. Fixed:
+`order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None)`
+now actually excludes faces below the threshold; wired from
+`plane_generator`. Verified: `min_area=3.0` alone now gives
+`SCDR_90_piece2.stp` a clean d1suned tally (`0.999918 +/- 0.34%`, was
+losing particles) -- but the *default* `min_area=0.01` still doesn't
+reach this sliver's own 1.9262mm^2 area, so this alone doesn't fix the
+file without manual tuning.
+
+### Dead end 2: raw area/compactness don't generalize across the corpus
+
+User's own idea: since 8.46mm^2 (a real face) and 1.93mm^2 (the sliver)
+are the same order of magnitude, maybe an "aspect ratio" per face (area
+vs. a shape-compactness measure) would separate them where raw area
+can't. Added `GFace.Compactness = Area / RG_max^2` (`RG_max` = largest
+principal radius of gyration, via `BRepGProp.SurfaceProperties_s(...).PrincipalProperties()`
+-- computed once, piggybacking on the existing Area/CenterOfMass call, no
+extra native pass needed) to `geo/_ocp_impl.py`. Worked cleanly on this
+one file (real faces: Compactness 0.585-4.62; slivers: 6e-7-0.019) --
+but a full 109-file/1733-face corpus scan found real, large-area,
+legitimately elongated faces (e.g. `RoundCorners/TVA_solid16_cell17.stp`
+face[12], Area=14575.8mm^2, a genuine 5.6mm x 2602.8mm structural
+plate edge -- confirmed by direct export+inspection, user verified it by
+eye) with Compactness as low as 0.026 -- indistinguishable from a sliver
+by this measure alone, since Compactness measures shape elongation, not
+physical scale. A universal Compactness threshold would misclassify real
+thin panels.
+
+### Dead end 3: isolated-edge-length clustering (per-solid noise floor)
+
+Comparing the sliver's own edge lengths against the *rest of the same
+solid's* edge-length distribution (not the whole corpus) showed a real
+pattern: the sliver's edges (0.055mm) sit in an isolated log-space
+cluster, bracketed by large gaps on both sides, disconnected from both
+the solid's own sub-micron noise floor and its real-feature range; a
+real face's short edge (e.g. TVA's 5.6mm) sits at the *bottom of a
+continuous* distribution instead. Implemented a per-solid clustering +
+gap-detection algorithm and tested 3 refinements (bare isolation, shortest-
+edge-only, isolated-edge-count) -- all produced false positives: a real,
+large cone/plane face directly touching the sliver has the sliver's own
+tiny shared boundary edge as its own "shortest edge," getting flagged
+even though the face itself is completely legitimate. Abandoned as too
+complex/fragile relative to what it bought.
+
+### The fix that worked: `CharacteristicWidth`
+
+User's refined idea: combine a characteristic *length* with Compactness,
+rather than using either alone. Derived analytically: for a rectangle of
+length L and width W, `RG_max == L/sqrt(12)` exactly, so
+`W == Area/(RG_max*sqrt(12)) == sqrt(Area*Compactness/12)` -- and this
+generalizes correctly to a *curved* sliver too (RG_max captures the
+spread along whatever shape the face follows, straight or curved).
+Verified this recovers the sliver's true width (0.055034mm, matching its
+own real ParameterRange-derived dimension exactly) and TVA's real
+panel's true width (5.6mm, exact) from Area+Compactness alone -- no
+per-surface-type angle-to-arclength conversion needed, unlike a naive
+ParameterRange-based approach.
+
+**Corpus-wide validation** (109 files, 1733 faces, reusing the same scan
+data as the Compactness dead end): sorted by `CharacteristicWidth`, there
+is a single, clean gap of >0.5 log10-decades between `0.0550342mm`
+(`SCDR_90_piece2.stp` face[12], the sliver -- the *largest* width among
+every known sliver in the whole corpus) and `0.192768mm`
+(`Torus_solid1.stp` face[7] -- the *smallest* width among every other
+face in the whole corpus, real or not yet independently confirmed).
+**Not a single face out of 1733, across every file, falls in that gap.**
+0.1mm (the user's own original suggestion) sits in the middle. Not a
+strict mathematical guarantee in all cases (14/1733 faces, all real,
+substantial, *curved* faces like sphere caps, have `width` up to 23%
+*larger* than `sqrt(Area)` would suggest under a flat-rectangle model --
+confirmed this deviation is always in the safe direction, toward *larger*
+computed width, never smaller) but empirically the cleanest, most robust
+signal found this session, and the only one that survived corpus-wide
+testing.
+
+### Implementation (ocp engine only so far)
+
+- `geo/_ocp_impl.py::GFace.__init__` -- added `Compactness` and
+  `CharacteristicWidth` as eager fields (both derived from the single
+  already-computed `PrincipalProperties()` call).
+- `GEOUNED/utils/data_classes.py::Tolerances` -- new `min_face_width`
+  field, default `0.1` (mm). Deliberately kept as a *separate*,
+  independent tolerance from `min_area`, not a replacement -- the two
+  are complementary (confirmed via the same corpus scan: `width` isn't
+  strictly bounded by `sqrt(Area)` for all shapes, so neither threshold
+  strictly subsumes the other; `min_area` still independently catches a
+  tiny-in-both-dimensions compact fragment, `min_face_width` catches a
+  large-area-but-narrow sliver `min_area` alone would miss).
+- `decompose/decom_utils_generator.py::order_plane_face` -- excludes on
+  `min_area` OR `min_face_width` (both apply to plane candidates).
+- `utils/meta_surfaces_utils.py::eligible_plane` -- **also fixed a
+  real, independent pre-existing bug found along the way**: it always
+  called a bare `Tolerances()` (the class default) instead of accepting
+  the caller's actual configured tolerances object, silently ignoring
+  any `min_area` the user had set via `CadToCsg(tolerances=...)`. Now
+  takes `tolerances=None` and threads the real object through; also
+  gained the same `min_face_width` check.
+- `utils/meta_surfaces.py::multiplane`, `decompose/generators.py::next_multiplanes`,
+  `utils/functions.py::get_multiplanes` (the CONVERSION-phase MultiPlane
+  path, called from `conversion/cell_definition.py`) -- all now thread
+  `tolerances` through to `eligible_plane`/the recursive `multiplane`
+  call, instead of relying on the previously-broken hardcoded default.
+- `conversion/cell_definition.py::simple_solid_definition`'s own
+  per-face reconstruction loop -- already had a `min_area` check
+  (`face.Area < Surfaces.tolerances.min_area`, logged and skipped) but,
+  same story, no width check; added `face.CharacteristicWidth <
+  Surfaces.tolerances.min_face_width`, **not restricted to `GPlane`**
+  (an early version wrongly gated this to planes only -- corrected per
+  direct user feedback: a thin sliver Cylinder/Cone/Sphere/Torus patch is
+  exactly the same class of artifact, and `CharacteristicWidth` is
+  already computed generically for every surface type).
+- `decompose/generators.py::cylinder_generator`/`cone_generator`/
+  `sphere_generator`/`torus_generator` -- **also had zero area/width
+  filtering of any kind** for their own decomposition-candidate role
+  (parallel gap to `plane_generator`'s, found by the same "does this
+  apply to every face-type loop" question, per direct user instruction);
+  all 4 now take `tolerances=None` and skip a face below
+  `min_face_width`, wired from `get_surfaces`.
+
+### Verification: 2 files fixed/improved, 1 file regressed -- NOT resolved
+
+- `Decomposed/SCDR_90_piece2.stp`: **fixed**, tally `0.999918 +/- 0.34%`
+  (was losing particles / ~23.5 sigma), with *default* tolerances (no
+  manual `min_area` tuning needed) -- the original goal, achieved. 15
+  surfaces written (was 17 -- the sliver's own 2 spurious extra planes,
+  leaked in via the conversion-phase per-face loop's own missing width
+  check, are gone).
+- `Complex_cell/SCDR_90.stp` (the full, un-decomposed original this
+  fixture family derives from -- long documented history earlier in this
+  file, historically 0.999346/~3.3 sigma right at this project's own
+  "real failure" threshold): **improved**, tally `0.998417 +/- 0.23%`
+  (~0.69 sigma) -- a real, independently-confirmed improvement, not
+  assumed from the piece2 fix alone.
+- `Mixed/SCDR_90_hollow.stp` (a related SCDR_90 variant, same face-area
+  fingerprint as `piece2` in the corpus scan): **regressed**. Confirmed
+  via direct before/after d1suned on the *identical* file, isolating this
+  session's changes with `git stash`/`stash pop` (not assumed): before,
+  `0.998967 +/- 0.37%` (clean, ~0.28 sigma); after, `1.49022 +/- 0.32%`
+  (badly wrong, ~150+ sigma). Composite-surface counts shifted
+  `MultiP:2,RoundC:2,RevCC:1` -> `MultiP:1,RoundC:4,RevCC:3` -- a materially
+  different reconstruction, not just a numeric drift. A raw MCNP-text
+  diff (same technique used for `piece2`'s own root-cause) shows a more
+  complex pattern than `piece2`'s "one known sliver plane leaks back in"
+  -- several *new* plane surfaces with normals not matching any single
+  already-identified sliver, and others disappearing -- suggesting the
+  fix changed which candidate surfaces get discovered during RevCC/
+  MultiPlane chain detection in a way that's *wrong* for this file,
+  unlike `piece2`/`SCDR_90.stp` where the same kind of change was
+  *correct*. **Not root-caused.** This is exactly the "decomposition
+  candidate-list change can silently steer down a different, wrong
+  path elsewhere" risk this project's own history warns about
+  repeatedly (`get_can_surfaces`/`outer2_only`, the RevCC corpus
+  sessions, etc.) -- confirmed to have actually happened here, not just
+  a theoretical risk this time.
+
+**109-file corpus differential scan** (`Solidos/test_models`, excluding
+`Big_model_reserved`, composite-surface counts, `git stash`/`stash pop`):
+exactly 4 files differ -- the 3 above plus
+`Big_complex_cell/modelCell_670000.stp` (`RoundC: 41 -> 40`, one fewer --
+not independently verified this session; this file is already known
+lost-particle-broken regardless of this change, per the pending list
+below, so this specific count shift's own correctness is unconfirmed).
+
+**Update: the `SCDR_90_hollow.stp` regression named below is resolved** --
+see "`SCDR_90_hollow.stp` piece5 resolved" further down this file for the
+full account (a real, separate `Gsplit` degeneracy, not a bug in the
+`CharacteristicWidth` work itself). The working tree was left uncommitted
+at the time this note was written; by the time the fix below landed, more
+files had accumulated (`utils/meta_surfaces_utils.py`,
+`geo/vector_geometry.py` in addition to the ones listed here) -- see
+`git status` for the current, authoritative set rather than trusting this
+list.
+
+### Not yet done (beyond the regression itself)
+
+- `CharacteristicWidth`/`Compactness` exist only in `geo/_ocp_impl.py` --
+  not yet ported to `_occ_impl.py` or `_freecad_impl.py`. Per this
+  project's own "prove it works, then propagate" convention, porting
+  should wait until the `SCDR_90_hollow.stp` regression is resolved and
+  the `ocp`-engine behavior is fully trusted.
+- `tests/geo/test_ocp_impl.py` + `tests/test_cadtocsg.py` (89/89) were
+  green after every step this session, but this only exercises
+  `testing/inputSTEP`'s 50-file corpus, not `Solidos/test_models` (where
+  the regression was actually found) -- the 109-file scan is the real
+  regression net here, not the committed test suite.
+- `Big_complex_cell/modelcell_cut1.stp`, `Mixed/multiplane_add_plane_cyl.stp`,
+  `Enclosures/w_encl.stp` cells 4-5, `Big_complex_cell/modelCell_670000.stp`'s
+  own lost-particles issue -- all still open from the prior pending list,
+  untouched this session.
+
+## `SCDR_90_hollow.stp` piece5 resolved: a real cone-cylinder coaxial
+degeneracy `_try_coaxial_cone_split` never searched for, plus a retry
+tolerance that was too tight for its own presplit -- found and fixed
+with extensive live user guidance, corpus-verified, tests green
+
+Direct continuation of the `SCDR_90_piece2.stp` sliver investigation
+above (same session, later). `SCDR_90_hollow.stp` piece5 (one of 8
+irreducible decomposed pieces, Volume=4511.6013mm^3) gave a clean-looking
+but wrong d1suned tally (0.740239 +/- 0.52%, ~26% material missing) --
+unaffected by any of the `CharacteristicWidth` work. **User's own
+diagnosis, stated directly and confirmed correct end to end**: piece5 was
+never actually irreducible -- a real `Gsplit` call during decomposition
+silently failed to separate it, the same class of bug as this file's own
+"Motivating problem" and the already-existing coaxial-cone `Gsplit`
+fallback (`_try_coaxial_cone_split`, `geo/_occ_impl.py`/`_ocp_impl.py`)
+was built to catch -- but didn't, here.
+
+**Investigation, in the order it actually happened** (kept because each
+wrong turn is instructive, matching this file's own established
+discipline):
+- First isolated a genuine *verification-script* bug, not a geometry bug:
+  point-sampling `check_sign` against piece5's own top-level surfaces
+  while assuming every term must be positive gave `both_hits=0`
+  (apparently zero overlap between predicted CSG and real material) --
+  contradicting d1suned's own clean-looking tally. **User caught this
+  directly** ("ni puede ser tan distinta tu estimacion del CSG con
+  d1suned"). Root cause: piece5's real cell definition
+  (`3 -5 -6 3 7 (-1:-2 4)`) requires the two K/Y cones **negated**
+  (`-5`, `-6`) -- respecting the real signed literals gave
+  `predicted/real ~= 0.7567`, matching d1suned almost exactly and
+  confirming the deficit is real, not a script artifact.
+- Verified the K/Y cards' own trailing sheet values (`-1`/`+1`) were
+  correctly, individually assigned to the right physical cone (matched
+  by exact apex-coordinate coincidence to 6+ significant digits) --
+  **not swapped**, ruling out that specific hypothesis cleanly.
+- `Gsplit` call-tracing (monkeypatching `geo.Gsplit`, matching this
+  file's own established technique) during `decompose_solids()` found
+  piece5's own ancestor (base_vol=4511.6013, byte-identical to piece5's
+  own final volume) rejected 4 separate cone-tool candidates as
+  "unchanged" (`degenerate_case_handled=False`) -- but a nearly-identical
+  sibling solid elsewhere in the same decomposition tree
+  (base_vol=4511.5953, differing by only 0.006mm^3) *did* successfully
+  split via the exact same class of tool
+  (`degenerate_case_handled=True`, giving 3344.11/1167.49) -- a strong
+  early signal that piece5's own deficit (~1172mm^3) matched that
+  sibling's own smaller piece almost exactly.
+- `_try_coaxial_cone_split` **was** already firing on piece5's own
+  cone1/cone2 candidates but returning `None` every time. Two real,
+  separate misdiagnoses were chased before the correct one, both
+  confirmed wrong via direct plain-boolean (`BRepAlgoAPI_Common`/`Cut`)
+  ground-truth checks rather than assumption:
+  1. First suspected the coaxial-cone search itself found the *wrong*
+     candidate circle on a mis-fragmented `other_cone` face (v0 on the
+     cone's own UV parametrization looked inconsistent with global Y at
+     first glance) -- this was a **false lead**: the mid_point/radius
+     computed by the existing formula (`(apex1+apex2)/2`,
+     `|apex1-apex2|/2`) was, in fact, already exactly correct (Y=49.9997,
+     R=54.5) -- the confusion was mistakenly assuming the surface's own
+     UV "V" parameter equals global Y directly, which it doesn't.
+  2. Then extended the fix to search coaxial **cone-cylinder** pairs too
+     (a real, separate degeneracy class: a cone reaching a coaxial
+     cylinder's own radius at exactly one height) -- added
+     `is_coaxial_cone_cylinder_pair` (`geo/vector_geometry.py`) and
+     `_group_coaxial_cylinder_faces` (`_ocp_impl.py`), wired into
+     `_try_coaxial_cone_split` as additional candidates alongside the
+     existing cone-cone search. This correctly found and split the *real*
+     circle where the R=40 cylinder, cone1, and cone2 all coincide
+     (Y=64.4997) -- but this turned out to be a **second false lead**:
+     that circle already existed as a real edge on both the cylinder and
+     cone2 faces (confirmed live: `n split_pieces=1`, nothing to split --
+     the boundary was already exactly there), and the user's own manual
+     FreeCAD cut confirmed directly that the only edge OCCT's kernel
+     failed to draw was specifically **the edge between the cutting cone
+     and the other cone surface** -- i.e. the original cone-cone
+     candidate, not cone-cylinder. (`is_coaxial_cone_cylinder_pair`/
+     `_group_coaxial_cylinder_faces` are kept in the codebase regardless
+     -- a real, independently correct predicate/grouping for a real
+     degeneracy class, just not the one active in this specific fixture.)
+- **Real root cause, confirmed via user-supplied ground-truth vertices**:
+  the user gave 5 real coordinates from their own inspection of the
+  actual solid and a parallel manual FreeCAD cut. 3 (`v1`, `v2`, `v3`)
+  matched real existing vertices to within 0.03-0.20mm; the other 2
+  (`v4`=(450.56,50,-15.27), `v5`=(448.69,50,-19.07), explicitly called
+  "puntos" not "vertices" by the user) matched **no** existing vertex --
+  but were confirmed to lie almost exactly on the tool cone's own surface
+  (44.9995-45.0002 deg vs a 45.0000 deg SemiAngle). Re-running the
+  *original*, unmodified cone-cone candidate search (the one already in
+  the codebase before this session, mid_point=(400.767,49.9997,6.884),
+  radius=54.5) found its own 2 crossings at **exactly** v4/v5 -- the true
+  circle really was the cone-cone one all along, and the crossing points
+  the algorithm already correctly finds on it are precisely the 2 real
+  points the user separately gave from their own inspection.
+- **Why the presplit + retry still failed even on the correct circle**:
+  the presplit (splitting cone2's own fragment at the v4-v5 arc) built a
+  valid solid, but `_raw_bop_split(presplit, tool, tolerance)` still
+  returned exactly 1 unchanged solid at the caller's own `tolerance`
+  (0.0) and every value up to 0.05. **Sweeping much wider retry
+  tolerances directly** (not guessed -- tried a real range) found the
+  actual threshold: **0.1 to 2.0** cleanly separates the presplit into 2
+  solids (3344.14/1166.41, matching the sibling's 3344.11/1167.49 to
+  within ~1mm^3) -- `tolerance=0.05` fails, `tolerance=0.1` succeeds, a
+  real, sharp cliff, not a gradual improvement. The existing code only
+  ever retried at the caller's own (typically near-zero) `tolerance` --
+  never escalated it -- so a presplit that's topologically valid but not
+  numerically *exact* enough for OCCT's own coincidence detection at
+  tight tolerance was silently discarded every time.
+
+**Fix, `_try_coaxial_cone_split` (`geo/_ocp_impl.py`)**: the retry step
+now tries an escalating tolerance ladder
+(`tolerance, 1e-6, 1e-4, 1e-2, 0.1, 0.5, 1.0`, skipping any value below
+the caller's own `tolerance`) instead of a single fixed attempt, keeping
+the first that produces >=2 valid solids passing the volume-conservation
+check. The volume-conservation tolerance itself is loosened from the
+existing `1e-6` relative bound to `1e-3` relative **specifically when a
+nonzero fuzzy retry tolerance was needed** (confirmed live: the real
+deviation at `tolerance=0.1` is ~2.3e-4 relative, comfortably inside
+`1e-3` with margin, while a still-tight `1e-6` bound would have wrongly
+rejected the correct result) -- an exact (`tolerance=0.0`) retry keeps
+the original tight `1e-6` bound unchanged, so nothing about the
+already-validated `rev_pipe.stp`/`SCDR_90_piece0_badvolume.stp` go/no-go
+cases from this fix's own original introduction is loosened.
+
+**2 real regressions found and fixed while corpus-verifying** (both
+confirmed via a 109-file `Solidos/test_models` differential scan,
+excluding `Big_model_reserved`):
+- `_split_face_at_v_line` crashed (`Standard_ConstructionError:
+  Geom2d_TrimmedCurve::U1 == U2`) on 4 files
+  (`Cans/fwd_can_0.stp`/`fwd_can_1.stp`/`rev_can_0.stp`/`rev_can_1.stp`)
+  once the new cone-cylinder candidate search started reaching a
+  periodic surface where the two candidate crossings coincided once
+  reduced to the same U parameter (e.g. a 2*pi wraparound) -- a real,
+  previously-unreachable degenerate input this function's own
+  `Geom2d_TrimmedCurve` construction didn't guard against. Fixed with a
+  `u_hi - u_lo < 1e-9` guard, returning `[native_face]` unchanged (the
+  function's own already-documented "didn't actually separate anything"
+  outcome) instead of crashing -- applies to cone-cone candidates too,
+  not just the new cone-cylinder ones, though only the latter reached it
+  in practice this session.
+- `gen_plane_cylinder` (`utils/meta_surfaces_utils.py`) crashed
+  (`ZeroDivisionError` inside `GVector.normalized()`) on
+  `Big_complex_cell/modelcell_cut1.stp` -- an indirect consequence (a
+  different decomposition path reached this pre-existing fragility for
+  the first time, not a bug in this session's own new code) of piece5's
+  fix changing decomposition ordering elsewhere in the corpus. Root
+  cause: `(V2 - V1).cross(axis)` is exactly zero when the closest-UV-node
+  search picks the same point for both `ifacemin`/`ifacemax` ends -- this
+  function's own header comment already flags it as a known-simplified
+  approximation ("Tolerance in this function are not the general once /
+  function should be reviewed"). Fixed with a length guard falling back
+  to `_perpendicular_axis(axis)` (the same arbitrary-but-deterministic
+  fallback pattern already used elsewhere in this file for a
+  similarly-undefined direction) instead of crashing.
+
+**Verification**: the fixed `SCDR_90_hollow.stp` now decomposes piece5
+into 2 real pieces (3344.14/1166.41, was 1 piece at 4511.60) --
+`decompose_solids()` alone confirms this, matching the sibling branch's
+own split almost exactly. Full end-to-end d1suned stochastic volume
+check on the complete, re-generated model (`volSDEF=True`, full void
+generation, standard settings): **tally 0.998967 +/- 0.37%** (was
+0.740239, ~35 sigma off) -- **0 lost particles**. `tests/geo` +
+`tests/test_cadtocsg.py`, 128/128 under `ocp`. A 109-file
+`Solidos/test_models` differential corpus scan (composite-surface-count
+crash/success comparison, excluding `Big_model_reserved`) went from 6
+failures (4 real regressions from this fix's own first cut, fixed above;
+1 pre-existing `ZeroDivisionError` also fixed above; 1 pre-existing slow
+file, `Big_complex_cell/modelCell_670000.stp`, exceeding this scan's own
+90s per-file timeout -- already documented elsewhere in this file as
+genuinely slow, ~230s, not a crash) down to **108/109**, with the one
+remaining "failure" being exactly that same known-slow file.
+
+**Not yet done**: `CharacteristicWidth`/`Compactness` (from the
+`SCDR_90_piece2.stp` investigation immediately above) remain
+`_ocp_impl.py`-only, not yet ported to `_occ_impl.py`/`_freecad_impl.py`
+-- this session's fixes are `ocp`-only too (`is_coaxial_cone_cylinder_pair`
+lives in the shared `vector_geometry.py` and is available to `_occ_impl.py`
+already, but `_group_coaxial_cylinder_faces`/the retry-tolerance-ladder
+change were only made in `_ocp_impl.py`). A full "before vs after"
+composite-surface-count differential (not just crash/success) was not
+completed for this specific fix -- the `git stash` attempt to build a
+clean before-baseline accidentally stashed the *entire* `_ocp_impl.py`
+file (including the earlier, still-uncommitted `CharacteristicWidth`
+work), producing a systematically broken (not a valid) baseline; this was
+recognized and abandoned in favor of the crash/success-only comparison
+above, which is what's actually verified.
+
+### A real, severe cross-engine crash found by finally testing FreeCAD/occ
+against this session's `CharacteristicWidth` work -- fixed with defensive
+`getattr` guards, not a full port
+
+The 128/128 `ocp` test result above was the only engine checked
+end-to-end for most of this session -- running `tests/test_cadtocsg.py`
+under `GEOUNED_CAD_ENGINE=freecad` for the first time since
+`CharacteristicWidth` was introduced (prompted by finishing the piece5
+fix and wanting to confirm all 3 engines before considering this done)
+found **47/117 tests failing** with `AttributeError: 'FaceGu' object has
+no attribute 'CharacteristicWidth'` -- every one of the 6 real call sites
+added this session (`decompose/generators.py`'s 4 `*_generator`
+functions, `conversion/cell_definition.py`'s per-face loop,
+`utils/meta_surfaces_utils.py::eligible_plane`,
+`decompose/decom_utils_generator.py::order_plane_face`) assumed
+`CharacteristicWidth` exists on every `GFace`/`FaceGu`, which was only
+ever true under `ocp`. The "Not yet done" note above already flagged
+`CharacteristicWidth` as `ocp`-only, but had understated the actual
+consequence -- not "an unavailable optimization elsewhere," a **hard
+crash** on any FreeCAD conversion touching a plane/cylinder/cone/sphere/
+torus candidate at all (i.e. nearly every real file).
+
+Rather than porting the full `PrincipalProperties`/radius-of-gyration
+machinery to `_freecad_impl.py`/`_occ_impl.py` right now (a real, bounded
+but nontrivial piece of work, and explicitly out of scope for finishing
+the piece5 fix), each of the 6 call sites was changed to
+`getattr(face, "CharacteristicWidth", float("inf"))` instead of a direct
+attribute read -- on an engine that doesn't have the field, the check
+degrades to "never trigger" (matching the pre-`CharacteristicWidth`
+behavior exactly, `min_area` alone still applies), never a crash; on
+`ocp`, `getattr` resolves to the real value, so `ocp`'s own already-
+verified behavior (0.999918 tally on `SCDR_90_piece2.stp`, etc.) is
+completely unchanged. Verified: **freecad 117/117**, **occ 89/89**
+(pythonocc-core -- confirmed to have hit the identical crash class before
+the fix, same root cause, same guard resolves it), **ocp 128/128** --
+all 3 engines green together for the first time since
+`CharacteristicWidth` was introduced. Porting the real computation to the
+other 2 engines (so `min_face_width` actually protects them too, not just
+`ocp`) remains open, now correctly scoped as "a missing feature on 2
+engines," not "a live crash on 2 engines."
+
+**Update, same session -- ported for real, per explicit user instruction
+("lo del CharacteristicWidth sí a ambos freecad y occ")**:
+`Compactness`/`CharacteristicWidth` are now computed on every engine's
+own `GFace`, not just `getattr`-guarded away:
+- `_occ_impl.py` (pythonocc-core): byte-for-byte the same code as `ocp`'s
+  own `GFace.__init__` -- `props.PrincipalProperties().RadiusOfGyration()`
+  is an identical API call on both bindings (already piggybacking on the
+  same `_surface_props(native)` GProp call this engine's `GFace` already
+  made for `Area`/`CenterOfMass`).
+- `_freecad_impl.py`: FreeCAD's `Part` API has no direct
+  `PrincipalProperties()` equivalent, so this one genuinely needed a
+  different technique -- `native.MatrixOfInertia` (the same area-based
+  inertia tensor `GEdge`/`GWire.MatrixOfInertia` already use, from
+  earlier in this migration) diagonalized by hand via
+  `numpy.linalg.eigvalsh` (mirroring `decom_utils_generator.py::
+  get_axis_inertia`'s own already-established eigendecomposition
+  pattern for edges), giving the same 3 principal moments OCCT's own
+  `PrincipalProperties()` computes internally; radius of gyration per
+  axis is `sqrt(moment / Area)`. **Verified, not assumed**: computed
+  `CharacteristicWidth` for `Solidos/test_models/Decomposed/
+  SCDR_90_piece2.stp`'s own already-known sliver face (face index 12)
+  under all 3 engines directly via `geo.Gload_step` -- **all three give
+  the byte-identical value, `0.055034196945107326`** -- confirming the
+  hand-diagonalized FreeCAD route is not just plausible but numerically
+  exact, matching this migration's own established "verify against a
+  real, known value across engines" discipline rather than trusting the
+  math by inspection alone. `FaceGu` (`utils/geometry_gu.py`) needed no
+  separate change -- it inherits from `GFace` and already calls
+  `super().__init__(x.__native__)`, so it picks up the new fields
+  automatically, closing the exact crash this whole section started
+  from. The `getattr(..., float("inf"))` guards at the 6 call sites
+  are left in place as a harmless defensive fallback (now always
+  resolving to the real value on all 3 engines) rather than reverted
+  back to direct attribute access. `_try_coaxial_cone_split`'s own
+  extension (the coaxial cone/cylinder search, tolerance-escalation
+  retry) was ported to `_occ_impl.py` too (mirroring `ocp`'s fix
+  exactly, pythonocc-core naming conventions) but **deliberately not**
+  to `_freecad_impl.py` -- confirmed with the user directly that this
+  one stays occ/ocp-only, per the original scoping decision (FreeCAD's
+  `Part` API has no equivalent for the raw `Geom2d_Line`/
+  `ShapeAnalysis_Surface.ValueOfUV`/`BRepLib.BuildCurve3d_s` primitives
+  this specific technique needs).
+
+**Update**: the full 3-engine suite was run, per the user's own "todos al
+final" instruction -- freecad 119/119, occ 87/89, ocp 126/128, with the
+4 failures (2 per pyOCC engine) confirmed pre-existing and unrelated to
+this session (see "Closed later the same day" above, in the pending-tasks
+section, for the full trace/`git stash` verification).
+
 ## Pending tasks, 2026-08-23 (consolidated)
+
+**Explicit user priority ordering, stated directly at the end of this
+session**: finish cleaning up known bugs in `GEOUNED` (the forward
+CAD-to-CSG pipeline) *before* picking `GEOReverse` (CsgToCad) issues back
+up -- e.g. the `test_cylbox_convertion` failure and the `hylife-v06.stp`
+round-trip discrepancy, both `GEOReverse`-side, are deliberately left
+open rather than chased further right now.
 
 Compiled from every open item scattered across this file's history plus
 this session's own findings, superseding the 2026-08-21 audit above where
@@ -7093,6 +7588,70 @@ treat as a compiled index, not a guarantee every line still reproduces.
   fixed" above: `get_can_surfaces`'s same-radius-cylinder branch required
   `is_parallel`, dead code for a genuine kinked "broken cylinder").
 
+**Resolved since this list was written** -- `SCDR_90_hollow.stp`'s own
+regression (`CharacteristicWidth`-based sliver filtering breaking it,
+0.999 -> 1.49) turned out to be a real, separate, pre-existing `Gsplit`
+degeneracy (piece5 was never actually irreducible), unrelated to
+`CharacteristicWidth` itself -- see "`SCDR_90_hollow.stp` piece5
+resolved" further down this file for the full fix (`_try_coaxial_cone_split`'s
+retry now escalates its own fuzzy tolerance instead of trying only the
+caller's, which was too tight). Full tally now 0.998967, was 0.740239.
+The working tree is still uncommitted (more files now than the 8 listed
+when this note was first written -- see `git status`) -- porting
+`CharacteristicWidth`/this session's other `ocp`-only fixes to
+`occ`/`freecad` remains open, not blocked by a regression anymore.
+
+**Closed later the same day (2026-08-23, evening session)** -- see the
+"`SCDR_90_hollow.stp` piece5 resolved" and "A real, severe cross-engine
+crash..." sections further down this file for the full accounts:
+- `SCDR_90_hollow.stp` piece5's ~26% missing volume -- root-caused (a
+  real `Gsplit` coaxial-cone-pair degeneracy the existing
+  `_try_coaxial_cone_split` fallback detected but whose retry never
+  escalated its own fuzzy tolerance past the caller's near-zero default)
+  and fixed. Full-model d1suned tally: 0.740239 -> 0.998967.
+- The `CharacteristicWidth`/`Compactness` work (from the `SCDR_90_piece2.stp`
+  investigation, same day) was found to hard-crash the `freecad` and
+  `occ` engines entirely (47/117 and equivalent tests failing,
+  `AttributeError`) the first time either was actually tested against it
+  -- fixed two ways: immediate `getattr(..., float("inf"))` guards at
+  all 6 real call sites (never crash, degrade to "check doesn't apply"),
+  then, per explicit user instruction, a real port of the computation
+  itself to both engines (`_freecad_impl.py` via `MatrixOfInertia` +
+  hand eigendecomposition, `_occ_impl.py` byte-identical to `ocp`'s own
+  `PrincipalProperties()` call) -- verified to give the byte-identical
+  value on all 3 engines for a known sliver face.
+- `_try_coaxial_cone_split`'s own fix (cone/cylinder coaxial detection +
+  tolerance-escalating retry) was also ported to `_occ_impl.py`
+  (pythonocc-core) -- confirmed with the user this one does **not** go to
+  `_freecad_impl.py` (no equivalent for the raw `Geom2d_Line`/
+  `ShapeAnalysis_Surface`/`BRepLib.BuildCurve3d_s` primitives it needs).
+- `docs/users_guide/execution_settings/cad2csg/python_cadtocsg_{cli,api}_usage.rst`
+  and `tests/config_cadtocsg_complete_defaults.json` updated with the new
+  `min_face_width` `Tolerances` field (the `Tolerances` class docstring
+  itself, and therefore `docs/python_api.rst`'s autodoc page, already had
+  it from when the field was first added).
+- Full 3-engine test suite run (`tests/geo` + `tests/test_cadtocsg.py` +
+  `tests/test_csgtocad.py`) after all of the above: **freecad 119/119,
+  occ 87/89, ocp 126/128** -- the 2 failures on each pyOCC engine are
+  `test_csgtocad.py::test_cylbox_convertion[mcnp]`/`[openmc_xml]`
+  (`GEOReverse`/`CsgToCad` producing 2/1 solids in the final exported
+  STEP where 4/5 are expected). **Confirmed, via `git stash` of this
+  entire session's `src/` changes, to be a pre-existing failure --
+  reproduces byte-for-byte identically (same "assert 2 == 4"/"assert
+  1 == 5", same merged volume) on the pre-session baseline.** Traced far
+  enough to rule out this session's own `Gsplit` changes as the cause: a
+  live `Gsplit`-call trace of the same `cylinder_box.mcnp` reconstruction
+  shows every tool used is `GCylinder`/`GPlane`/`GSphere` -- never a cone
+  -- so `_try_coaxial_cone_split` (which only engages when `_find_cone_face(tool)`
+  finds one) never even runs here. Not otherwise root-caused this
+  session -- a real, pre-existing `GEOReverse`-side bug (or an OCCT-
+  version-sensitivity difference between FreeCAD's bundled 7.8.1 and the
+  pyOCC engines' 7.9.3, matching this file's own recurring theme) that
+  was simply never caught before because `tests/test_csgtocad.py` had
+  apparently not been run against `occ` at all, and not recently against
+  `ocp`, prior to this session's own end-to-end verification pass. Flagged
+  as a new, standalone pending item below.
+
 **New, not yet written up anywhere else in this file** (found during this
 session's `Solidos/test_models` batch conversion + d1suned run, before the
 rc9.stp deep dive -- characterized/triaged but left unfixed when the
@@ -7100,8 +7659,6 @@ session redirected to rc9.stp, then to the 2 crashes above):
 - `Big_complex_cell/modelcell_cut1.stp` -- was a bad-tally failure
   (~45.5 sigma, per the 2026-08-21 audit's own "Changed symptom" note),
   now loses particles at runtime instead. Not root-caused either way.
-- `Decomposed/SCDR_90_piece2.stp` -- d1suned tally ~23.5 sigma off. Not
-  root-caused.
 - `Mixed/multiplane_add_plane_cyl.stp` -- d1suned tally ~4.5 sigma off
   (the cylinder sibling of the now-fixed `multiplane_add_plane_cone.stp`
   -- worth checking whether `gen_plane_cylinder` has the same apex-style
@@ -7152,6 +7709,47 @@ this pass)**:
   1.119x tally on the same unfixed file -- the two don't agree) --
   surfaced during the `add_reversedCC` investigation, not pursued once the
   real fix was found via the boolean-formula route instead. Still open.
+- `tests/test_csgtocad.py::test_cylbox_convertion[mcnp]`/`[openmc_xml]`
+  fail under both `occ` and `ocp` (`GEOReverse` producing 2/1 solids in
+  the exported STEP instead of the expected 4/5) -- confirmed
+  pre-existing (reproduces identically with this entire session's `src/`
+  changes stashed out) and confirmed unrelated to this session's own
+  `Gsplit` coaxial-cone work (a live trace shows no cone tool is ever
+  used reconstructing `cylinder_box.mcnp`, so `_try_coaxial_cone_split`
+  never engages). `freecad` passes both tests cleanly. New this session
+  (2026-08-23 evening), not carried forward from an earlier audit.
+  **Narrowed further, same session**: `cylinder_box.mcnp`'s "Solid Cells:
+  1" header means only cell 1 is real material (cells 2/3/4 are the
+  auto-generated void/graveyard-in/graveyard cells) -- cell 1's own
+  definition is a single boolean expression combining 6 `:`(OR)-separated
+  sub-clauses, so the 4 `_EXPECTED_VOLUMES["mcnp"]` entries
+  (1520814.9834 + 3864483.442 + 20092792.2374 = 25478090.66, plus the
+  graveyard's 7.999999999974521e18) represent cell 1's own real material
+  as **3 genuinely separate/disjoint solid pieces** -- confirmed by the
+  coincidence that 25478090.66 matches, to ~0.5 out of 25 million, a
+  value (`25478091.187395196`) already seen mid-construction in an
+  unrelated `Gsplit` trace (the sphere-cut fragment kept after removing
+  the graveyard). `interferencia` (`GEOReverse/Modules/buildCAD.py`,
+  the function whose own `fuse_solids(cellParts)` call was the first,
+  natural suspect for "3 things got merged into fewer") was **ruled out
+  directly, not by inspection alone** -- live-traced and confirmed it
+  never even fires for this file: `ContainerCell.shape` (the root
+  universe's own container cell) is `None` at the top level, so
+  `BuildUniverseCells`'s own `if universeCut and ContainerCell.shape:`
+  guard short-circuits before `interferencia` is ever called; it only
+  matters for *nested* sub-universes, which this file has none of. The
+  real merge must be happening inside `Objects.py`'s own
+  `CellObj.buildShape` (building cell 1's 6-OR-term definition into a
+  single CAD shape) -- not yet traced into. Per the test's own header
+  comment, `_EXPECTED_VOLUMES` was captured from FreeCAD's *own*,
+  pre-migration reconstruction of this exact file, so this may be a
+  genuine algorithmic difference introduced somewhere across this
+  project's whole multi-session pyOCC migration (how many separate
+  solids a multi-OR-term cell's construction keeps vs. fuses), not
+  necessarily a bug in any one recent change. **Explicit user decision:
+  stop here for now** -- `GEOReverse` investigation is deliberately
+  deferred until `GEOUNED`'s own forward pipeline is fully clean of
+  known bugs; this item stays open, picked up only once that's true.
 
 ## Code style preference
 

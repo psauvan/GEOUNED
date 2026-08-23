@@ -366,7 +366,41 @@ def cutting_face_number(f, Faces, omitfaces):
     return ncut
 
 
-def order_plane_face(Faces, omitfaces):
+def order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None):
+    # A residual sliver plane (a real face, but a near-zero-area boolean-
+    # cut artifact, not a genuine feature -- see Tolerances.min_area's own
+    # docstring) was never excluded here: plane_generator's own cutting-
+    # plane candidate list had no area filter of any kind, so every sliver
+    # plane in a solid was always tried as a real cutting surface during
+    # decomposition, regardless of how min_area was set (confirmed live,
+    # Solidos/test_models/Decomposed/SCDR_90_piece2.stp, 2026-08-23: a
+    # 1.9262mm^2 sliver plane was found to be the source of an
+    # unrecognized cutting-plane candidate; raising min_area had zero
+    # effect on the actual translation because nothing here ever read it).
+    #
+    # min_area alone isn't a reliable sliver signal on its own, though: a
+    # real, large-area, genuinely thin-and-long panel/wall face (e.g.
+    # Solidos/test_models/RoundCorners/TVA_solid16_cell17.stp's own
+    # face[12], area=14575.8mm^2, a real 5.6mm x 2602.8mm plate edge) can
+    # have a raw Area comparable to -- or bigger than -- a real sliver's
+    # (SCDR_90_piece2.stp's own sliver is only 1.93mm^2), while being a
+    # completely legitimate feature. min_face_width (GFace.CharacteristicWidth
+    # -- see its own docstring) is the corpus-verified robust signal:
+    # it recovers the face's true physical short dimension regardless of
+    # surface curvature, so a genuinely thin-but-long real panel (width
+    # 5.6mm) is never confused with an actual boolean-cut sliver (width
+    # 0.055mm) the way raw Area can be.
+    for f in Faces:
+        if f.Index in omitfaces:
+            continue
+        if not isinstance(f.Surface, GPlane):
+            continue
+        if min_area is not None and f.Area < min_area:
+            omitfaces.add(f.Index)
+            continue
+        if min_face_width is not None and getattr(f, "CharacteristicWidth", float("inf")) < min_face_width:
+            omitfaces.add(f.Index)
+
     counts = []
     face_dict = {}
     for f in Faces:

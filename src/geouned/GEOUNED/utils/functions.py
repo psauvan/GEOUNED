@@ -25,7 +25,7 @@ def get_box(comp, enlargeBox):
     return Gmake_box(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
 
 
-def get_multiplanes(solidFaces, omit_faces_set=None):
+def get_multiplanes(solidFaces, omit_faces_set=None, tolerances=None):
     """identify and return all multiplanes in the solid."""
 
     if omit_faces_set is None:
@@ -45,10 +45,10 @@ def get_multiplanes(solidFaces, omit_faces_set=None):
     for p in planes:
         if p.Index in omit_faces_set:
             continue
-        if not eligible_plane(p):
+        if not eligible_plane(p, tolerances):
             continue
         mp_plane_index = set()
-        mplanes = multiplane(p, planes, mp_plane_index)
+        mplanes = multiplane(p, planes, mp_plane_index, tolerances)
         if len(mplanes) != 1:
             if no_convex(mplanes):
                 mp_params = build_multip_params(mplanes)
@@ -597,7 +597,7 @@ def convex_planes(plane_list, zaxis):
             sina = -sina
         angle = math.atan2(sina, cosa)
         while angle < 0:
-            angle += 2 * math.pi    
+            angle += 2 * math.pi
         angles.append((angle, i))
 
     angles.sort()
@@ -675,15 +675,37 @@ def get_additional_corner_plane(ep1, ep2):
     v2, n2 = material_direction(pos2, face2, e2)
     point = 0.5 * (pos1 + pos2)
     combined = v1 + v2
-    if combined.length < 1e-6:
-        # v1/v2 exactly opposed: a real, valid configuration for a Reversed
-        # MultiRoundCorner (every wing's material-pointing normal faces
-        # "outward", and two wings meeting at a cusp can legitimately point
-        # in exactly opposite outward directions there) -- the corner's
-        # bounding planes are OR-combined, so either direction alone is a
-        # correct choice; there's no well-defined bisector to average
-        # toward instead.
-        paxis = v1
+    if combined.length < 1e-2:
+        # v1/v2 (near-)exactly opposed: a real, valid configuration for a
+        # Reversed MultiRoundCorner (every wing's material-pointing normal
+        # faces "outward", and two wings meeting at a cusp can legitimately
+        # point in exactly opposite outward directions there) -- the
+        # corner's bounding planes are OR-combined, so either direction
+        # alone is a correct choice; there's no well-defined bisector to
+        # average toward instead.
+        #
+        # The threshold was originally 1e-6 (only the *exactly* zero-length
+        # case), but a genuinely near-cusp corner rarely lands on exact
+        # floating-point cancellation -- confirmed live, 2026-08-23,
+        # Solidos/test_models/Mixed/SCDR_90_hollow.stp's own piece4 (a real
+        # R=37mm round corner): v1=(0.323,0,-0.947), v2=(-0.324,0,0.946)
+        # are antiparallel to within ~0.086 degrees, giving
+        # combined.length=0.00154 -- comfortably above the old 1e-6 guard,
+        # so it fell through to `combined.normalized()`, whose *direction*
+        # is dominated by that tiny near-cancellation residual (essentially
+        # numerical noise, not a meaningful bisector) rather than any real
+        # geometric signal. Raised to 1e-2 (~0.57 degrees from exactly
+        # opposed) for comfortable margin over the observed case while
+        # staying well below any genuine, well-conditioned corner angle.
+        #
+        # v1 vs v2, direct user correction: for piece4's real chain (this
+        # R37 corner sits adjacent to a real R40 corner in the same
+        # MultiRoundCorner), the additional plane's normal must be
+        # consistent with the neighboring corner's own additional plane,
+        # not an arbitrary pick -- confirmed v2 is the one that matches
+        # (v2=(-0.324,0,0.946) vs the R40 corner's own additional-plane
+        # axis=(-0.322,0,0.947), while v1 is its near-exact negation).
+        paxis = v2
     else:
         paxis = combined.normalized()
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))
