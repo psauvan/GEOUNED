@@ -8392,10 +8392,21 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
   MultiRoundCorner too (`project_mrc_adjacent_multiplane_pending.md`).
 - `Solidos/Torus/2_degen_torii.stp` -- still a hard MCNP fatal error in
   the latest full corpus run, unrelated to anything fixed this session.
-- A full `Solidos/`-scale (not just `test_models`) corpus differential
-  scan under the raw `occ` (pythonocc-core) engine specifically -- every
-  verification this session used `ocp`; `occ`'s own test suite (128/128)
-  passed but was never corpus-scanned the way `ocp` was.
+- ~~A full `test_models` corpus scan under the raw `occ` (pythonocc-core)
+  engine specifically~~ -- **done, 2026-08-24 (later same session)**.
+  New parallel scripts (`convert_one_occ.py`, `run_all_conversions_occ_parallel.py`,
+  `run_test_models_occ_d1suned.sh`, `analyze_test_models_occ.py`, mirroring
+  the `ocp` versions exactly, `pyoccenv` conda env) run against the same
+  100-file `test_models` corpus (excluding `Big_*`): 99/100 convert
+  (`ConeSphere.stp` fails identically, as accepted/expected), and the
+  d1suned result is **byte-identical to the `ocp` corpus scan** -- 91.4%
+  within 2 sigma, 6.7% marginal (same 7 files, same values), 1.9% fail
+  (same 2 `Enclosures/w_encl.stp` cells, same known bug), **0/100 files
+  with lost particles**. Confirms `occ` and `ocp` are fully equivalent
+  across this whole corpus after today's fixes -- no divergence between
+  the two pyOCC-family engines. A `Solidos/`-scale (beyond just
+  `test_models`) scan under `occ` remains undone, lower priority now
+  that this narrower but representative corpus matches exactly.
 - `check_sign` verification of RevCC from the conversion side -- still
   structurally unattempted (decomposition-side scanning can't reach it).
 - `Gload_step_labels`'s FreeCAD-style auto-suffix naming gap under
