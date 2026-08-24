@@ -567,6 +567,15 @@ def check_sign(solid_or_point, surf):
         inside = surf.region.region.evaluate(surfSet)
         return 1 if inside else -1
 
+    elif surf.Type == "ReversedConeCylinder":
+        # surf.components (id -> primitive GeounedSurface) is the same
+        # numbering<->surface table built once in
+        # MetaSurfacesDict.add_reversedCC/_reversedCC_component -- same
+        # pattern as Can/TCone above.
+        surfSet = {id: check_sign(point, comp) > 0 for id, comp in surf.components.items()}
+        inside = surf.region.region.evaluate(surfSet)
+        return 1 if inside else -1
+
     elif surf.Type == "RoundCorner" or surf.Type == "MultiRoundCorner":
         # surf.components (id -> primitive GeounedSurface) preserves the
         # same order the hand-written versions used (planes, then per-corner

@@ -8407,8 +8407,10 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
   the two pyOCC-family engines. A `Solidos/`-scale (beyond just
   `test_models`) scan under `occ` remains undone, lower priority now
   that this narrower but representative corpus matches exactly.
-- `check_sign` verification of RevCC from the conversion side -- still
-  structurally unattempted (decomposition-side scanning can't reach it).
+- ~~`check_sign` verification of RevCC from the conversion side~~ --
+  **done, 2026-08-24 (later same session)**. See the dedicated section
+  further below ("`check_sign` verification of RevCC from the conversion
+  side: real scaffolding rebuilt, one genuine discrepancy found").
 - `Gload_step_labels`'s FreeCAD-style auto-suffix naming gap under
   `occ`/`ocp` -- narrow, non-blocking, unchanged.
 - The 6 exotic quadric surfaces (`Gmake_elliptic_cone`/etc.) remain
@@ -8428,6 +8430,87 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
 - `get_join_cone_cyl`'s `ifacemin`/`ifacemax` indexing -- confirmed
   correct-as-is (not a bug), no action needed, kept here only as a
   pointer back to its own already-closed writeup above.
+
+## `check_sign` verification of RevCC from the conversion side: real
+scaffolding rebuilt, one genuine discrepancy found
+
+Closes the long-standing "structurally unattempted" item (see "`check_sign`
+end-to-end verification, part 5" earlier in this file for why: RevCC
+never cuts anything during decomposition, so scanning `decompose_solids()`
+output the way every other composite type was verified can never reach
+it -- it's only ever identified during *conversion*, in `add_reversedCC`,
+walking the faces of an already-finished solid element after the fact).
+
+**Scaffolding rebuilt, this time kept rather than reverted**: an earlier
+session (see "Bug 4 (the deep one)" above) built `check_sign`'s
+`"ReversedConeCylinder"` dispatch branch and `.components` population in
+`add_reversedCC`/`_reversedCC_component` purely as throwaway diagnostic
+scaffolding, then explicitly reverted both once no longer needed for
+that session's own bug hunt. Rebuilt from scratch, same pattern as
+Can/TCone's own `.components`/`.region.evaluate()` dispatch:
+`_reversedCC_component` now returns a 3-tuple (`s_region, p_region,
+components`) instead of 2, with `components` mapping `abs(id) ->` the
+real primitive `GeounedSurface` (cylinder/cone, its `ApexPlane` if any,
+its own closing `Plane`); `add_reversedCC` accumulates these across every
+chain segment plus each `AdjacentMultiplanePlanes` member into one dict,
+stored as `reversedCC.components` alongside `.region` (only in the
+"newly added" branch, matching every other composite type's own
+convention). `boolean_solids.py::check_sign` gained the
+`"ReversedConeCylinder"` branch, identical in shape to Can/TCone's own.
+
+**Methodology, worked out live rather than assumed**: the established
+"check_sign end-to-end verification" pattern for Can/TCone/RoundCorner/
+MultiRoundCorner built an *independent* CAD ground-truth solid via the
+same `make*` construction path `Gsplit` itself uses, then sampled points
+strictly inside the exact box that construction used. RevCC has no
+equivalent -- it never gets built as a CAD cutting tool at all. First
+attempt (sample uniformly across the *whole* real decomposed solid's own
+BoundBox, compare `check_sign(point, revcc)` against `real_solid.is_inside(point)`)
+gave a consistent, informative-but-wrong result on `cyl_cone.stp`
+(~80% match, every mismatch `real_inside=False, check_sign_inside=True`)
+-- exactly the expected symptom of evaluating a composite surface's own
+formula in isolation, unbounded by the *rest* of the cell's own other
+boundary terms (e.g. the model's real end-cap planes, which RevCC's own
+formula knows nothing about). Fixed by deriving a *local* sampling box
+instead: for each of the RevCC's own chain segments (`rc.Surf.CylCones`),
+find the real face(s) on the solid whose analytic surface matches (same
+axis direction, same center/apex within 1mm, same radius for cylinders)
+and take the union of *those specific real faces'* own BoundBoxes -- the
+real, finite, trimmed extent of the actual feature, as opposed to the
+infinite analytic surface or the whole unrelated solid.
+
+**Results, 2 independent real fixtures, 300 random points per RevCC
+registration**:
+- `RevCC_regression/cyl_cone.stp` (the project's own most-verified RevCC
+  fixture, d1suned tally 0.996547): **300/300, 300/300, 300/300** across
+  all 3 RevCC registrations found in this one solid -- a clean, perfect
+  match confirming the current `add_reversedCC` formula (the `plane_region
+  AND (s_1 AND ... AND s_n)` redesign from the earlier "Bug 4" fix) is
+  correct at the per-point level, not just in aggregate volume.
+- `RevCC_regression/Big_model_reserved__hylife-v06__solid113_piece0__revcc1.stp`
+  (d1suned tally 0.99938 on this exact file, per the earlier "Bug 4"
+  investigation): **271/300 (90.3%)** -- a real, reproducible discrepancy,
+  every mismatch again `real_inside=False, check_sign_inside=True`
+  (over-prediction of material). The derived local box
+  (Z:[4050.80, 4396.49]) matches, to the decimeter, the *same* range
+  already flagged in that earlier investigation as suspicious: "the
+  reconstructed CAD volume was 1.401x the true solid's volume... and the
+  reconstructed solid's own BoundBox (Z:[3981.7, 4465.6]) genuinely
+  exceeds the cell's own explicit bounding planes 6/7 (Z:[4050.8,
+  4396.5])" -- this check_sign result is independent, new, numeric
+  confirmation of that same already-flagged GEOReverse-side concern, not
+  a new finding on its own, but the first time it's been quantified at
+  the point level (90.3%) rather than only via aggregate volume ratios.
+
+**Not pursued further this pass**: root-causing *why* `hylife-v06.stp`
+solid113's own RevCC formula over-predicts material in this specific
+local region -- would need to trace which of the segment's own
+components (its cylinder/cone, its closing plane, or its
+`AdjacentMultiplanePlanes` member) is the one letting these 29/300 points
+through incorrectly, the same kind of per-component instrumentation used
+throughout this file's earlier RevCC investigations. Flagged as the
+natural next step for whoever picks up the still-open GEOReverse
+`hylife-v06.stp` round-trip discrepancy.
 
 ## Code style preference
 

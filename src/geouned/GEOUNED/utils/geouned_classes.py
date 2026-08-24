@@ -1139,15 +1139,21 @@ class MetaSurfacesDict(dict):
         going any further, matching a bare cylinder/cone otherwise; `p_region`
         is the segment's own additional plane, registered independently
         (never shared/summed across segments here -- each chain segment
-        gets exactly one independent plane, per the RevCC definition)."""
+        gets exactly one independent plane, per the RevCC definition).
+        Also returns `components`, the numbering<->surface relation for
+        every id this segment references -- same role as Can/TCone/
+        RoundCorner's own `.components`, needed for `check_sign`."""
+        components = {}
         if cc.Type == "Cylinder":
             sid, exist = self.primitive_surfaces.add_cylinder(cc.Surf.Cylinder, True)
             cc.Surf.Cylinder.bVar = sid
             s_region = BoolSurface(0, sid)
+            components[abs(sid)] = cc.Surf.Cylinder
         else:
             cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
             cc.Surf.Cone.bVar = cid
             s_region = BoolSurface(0, cid)
+            components[abs(cid)] = cc.Surf.Cone
             if cc.Surf.ApexPlane:
                 apid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True)
                 if exist:
@@ -1155,6 +1161,7 @@ class MetaSurfacesDict(dict):
                     if is_opposite(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                         apid = -apid
                 s_region = s_region + (-BoolSurface(0, apid))
+                components[abs(apid)] = cc.Surf.ApexPlane
 
         pid, exist = self.primitive_surfaces.add_plane(cc.Surf.Plane, True)
         if exist:
@@ -1162,20 +1169,24 @@ class MetaSurfacesDict(dict):
             if is_opposite(cc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                 pid = -pid
         p_region = BoolSurface(0, pid)
-        return s_region, p_region
+        components[abs(pid)] = cc.Surf.Plane
+        return s_region, p_region, components
 
     def add_reversedCC(self, reversedCC):
         cylcones = reversedCC.Surf.CylCones
+        components = {}
 
         if len(cylcones) == 1:
-            s_region, p_region = self._reversedCC_component(cylcones[0])
+            s_region, p_region, comp = self._reversedCC_component(cylcones[0])
+            components.update(comp)
             reversedCC_region = s_region * p_region
         else:
             plane_region = None
 
             surf_components = []
             for cc in cylcones:
-                s_region, p_region = self._reversedCC_component(cc)
+                s_region, p_region, comp = self._reversedCC_component(cc)
+                components.update(comp)
                 plane_region = BoolSurface.add(plane_region, p_region)
                 surf_components.append(s_region)
 
@@ -1201,6 +1212,7 @@ class MetaSurfacesDict(dict):
                 p = self.get_primitive_surface(pid)
                 if is_opposite(mpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                     pid = -pid
+            components[abs(pid)] = mpp
             reversedCC_region = reversedCC_region + (-BoolSurface(0, pid))
 
         add_cc = True
@@ -1214,6 +1226,7 @@ class MetaSurfacesDict(dict):
             self.surfaceNumber += 1
             newregion = reversedCC_region.copy(self.surfaceNumber)
             reversedCC.region = newregion
+            reversedCC.components = components
             self["RevCC"].append(reversedCC)
             self.__surfIndex__["RevCC"].append(reversedCC.region.__int__())
         else:
