@@ -7944,6 +7944,94 @@ artifact? settings mismatch vs. the original verification run? a genuine
 regression from something later in the session history?) before treating
 any of the other, genuinely-new findings above as trustworthy leads.
 
+## `cyl_cone.stp`'s regression bisected: `ac44907`'s `UnifyFaces=False`
+crash workaround, not any of this session's own multiplane/coaxial-cone
+work
+
+Follow-up, same night. User's own suspicion: revert the day's 4 changes
+(SCDR_90_hollow piece5 coaxial-cone fix + `CharacteristicWidth` port,
+`gen_plane_cylinder`/`gen_plane_cone` -- no code change, closed as
+not-a-bug, `_find_adjacent_multiplane_planes`'s inverted search) one at a
+time and see if `cyl_cone.stp` recovers.
+
+**Reverting `_find_adjacent_multiplane_planes` alone: no change** --
+byte-identical failure (10 lost particles, nps=462 abort, tally
+0.923208 +/- 13.7%, volume 1769.70) with and without the revert.
+
+**Reverting all 4 of today's functional changes together** (checked out
+`meta_surfaces_utils.py`, `_freecad_impl.py`, `_occ_impl.py`,
+`_ocp_impl.py`, `vector_geometry.py`, `data_classes.py`, `functions.py`,
+`meta_surfaces.py`, `generators.py`, `decom_utils_generator.py`,
+`cell_definition.py` back to their state at `ac44907`, i.e. right before
+today's session started): **still byte-identical failure** -- same
+volume, same tally, same nps=462 abort. This ruled out every one of
+today's own changes at once, which was surprising enough to bisect
+further back rather than stop here.
+
+**Bisected via `git worktree` (isolated checkouts, `PYTHONPATH` pointed
+at each worktree's `src/`, main working tree never touched) against the
+commit history since `cyl_cone.stp` was last known-good**:
+- `2ea77ce` (2026-08-21, the commit that originally fixed
+  `_valid_chain_junction`/`twoPimod` and verified this exact tally) --
+  **clean**: 0 lost particles, tally 0.996542 +/- 0.29%, reproducing the
+  historical value exactly. Confirms the bisection methodology itself is
+  sound (same settings, same fixture, matches the documented baseline).
+- `b0ad998` (2026-08-22, `add_reversedCC`'s `plane_region` redesign) --
+  **still clean**, identical 0.996542.
+- `c084906` (2026-08-23 11:43, `is_same_plane_surface` antiparallel-axis
+  fix + `convex_planes` unnormalized-angle-sort fix) -- **still clean**,
+  identical 0.996542.
+- `ac44907` (2026-08-23 12:14, "Fix two GEOUNED crash cases: cone-apex
+  degeneracy and a native BOP flag crash") -- **broken**: 10 lost
+  particles, tally 0.923208, byte-identical to the failure seen at HEAD.
+
+**Root cause, confirmed by reading `ac44907`'s own diff**: its
+`ConeSphere.stp` segfault fix changed `GSolid.fix()`/`.refine()`
+(`geo/_ocp_impl.py`) from `ShapeUpgrade_UnifySameDomain(...,
+UnifyEdges=True, UnifyFaces=True, ...)` to `UnifyEdges=True,
+UnifyFaces=False` -- necessary to stop a real native access-violation
+crash on `ConeSphere.stp`, but this changes face-merging behavior for
+**every** solid loaded (`Gload_step` calls `fix()` unconditionally), not
+just the crashing case. `cyl_cone.stp`'s RevCC chain detection
+(`merge_same_surface_faces`/`closed_cylinder_cone`/`get_join_cone_cyl`)
+apparently depends on `UnifyFaces=True`'s pre-merging to correctly
+recognize the file's own split cylinder/cone fragments as one contiguous
+same-surface group -- with `UnifyFaces=False`, the chain-following
+breaks silently (no crash, no exception -- just a wrong RevCC boolean
+region, the same "wrong AND/OR grouping" failure mode this exact file
+has hit repeatedly throughout this project's history).
+
+**This is the same "fix regresses a different file silently" pattern
+already documented multiple times in this project** (`get_can_surfaces`/
+`outer2_only`, the RevCC corpus sessions) -- `ac44907`'s own commit
+message only re-verified `cylBox.stp`/`DoubleCylinder/pieza.stp` (the
+precedent case a similar-looking `UnifyEdges` change broke previously),
+never `cyl_cone.stp` specifically, so this regression went uncaught for
+a day and a half.
+
+**Not yet fixed -- a genuine tradeoff, not a one-line correction**:
+`UnifyFaces=True` is a confirmed, deterministic native crash (access
+violation, not a catchable Python exception) on `ConeSphere.stp` under
+`ocp`; `UnifyFaces=False` silently breaks `cyl_cone.stp`'s RevCC
+detection. Simply flipping the flag back trades one broken file for
+another. Candidate directions for next session, none attempted yet:
+(1) find a third `ShapeUpgrade_UnifySameDomain` configuration or a
+different repair primitive that avoids the crash without disabling face
+merging broadly; (2) make the RevCC chain-following logic itself
+tolerant of un-merged, still-fragmented same-surface faces (the
+`merge_same_surface_faces`/`closed_cylinder_cone` pipeline already exists
+precisely to handle fragmented faces -- worth checking why it doesn't
+fully compensate for `UnifyFaces=False` on this file); (3) try
+`UnifyFaces=True` first and fall back to `False` only if it raises/
+crashes -- **not viable as stated**, since the crash is a native access
+violation, not a Python exception, so no `try/except` can recover from
+it once triggered (this is explicitly why `ac44907` disabled it
+unconditionally rather than conditionally). Bisection worktrees were
+created under `/tmp/geouned_bisect_*` (Windows: `AppData/Local/Temp/`)
+and removed after use (`git worktree remove --force`) -- main working
+tree was never modified by this investigation, confirmed clean
+throughout.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
