@@ -8655,6 +8655,177 @@ throughout this file's earlier RevCC investigations. Flagged as the
 natural next step for whoever picks up the still-open GEOReverse
 `hylife-v06.stp` round-trip discrepancy.
 
+## Degenerate-torus (self-intersecting) `a_sign` disambiguation, ported from
+the user's own pre-migration upstream patch (`04fdeaa`, GEOUNED-org#344)
+
+User pointed at a real, already-committed fix in their own upstream fork
+(`GEOUNED-org/GEOUNED@04fdeaa`, "Fix degenerated Torus issues (#344)",
+already configured as the `upstream` git remote) written before this
+project's whole pyOCC migration -- asked to find it, then port it to the
+current, much-changed architecture.
+
+**What the original patch does**: a "degenerate" torus (`MinorRadius >
+MajorRadius`, a self-intersecting spindle/apple torus) is two
+geometrically distinct 3D sheets (an ordinary outer one and a pinched,
+self-intersecting inner one) satisfying the *same* implicit equation --
+same Center/Axis/MajorRadius/MinorRadius, ambiguous unless disambiguated
+by a real point on the actual face. The old patch added
+`Degenerated`/`a_sign` fields (computed by sampling one real face vertex,
+comparing its true tube radius against MinorRadius) to the torus wrapper
+class, used them to (1) keep the two sheets from being wrongly merged
+during same-surface face-grouping, (2) flip Forward/Reversed per-face
+when writing the cell's own boolean expression (since a self-intersecting
+torus's two sheets share ONE written surface card), and (3) encode which
+sheet via the sign of the *written major radius* (mirroring this
+project's own existing signed-cone-SemiAngle convention) rather than
+adding a new output-format parameter.
+
+**Port, mapped onto the current 3-engine `geo` architecture** (none of
+this existed at the time of the original patch):
+- `geo/vector_geometry.py::torus_sheet_sign(vertex, torus, tol=1e-8)` --
+  new pure function, the same math as the old
+  `TorusGu.degenerate_surface_type()`, duck-typed like the file's own
+  `is_inside_*` siblings so it works on either a `GTorus` or a
+  `TorusOnlyParams`.
+- `GTorus.__init__`/`.from_values` (all 3 engines) -- gained
+  `Degenerated`/`a_sign` (default 1) so every instance is
+  self-consistent regardless of construction path; `Gclassify_surface`
+  (all 3 engines) refines `a_sign` from a real face vertex whenever
+  `Degenerated`, using each engine's own native vertex-extraction idiom
+  (`native_face.Vertexes[0].Point` for FreeCAD; `TopExp_Explorer` +
+  `BRep_Tool.Pnt`/`Pnt_s` for occ/ocp).
+- `basic_functions_part1.py::TorusOnlyParams` -- gained the same 2
+  fields, `a_sign` read from an optional 5th tuple element (default 1,
+  matching this project's own established trailing-optional-tuple-element
+  convention for these `*Params` classes).
+- `basic_functions_part2.py::is_same_torus` -- gained a new
+  `check_a_sign=False` parameter (default off, matching every existing
+  call site's own behavior byte-for-byte) rather than an unconditional
+  a_sign comparison, because this migrated codebase's shared
+  `is_same_torus` function -- unlike the old code's two *separate*
+  functions (`TorusGu.isSameSurface` for decompose-time face-grouping,
+  `BF.is_same_torus` for conversion-time global registration) -- serves
+  BOTH roles, which need *opposite* a_sign semantics: decompose-time
+  grouping (`SolidGu.same_torus_surf`, now passing `check_a_sign=True`)
+  must never merge a degenerate torus's two distinct sheets into one
+  face group; conversion-time global registration
+  (`SurfacesDict.add_torus`/`get_id`, left at the default `False`) must
+  treat both sheets as ONE registered MCNP/OpenMC/etc surface (per the
+  "one written card, sign-encoded" design), syncing the registered
+  entry's own `a_sign` to whichever face is currently being processed
+  each time a match is found -- exactly the old patch's own "only one
+  degenerated surface can be present at once" comment, ported verbatim.
+- `cell_definition.py`'s Torus branch -- the Forward/Reversed flip
+  (`orient = "Reversed" if orient == "Forward" else "Forward"` when
+  `Degenerated and a_sign < 0`) and the `VClosed or Degenerated` skip
+  (never build the extra V-bounding annex surface for a degenerate
+  torus), both ported using a local `orient` variable derived from
+  `face.Orientation` rather than mutating it in place, then used
+  consistently for both the VSurface-construction gate and the final
+  `GeounedSurface(..., orient)` -- matching the old code's own
+  before-vs-after-the-flip usage pattern exactly.
+- `write/functions.py` -- all 4 surface writers (`mcnp_surface`,
+  `open_mc_surface`, `serpent_surface`, `phits_surface`; this migrated
+  codebase's write layer only ever writes Tier-1 `TorusOnly`-typed
+  surfaces, one physical card per registered id, confirming the port's
+  scope matches the old patch's own 4 sites exactly) gained
+  `if surf.Degenerated: radMaj *= surf.a_sign` right after computing the
+  scaled major radius.
+- `boolean_function.py::BoolSequence.assign()` -- ported the
+  list/tuple-unwrapping branch, but **not verbatim**: the old patch's own
+  `self.elements = list(*seq)` is a real bug (unpacking a length>1
+  sequence as separate positional args to `list()` raises `TypeError` --
+  `list()` only accepts 0 or 1 argument), confirmed by direct reasoning
+  before porting, not guessed. Ported as the evidently-intended
+  `self.elements = list(seq)` instead -- a deliberate correction of the
+  upstream patch's own mistake, not a blind copy (this project's
+  established "port bugs as-is, flag them" convention applies to
+  *pre-existing* bugs found *while* porting something else, not to
+  visibly introducing a new one into freshly-ported code where the fix
+  is unambiguous).
+
+**A real, upstream `get_id` gap found and left as-is**: the old patch's
+`get_id`-side `a_sign` sync (`if s.Surf.Degenerated: s.Surf.a_sign =
+facein.a_sign`) was ported into this codebase's own `SurfacesDict.get_id`
+too, for fidelity -- but `get_id` has **zero callers anywhere in this
+migrated codebase** (confirmed by grep), so this edit is currently inert.
+Not deleted (matching this project's general reluctance to delete
+plausibly-still-useful dead code without a dedicated audit pass) but
+flagged here rather than left silently unexplained.
+
+**Verified**: a direct unit-level test (`SurfacesDict.add_torus` called
+twice with matching Tier-1 `TorusOnly` surfaces, non-degenerate and
+degenerate) confirms the merge/sync logic behaves exactly as designed --
+matching non-degenerate tori share one bVar; a degenerate torus's two
+opposite-sign faces also share one bVar, with the registered entry's own
+`a_sign` correctly updated to track the most recently processed face.
+`Solidos/test_models/Torus/Torus_solid1.stp` (an ordinary, non-degenerate
+torus, already established at tally `0.99672` from an earlier session)
+reconverted and re-checked via d1suned after the patch: **byte-identical
+tally `0.99672`, 0 lost particles** -- confirms zero behavior change for
+the non-degenerate path, as designed (every new code path is gated on
+`Degenerated`, which is `False` here). `tests/geo` + `tests/test_cadtocsg.py`
+green on all 3 engines (`ocp` 128/128, `occ` 128/128, `freecad` 158/158,
+the last also covering `tests/test_csgtocad.py`). A 99-file
+`Solidos/test_models` differential corpus scan (composite-surface-type
+counts, excluding `Big_*`/`duplicates_removed`/the already-documented
+`ConeSphere.stp` native-crash case, `git stash` before/after) --
+**zero files differ** anywhere in the corpus.
+
+**`2_degen_torii.stp` itself is NOT fixed by this patch -- a separate,
+pre-existing, unrelated bug found while testing against it.** Converting
+this file (the fixture the whole degenerate-torus investigation was
+originally motivated by) succeeds without crashing under all 3 engines,
+and the written surface cards do show the expected sign-encoding trick
+firing correctly (2 `TZ` tori, both `a_sign=-1`, both written with a
+negative major radius) -- but the solid cell's own boolean `Definition`
+collapses to a literal `False` during `build_void()`'s "Cleaning
+definition" step (`core.py`, `c.Definition.expand_regions_to_boolVar()` +
+`.clean()`), meaning **cell 1 is silently omitted from the written MCNP
+file entirely**, despite the volume-tally `SDEF`/`F4` cards still
+referencing it -- explaining this file's own long-documented history of
+escalating-but-never-fully-resolved symptoms (hard fatal error -> ordinary
+lost-particle abort). **Confirmed, via a direct before/after comparison
+with this entire torus patch `git stash`ed out, that this exact
+`False`-collapse reproduces byte-for-byte identically on the pristine,
+unpatched codebase** -- this is not something the torus patch caused, and
+disabling just the new Forward/Reversed orientation flip (tested directly,
+in isolation) doesn't change the outcome either. Traced one level
+further: `Definition` is a real, non-trivial `OR[AND[...]]` expression
+immediately after `build_solid_definition()` (before void generation runs
+at all) -- the collapse happens specifically inside the void-generation/
+cleaning pass, not in this session's own torus-registration code at all.
+Not pursued further this session (a genuinely separate investigation,
+into `expand_regions_to_boolVar()`/`clean()`'s own simplification logic
+for this file's specific 2-torus boolean structure, not into anything
+this patch touches) -- added to the pending list below.
+
+## Pending: `2_degen_torii.stp`'s solid cell definition collapses to
+`False` during void-cleaning -- pre-existing, unrelated to the torus
+`a_sign` patch, not yet root-caused
+
+`Solidos/test_models/Torus/2_degen_torii.stp`'s only solid cell has a
+real, correct boolean `Definition` right after `build_solid_definition()`
+(confirmed: a genuine `OR[AND[...]]` expression referencing both
+registered torus surfaces and 5 bounding planes) -- but after
+`build_void()` runs, `core.py`'s "Cleaning definition" step
+(`c.Definition.expand_regions_to_boolVar()` + `.clean()`, the
+`forceNoOverlap=False` branch) reduces it to a literal `False`, silently
+dropping the entire solid cell from the written MCNP output while the
+volume-check `SDEF`/`F4` tally cards still reference it by number --
+explaining why this file has never produced a usable output (hard fatal
+error, then just an early lost-particle abort, in earlier sessions'
+attempts). Confirmed via direct `git stash` comparison to be **completely
+independent of the degenerate-torus `a_sign` work** above -- reproduces
+identically on the unpatched codebase. Next step: instrument
+`BoolSequence.expand_regions_to_boolVar()`/`.clean()` directly on this
+file's own pre-void `Definition` to find which specific simplification
+step (and which literal pair) is wrongly concluding a contradiction --
+same discipline as this project's own many prior `X AND NOT X`-style
+sign-bug investigations (Can/TCone/RevCC), but for a genuinely different
+part of the pipeline (boolean cleaning, not surface-sign derivation)
+never chased down before.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

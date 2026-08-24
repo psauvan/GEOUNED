@@ -146,6 +146,7 @@ from .vector_geometry import (
     plane_tangent_at,
     plane_value_at,
     to_gvector,
+    torus_sheet_sign,
 )
 
 
@@ -499,6 +500,10 @@ class GTorus:
         self.MajorRadius = gp_tor.MajorRadius()
         self.MinorRadius = gp_tor.MinorRadius()
         self.__native__ = geom_surface
+        # See _freecad_impl.py's GTorus.__init__ for the full rationale
+        # (self-intersecting torus, two sheets, a_sign disambiguation).
+        self.Degenerated = self.MinorRadius > self.MajorRadius
+        self.a_sign = 1
 
     @classmethod
     def from_values(cls, center: GVector, axis: GVector, major_radius: float, minor_radius: float) -> "GTorus":
@@ -508,6 +513,8 @@ class GTorus:
         torus.MajorRadius = major_radius
         torus.MinorRadius = minor_radius
         torus.__native__ = None
+        torus.Degenerated = minor_radius > major_radius
+        torus.a_sign = 1
         return torus
 
     def parameter(self, point: GVector) -> tuple[float, float]:
@@ -533,7 +540,14 @@ def Gclassify_surface(native_face):
     if kind == GeomAbs_Sphere:
         return GSphere(adaptor.Sphere(), BRep_Tool.Surface_s(native_face))
     if kind == GeomAbs_Torus:
-        return GTorus(adaptor.Torus(), BRep_Tool.Surface_s(native_face))
+        torus = GTorus(adaptor.Torus(), BRep_Tool.Surface_s(native_face))
+        # torus.Degenerated already set by GTorus.__init__; refine
+        # a_sign (default 1) from a real vertex of the originating face.
+        if torus.Degenerated:
+            vexp = TopExp_Explorer(native_face, TopAbs_VERTEX)
+            vertex = _to_gvector(BRep_Tool.Pnt_s(TopoDS.Vertex(vexp.Current())))
+            torus.a_sign = torus_sheet_sign(vertex, torus)
+        return torus
     return None
 
 

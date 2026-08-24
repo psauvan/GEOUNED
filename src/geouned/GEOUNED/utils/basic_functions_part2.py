@@ -154,10 +154,23 @@ def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
     return False
 
 
-def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True):
+def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True, check_a_sign=False):
     if is_parallel(tor1.Axis, tor2.Axis, atol):
         if tor1.Axis.dot(tor2.Axis) < 0:
             return False  # Assume same cone with oposite axis as different
+        # `check_a_sign` distinguishes two genuinely different uses of
+        # "same torus": grouping same-analytic-surface face fragments
+        # during decomposition (SolidGu.same_torus_surf) must NOT merge
+        # a self-intersecting torus's outer and inner sheets, since
+        # they're geometrically distinct faces -- opts in with
+        # check_a_sign=True. Global CSG-surface registration
+        # (MetaSurfacesDict.get_id/add_torus) deliberately does NOT
+        # (default False): both sheets of one degenerate torus are
+        # written as a single MCNP/OpenMC/etc surface (the sign is
+        # encoded into the written major radius instead, see
+        # write/functions.py), so they must compare equal here.
+        if check_a_sign and getattr(tor1, "a_sign", 1) != getattr(tor2, "a_sign", 1):
+            return False
         if rel_tol:
             Rtol = dtol * max(tor1.MajorRadius, tor2.MajorRadius)
             rtol = dtol * max(tor1.MinorRadius, tor2.MinorRadius)

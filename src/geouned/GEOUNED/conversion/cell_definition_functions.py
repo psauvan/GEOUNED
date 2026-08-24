@@ -53,7 +53,7 @@ def gen_torus(face, tolerances):
         or is_parallel(Axis, GVector(0, 1, 0), tolerances.angle)
         or is_parallel(Axis, GVector(0, 0, 1), tolerances.angle)
     ):
-        return GeounedSurface(("TorusOnly", (Center, Axis, MajorRadius, MinorRadius)))
+        return GeounedSurface(("TorusOnly", (Center, Axis, MajorRadius, MinorRadius, face.Surface.a_sign)))
     else:
         return None
 

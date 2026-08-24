@@ -531,6 +531,40 @@ def is_inside_torus(point: GVector, torus) -> bool:
     return rp > torus.MinorRadius
 
 
+def torus_sheet_sign(vertex: GVector, torus, tol: float = 1e-8) -> int:
+    """For a self-intersecting (degenerate: MinorRadius > MajorRadius)
+    torus, +1 if `vertex` lies on the ordinary outer sheet, -1 if on the
+    pinched, self-intersecting inner sheet -- these are two genuinely
+    distinct subsets of the point set satisfying the torus's own implicit
+    equation (folded through the axis where the naive tube radius would
+    go negative), not just two ways of naming the same surface. Always +1
+    for a non-degenerate torus, where the two sheets coincide.
+
+    Derivation: `radial` is the true (always non-negative) radial
+    direction of `vertex` itself, read directly off its real 3D position
+    -- not derived from the torus's own (u, v) parametrization, which is
+    exactly what folds over and becomes ambiguous on the inner sheet.
+    `radial * MajorRadius` is therefore the point on the torus's own
+    major (central) circle at `vertex`'s true azimuth; the true tube
+    radius at that azimuth is the distance from there to `vertex`. On the
+    outer sheet this distance is always MinorRadius (matching the
+    standard parametrization); on the inner sheet it isn't, since the
+    inner sheet's parametrization has its major-circle offset applied in
+    the *opposite* azimuthal direction from where the point actually
+    sits.
+    """
+    if torus.MinorRadius <= torus.MajorRadius:
+        return 1
+    v = vertex - torus.Center
+    radial = v - v.dot(torus.Axis) * torus.Axis
+    if radial.length < 1e-12:
+        return 1
+    radial = radial.normalized()
+    r = v - radial * torus.MajorRadius
+    diff = abs(r.length - torus.MinorRadius)
+    return 1 if diff < tol else -1
+
+
 def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None:
     """Real roots of a*t^2 + b*t + c = 0, ordered (smaller, larger).
     None if there are 0 real roots, or if the equation degenerates to

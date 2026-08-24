@@ -163,7 +163,7 @@ def torus_generator(GUFaces, tolerances=None):
         radMin = face.Surface.MinorRadius
         center = face.Surface.Center
         dir = face.Surface.Axis
-        torus = GeounedSurface(("TorusOnly", (center, dir, radMaj, radMin)))
+        torus = GeounedSurface(("TorusOnly", (center, dir, radMaj, radMin, face.Surface.a_sign)))
         yield torus
 
 

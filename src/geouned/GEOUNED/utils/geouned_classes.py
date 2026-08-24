@@ -1553,6 +1553,16 @@ class SurfacesDict(dict):
                 add_torus = False
                 bVar = s.bVar
                 tor.bVar = bVar
+                if s.Surf.Degenerated:
+                    # Both sheets of a self-intersecting torus are
+                    # registered as ONE surface (is_same_torus doesn't
+                    # check a_sign here, by design -- see its own
+                    # docstring); keep the registered entry's own
+                    # a_sign in sync with whichever face is currently
+                    # being processed, since only one sheet's sign can
+                    # be encoded into the single written surface card
+                    # at a time.
+                    s.Surf.a_sign = tor.Surf.a_sign
                 self.__last_obj__ = ("Tor", i)
                 break
         if add_torus:
@@ -1623,6 +1633,11 @@ class SurfacesDict(dict):
                     atol=self.tolerances.tor_angle,
                     rel_tol=self.tolerances.relativeTol,
                 ):
+                    if s.Surf.Degenerated:
+                        # See add_torus's identical sync -- only one
+                        # degenerate torus sheet's sign can be encoded
+                        # into the single written surface at a time.
+                        s.Surf.a_sign = facein.Surf.a_sign
                     return s.bVar
 
         return 0

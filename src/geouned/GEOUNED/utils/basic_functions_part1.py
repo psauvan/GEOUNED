@@ -433,6 +433,16 @@ class TorusOnlyParams:
         self.Axis = params[1]
         self.MajorRadius = params[2]
         self.MinorRadius = params[3]
+        # A self-intersecting (degenerate) torus has two geometrically
+        # distinct sheets sharing the same (Center, Axis, MajorRadius,
+        # MinorRadius) -- see geo/vector_geometry.py's torus_sheet_sign
+        # docstring. Callers that already know which sheet a face
+        # belongs to (its GTorus descriptor's own .a_sign, computed once
+        # at classification time from a real face vertex) pass it as an
+        # optional 5th tuple element; every other caller gets the safe
+        # default (1, "outer sheet"), matching a non-degenerate torus.
+        self.Degenerated = self.MinorRadius > self.MajorRadius
+        self.a_sign = params[4] if len(params) > 4 else 1
 
     def __str__(self):
         outstr = f"""Torus :

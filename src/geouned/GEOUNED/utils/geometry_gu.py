@@ -100,6 +100,7 @@ class SolidGu(GSolid):
                     dtol=self.tolerances.tor_distance,
                     atol=self.tolerances.tor_angle,
                     rel_tol=self.tolerances.relativeTol,
+                    check_a_sign=True,  # never merge a self-intersecting torus's two distinct sheets into one face group
                 ):
                     current.append(j)
             for c in current:

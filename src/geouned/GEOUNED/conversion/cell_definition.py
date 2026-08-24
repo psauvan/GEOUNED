@@ -198,14 +198,23 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                 else:
                     UPlanes = []
 
+                orient = face.Orientation
+                if face.Surface.Degenerated and face.Surface.a_sign < 0:
+                    # A self-intersecting torus's two sheets are written
+                    # as a single, signed-major-radius surface card (see
+                    # write/functions.py) -- which physical side of that
+                    # one card counts as "inside" for this cell flips
+                    # depending on which sheet the real face belongs to.
+                    orient = "Reversed" if orient == "Forward" else "Forward"
+
                 VSurface, surf_orientation = None, None
-                if face.Orientation == "Reversed":
+                if orient == "Reversed":
                     index, Vparams = solid_gu.TorusVParams[iface]
                     v_closed, VminMax = Vparams
-                    if not v_closed:
+                    if not (v_closed or face.Surface.Degenerated):
                         VSurface, surf_orientation = V_torus_surfaces(face, VminMax, Surfaces)
 
-                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, surf_orientation), face.Orientation))
+                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, surf_orientation), orient))
                 torus_region = Surfaces.add_torus(torus)
                 component_definition.append(torus_region)
             else:

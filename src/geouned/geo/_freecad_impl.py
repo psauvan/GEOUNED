@@ -55,6 +55,7 @@ from .vector_geometry import (
     to_gboundbox,
     to_gmatrix,
     to_gvector,
+    torus_sheet_sign,
 )
 
 
@@ -353,6 +354,17 @@ class GTorus:
         self.MajorRadius = native.MajorRadius
         self.MinorRadius = native.MinorRadius
         self.__native__ = native
+        # A self-intersecting (degenerate) torus has two geometrically
+        # distinct sheets sharing the same analytic parameters -- `a_sign`
+        # disambiguates which one a given face belongs to (see
+        # torus_sheet_sign's own docstring). Defaulted here so every
+        # GTorus is self-consistent regardless of construction path;
+        # Gclassify_surface refines `a_sign` from a real face vertex
+        # whenever one is available (the only case that actually matters
+        # -- `a_sign` is meaningless, and never read, for a non-degenerate
+        # torus).
+        self.Degenerated = self.MinorRadius > self.MajorRadius
+        self.a_sign = 1
 
     @classmethod
     def from_values(cls, center: GVector, axis: GVector, major_radius: float, minor_radius: float) -> "GTorus":
@@ -363,6 +375,8 @@ class GTorus:
         torus.MajorRadius = major_radius
         torus.MinorRadius = minor_radius
         torus.__native__ = None
+        torus.Degenerated = minor_radius > major_radius
+        torus.a_sign = 1
         return torus
 
     def parameter(self, point: GVector) -> tuple[float, float]:
@@ -401,7 +415,16 @@ def Gclassify_surface(native_face):
     if kind is Part.Sphere:
         return GSphere(surface)
     if kind is Part.Toroid:
-        return GTorus(surface)
+        torus = GTorus(surface)
+        # torus.Degenerated already set by GTorus.__init__; refine
+        # a_sign (default 1) from a real vertex of the originating face,
+        # so every consumer (face-merging during decomposition, MCNP/
+        # OpenMC/etc surface registration and writing) sees a consistent
+        # value without re-deriving it.
+        if torus.Degenerated:
+            vertex = to_gvector(native_face.Vertexes[0].Point)
+            torus.a_sign = torus_sheet_sign(vertex, torus)
+        return torus
     if kind is Part.BSplineSurface:
         # the only acceptable case for a BSplineSurface is one that's
         # geometrically just a mislabeled plane (some CAD exports do this
