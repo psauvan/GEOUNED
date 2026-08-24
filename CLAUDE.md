@@ -8141,6 +8141,79 @@ in `geo/_ocp_impl.py` and `geo/_occ_impl.py`, and not scheduled for
 further work unless a future OCCT release (beyond 7.9.3) or OCP/
 pythonocc-core binding update changes the underlying crash behavior.
 
+## `SCDR_90_hollow.stp`'s remaining lost-particle issue: `other_face_edge`'s
+sliver check missed a narrow-but-large-enough-area sliver, fixed by adding
+the same `CharacteristicWidth` check used elsewhere
+
+Follow-up, same night. User's own manual inspection (not tool-assisted)
+found the real cause of `SCDR_90_hollow.stp`'s still-lingering lost
+particles (already known/documented, not the coaxial-cone-split issue
+fixed earlier in this file): "el fallo es en la seleccion de los plano
+multiplane en RevCC. Se añade un plano de MP que no es adyacente a la
+cara RevCC" -- a MultiPlane component plane gets attached to a RevCC
+segment's own `AdjacentMultiplanePlanes` even though it isn't really
+physically adjacent, connected only by a near-degenerate touch (a
+0.1875-length edge to a 0.0151-area sliver face -- essentially a point,
+per the user's own description: "conectado solo por un edge donde un
+vertice del plano pertenece a este edge").
+
+**Traced to `_find_adjacent_multiplane_planes` -> `other_face_edge`**
+(`geometry_gu.py`): the sliver-skip logic there only checked
+`face.Area >= min_area` (default 0.01) to decide whether a candidate
+face is a residual boolean-cut sliver worth walking past. The offending
+face (`piece[3]` of the decomposed solid, `face[2]`, the tiny sliver
+bordering the RevCC's cone) has `Area=0.015097` -- just barely above
+0.01, so it was accepted as "real" and returned directly, without
+walking further to find the actual, larger far face. Confirmed live
+(`face.CharacteristicWidth=0.077776`, below the default
+`min_face_width=0.1`) that this is exactly the class of sliver
+`CharacteristicWidth` (added earlier this session for
+`SCDR_90_piece2.stp`'s own, differently-shaped sliver problem) already
+exists to catch -- just never wired into `other_face_edge` itself.
+
+Two fixes applied together, per direct exchange with the user (who
+correctly predicted that threading the tolerance object alone, without
+the width check, would not fix anything -- confirmed: the pipeline's own
+configured `min_area` is still the 0.01 default either way, so passing
+it through changes nothing numerically on its own):
+1. `_find_adjacent_multiplane_planes` now passes `tolerances.min_area`
+   through to `other_face_edge`'s `_min_area` (was previously omitted
+   entirely, silently falling back to a bare `Tolerances()` default --
+   the same stale-default-instance bug pattern already found and fixed
+   for `eligible_plane` earlier this session).
+2. `other_face_edge` itself gained a second, genuinely new criterion:
+   a candidate face is now only accepted as "not a sliver" when *both*
+   `Area >= min_area` *and* `CharacteristicWidth >= min_face_width` --
+   matching the same OR-combined sliver test already used elsewhere
+   (`cell_definition.py`'s per-face loop, the 4 `*_generator` functions).
+   `_min_face_width` threaded through the function's own recursive
+   sliver-walk call alongside the existing `_min_area` threading.
+
+This is a change to the *shared* `other_face_edge` function, so it
+applies to every `skip_slivers=True` caller, not just
+`_find_adjacent_multiplane_planes` (`get_adjacent_cylplane`,
+`get_adjacent_cylknesurfFace`, `multiplane()`'s corner-plane search, the
+Can-detection paths in `meta_surfaces.py`) -- matching this project's
+own "fix at the shared function, not per call site" discipline.
+
+**Verified**: re-tracing `_find_adjacent_multiplane_planes` for the same
+RevCC cone segment now finds only 1 adjacent MultiPlane component (was
+2) -- the spurious match (matching MCNP surface 10 in the written
+output) is gone, leaving only the genuine, substantial-face adjacency
+(Area=233.35). `tests/geo` + `tests/test_cadtocsg.py`: `ocp` 128/128,
+`occ` 128/128, `freecad` 158/158. A 106-file `test_models` differential
+corpus scan (parallel, excluding `Big_*`) shows **exactly 1 file
+differs**: `Decomposed/SCDR_90_piece2.stp` (`RoundC:1->0, Cyl:0->1` --
+a different, but independently re-verified via d1suned to be
+*equally correct*, classification path: tally 0.999918 +/- 0.34%,
+byte-identical to its own already-established value before this fix,
+0 lost particles) -- confirming this change is safe everywhere else in
+the corpus. `SCDR_90_hollow.stp` itself, the motivating fixture: **0
+lost particles** (was 10), tally 0.998967 +/- 0.37% -- matches the
+tally already established by the earlier, independent coaxial-cone-split
+fix for this same file, confirming the remaining lost-particle gap was
+a real, separate bug now fully closed.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

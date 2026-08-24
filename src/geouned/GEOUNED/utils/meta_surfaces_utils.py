@@ -632,7 +632,10 @@ def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
     seen_planes = set()
     for piece in pieces:
         for e in piece.OuterWire.Edges:
-            result = other_face_edge(e, piece, GUFaces, outer_only=False, skip_slivers=True)
+            result = other_face_edge(
+                e, piece, GUFaces, outer_only=False, skip_slivers=True,
+                _min_area=tolerances.min_area, _min_face_width=tolerances.min_face_width,
+            )
             if result is None:
                 continue
             _, _, otherface = result

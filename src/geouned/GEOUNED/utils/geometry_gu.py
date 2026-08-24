@@ -283,16 +283,27 @@ def define_surface(face, surface=None):
     return surface
 
 
-def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _visited=None):
+def other_face_edge(
+    current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _min_face_width=None, _visited=None
+):
     # skip_slivers=False preserves the original behavior for every existing
     # caller: returns just the found face. A caller that's walking adjacency
     # to find a real neighboring feature (get_adjacent_cylplane,
     # get_adjacent_cylknesurfFace) can pass skip_slivers=True to treat a
-    # residual sliver face (area below tolerances.min_area -- a degenerate
-    # near-zero-area patch left over from a boolean cut that grazed
-    # tangentially instead of terminating cleanly) as transparent: instead
-    # of stopping there, keep walking across the sliver's own other edges
-    # to find the real face beyond it.
+    # residual sliver face (area below tolerances.min_area, OR
+    # CharacteristicWidth below tolerances.min_face_width -- a degenerate
+    # near-zero-area or large-area-but-narrow patch left over from a boolean
+    # cut that grazed tangentially instead of terminating cleanly) as
+    # transparent: instead of stopping there, keep walking across the
+    # sliver's own other edges to find the real face beyond it. Both checks
+    # are needed: area alone misses a narrow-but-large sliver (the original
+    # motivation for CharacteristicWidth, see SCDR_90_piece2.stp), and width
+    # alone would need the same guard the other direction -- confirmed live,
+    # 2026-08-24, SCDR_90_hollow.stp: a real cone-to-MultiPlane match was
+    # anchored on a face with Area=0.0151 (just above the 0.01 default
+    # min_area, so not skipped) but CharacteristicWidth=0.0778 (below the
+    # 0.1 default min_face_width) -- a genuine sliver by width, missed by
+    # area alone.
     #
     # In skip_slivers mode the return shape changes to a 3-tuple
     # (touching_edge, near_face, far_face): far_face is the real face found;
@@ -316,8 +327,10 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_sl
             if current_edge.is_same(edge):
                 if not skip_slivers:
                     return face
-                threshold = _min_area if _min_area is not None else Tolerances().min_area
-                if face.Area >= threshold:
+                area_threshold = _min_area if _min_area is not None else Tolerances().min_area
+                width_threshold = _min_face_width if _min_face_width is not None else Tolerances().min_face_width
+                width = getattr(face, "CharacteristicWidth", float("inf"))
+                if face.Area >= area_threshold and width >= width_threshold:
                     return current_edge, current_face, face
                 visited = set(_visited) if _visited else set()
                 visited.add(current_face.Index)
@@ -327,7 +340,7 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False, skip_sl
                 for e2 in face.OuterWire.Edges if outer_only else face.Edges:
                     if e2.is_same(current_edge):
                         continue
-                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, threshold, visited)
+                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, area_threshold, width_threshold, visited)
                     if found is not None:
                         return found
                 return None
