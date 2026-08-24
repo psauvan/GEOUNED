@@ -8456,18 +8456,20 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
 - `get_join_cone_cyl`'s `ifacemin`/`ifacemax` indexing -- confirmed
   correct-as-is (not a bug), no action needed, kept here only as a
   pointer back to its own already-closed writeup above.
-- ~~`Enclosures/w_encl.stp` cells 4-5 -- zero tally~~ -- **root-caused and
-  fixed, 2026-08-24 (later same session)**. See the dedicated section
-  below ("`GeounedSolid.check_intersection`'s `Gdistance`-based early-exit
+- ~~`Enclosures/w_encl.stp` cells 4-5 -- zero tally~~ -- **fully closed,
+  2026-08-24 (later same session)**. See the dedicated section below
+  ("`GeounedSolid.check_intersection`'s `Gdistance`-based early-exit
   wrongly classified fully-nested solids as disjoint"). The
   `LF.remove_enclosure(meta_list)` line this list previously called "the
   known fix, just never applied" was tested directly (temporarily
   uncommented) and confirmed to produce byte-identical MCNP output --
   it was never the real fix, just a plausible-looking, untested guess
-  from an earlier session. Stays commented out. **A second, genuinely
-  separate defect was exposed once the real fix landed** -- see the same
-  section below for why `w_encl.stp` is not yet at a clean d1suned tally
-  even after this fix.
+  from an earlier session. Stays commented out. The real fix
+  (`check_intersection`) exposed a second, genuinely separate defect --
+  the file's own 2 spheres geometrically overlapped by ~0.297mm in the
+  CAD itself -- which the user then fixed directly by moving one sphere
+  in the source STEP file. Re-verified after both fixes: 0 lost
+  particles, all 5 cells within ~1 sigma of 1.0.
 
 ## `GeounedSolid.check_intersection`'s `Gdistance`-based early-exit wrongly
 classified fully-nested solids as disjoint -- `Enclosures/w_encl.stp` cells
@@ -8554,10 +8556,23 @@ this class of problem) resolves it: it does **not** -- cells 4/5's own
 written definitions are byte-identical with or without the flag, meaning
 whatever pairwise overlap-resolution `forceNoOverlap` performs elsewhere
 in the pipeline doesn't currently reach this specific solid-vs-solid
-(not solid-vs-enclosure) overlap. **Not fixed this session** -- flagged
-as a new, separate, real pending item (see below); the `check_intersection`
-fix itself is complete, correct, and the original reported symptom
-(cells 4/5's clean zero tally) is resolved.
+(not solid-vs-enclosure) overlap.
+
+**Closed, not a GEOUNED bug**: per direct user confirmation, the overlap
+was a genuine CAD authoring defect in `w_encl.stp` itself, not a
+GEOUNED conversion issue -- the user moved one of the two spheres in the
+source STEP file to remove the ~0.297mm overlap and saved it back over
+the original fixture. Re-converted and re-ran d1suned on the corrected
+file: sphere 18's center shifted from `(9.637, 3.545, 0)` to
+`(10.737, 3.545, 0)` (a 1.1mm move along X, confirmed in the freshly
+re-exported MCNP surface card), and the full run now completes with
+**0 lost particles** and clean tallies on all 5 cells (`0.9994, 1.0007,
+0.9983, 0.9932, 0.9911` -- all within ~1sigma). `Enclosures/w_encl.stp`
+is fully resolved: both the `check_intersection` bug (GEOUNED-side, fixed
+above) and the sphere overlap (CAD-side, fixed by the user) are closed.
+The `check_intersection` fix remains necessary and correct regardless --
+without it, the enclosure's void cell still wouldn't have excluded the
+2 spheres even with non-overlapping geometry.
 
 ## `check_sign` verification of RevCC from the conversion side: real
 scaffolding rebuilt, one genuine discrepancy found
