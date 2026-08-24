@@ -8321,6 +8321,103 @@ genuinely tiny fragment). `SCDR_90_hollow.stp` re-verified byte-identical
 threading fix -- confirms closing that gap didn't perturb the
 already-fixed RevCC/MultiPlane behavior for a normal-scale solid.
 
+## Pending tasks, 2026-08-24 (consolidated, supersedes the 2026-08-23 list
+above where they overlap)
+
+**Closed this session (2026-08-24)** -- see the dedicated sections above
+for the full account of each:
+- `cyl_cone.stp`/`rev_pipe.stp`/`rc3.stp`/`TVA_final_allencl__solid8_piece0__revcc1.stp`
+  regression -- bisected via `git worktree` to `ac44907`'s
+  `UnifyFaces=False` (ocp) / `unify_edges=False` (occ) `ConeSphere.stp`
+  crash workaround; reverted precisely (4 flag literals + docstrings,
+  not a whole-file checkout -- the first attempt at this revert
+  accidentally wiped `CharacteristicWidth` too, caught via a fresh
+  corpus scan before landing). All 4 files confirmed fixed and stable
+  across 2 full corpus re-runs.
+- `ConeSphere.stp` under `occ`/`ocp` -- direction 1 (another
+  `ShapeUpgrade_UnifySameDomain` configuration) exhausted, every exposed
+  OCP knob still crashes inside `Build()` itself. Direction 3 confirmed
+  `freecad` handles it cleanly. **Accepted as a permanent, documented
+  limitation under `occ`/`ocp`** -- not scheduled for further work unless
+  a future OCCT/binding release changes the underlying crash.
+- `SCDR_90_hollow.stp`'s remaining lost particles -- user traced by hand
+  to `_find_adjacent_multiplane_planes` accepting a near-degenerate
+  sliver touch (0.1875mm edge, 0.0151mm^2 face) as proof of a real
+  MultiPlane adjacency. Fixed: `other_face_edge`'s `skip_slivers` check
+  now requires `CharacteristicWidth >= min_face_width` too, not just
+  `Area >= min_area`; `_find_adjacent_multiplane_planes` now threads the
+  real `tolerances` object through instead of a bare default. 10 lost
+  particles -> 0.
+- `modelcell_cut1_v2_piece66.stp`'s lost particles -- user traced by hand
+  to a genuinely tiny decomposed piece (Volume=0.072mm^3) whose own real
+  faces fall below the *absolute* `min_area`/`min_face_width` defaults.
+  Fixed: `Tolerances.scaled(volume)` (volume^(1/3)-based, `min()`-only-
+  decreases, `SCALE_REFERENCE_LENGTH=10mm` class constant) applied once
+  per solid in `cell_definition.py`; a real, independent tolerances-
+  threading gap in `get_reversed_cone_cylinder` (silently used a bare
+  `Tolerances()`, never the user's configured one) closed as part of the
+  same fix. 10 lost particles -> 0.
+- **Full `test_models` corpus status after all of the above** (100 files,
+  excluding `Big_*`, parallel conversion + parallel d1suned via the new
+  permanent scripts in `SolidTestMCNP/scripts/`): **91.4% within 2 sigma,
+  6.7% marginal, 1.9% fail (only `Enclosures/w_encl.stp`'s 2 cells,
+  already-known enclosure-duplication bug) -- 0/100 files with any lost
+  particles at all**, for the first time this session's corpus history.
+
+**New permanent utility scripts added this session**
+(`\\wsl.localhost\Ubuntu-22.04\home\patrick\work\taller\SolidTestMCNP\scripts\`):
+`convert_one_ocp.py` + `run_all_conversions_ocp_parallel.py` (8-way
+parallel conversion, ocp engine forced, ~25s for 99 real files -- much
+faster than the earlier sequential `run_all_conversions.py`/
+`convert_one.py` pair, which stays FreeCAD-oriented and untouched),
+`run_test_models_ocp_d1suned.sh` (16-way parallel d1suned, adapted from
+`run_all_d1suned.sh`, pointed at a dedicated `runs_test_models_ocp/`
+dir), `analyze_test_models_ocp.py` (adapted from `analyze_results.py`,
+same stale-outp-safe methodology, pointed at the same dedicated dir).
+
+**Still open, not touched this session** (carried forward from the
+2026-08-23 list, not re-verified item by item unless noted):
+- `Big_complex_cell/modelcell_cut1.stp` and
+  `Big_complex_cell/modelCell_670000.stp` -- both lose particles, neither
+  root-caused. **Excluded from every corpus scan run this session** (the
+  `Big_*` exclusion convention) -- genuinely unknown whether any of
+  today's fixes affect them; would need a dedicated, ask-first run per
+  the standing `feedback_ask_before_big_models` memory.
+- `Enclosures/w_encl.stp` -- the one remaining real failure in the full
+  corpus. Fix already known and written (`LF.remove_enclosure(meta_list)`
+  in `loadfile/load_step.py`) but its call is still commented out.
+  Lowest-effort open item on this whole list -- likely a 1-line fix,
+  just never actually applied.
+- `AdjacentMultiplanePlanes` needs extending from RevCC to
+  MultiRoundCorner too (`project_mrc_adjacent_multiplane_pending.md`).
+- `Solidos/Torus/2_degen_torii.stp` -- still a hard MCNP fatal error in
+  the latest full corpus run, unrelated to anything fixed this session.
+- A full `Solidos/`-scale (not just `test_models`) corpus differential
+  scan under the raw `occ` (pythonocc-core) engine specifically -- every
+  verification this session used `ocp`; `occ`'s own test suite (128/128)
+  passed but was never corpus-scanned the way `ocp` was.
+- `check_sign` verification of RevCC from the conversion side -- still
+  structurally unattempted (decomposition-side scanning can't reach it).
+- `Gload_step_labels`'s FreeCAD-style auto-suffix naming gap under
+  `occ`/`ocp` -- narrow, non-blocking, unchanged.
+- The 6 exotic quadric surfaces (`Gmake_elliptic_cone`/etc.) remain
+  `_not_implemented(...)` stubs in `GEOReverse`'s pyOCC backends.
+- `Solidos/` STEP fixture tree reorganization/dedup -- still only
+  partially done.
+- **`GEOReverse` (CsgToCad) work, deliberately deferred all session** per
+  the user's own explicit priority ordering (finish `GEOUNED` first):
+  the `hylife-v06.stp` round-trip volume discrepancy, and
+  `tests/test_csgtocad.py::test_cylbox_convertion[mcnp]`/`[openmc_xml]`
+  failing under `occ`/`ocp` (narrowed to `Objects.py::CellObj.buildShape`,
+  not traced further). **Given the corpus is now at 0 lost particles and
+  only 1 known, already-fixable real failure, `GEOUNED` is close enough
+  to "clean" that picking `GEOReverse` back up next session is
+  reasonable** -- worth raising with the user directly rather than
+  assuming.
+- `get_join_cone_cyl`'s `ifacemin`/`ifacemax` indexing -- confirmed
+  correct-as-is (not a bug), no action needed, kept here only as a
+  pointer back to its own already-closed writeup above.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
