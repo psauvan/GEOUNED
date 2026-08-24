@@ -1389,11 +1389,19 @@ def Gload_step_labels(filename: str) -> list[GLabelNode]:
                 # objects (with auto-suffixed names), XCAF keeps it as one
                 # label. Split into one node per solid here too, to preserve
                 # the positional-alignment contract with Gload_step's own
-                # per-solid TopExp_Explorer walk -- sharing the same label/
-                # parent across all of them rather than guessing at FreeCAD's
-                # internal auto-suffix naming convention.
-                for _ in range(n_solids):
-                    nodes.append(GLabelNode(label=name, parent=parent_node, n_solids=1))
+                # per-solid TopExp_Explorer walk. The suffix below does NOT
+                # attempt to replicate FreeCAD's own internal auto-suffix
+                # convention (an undocumented Document-level object-naming
+                # counter, not reliably derivable from XCAF data alone) --
+                # it exists only so the N solids' own written comments
+                # (load_step.py's `comment + "/" + label`) stay distinct
+                # from each other. Confirmed live, 2026-08-24, without this:
+                # every one of the N solids got the exact same label text,
+                # not just a differently-suffixed one -- a real regression
+                # from FreeCAD's own distinguishable-per-solid comments, not
+                # merely a cosmetic mismatch.
+                for i in range(n_solids):
+                    nodes.append(GLabelNode(label=f"{name}_{i + 1}", parent=parent_node, n_solids=1))
 
     free_labels = TDF_LabelSequence()
     shape_tool.GetFreeShapes(free_labels)

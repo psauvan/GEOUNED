@@ -8411,8 +8411,34 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
   **done, 2026-08-24 (later same session)**. See the dedicated section
   further below ("`check_sign` verification of RevCC from the conversion
   side: real scaffolding rebuilt, one genuine discrepancy found").
-- `Gload_step_labels`'s FreeCAD-style auto-suffix naming gap under
-  `occ`/`ocp` -- narrow, non-blocking, unchanged.
+- ~~`Gload_step_labels`'s FreeCAD-style auto-suffix naming gap under
+  `occ`/`ocp`~~ -- **investigated and fixed, 2026-08-24 (later same
+  session)**. Turned out worse than the "narrow, non-blocking" framing
+  suggested: when an XCAF "simple shape" label holds several solids
+  (`testing/inputSTEP/tubos.stp`: 1 label, 3 solids), the split-into-N-nodes
+  branch gave every one of the N nodes the *exact same, unsuffixed* label
+  text -- not just a differently-suffixed one. Confirmed a real
+  consequence: `load_step.py`'s own `comment + "/" + label` (used to build
+  each solid's own written comment, e.g. in MCNP output) made all N
+  solids' comments byte-identical too, where FreeCAD gives each a
+  distinguishable one (`RETURN-80K-PC7`/`RETURN-80K-PC001`/`RETURN-80K-PC002`
+  for this exact fixture). Fixed in both `geo/_ocp_impl.py` and
+  `geo/_occ_impl.py`: each split node now gets `f"{name}_{i+1}"` --
+  deliberately **not** an attempt to replicate FreeCAD's own internal
+  auto-suffix scheme (confirmed by direct inspection to be an
+  undocumented Document-level object-naming counter, not derivable from
+  XCAF data alone -- e.g. `PC7` then `PC001`/`PC002`, no relation to the
+  base name's own trailing digit), just a simple positional suffix so the
+  N solids stop being indistinguishable. A second, deeper difference was
+  also found and investigated -- the *parent* node's own label differs
+  too (FreeCAD: an auto-named intermediate grouping node,
+  `RETURN-80K-PC003`; `occ`/`ocp`: the file-level assembly name, `tubos`)
+  -- but per the user's own direct confirmation, this reflects FreeCAD's
+  own known-idiosyncratic STEP-assembly grouping behavior (already
+  observed by the user to diverge from other CAD tools' conventions, not
+  something GEOUNED's `occ`/`ocp` XCAF walk should try to replicate) --
+  left as-is, not a bug. `tests/geo` + `tests/test_cadtocsg.py`: `ocp`
+  128/128, `occ` 128/128.
 - The 6 exotic quadric surfaces (`Gmake_elliptic_cone`/etc.) remain
   `_not_implemented(...)` stubs in `GEOReverse`'s pyOCC backends.
 - `Solidos/` STEP fixture tree reorganization/dedup -- still only
