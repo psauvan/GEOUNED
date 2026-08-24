@@ -8032,6 +8032,115 @@ and removed after use (`git worktree remove --force`) -- main working
 tree was never modified by this investigation, confirmed clean
 throughout.
 
+## Decision: `ac44907`'s `UnifyFaces=False` ConeSphere.stp crash workaround
+reverted for real -- direction 1 exhausted, direction 3 chosen, `ConeSphere.stp`
+accepted as a known, unresolved failure under `occ`/`ocp`
+
+Direct follow-up, same night. Direction 1 (find another `ShapeUpgrade_
+UnifySameDomain` configuration that avoids the crash) was tried
+exhaustively against `ConeSphere.stp` under `ocp`, isolated per-config in
+a fresh subprocess each time (a crash is a native access violation, kills
+the whole process, so no single Python session could iterate through
+candidates): `SetSafeInputMode(True)`, `AllowInternalEdges(False)`,
+`SetAngularTolerance` tight (1e-8) and loose (1e-2), the two combined,
+`ConcatBSplines=False`, `UnifyEdges=False` with `UnifyFaces=True` alone,
+running on a `BRepBuilderAPI_Copy` first, `SetLinearTolerance(1.0)` --
+**every one crashed identically** (`-1073741819` / `0xC0000005`).
+Confirmed the crash happens inside `Build()` itself, before `Shape()` is
+ever called -- no Python-level recovery point exists. Direction 1 is a
+dead end: no exposed OCP configuration knob avoids this crash.
+
+Direction 3 tried next, per explicit user request: does the FreeCAD
+engine handle `ConeSphere.stp`? **Yes, cleanly** -- converts without any
+crash, and a d1suned stochastic volume check confirms it's geometrically
+correct too (0 lost particles, tally 0.994928 +/- 0.28%). FreeCAD uses
+`Part.Shape.removeSplitter()`, not `ShapeUpgrade_UnifySameDomain`
+directly, and bundles OCCT 7.8.1 vs. `occ`/`ocp`'s 7.9.3 -- consistent
+with this whole project's recurring theme of OCCT-version-specific BOP
+sensitivity differences (see "The ~8-10x hylife-v06.stp gap..." and
+"`SCDR_90_hollow.stp` piece5 resolved..." elsewhere in this file for two
+other instances of the same pattern, in both directions).
+
+**Explicit user decision**: accept `ConeSphere.stp` as a known,
+unresolved failure under `occ`/`ocp` (crash under `ocp`; the older,
+pre-`ac44907` code path for `occ` documented this as a *hang* rather
+than a crash for the same file -- not re-verified which is accurate,
+treated the same way either way) rather than keep trading it for a
+wider, silent regression elsewhere. Reverted `ac44907`'s flag change in
+both `geo/_ocp_impl.py` (`GSolid.fix()`/`.refine()`:
+`UnifyFaces=False` -> `True`, restoring `UnifyEdges=True, UnifyFaces=True`)
+and `geo/_occ_impl.py` (`GSolid.fix()`/`.refine()`:
+`(shape, True, False, True)` -> `(shape, True, True, True)`, restoring
+`unify_edges=True` alongside the already-unchanged `unify_faces=True`) --
+`_freecad_impl.py` untouched throughout, never had this flag at all.
+
+**A real methodological mistake made and caught mid-investigation, worth
+recording**: the first revert attempt used `git checkout ac44907~1 --
+src/geouned/geo/_occ_impl.py src/geouned/geo/_ocp_impl.py` -- a whole-file
+checkout, not a targeted flag change. This silently wiped out *everything*
+added to those two files by later commits too, most importantly
+`CharacteristicWidth`/`Compactness` (commit `3809306`, chronologically
+*after* `ac44907` despite fixing a chronologically-earlier-numbered
+regression in a different investigation) -- the real fix for a
+*different*, already-resolved file, `Decomposed/SCDR_90_piece2.stp`. A
+100-file parallel corpus re-run under this over-broad revert showed
+`cyl_cone.stp`/`rev_pipe.stp`/`rc3.stp`/`TVA_final_allencl` fixed (as
+intended) but `SCDR_90_piece2.stp` freshly broken (11.13 sigma, 10 lost
+particles) -- which looked, at first glance, like a real interaction
+between `UnifyFaces=True` and sliver detection (a plausible-sounding
+story: face unification silently merging away the exact slivers
+`CharacteristicWidth` exists to catch). **It wasn't** -- confirmed by
+checking `grep -c CharacteristicWidth src/geouned/geo/_ocp_impl.py`
+after the revert: zero matches, the feature was simply gone, not
+interacting with anything. Restored both files to `HEAD` and reapplied
+*only* the four `ShapeUpgrade_UnifySameDomain` flag values (plus their
+own docstrings) by hand instead of a file-level checkout -- confirmed via
+`git diff --stat` that this second attempt touched only ~115 lines
+(docstrings + 4 flag literals) versus the first attempt's ~640-line
+whole-file diff. **Lesson, matching this project's own repeatedly-stated
+discipline**: a `git checkout <ref> -- <file>` reverts the *entire* file
+to that ref's state, not just "the change introduced by one specific
+later commit" -- when multiple unrelated fixes touch the same file across
+different commits, always verify what a revert actually removes (`git
+diff --stat` before trusting the result) rather than assuming a
+file-level checkout is equivalent to undoing one logical change.
+
+**Full corpus re-verification with the corrected, minimal revert** (100
+STEP files under `Solidos/test_models`, excluding `Big_*`, parallel
+conversion + parallel d1suned via new permanent utility scripts --
+`convert_one_ocp.py`, `run_all_conversions_ocp_parallel.py` (8-way
+thread pool, ~25s for 99 real conversions), `run_test_models_ocp_d1suned.sh`
+(16-way parallel, adapted from `run_all_d1suned.sh`), `analyze_test_models_ocp.py`
+(adapted from `analyze_results.py`), all added to
+`\\wsl.localhost\Ubuntu-22.04\home\patrick\work\taller\SolidTestMCNP\scripts\`
+as permanent utilities per this project's own established convention):
+99/100 convert (only `Mixed/ConeSphere.stp` fails, as accepted/expected,
+`rc=3221225477` = `0xC0000005`); 105 cell tallies, **90.5% within 2
+sigma** (up from 87.5% in the original, pre-any-revert full batch),
+**2.9% real failures** (down from 6.2%) -- `cyl_cone.stp` (both copies),
+`rev_pipe.stp` (both copies), `rc3.stp`, and `TVA_final_allencl__solid8_piece0__revcc1`
+all confirmed fixed and staying fixed; `SCDR_90_piece2.stp` confirmed
+**not** regressed this time (the interaction hypothesis was correctly
+ruled out); every remaining failure (`Enclosures/w_encl.stp`'s
+enclosure-duplication bug, `Decomposed/modelcell_cut1_v2_piece66.stp`
+improved from 9777 sigma to 5.21 sigma but still failing,
+`Hollow_plates/placa.stp`/`Torus/2_degen_torii.stp`'s fatal errors,
+`Mixed/SCDR_90_hollow.stp`'s lost particles) is either already documented
+elsewhere in this file or unaffected by this change (`SCDR_90_hollow.stp`'s
+9-10 lost-particle-line count matches its own original, pre-any-revert
+batch result almost exactly -- not a new regression). Full `tests/geo` +
+`tests/test_cadtocsg.py` + `tests/test_csgtocad.py`: `ocp` 128/128, `occ`
+128/128, `freecad` 158/158 (freecad's own count is higher because
+`test_csgtocad.py`'s FreeCAD-only assertions run there too) -- all three
+engines confirmed green with this change in place.
+
+**Final status**: `ConeSphere.stp` is untranslatable under `occ`/`ocp`
+(crash/hang) and translatable under `freecad` -- this asymmetry is
+accepted, documented in both `fix()`'s and `Gload_step`'s own docstrings
+in `geo/_ocp_impl.py` and `geo/_occ_impl.py`, and not scheduled for
+further work unless a future OCCT release (beyond 7.9.3) or OCP/
+pythonocc-core binding update changes the underlying crash behavior.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

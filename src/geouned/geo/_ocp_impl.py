@@ -1218,10 +1218,19 @@ class GSolid:
             # completes cleanly (same volume, still valid) while
             # UnifyEdges=False/UnifyFaces=True crashes the process
             # deterministically, both via keyword and positional arguments.
-            # Kept off here for the same reason UnifyEdges is already
-            # conditioned on validity above: no Python-level guard can
-            # recover from this once triggered.
-            unify = ShapeUpgrade_UnifySameDomain(native, UnifyEdges=True, UnifyFaces=False, ConcatBSplines=True)
+            # An attempt to disable UnifyFaces here (2026-08-23) was
+            # reverted the same day (2026-08-24): it silently broke a
+            # different, previously-fixed regression class instead --
+            # cyl_cone.stp/rev_pipe.stp/rc3.stp/TVA_final_allencl's RevCC
+            # chain-detection all depend on UnifyFaces=True's own face
+            # merging (confirmed via a 100-file test_models corpus
+            # differential: reverting to UnifyFaces=False fixed all 4 of
+            # those, at the cost of reintroducing ConeSphere.stp's crash).
+            # Per explicit user decision, ConeSphere.stp is accepted as a
+            # known, unresolved crash under this engine rather than kept
+            # "fixed" at the cost of a wider, silent regression --
+            # UnifyFaces stays True.
+            unify = ShapeUpgrade_UnifySameDomain(native, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
             unify.Build()
             unified = unify.Shape()
             if BRepCheck_Analyzer(unified).IsValid():
@@ -1253,8 +1262,27 @@ class GSolid:
         session and was very likely a stale/reversed finding from an
         earlier OCCT build or a keyword-argument mixup (this
         constructor's own argument order is confirmed swapped relative
-        to pythonocc-core -- see this file's module docstring). Kept off
-        here unconditionally, matching fix()'s own identical change.
+        to pythonocc-core -- see this file's module docstring).
+
+        Disabling UnifyFaces here (2026-08-23) was reverted the next day
+        (2026-08-24), per explicit user decision, once a 100-file
+        test_models corpus differential run showed it silently broke
+        cyl_cone.stp/rev_pipe.stp/rc3.stp/TVA_final_allencl's RevCC
+        chain-detection -- all 4 depend on UnifyFaces=True's own face
+        merging and had already been individually fixed and verified
+        earlier in this project's history. Trading 4 known-good files
+        for 1 known-bad one is the wrong direction; UnifyFaces=True
+        stays on unconditionally, and ConeSphere.stp is accepted as a
+        known, unresolved crash under this engine instead (every
+        documented `ShapeUpgrade_UnifySameDomain` configuration knob
+        exposed by OCP -- SetSafeInputMode, AllowInternalEdges,
+        SetAngularTolerance tight/loose, SetLinearTolerance, running on
+        a BRepBuilderAPI_Copy first, ConcatBSplines=False, UnifyEdges=False
+        alone -- was tried and still crashes; confirmed the crash occurs
+        inside Build() itself, before Shape() is ever called, so no
+        Python-level recovery is possible; the FreeCAD engine converts
+        ConeSphere.stp cleanly, since it uses Part.Shape.removeSplitter()
+        rather than this OCCT-7.9.x-specific function).
 
         KNOWN GAP: a hang (not a crash) under UnifyEdges=True was also
         historically reported for this same file under pythonocc-core
@@ -1281,7 +1309,7 @@ class GSolid:
         native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
-        unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=False, ConcatBSplines=True)
+        unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
         try:
             unify.Build()
             refined = unify.Shape()
@@ -1366,18 +1394,18 @@ def Gload_step(filename: str) -> list[GSolid]:
     ShapeFix_Shape right after load, the same cut reproduces FreeCAD's
     own clean 2-piece split to ~0.01%.
 
-    Previously called a narrower `_heal_on_load` helper (ShapeFix_Shape
-    only, deliberately bypassing `GSolid.fix()`'s own UnifyEdges/UnifyFaces
-    attempt) because `fix()` itself used to crash the process on
-    Solidos/test_models/Mixed/ConeSphere.stp -- see `fix()`'s own
-    docstring above for the real cause (UnifyFaces=True, now disabled
-    there) and the 2026-08-23 fix. With `fix()` itself no longer crashing
-    on that case, the narrower bypass was redundant (and strictly weaker
-    -- it skipped the UnifyEdges healing step too) and was removed, so
-    this now calls the ordinary `GSolid.fix()` directly, matching
-    `_occ_impl.py`'s own equivalent Gload_step exactly. Re-verified
-    against ConeSphere.stp directly (GSolid(native).fix(1e-6) succeeds,
-    same volume, still valid)."""
+    KNOWN GAP, accepted per explicit user decision (2026-08-24): loading
+    Solidos/test_models/Mixed/ConeSphere.stp under this engine crashes
+    the process here (native access violation inside `fix()`'s own
+    `UnifyFaces=True` call, not a catchable Python exception -- see
+    `fix()`'s own docstring for the full account of why UnifyFaces=True
+    is kept on unconditionally despite this). A same-day attempt to work
+    around it by disabling UnifyFaces was tried and reverted, since it
+    silently broke 4 other, previously-fixed files' RevCC chain
+    detection -- confirmed via a 100-file test_models corpus differential.
+    ConeSphere.stp remains untranslatable under this engine; the FreeCAD
+    engine handles it cleanly (uses `Part.Shape.removeSplitter()`, not
+    this OCCT-7.9.x-specific function)."""
     reader = STEPControl_Reader()
     status = reader.ReadFile(filename)
     if status != IFSelect_RetDone:
