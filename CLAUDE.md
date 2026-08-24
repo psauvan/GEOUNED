@@ -8456,6 +8456,108 @@ same stale-outp-safe methodology, pointed at the same dedicated dir).
 - `get_join_cone_cyl`'s `ifacemin`/`ifacemax` indexing -- confirmed
   correct-as-is (not a bug), no action needed, kept here only as a
   pointer back to its own already-closed writeup above.
+- ~~`Enclosures/w_encl.stp` cells 4-5 -- zero tally~~ -- **root-caused and
+  fixed, 2026-08-24 (later same session)**. See the dedicated section
+  below ("`GeounedSolid.check_intersection`'s `Gdistance`-based early-exit
+  wrongly classified fully-nested solids as disjoint"). The
+  `LF.remove_enclosure(meta_list)` line this list previously called "the
+  known fix, just never applied" was tested directly (temporarily
+  uncommented) and confirmed to produce byte-identical MCNP output --
+  it was never the real fix, just a plausible-looking, untested guess
+  from an earlier session. Stays commented out. **A second, genuinely
+  separate defect was exposed once the real fix landed** -- see the same
+  section below for why `w_encl.stp` is not yet at a clean d1suned tally
+  even after this fix.
+
+## `GeounedSolid.check_intersection`'s `Gdistance`-based early-exit wrongly
+classified fully-nested solids as disjoint -- `Enclosures/w_encl.stp` cells
+4-5's zero tally, fixed; a second, separate overlap defect found underneath
+
+Direct continuation of the pending-list item above, picked up per explicit
+user selection ("vale vemos Enclosures/w_encl.stp"). `w_encl.stp`'s cells
+4/5 (2 spheres, `IsEnclosure=False`, real material cells) got exactly
+`0.0` tally with zero relative error via d1suned -- a "clean zero," not
+statistical noise, and with **zero lost particles** in the baseline run
+(that detail turned out to be the key clue, see below).
+
+**Traced end to end, not guessed**: `void_functions.py::assignEnclosure`
+iterates every real solid against every enclosure's own CAD solid via
+`m.check_intersection(encl.CADSolid)`; when this returns anything but a
+real intersection code, `assignEnclosure` falls through to
+`m.enclosure_list = {-1}, m.ParentEnclosureID = -1` ("not inside any
+enclosure"). Confirmed live, by instrumenting `assignEnclosure`/
+`select_solids` directly: **both spheres got `enclosure_list={-1}`** even
+though they are, in fact, fully inside the file's own enclosure box --
+meaning `select_solids(EnclosureID=1)` (called during the enclosure's own
+void-cell generation) returned 0 solids, so the enclosure's own "Void
+Enclosure #1" cell never learned it needed to exclude the 2 spheres
+nested inside it. The written MCNP confirmed this precisely: cell 7
+("Void Enclosure #1")'s own definition never referenced surfaces 17/18
+(the 2 sphere surfaces) at all -- geometrically, cell 7 fully overlapped
+both spheres, silently absorbing 100% of their track length before the
+spheres' own cells (4/5) ever got a chance to register any.
+
+**Root cause, in `GeounedSolid.check_intersection`**
+(`utils/geouned_classes.py`): the function's own first line was a cheap
+early-exit, `if Gdistance(g1, g2) > dtolerance: return 1` (return
+"disjoint" whenever the two solids' own surfaces are more than a hair's
+width apart). This is correct for two solids that are genuinely
+separate, but **wrong whenever one solid is fully nested inside the other
+without touching its boundary** -- exactly the sphere-inside-enclosure-box
+case, which is the single most common real use of `check_intersection` in
+this whole codebase. Verified precisely: `Gdistance(sphere, enclosure) =
+40.74mm` (>> `dtolerance=1e-6`), triggering the wrong early return of `1`
+(disjoint) -- even though the *volume*-based check further down the same
+function (bypassed by the early return) would have correctly computed
+`common_volume == sphere.Volume` exactly, i.e. genuine full containment,
+which should return `-1`.
+
+**Fix**: replaced the `Gdistance`-based early-exit with
+`if not g1.BoundBox.intersects(g2.BoundBox): return 1` --
+`GBoundBox.intersects()` (pure math, `geo/vector_geometry.py`, shared
+identically by all 3 engines, already existed for unrelated purposes)
+correctly reports a fully-nested BoundBox as intersecting (matching
+FreeCAD's own `BoundBox.intersect` semantics), so it never produces this
+false negative, while still cheaply ruling out the genuinely-disjoint
+case before the more expensive volume computation below it runs.
+
+**Verified**: `check_intersection(sphere, enclosure)` now returns `-1`
+(was `1`); `assignEnclosure` now correctly assigns both spheres
+`enclosure_list={1}, ParentEnclosureID=1`; the written MCNP's cell 7 now
+correctly reads `6 8 10 17 18 -11 -7 -5` (excluding both sphere surfaces,
+`$Enclosed cells : (4, 5)`); d1suned confirms cells 4/5 now get real,
+non-zero tallies (0.959, 0.997) instead of exactly 0.0.
+`tests/geo`+`tests/test_cadtocsg.py`: 128/128 under both `ocp` and `occ`
+(the fix is pure `geo`-level code, engine-agnostic by construction, so
+FreeCAD was not separately re-run but carries no engine-specific risk).
+
+**A second, genuinely separate defect was exposed by this fix, not caused
+by it**: with cells 4/5 finally getting real track length, the same
+d1suned run now hits 10 lost particles ("no cell found in subroutine
+newcel") at the boundary of sphere 18, aborting the run early (nps~10644
+of the requested count). Confirmed via a direct baseline-vs-fix
+comparison (temporarily `git stash`ing just this fix): the **baseline has
+zero lost particles** -- the pre-fix bug was silently masking this second
+defect the whole time, since particles never got a chance to genuinely
+cross into/out of the spheres before. Root cause, found by checking the
+2 sphere surfaces' own written parameters directly: sphere 17 (center
+`(0.366, 0.681, 0)`, R=5) and sphere 18 (center `(9.637, 3.545, 0)`, R=5)
+have a center-to-center distance of `9.703mm` against a combined radius
+of `10.0mm` -- **the two spheres genuinely overlap each other by
+~0.297mm in the real CAD geometry**, and neither cell 4 (`-17`) nor cell
+5 (`-18`) excludes the other, so the ~0.297mm lens-shaped overlap region
+satisfies both cells' definitions simultaneously -- a classic overlapping-
+cell configuration, and exactly the kind of ambiguity that produces lost
+particles right at the shared boundary. Tested whether `options.
+forceNoOverlap=True` (the pipeline's own existing mechanism for exactly
+this class of problem) resolves it: it does **not** -- cells 4/5's own
+written definitions are byte-identical with or without the flag, meaning
+whatever pairwise overlap-resolution `forceNoOverlap` performs elsewhere
+in the pipeline doesn't currently reach this specific solid-vs-solid
+(not solid-vs-enclosure) overlap. **Not fixed this session** -- flagged
+as a new, separate, real pending item (see below); the `check_intersection`
+fix itself is complete, correct, and the original reported symptom
+(cells 4/5's clean zero tally) is resolved.
 
 ## `check_sign` verification of RevCC from the conversion side: real
 scaffolding rebuilt, one genuine discrepancy found

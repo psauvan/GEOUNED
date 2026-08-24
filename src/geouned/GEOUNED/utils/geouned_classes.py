@@ -192,7 +192,32 @@ class GeounedSolid:
         g1 = GSolid(self.CADSolid)
         g2 = GSolid(solid)
 
-        if Gdistance(g1, g2) > dtolerance:
+        # A cheap early-out for the genuinely-disjoint case, WITHOUT the
+        # bug the previous Gdistance-based version had: Gdistance measures
+        # *surface-to-surface* distance, which is large whenever one solid
+        # is fully nested inside the other with room to spare (e.g. a small
+        # object floating inside a much bigger enclosure, not touching its
+        # walls) -- a real, common, legitimate case this function's own
+        # docstring explicitly promises to detect (-1/-2). Confirmed live,
+        # 2026-08-24, Solidos/test_models/Enclosures/w_encl.stp: a real
+        # sphere fully embedded in its own enclosure (common_volume equals
+        # the sphere's own volume exactly) still measured Gdistance=40.74mm
+        # (its own surface, not touching the enclosure's walls), so the old
+        # `Gdistance > dtolerance -> return 1` check wrongly classified it
+        # as disjoint before ever reaching the volume-based check below --
+        # assignEnclosure then never recognized this solid as belonging to
+        # the enclosure at all, and the enclosure's own generated void cell
+        # never learned to exclude it, leaving a real geometric overlap
+        # (confirmed via a d1suned run: the sphere's own cell got exactly
+        # 0.0 tally, all track length silently absorbed by the void cell
+        # that wrongly also claims that same space).
+        # BoundBox.intersects() is the mathematically sound version of the
+        # same "can these possibly overlap" pre-filter: two disjoint
+        # BoundBoxes make overlap impossible regardless of surface
+        # distance, but a fully-nested BoundBox still reports intersecting
+        # (matching FreeCAD's own BoundBox.intersect semantics), so it
+        # never produces this false negative.
+        if not g1.BoundBox.intersects(g2.BoundBox):
             return 1
 
         common_volume = sum(c.Volume for c in Gcommon(g1, [g2]))
