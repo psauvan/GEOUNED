@@ -8214,6 +8214,113 @@ tally already established by the earlier, independent coaxial-cone-split
 fix for this same file, confirming the remaining lost-particle gap was
 a real, separate bug now fully closed.
 
+## `modelcell_cut1_v2_piece66.stp`'s lost particles: absolute `min_area`/
+`min_face_width` don't scale down for a genuinely tiny decomposed piece --
+`Tolerances.scaled(volume)` added, plus a real tolerances-threading gap
+fixed in `get_reversed_cone_cylinder`
+
+Follow-up, same night. User's own diagnosis, again by hand: `piece66`
+(`Decomposed/modelcell_cut1_v2_piece66.stp`, one of the corpus's
+remaining lost-particle files) is a genuinely tiny decomposed fragment
+(Volume=0.072mm^3) whose own 2 real lateral faces (Area=0.014451,
+CharacteristicWidth=0.0778) fall below the *absolute* default
+`min_face_width=0.1` -- getting wrongly dropped from the cell's own
+written boundary by `cell_definition.py`'s per-face loop, leaving a
+real geometric gap. Confirmed live: this exact fragment's smallest
+genuine sliver (`Area=0.002116, CharacteristicWidth=0.000423`) sits
+~60x below the 2 real lateral faces on the width axis -- a clean
+separation the *absolute* thresholds simply can't see because they were
+never calibrated for a solid this small in the first place.
+
+**Alternative considered and rejected, per direct exchange with the
+user**: simply excluding sub-threshold-volume pieces from the model
+outright, rather than fixing the tolerance mismatch. Argued against: a
+decomposed piece is one member of a partition that must exactly
+reconstruct the original solid with no gaps; dropping the piece entirely
+removes its real, physical material and leaves the *exact same* class of
+geometric hole (arguably worse -- no cell at all there, vs. today's
+wrong-but-present cell) -- MCNP would still lose particles in that
+region, and the model would additionally be missing real mass/density.
+A geometrically sound alternative (fusing the tiny piece into a
+neighbor) was named but set aside as a much larger, riskier change than
+fixing the tolerance mismatch that's the actual root cause.
+
+**Design, worked out step by step with the user before implementing**:
+- Characteristic length of the solid: `Volume**(1/3)` -- deliberately
+  *not* combined with the solid's own BoundBox diagonal/extent to detect
+  "elongation," even though that was raised as a candidate refinement.
+  Ruled out with a concrete counterexample computed on `piece66` itself:
+  `Volume**(1/3) ~= 0.416mm` but BoundBox diagonal `~= 5.067mm` -- a
+  >10x gap, since this fragment is a thin curved shell segment, not
+  compact. Requiring the diagonal to *also* look "small" (or using it
+  instead) would have failed to trigger scaling for the exact case this
+  fix targets: real face area tracks the solid's own *volume*
+  (Volume ~= typical face area x typical thickness), not its spatial
+  reach, so the volumetric length scale is the one that actually
+  correlates with the failure mode being guarded against.
+- Scaling only ever *decreases* min_area/min_face_width, never increases
+  them: `effective = min(default, default * (L/L_ref))` for
+  min_face_width (linear in length) and the squared form for min_area
+  (dimensionally consistent, derived from the same single length scale)
+  -- a solid at or above the reference scale gets back the exact,
+  unmodified original tolerances via the `min()`, with no separate
+  threshold/gate needed.
+- Reference length `L_ref = 10mm` (1cm) -- the user's own proposal,
+  matching MCNP's own natural length unit (GEOUNED's internal units are
+  mm, STEP-native; MCNP output is written in cm) as the scale at which
+  the absolute defaults are considered correctly calibrated. Verified
+  numerically against `piece66`'s own real data before accepting it:
+  with `L_ref=10mm`, `effective_min_face_width=0.00416`, cleanly
+  separating the real lateral faces (0.0778, passes with ~19x margin)
+  from the genuine sliver (0.000423, still correctly rejected, ~10x
+  margin the other way).
+
+**Implementation**: `Tolerances.scaled(volume) -> Tolerances`
+(`data_classes.py`) -- returns a new instance with every other field
+copied unchanged, only `min_area`/`min_face_width` scaled per the
+formula above. Applied in exactly one place, `cell_definition.py`'s
+`simple_solid_definition`: computed once per solid
+(`scaled_tolerances = Surfaces.tolerances.scaled(solid_gu.Volume)`,
+right after `solid_gu` is built) and used in place of `Surfaces.tolerances`
+for the per-face min_area/min_face_width checks, `get_multiplanes`, and
+`get_reversed_cone_cylinder` -- not threaded any further than that;
+per explicit user agreement this stays scoped to "opcion A" (the
+handful of call sites already touched/verified this session), not a
+full audit of every tolerances-consuming function in the codebase.
+
+**A real, independent threading gap found and fixed while wiring this
+up, per explicit user request to also fix it**: `get_reversed_cone_cylinder`
+(`functions.py`) took no `tolerances` parameter at all, and its own
+callee `get_revConeCyl_surfaces` (`meta_surfaces.py`) called
+`get_join_cone_cyl(..., Tolerances())` with a bare default -- meaning
+the entire RevCC/MultiPlane detection chain (down to
+`_find_adjacent_multiplane_planes`/`other_face_edge`, the exact path
+fixed earlier this same night for `SCDR_90_hollow.stp`) was silently
+ignoring whatever `min_area`/`min_face_width` a user actually configured
+via `CadToCsg(tolerances=...)`, always falling back to the class
+defaults regardless. This means the earlier `SCDR_90_hollow.stp` fix
+only "worked" in this session's own verification because no custom
+tolerances were ever passed in those tests -- it would not have
+respected a real custom configuration. Fixed: `get_reversed_cone_cylinder`
+now takes `tolerances` as a required parameter and threads it through to
+`get_revConeCyl_surfaces` -> `get_join_cone_cyl` -> `_find_adjacent_multiplane_planes`,
+closing the gap end to end. `Tolerances` import in `meta_surfaces.py`
+removed as now-unused.
+
+**Verified**: `piece66` isolated, full pipeline (`volSDEF=True`, void
+generation): **0 lost particles** (was 10), tally `0.997236 +/- 4.06%`
+(the wide error bar reflects the tiny solid's own low photon-crossing
+statistics at this NPS, not a translation problem -- within ~0.68
+sigma). `tests/geo` + `tests/test_cadtocsg.py`: `ocp` 128/128. A 106-file
+`test_models` differential corpus scan (parallel, excluding `Big_*`,
+composite-surface-type counts) shows **zero files differ** -- this fix
+is invisible to every solid at normal scale, confirming the `min()`-based
+design does exactly what it was meant to (only ever engage for a
+genuinely tiny fragment). `SCDR_90_hollow.stp` re-verified byte-identical
+(tally 0.998967, 0 lost particles) after the `get_reversed_cone_cylinder`
+threading fix -- confirms closing that gap didn't perturb the
+already-fixed RevCC/MultiPlane behavior for a normal-scale solid.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

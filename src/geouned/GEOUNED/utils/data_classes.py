@@ -245,6 +245,15 @@ class Tolerances:
             sliver's is <=0.055mm, a clean >0.5-decade gap with 0.1 sitting in the middle.
     """
 
+    # Reference length (mm, GEOUNED's own internal unit) used by scaled()
+    # below the min_area/min_face_width defaults are considered correctly
+    # calibrated -- 1cm, MCNP's own natural length unit, per direct user
+    # choice. Deliberately a class constant, not a constructor parameter:
+    # unlike min_area/min_face_width themselves (real per-run tuning
+    # knobs), this is calibration machinery for scaled() -- not something
+    # a user is expected to tune per run.
+    SCALE_REFERENCE_LENGTH = 10.0
+
     def __init__(
         self,
         relativeTol: bool = False,
@@ -465,6 +474,71 @@ class Tolerances:
         if not isinstance(min_face_width, float):
             raise TypeError(f"geouned.Tolerances.min_face_width should be a float, not a {type(min_face_width)}")
         self._min_face_width = min_face_width
+
+    def scaled(self, volume: float) -> "Tolerances":
+        """Returns a copy of this Tolerances with min_area/min_face_width
+        scaled down for a solid whose own Volume is small relative to
+        GEOUNED's internal mm units -- never scaled up. min_area/
+        min_face_width are absolute thresholds calibrated for "normal"
+        solids; a genuinely small decomposed piece (e.g. Volume < 1 mm^3)
+        can have real, legitimate faces whose own area/width falls below
+        these defaults, causing them to be wrongly dropped as slivers
+        (confirmed live, 2026-08-24,
+        Solidos/test_models/Decomposed/modelcell_cut1_v2_piece66.stp:
+        Volume=0.072mm^3, 2 real lateral faces with CharacteristicWidth
+        =0.026mm, below the default min_face_width=0.1mm -- dropping
+        them left a real gap in the cell definition, causing MCNP lost
+        particles).
+
+        Reference length SCALE_REFERENCE_LENGTH=10mm (1cm, GEOUNED's own
+        internal unit is mm, and 1cm is the natural MCNP length unit the
+        user chose as the scale at which the absolute defaults are
+        considered correctly calibrated -- a class constant, not a
+        constructor parameter, since it's calibration machinery for this
+        method rather than a per-run tuning knob like min_area/
+        min_face_width themselves). L = Volume**(1/3), a pure volumetric
+        length scale --
+        deliberately NOT combined with the solid's own BoundBox extent
+        (its "elongation"): the failure mode being guarded against is
+        real face *area* falling below an absolute threshold, which
+        tracks the solid's own volume (Volume ~= typical face area x
+        typical thickness), not its spatial reach. A highly elongated
+        but small-volume sliver (exactly the piece66 case: BoundBox
+        diagonal ~5mm despite Volume^(1/3) ~0.4mm) would fail to trigger
+        scaling at all if diagonal were used instead or combined as an
+        additional gate -- confirmed by direct calculation on piece66's
+        own numbers before choosing this formula.
+
+        min_face_width scales linearly with L (both are lengths);
+        min_area scales with L^2 (an area) -- dimensionally consistent,
+        derived from the same single length scale. Both are `min()`-ed
+        against the original value, so a solid whose own L >=
+        SCALE_REFERENCE_LENGTH gets back the unmodified original
+        tolerances -- zero behavior change for every solid at or above
+        "normal" scale."""
+        length_scale = min(1.0, volume ** (1.0 / 3.0) / self.SCALE_REFERENCE_LENGTH)
+        scaled_min_area = min(self.min_area, self.min_area * length_scale**2)
+        scaled_min_face_width = min(self.min_face_width, self.min_face_width * length_scale)
+        return Tolerances(
+            relativeTol=self.relativeTol,
+            relativePrecision=self.relativePrecision,
+            value=self.value,
+            distance=self.distance,
+            angle=self.angle,
+            pln_distance=self.pln_distance,
+            pln_angle=self.pln_angle,
+            cyl_distance=self.cyl_distance,
+            cyl_angle=self.cyl_angle,
+            sph_distance=self.sph_distance,
+            kne_distance=self.kne_distance,
+            kne_angle=self.kne_angle,
+            tor_distance=self.tor_distance,
+            tor_angle=self.tor_angle,
+            min_area=scaled_min_area,
+            add_pln_distance=self.add_pln_distance,
+            add_pln_angle=self.add_pln_angle,
+            min_face_width=scaled_min_face_width,
+        )
 
 
 class NumericFormat:

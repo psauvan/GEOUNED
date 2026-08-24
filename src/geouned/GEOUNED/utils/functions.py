@@ -149,7 +149,7 @@ def get_roundCorner(solidFaces, cornerface_index=None, solid=None):
         return corner_list, cornerface_index
 
 
-def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
+def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_index=None):
     if conecylface_index is None:
         conecylface_index = set()
         one_value_return = False
@@ -162,7 +162,7 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, conecylface_index=None):
             continue
         if isinstance(f.Surface, (GCylinder, GCone)):
             if f.Orientation == "Reversed":
-                rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index)
+                rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index, tolerances)
                 if rcc:
                     gc = GeounedSurface(("ReversedConeCylinder", build_RCC_params(rcc)))
                     conecyl_list.append(gc)

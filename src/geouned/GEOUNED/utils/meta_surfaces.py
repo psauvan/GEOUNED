@@ -1,4 +1,3 @@
-from .data_classes import Tolerances
 from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
 from .geometry_gu import other_face_edge
@@ -376,5 +375,5 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     return rc_list, face_index
 
 
-def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces):
-    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, Tolerances())
+def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces, tolerances):
+    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, tolerances)

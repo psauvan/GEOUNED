@@ -51,6 +51,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
+    # A genuinely small decomposed piece (e.g. residual sliver-adjacent
+    # fragment) can have real, legitimate faces whose own area/width falls
+    # below the absolute min_area/min_face_width defaults -- scaled once
+    # here, per solid, rather than changing the defaults globally. See
+    # Tolerances.scaled()'s own docstring for the full rationale.
+    scaled_tolerances = Surfaces.tolerances.scaled(solid_gu.Volume)
     if meta_surfaces:
         RFCan, omitFaces = get_Can(solid_gu.Faces)
         for cs in RFCan:
@@ -80,7 +86,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
         # multiplanes,pindex = get_multiplanes(solid_gu,solid.BoundBox) #pindex are all faces index used to produced multiplanes, do not count as standard planes
         # pindex are all faces index used to produced multiplanes, do not count as standard planes
-        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces, Surfaces.tolerances)
+        multiplanes = get_multiplanes(solid_gu.Faces, omitFaces, scaled_tolerances)
         for mp in multiplanes:
             mp_region = Surfaces.add_multiPlane(mp)
             component_definition.append(mp_region)
@@ -91,7 +97,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         # just a boolean gate -- get_join_cone_cyl needs it to identify
         # *which* of a RevCC's own 2 chain ends (if any) borders one of
         # these, not just whether any exist in the solid.
-        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplanes, omitFaces)
+        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplanes, scaled_tolerances, omitFaces)
         for cs in reversedCC:
             cc_region = Surfaces.add_reversedCC(cs)
             component_definition.append(cc_region)
@@ -104,12 +110,12 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     for iface, face in enumerate(solid_gu.Faces):
         if iface in omitFaces:
             continue
-        if abs(face.Area) < Surfaces.tolerances.min_area:
+        if abs(face.Area) < scaled_tolerances.min_area:
             logger.warning(
-                f"{str(face.Surface)} surface removed from cell definition. Face area < Min area ({face.Area} < {Surfaces.tolerances.min_area})"
+                f"{str(face.Surface)} surface removed from cell definition. Face area < Min area ({face.Area} < {scaled_tolerances.min_area})"
             )
             continue
-        if getattr(face, "CharacteristicWidth", float("inf")) < Surfaces.tolerances.min_face_width:
+        if getattr(face, "CharacteristicWidth", float("inf")) < scaled_tolerances.min_face_width:
             # min_area alone doesn't catch a real, large-area but genuinely
             # thin sliver face of ANY surface type (see
             # Tolerances.min_face_width's own docstring, and
@@ -125,7 +131,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             # every surface type.
             logger.warning(
                 f"{str(face.Surface)} surface removed from cell definition. Face characteristic width < min_face_width "
-                f"({face.CharacteristicWidth} < {Surfaces.tolerances.min_face_width})"
+                f"({face.CharacteristicWidth} < {scaled_tolerances.min_face_width})"
             )
             continue
         if face.Area < 0:
