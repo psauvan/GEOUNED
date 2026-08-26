@@ -2,7 +2,7 @@ from .data_constants import twoPi, mask
 from .basic_functions_part2 import is_parallel, is_same_cylinder
 from .geometry_gu import other_face_edge
 from ...geo import GLine, GPlane, GCylinder, GTorus, Gclassify_curve
-from .geometry_gu import ShellGu
+from .geometry_gu import ShellFaceGu
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
     region_sign,
@@ -140,7 +140,7 @@ def get_can_surfaces(cylinder, solidFaces):
     # shell/no-shell dispatch build_can_params already uses) since
     # cylinder_shell can be either, depending on whether the seed's
     # analytic surface is split into several same-surface pieces.
-    is_shell = isinstance(cylinder_shell, ShellGu)
+    is_shell = isinstance(cylinder_shell, ShellFaceGu)
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
@@ -333,7 +333,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
 
     fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
 
-    if type(cyl_shell) is ShellGu:
+    if type(cyl_shell) is ShellFaceGu:
         face_index.update(cyl_shell.Indexes)
         cylinders_set.update(cyl_shell.Indexes)
     else:
@@ -376,4 +376,5 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
 
 
 def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces, tolerances):
-    return get_join_cone_cyl(face, Faces, multifaces, omitFaces, tolerances)
+    revcc_shell = merge_same_surface_faces(face, Faces)
+    return get_join_cone_cyl(revcc_shell, Faces, multifaces, omitFaces, tolerances)

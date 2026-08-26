@@ -16,6 +16,7 @@ from ..utils.functions import (
     get_box,
 )
 from ..utils.boolean_function import BoolSequence
+from ..utils.meta_surfaces_utils import merge_same_surface_faces
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
     gen_plane,
@@ -24,12 +25,15 @@ from .cell_definition_functions import (
     gen_sphere,
     gen_torus,
     cone_apex_plane,
-    V_torus_surfaces,
+    check_torus_bounds,
+    V_torus_surface,
     U_torus_planes,
+    oneplane_surface,
+    one_torus_plane,
+    one_degenerated_torus_plane,
     gen_plane_sphere,
-    gen_plane_cylinder,
-    gen_plane_cone,
     omit_multiplane_repeated_planes,
+    torus_face_configuration,
 )
 
 logger = logging.getLogger("general_logger")
@@ -139,43 +143,41 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         if face.Orientation not in ("Forward", "Reversed"):
             continue
 
+        shell = merge_same_surface_faces(face, solid_gu.Faces)
+        omitFaces.update(shell.Indexes if isinstance(shell, GU.ShellFaceGu) else {face.Index})
+
         if isinstance(face.Surface, GU.GPlane):
             plane = gen_plane(face)
             plane_region = Surfaces.add_plane(plane, True)
             component_definition.append(plane_region)
 
         elif isinstance(face.Surface, GU.GCylinder):
+            # this branch doesn't need additional plane for
+            # reversed orientation, because open reversed orientation
+            # is handled by RevCC, and closed reversed orientation
+            # doesn't need additional plane.
             cylinderOnly = gen_cylinder(face)
-            if face.Orientation == "Reversed":
-                plane = gen_plane_cylinder(
-                    face, solid_gu.Faces, Surfaces.tolerances
-                )  # plane must be correctly oriented toward materials
-            else:
-                plane = None
-
-            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, plane), face.Orientation))
+            cylinder = GeounedSurface(("Cylinder", (cylinderOnly, None), face.Orientation))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
 
         elif isinstance(face.Surface, GU.GCone):
+            # this branch doesn't need additional plane for
+            # reversed orientation, because open reversed orientation
+            # is handled by RevCC, and closed reversed orientation
+            # doesn't need additional plane.
+
             coneOnly = gen_cone(face)
             apexPlane = cone_apex_plane(face, Surfaces.tolerances)
-            if face.Orientation == "Reversed":
-                plane = gen_plane_cone(
-                    face, solid_gu.Faces, Surfaces.tolerances
-                )  # plane must be correctly oriented toward materials
-            else:
-                plane = None
 
-            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, plane), face.Orientation))
+            cone = GeounedSurface(("Cone", (coneOnly, apexPlane, None), face.Orientation))
             cone_region = Surfaces.add_cone(cone)
             component_definition.append(cone_region)
 
         elif isinstance(face.Surface, GU.GSphere):
             sphereOnly = gen_sphere(face)
-            plane = None
             if face.Orientation == "Reversed":
-                plane = gen_plane_sphere(face, solid_gu.Faces)
+                plane = gen_plane_sphere(shell)
             else:
                 plane = None
 
@@ -186,45 +188,51 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         elif isinstance(face.Surface, GU.GTorus):
             torusOnly = gen_torus(face, Surfaces.tolerances)
             if torusOnly is not None:
-                index, u_params = solid_gu.TorusUParams[iface]
-                if index == last_torus:
-                    continue
-                last_torus = index
-                # add if necesary additional planes following U variable
-                u_closed, u_minMax = u_params
+                Urange, Vrange = check_torus_bounds(shell)
+                Uclosed, Uparams = Urange
+                Vclosed, Vparams = Vrange
 
-                if not u_closed:
-                    UPlanes = U_torus_planes(face, u_minMax, Surfaces)
+                Uplanes = []
+                Vsurface = []
+                Vconfig = None
+
+                if type(shell) is GU.ShellFaceGu:
+                    degenerated = shell.Faces[0].Surface.Degenerated
                 else:
-                    UPlanes = []
+                    degenerated = shell.Surface.Degenerated
 
-                orient = face.Orientation
-                if face.Surface.Degenerated and face.Surface.a_sign < 0:
-                    # A self-intersecting torus's two sheets are written
-                    # as a single, signed-major-radius surface card (see
-                    # write/functions.py) -- which physical side of that
-                    # one card counts as "inside" for this cell flips
-                    # depending on which sheet the real face belongs to.
-                    orient = "Reversed" if orient == "Forward" else "Forward"
+                face_orientation = face.Orientation
+                if degenerated:
+                    if face.Surface.a_sign < 0:
+                        # A self-intersecting torus's two sheets are written
+                        # as a single, signed-major-radius surface card (see
+                        # write/functions.py) -- which physical side of that
+                        # one card counts as "inside" for this cell flips
+                        # depending on which sheet the real face belongs to.
+                        face_orientation = "Reversed" if face.Orientation == "Forward" else "Forward"
+                    if not (Uclosed and Vclosed) and face_orientation == "Reversed":
+                        Uplanes = one_degenerated_torus_plane(shell, Surfaces)
+                else:
+                    if Uclosed and not Vclosed:
+                        if shell.Orientation == "Reversed":
+                            Vsurface, Vconfig = V_torus_surface(shell, Vparams, Surfaces)
+                    elif not Uclosed and Vclosed:
+                        Uplanes = U_torus_planes(shell, Uparams, Surfaces)
+                    elif not Uclosed and not Vclosed:
+                        radius_ratio = shell.Surface.MajorRadius / shell.Surface.MinorRadius
+                        if oneplane_surface(Uparams, Vparams, radius_ratio) and False:
+                            Uplanes = one_torus_plane(shell, Uparams, Vparams, Surfaces)
+                        else:
+                            Uplanes = U_torus_planes(shell, Uparams, Surfaces)
+                            if shell.Orientation == "Reversed":
+                                Vsurface, Vconfig = V_torus_surface(shell, Vparams, Surfaces)
 
-                VSurface, surf_orientation = None, None
-                if orient == "Reversed":
-                    index, Vparams = solid_gu.TorusVParams[iface]
-                    v_closed, VminMax = Vparams
-                    if not (v_closed or face.Surface.Degenerated):
-                        VSurface, surf_orientation = V_torus_surfaces(face, VminMax, Surfaces)
-
-                torus = GeounedSurface(("Torus", (torusOnly, UPlanes, VSurface, surf_orientation), orient))
+                torus = GeounedSurface(("Torus", (torusOnly, Uplanes, Vsurface, Vconfig), face_orientation, degenerated))
                 torus_region = Surfaces.add_torus(torus)
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")
 
-    # solid.exportStep('solid.stp')
-    # for k in Surfaces.keys():
-    #    for i,m in enumerate(Surfaces[k]):
-    #        m.build_surface(solid.BoundBox)
-    #        m.shape.exportStep(f'{k}_{i}.stp')
     return component_definition
 
 

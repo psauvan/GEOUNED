@@ -7,7 +7,7 @@ import math
 logger = logging.getLogger("general_logger")
 
 from .boolean_function import BoolVariable
-from .geometry_gu import ShellGu, is_same_surface
+from .geometry_gu import ShellFaceGu, is_same_surface
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
@@ -369,7 +369,7 @@ def _closing_plane(cyl, edges, kind, secondary):
 
 def build_can_params(cs):
     cyl_in, sr1, sr2 = cs
-    shell = type(cyl_in) is ShellGu
+    shell = type(cyl_in) is ShellFaceGu
     if not shell:
         cyl = cyl_in
     else:
@@ -500,7 +500,7 @@ def build_can_params(cs):
 
 def build_tcone_params(ks):
     kne_in, p1, p2 = ks
-    shell = type(kne_in) is ShellGu
+    shell = type(kne_in) is ShellFaceGu
     if not shell:
         kne = kne_in
     else:

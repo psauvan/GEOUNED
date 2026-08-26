@@ -553,16 +553,9 @@ def torus_sheet_sign(vertex: GVector, torus, tol: float = 1e-8) -> int:
     the *opposite* azimuthal direction from where the point actually
     sits.
     """
-    if torus.MinorRadius <= torus.MajorRadius:
-        return 1
-    v = vertex - torus.Center
-    radial = v - v.dot(torus.Axis) * torus.Axis
-    if radial.length < 1e-12:
-        return 1
-    radial = radial.normalized()
-    r = v - radial * torus.MajorRadius
-    diff = abs(r.length - torus.MinorRadius)
-    return 1 if diff < tol else -1
+    r = vertex - torus.Center
+    outer = r.length > math.sqrt(torus.MinorRadius**2 - torus.MajorRadius**2)
+    return 1 if outer else -1
 
 
 def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None:

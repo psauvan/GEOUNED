@@ -1,16 +1,17 @@
 import math
 import logging
 
+from geouned.GEOUNED.utils.geometry_gu import ShellFaceGu
+
 from ..utils.basic_functions_part1 import (
-    is_in_line,
+    twoPimod,
     is_parallel,
     is_same_value,
-    shapes_in_contact,
 )
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
-from ...geo import GPlane, GCylinder, GCone, GSphere, GBoundBox, GVector
+from ...geo import GPlane, GCylinder, GCone, GSphere, GBoundBox, GVector, Gmake_wire
 
 logger = logging.getLogger("general_logger")
 
@@ -69,7 +70,67 @@ def cone_apex_plane(cone, tolerances):
     return GeounedSurface(("Plane", (cone.Surface.Apex, cone.Surface.Axis, 1, 1)))
 
 
-def V_torus_surfaces(face, v_params, Surfaces):
+def check_torus_bounds(shell):
+
+    def merge_periodic_uv(parameter, faceList):
+        two_pi = 2.0 * math.pi
+        if parameter == "U":
+            i1 = 0
+            i2 = 2
+        elif parameter == "V":
+            i1 = 2
+            i2 = 4
+
+        params = []
+        arcLength = 0.0
+        for face in faceList:
+            V0, V1 = face.ParameterRange[i1:i2]
+            arcLength += V1 - V0
+            params.append((V0, V1))
+
+        params.sort()
+        V0 = params[0][0]
+        V1 = params[-1][1]
+        if arcLength >= two_pi * (1.0 - 1e-5):
+            mergedParams = (True, (V0, V0 + two_pi))
+        else:
+            if is_same_value(V0, 0.0, 1e-5) and is_same_value(V1, two_pi, 1e-5):
+                for i in range(len(params) - 1):
+                    if not is_same_value(
+                        params[i][1],
+                        params[i + 1][0],
+                        1e-5,
+                    ):
+                        break
+                v_min = params[i + 1][0] - two_pi
+                v_max = params[i][1]
+            else:
+                # params is sorted by V0 ascending, so params[0][0] is always
+                # the true minimum V0 -- but sorting by V0 does not imply
+                # sorted V1, so params[-1][1] is only the true maximum V1
+                # when the pieces form a simple, non-nested chain. When one
+                # piece's own range is fully nested inside another's (e.g. a
+                # tiny residual sliver piece sitting within a larger piece's
+                # own V-span), params[-1][1] can under-report the real
+                # merged extent -- take the max explicitly instead.
+                v_min = params[0][0]
+                v_max = max(v1 for _, v1 in params)
+            mergedParams = (False, (v_min, v_max))
+
+        return mergedParams
+
+    if type(shell) is ShellFaceGu:
+        tFaces = shell.Faces
+    else:
+        tFaces = [shell]
+
+    URange = merge_periodic_uv("U", tFaces)
+    VRange = merge_periodic_uv("V", tFaces)
+
+    return URange, VRange
+
+
+def V_torus_surface(face, v_params, Surfaces):
     if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(1, 0, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
@@ -78,12 +139,18 @@ def V_torus_surfaces(face, v_params, Surfaces):
         axis = GVector(0, 0, 1)
 
     torus_center = face.Surface.Center
+    vmin, vmax = v_params
+    if type(face) is ShellFaceGu:
+        tface = face.Faces[0]
+    else:
+        tface = face
 
-    p1 = face.value_at(0.0, v_params[0]) - torus_center
+    p1 = tface.value_at(0.0, vmin) - torus_center
+    p2 = tface.value_at(0.0, vmax) - torus_center
+
     z1 = p1.dot(axis)
     d1 = p1.cross(axis).length
 
-    p2 = face.value_at(0.0, v_params[1]) - torus_center
     z2 = p2.dot(axis)
     d2 = p2.cross(axis).length
 
@@ -95,17 +162,18 @@ def V_torus_surfaces(face, v_params, Surfaces):
             axis = -axis
         return GeounedSurface(("Plane", (center, axis, 1, 1))), None
 
-    elif is_same_value(d1, d2, Surfaces.tolerances.distance) or Surfaces.options.forceCylinder:
+    elif is_same_value(d1, d2, Surfaces.tolerances.distance):
         radius = min(d1, d2)
         center = torus_center
-        if is_same_value(d1, face.Surface.MajorRadius, Surfaces.tolerances.distance):
-            v_mid = (v_params[0] + v_params[1]) * 0.5
-            p_mid = face.value_at(0, v_mid) - center
-            if p_mid.cross(axis).length < face.Surface.MajorRadius:
+        if is_same_value(d1, tface.Surface.MajorRadius, Surfaces.tolerances.distance):
+            v_mid = (vmin + vmax) * 0.5
+
+            p_mid = tface.value_at(0, v_mid) - center
+            if p_mid.cross(axis).length < tface.Surface.MajorRadius:
                 in_surf = True
-            v_mid = (v_params[0] + v_params[1]) * 0.5
-            p_mid = face.value_at(0, v_mid) - center
-            if p_mid.cross(axis).length < face.Surface.MajorRadius:
+            v_mid = (vmin + vmax) * 0.5
+            p_mid = tface.value_at(0, v_mid) - center
+            if p_mid.cross(axis).length < tface.Surface.MajorRadius:
                 in_surf = True
                 radius = max(d1, d2)
             else:
@@ -116,7 +184,7 @@ def V_torus_surfaces(face, v_params, Surfaces):
             else:
                 orientation = "Reversed"
         else:
-            if d1 < face.Surface.MajorRadius:
+            if d1 < tface.Surface.MajorRadius:
                 orientation = "Forward"
                 radius = max(d1, d2)
             else:
@@ -130,8 +198,8 @@ def V_torus_surfaces(face, v_params, Surfaces):
         cone_axis = axis if (z1 - za) > 0.0 else -axis
         cone = GeounedSurface(("ConeOnly", (apex, cone_axis, semi_angle, 1, 1)))
 
-        v_mid = (v_params[0] + v_params[1]) * 0.5
-        p_mid = face.value_at(0, v_mid) - torus_center
+        v_mid = (vmin + vmax) * 0.5
+        p_mid = tface.value_at(0, v_mid) - torus_center
         z_mid = p_mid.dot(axis)
         d_mid = p_mid.cross(axis).length
 
@@ -143,12 +211,11 @@ def V_torus_surfaces(face, v_params, Surfaces):
         else:
             orientation = "Reversed"
 
-        # apexPlane = cone_apex_plane(cone, orientation, Surfaces.tolerances)  #apex plane not produced because torus axis along x,y,z
+        # apex plane not produced because torus axis along x,y,z
         return cone, orientation
 
 
-def U_torus_planes(face, u_params, Surfaces):
-
+def U_torus_planes(face, UParams, Surfaces):
     if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(1, 0, 0)
     elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
@@ -156,33 +223,33 @@ def U_torus_planes(face, u_params, Surfaces):
     elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
         axis = GVector(0, 0, 1)
 
-    center = face.Surface.Center
-    p1 = face.value_at(u_params[0], 0.0)
-    p2 = face.value_at(u_params[1], 0.0)
-    pmid = face.value_at(0.5 * (u_params[0] + u_params[1]), 0.0)
+    umin, umax = UParams
 
-    if is_same_value(abs(u_params[1] - u_params[0]), math.pi, Surfaces.tolerances.value):
-        d = axis.cross(p2 - p1).normalized()
-        if d.dot(pmid - center) < 0:
-            d = -d
-
-        return (GeounedSurface(("Plane", (center, d, 1, 1))),)
-
-    elif u_params[1] - u_params[0] < math.pi:
-        d = axis.cross(p2 - p1).normalized()
-        if d.dot(pmid - center) < 0:
-            d = -d
-
-        return (GeounedSurface(("Plane", (center, d, 1, 1))),)
-
+    if type(face) is ShellFaceGu:
+        p1 = face.Faces[0].value_at(umin, 0.0)
+        p2 = face.Faces[0].value_at(umax, 0.0)
+        pmid = face.Faces[0].value_at(0.5 * (umin + umax), 0.0)
     else:
-        d1 = axis.cross(p1)
-        d1.normalize()
+        p1 = face.value_at(umin, 0.0)
+        p2 = face.value_at(umax, 0.0)
+        pmid = face.value_at(0.5 * (umin + umax), 0.0)
+
+    center = face.Surface.Center
+
+    angle = twoPimod(abs(umax - umin))
+    if angle < math.pi + Surfaces.tolerances.value:
+        d = axis.cross(p2 - p1).normalized()
+        if d.dot(pmid - center) < 0:
+            d = -d
+        return (GeounedSurface(("Plane", (center, d, 1, 1))),)
+    else:
+        d1 = axis.cross(p1 - center)
+        d1 = d1.normalized()
         if d1.dot(pmid - center) < 0:
             d1 = -d1
 
-        d2 = axis.cross(p2)
-        d2.normalize()
+        d2 = axis.cross(p2 - center)
+        d2 = d2.normalized()
         if d2.dot(pmid - center) < 0:
             d2 = -d2
 
@@ -191,33 +258,419 @@ def U_torus_planes(face, u_params, Surfaces):
         return (plane1, plane2)
 
 
-def gen_plane_sphere(face, solidFaces):
-    same_faces = []
-    same_faces.append(face)
-    center = face.Surface.Center
+def _unwrap_near(u, reference):
+    """The representative of u's own periodic equivalence class
+    (u + k*2*pi, any integer k) that lands closest to `reference` --
+    avoids an artificial 0/2*pi discontinuity when sampling near the
+    surface's own periodic U seam: confirmed live, 2026-08-26,
+    codo.stp -- Umax sits almost exactly at 2*pi, and twoPimod's own
+    unconditional wrap into [0, 2*pi) was reducing that side's own
+    sampled U values down to ~0, misclassifying it as the Umin side."""
+    two_pi = 2 * math.pi
+    return u + two_pi * round((reference - u) / two_pi)
 
-    for f in solidFaces:
-        if f.isEqual(face) or type(f.Surface) is not GSphere:
-            continue
-        if f.Surface.Center == face.Surface.Center and f.Surface.Radius == face.Surface.Radius:
-            # print 'Warning: coincident sphere faces are the same'
-            for f2 in same_faces:
-                if shapes_in_contact(f.__native__, f2.__native__):
-                    same_faces.append(f)
-                    break
 
-    # print same_faces
-    normal = GVector(0, 0, 0)
-    for f in same_faces:
-        normal = normal + f.Area * (f.CenterOfMass - center)
+def _edge_u_extent(face, edge, reference, n_samples=9):
+    """The U extent [u_lo, u_hi] this edge's own geometry actually
+    reaches on `face`, sampled along its full length -- not just its 2
+    endpoints. A torus face bounded by a plane that does NOT pass
+    through the torus axis produces a boundary curve where U genuinely
+    varies along the edge, including for a topologically "closed" edge
+    (same start/end vertex): confirmed live, 2026-08-26,
+    U_open_Fwd_3.stp -- one such edge's own endpoints sit at U=3.66, but
+    it dips to U=3.41 (matching Umin exactly) at its own midpoint;
+    checking only the 2 endpoints would have missed this and wrongly
+    concluded the edge doesn't belong to either side.
+
+    Each sample is unwrapped near `reference` (see _unwrap_near) instead
+    of naively reduced via twoPimod, so a seam sitting inside or right
+    at the edge of [Umin, Umax] doesn't fracture the edge's own extent
+    across the 0/2*pi cut."""
+    t0, t1 = edge.ParameterRange
+    us = [
+        _unwrap_near(face.parameter(edge.value_at(t0 + (t1 - t0) * k / (n_samples - 1)))[0], reference)
+        for k in range(n_samples)
+    ]
+    return min(us), max(us)
+
+
+def _classify_edge_u_side(u_lo, u_hi, Umin, Umax, region_frac=0.25):
+    """ "min" if the edge's own U extent [u_lo, u_hi] reaches the Umin
+    region but not the Umax region, "max" if the reverse, or None if it
+    reaches BOTH regions (a genuine connector edge, bridging the two
+    sides -- see below) or NEITHER (an edge of an unrelated wire, e.g.
+    an interior hole, not anchored to either side at all).
+
+    A first version compared against the midpoint of [Umin, Umax] --
+    wrong per the user's own counter-example (2026-08-26,
+    U_open_Rev_2.stp): the two sides' own boundary edges are not
+    symmetric in how far they dip toward the middle (one reaching only
+    to ~10% of the full span, the other to ~65%), so a fixed midpoint
+    split misclassified the deeper-dipping real side edge as a
+    connector.
+
+    Corrected per the user's own direct description of how a connector
+    edge is actually identified: a connector edge is the one whose own
+    U extent runs from the Umin region all the way to the Umax region
+    (touches both), which is a real, qualitatively different signature
+    from a side edge (which only ever touches ONE of the two regions,
+    however deep it dips toward the middle). "Region" here is the
+    [Umin, Umin + region_frac*span] / [Umax - region_frac*span, Umax]
+    neighborhood of each boundary -- confirmed against both known
+    non-connector cases (U_open_Fwd_3.stp, codo.stp) and the
+    counter-example above with region_frac=0.25."""
+    span = Umax - Umin
+    tol = region_frac * span
+    reaches_min = (u_lo - Umin) < tol
+    reaches_max = (Umax - u_hi) < tol
+    if reaches_min and reaches_max:
+        return None  # connector: reaches both regions
+    if reaches_min:
+        return "min"
+    if reaches_max:
+        return "max"
+    return None  # reaches neither -- unrelated
+
+
+def torus_u_side_edges(shell, Uparams):
+    """Split a torus face/shell's own boundary into the two U-side edge
+    sets (Umin-side edges, Umax-side edges) -- only meaningful when U is
+    open (Uclosed=False).
+
+    Gathers the shell's own boundary edges (real face.wires() for a
+    single face; _boundary_edges_of_merged_faces for a merged
+    ShellFaceGu, since an internal seam between merged pieces must not
+    be treated as a real boundary) and classifies each edge
+    independently by its own sampled U extent (_classify_edge_u_side) --
+    no wire-level grouping needed, since an edge's own extent already
+    anchors it to one side or marks it as a connector on its own."""
+    Umin, Umax = Uparams
+
+    if type(shell) is ShellFaceGu:
+        # Local import: meta_surfaces_utils.py imports FROM this module
+        # at module level (gen_cone/gen_cylinder/cone_apex_plane), so
+        # importing from it here at module level would be circular.
+        from ..utils.meta_surfaces_utils import _boundary_edges_of_merged_faces
+
+        edges = _boundary_edges_of_merged_faces(shell.Faces)
+        # any merged face works for .parameter() -- they all share the
+        # same underlying analytic torus surface (that's what merging
+        # means), so U/V parametrization is consistent across them
+        param_face = shell.Faces[0]
+    else:
+        edges = [e for w in shell.wires() for e in w.Edges]
+        param_face = shell
+
+    reference = 0.5 * (Umin + Umax)
+    min_edges, max_edges = [], []
+    for e in edges:
+        u_lo, u_hi = _edge_u_extent(param_face, e, reference)
+        side = _classify_edge_u_side(u_lo, u_hi, Umin, Umax)
+        if side == "min":
+            min_edges.append(e)
+        elif side == "max":
+            max_edges.append(e)
+        # else: connector edge, or an unrelated wire's edge -- ignore
+
+    return min_edges, max_edges
+
+
+def _u_sides_planar(shell, Uclosed, Vclosed, Uparams):
+    """(UminSide_planar, UmaxSide_planar): whether each U-boundary
+    side's own boundary edges are all INDIVIDUALLY planar (each edge on
+    its own, not necessarily all sharing one common plane -- an off-axis
+    plane cut can leave a side made of several distinct planar pieces
+    at different orientations, see edges_individually_planar's own
+    docstring), so no additional U-bounding plane needs constructing
+    for it (U_torus_planes could skip that side).
+
+    Only computed for the Uopen+Vclosed case for now (per explicit user
+    scoping, 2026-08-26: Uopen+Vopen is a harder case, tackled later) --
+    returns (None, None) otherwise, including for a closed-U face (the
+    question doesn't apply there: no U-bounding plane is ever needed)."""
+    if Uclosed or not Vclosed:
+        return None, None
+
+    # Local import: meta_surfaces_utils.py imports FROM this module at
+    # module level (gen_cone/gen_cylinder/cone_apex_plane), so importing
+    # from it here at module level would be circular.
+    from ..utils.meta_surfaces_utils import edges_individually_planar
+
+    min_edges, max_edges = torus_u_side_edges(shell, Uparams)
+    return edges_individually_planar(min_edges), edges_individually_planar(max_edges)
+
+
+def torus_face_configuration(shell, Urange, Vrange):
+    """Group every classification characteristic of a torus face/shell
+    into one configuration tuple -- the key used to select the correct
+    boolean-expression construction for its Torus branch.
+
+    `Urange`/`Vrange` are check_torus_bounds(shell)'s own return values
+    (each a (closed, (min, max)) pair). Returns:
+    (orientation, Uclosed, Vclosed, u_over_180, v_side_value,
+     v_arc_class, degenerated, UminSide_planar, UmaxSide_planar)
+    - orientation: "Forward" or "Reversed" (shell.Orientation)
+    - Uclosed / Vclosed: whether the U / V range spans a full 2*pi loop
+    - u_over_180: whether the U range spans more than pi (180 degrees)
+    - v_side_value: v_side(*Vparams) -- +1 outer/convex, -1 inner/
+      concave, 0 straddles neither band cleanly (see v_side's own
+      docstring)
+    - v_arc_class: the V arc length (Vmax - Vmin) bucketed into 3
+      cases -- 1 if v_arc <= pi/2, 2 if pi/2 < v_arc <= pi, 3 if
+      v_arc > pi
+    - degenerated: whether the underlying torus is self-intersecting
+      (MinorRadius > MajorRadius)
+    - UminSide_planar / UmaxSide_planar: whether the boundary at
+      U=Umin / U=Umax is already delimited exclusively by a (real)
+      plane -- only computed for Uopen+Vclosed, None otherwise -- see
+      _u_sides_planar's own docstring"""
+    Uclosed, Uparams = Urange
+    Vclosed, Vparams = Vrange
+    Umin, Umax = Uparams
+    Vmin, Vmax = Vparams
+    u_over_180 = (Umax - Umin) > math.pi
+    v_side_value = v_side(*Vparams)
+    v_arc = Vmax - Vmin
+    if v_arc <= math.pi / 2:
+        v_arc_class = 1
+    elif v_arc <= math.pi:
+        v_arc_class = 2
+    else:
+        v_arc_class = 3
+    degenerated = shell.Surface.Degenerated
+    UminSide_planar, UmaxSide_planar = _u_sides_planar(shell, Uclosed, Vclosed, Uparams)
+    return (
+        shell.Orientation,
+        Uclosed,
+        Vclosed,
+        u_over_180,
+        v_side_value,
+        v_arc_class,
+        degenerated,
+        UminSide_planar,
+        UmaxSide_planar,
+    )
+
+
+def v_side(vmin, vmax):
+    """Classify a torus V range by which side of the tube it lies on.
+
+    V=0 is the tube's outer equator (farthest from the torus axis,
+    rho(v) = MajorRadius + MinorRadius*cos(v) maximal); V=pi is the
+    inner equator (closest to the axis, rho minimal) -- see the torus
+    parametrization P(u,v) = Center + rho(v)*radial(u) + MinorRadius*
+    sin(v)*Axis.
+
+    Returns +1 if the whole [vmin, vmax] range lies within [-pi/2, pi/2]
+    (mod 2*pi) -- the outer/convex side, cos(v) > 0 throughout -- -1 if
+    it lies entirely within [pi/2, 3*pi/2] -- the inner/concave side,
+    cos(v) < 0 throughout -- or 0 if the range straddles a boundary and
+    doesn't fit cleanly in either band."""
+    v0 = twoPimod(vmin)
+    v1 = v0 + (vmax - vmin)  # shift by the same amount as v0, so the
+    # true span (vmax - vmin) is preserved instead of being corrupted by
+    # wrapping each endpoint independently
+
+    # The outer band ([-pi/2, pi/2] mod 2*pi) straddles the v0=0 wrap
+    # point once v0 is reduced into [0, 2*pi) -- check both periodic
+    # copies of the band that can overlap that window.
+    for offset in (0.0, 2 * math.pi):
+        lo, hi = -math.pi / 2 + offset, math.pi / 2 + offset
+        if lo <= v0 and v1 <= hi:
+            return 1
+
+    # The inner band ([pi/2, 3*pi/2]) never straddles the v0=0 wrap
+    # point, so a single check in [0, 2*pi) is sufficient.
+    if math.pi / 2 <= v0 and v1 <= 3 * math.pi / 2:
+        return -1
+
+    return 0
+
+
+def _torus_v_of_min_rho(vmin, vmax):
+    """The value of v within [vmin, vmax] where the torus's own local
+    tube-circle radius rho(v) = MajorRadius + MinorRadius*cos(v) is
+    smallest -- i.e. the "hardest" end of the range for a single plane
+    to close, since rho decreases as v moves away from 0 (mod 2*pi)
+    toward pi. Checks both range endpoints plus any interior point
+    where v is an odd multiple of pi (the true global minimum of rho,
+    if it falls inside the range)."""
+    candidates = [vmin, vmax]
+    k_lo = math.ceil((vmin - math.pi) / (2 * math.pi))
+    k_hi = math.floor((vmax - math.pi) / (2 * math.pi))
+    for k in range(k_lo, k_hi + 1):
+        candidates.append(math.pi + 2 * k * math.pi)
+    return min(candidates, key=math.cos)
+
+
+def oneplane_surface(Uparams, Vparams, radius_ratio):
+    """Whether a single flat plane (built by one_torus_plane) can close
+    off BOTH the U and V gaps of a torus face that's open in both
+    directions, instead of needing 2 U-bounding planes plus a separate
+    V-bounding surface.
+
+    Derived and verified empirically with the user, 2026-08-25 (R=4,
+    r=2 worked example, swept symmetric/asymmetric U and V ranges --
+    see CLAUDE.md's own "oneplane_surface" derivation writeup for the
+    full account): the candidate plane is the vertical chord (normal
+    perpendicular to the torus axis) through the two real face points
+    at (Umin, v_worst) and (Umax, v_worst), where v_worst is whichever
+    v in [Vmin, Vmax] gives the smallest tube radius
+    rho(v) = MajorRadius + MinorRadius*cos(v) -- the harder end to
+    close. This chord's own distance from the torus axis is
+    rho(v_worst) * cos((Umax-Umin)/2), and the plane exists iff this
+    distance stays outside the torus's own "core" cylinder (radius
+    MajorRadius + MinorRadius/2, spanning the torus's own full height
+    -MinorRadius to +MinorRadius along its axis) -- confirmed via
+    direct point-sampling across symmetric and asymmetric V ranges,
+    including ranges straddling v=0.
+
+    The whole condition is scale-invariant (dividing both sides by
+    MinorRadius): only radius_ratio = MajorRadius/MinorRadius matters,
+    not the absolute size --
+    (radius_ratio + cos(v_worst)) * cos(dU/2) >= radius_ratio + 0.5.
+    """
+    Umin, Umax = Uparams
+    Vmin, Vmax = Vparams
+    v_worst = _torus_v_of_min_rho(Vmin, Vmax)
+    rho_worst = radius_ratio + math.cos(v_worst)
+    dU = abs(Umax - Umin)
+    return rho_worst * math.cos(dU / 2.0) >= radius_ratio + 0.5
+
+
+def one_torus_plane(shell, Uparams, Vparams, Surfaces):
+    """Build the single closing plane whose existence oneplane_surface
+    already confirmed -- the vertical chord through the real face
+    points at (Umin, v_worst) and (Umax, v_worst). See oneplane_surface's
+    own docstring for the full derivation. Used only for the ordinary
+    (non-degenerate) case, once oneplane_surface has confirmed a single
+    plane is possible -- U and V are both genuinely open here, so
+    Umin/Umax are never the same physical point (see
+    one_degenerated_torus_plane's own docstring for why that matters
+    and why it needs a different, more general construction).
+    """
+    if is_parallel(shell.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
+        axis = GVector(1, 0, 0)
+    elif is_parallel(shell.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
+        axis = GVector(0, 1, 0)
+    elif is_parallel(shell.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
+        axis = GVector(0, 0, 1)
+
+    Umin, Umax = Uparams
+    Vmin, Vmax = Vparams
+    v_worst = _torus_v_of_min_rho(Vmin, Vmax)
+
+    if type(shell) is ShellFaceGu:
+        tface = shell.Faces[0]
+    else:
+        tface = shell
+
+    p1 = tface.value_at(Umin, v_worst)
+    p2 = tface.value_at(Umax, v_worst)
+    pmid = tface.value_at(0.5 * (Umin + Umax), v_worst)
+
+    d = axis.cross(p2 - p1).normalized()
+    if d.dot(pmid - p1) < 0:
+        d = -d
+
+    return (GeounedSurface(("Plane", (p1, d, 1, 1))),)
+
+
+def one_degenerated_torus_plane(shell, Surfaces):
+    """Build the single closing plane for a DEGENERATE (self-intersecting,
+    MinorRadius > MajorRadius) torus face whose U and/or V range is
+    open -- per the user's own direct confirmation, 2026-08-25: for a
+    degenerate torus, whenever U and V aren't BOTH already closed,
+    exactly one plane always suffices (unlike the ordinary case, which
+    needs oneplane_surface's own existence check first).
+
+    General by construction: works for any combination of open U/V,
+    unlike one_torus_plane's own chord-based construction (through the
+    2 U-extreme points at a single, analytically-chosen v), which
+    breaks whenever U alone is already fully closed, since its own 2
+    endpoints then collapse to the same physical point (Umin and
+    Umax=Umin+2*pi are the same point on a closed torus) -- confirmed
+    live on Solidos/../tank.stp's own degenerate torus, which hits
+    exactly this Uclosed=True case.
+
+    Per the user's own direct instruction: the plane's own normal is
+    the face's own boundary contour's principal inertia axis (same
+    machinery already used for a similar purpose in
+    decom_utils_generator.py::spline_wires -- Gmake_wire + get_axis_inertia,
+    falling back to summing each boundary edge's own individual axis if
+    the boundary edges don't form one single connected wire, e.g. a
+    merged shell whose own outer boundary is more than one loop). Its
+    position is the contour's own extreme point in the direction AWAY
+    from the face's own material -- i.e. the point a plane sweeping in
+    from infinity, moving toward the face (normal pointing at the
+    face's own material), would touch first. This guarantees the whole
+    contour -- and, since the face's own surface is bounded by that
+    contour, the whole face -- ends up on one side.
+    """
+    if type(shell) is ShellFaceGu:
+        # deferred import -- meta_surfaces_utils.py itself imports from
+        # this file at module level (gen_cone/gen_cylinder/cone_apex_plane),
+        # so importing it back at module level here would be circular;
+        # safe as a local import since neither module needs the other's
+        # names until a real call happens, well after both are loaded.
+        from ..utils.meta_surfaces_utils import _boundary_edges_of_merged_faces
+
+        boundary_edges = _boundary_edges_of_merged_faces(shell.Faces)
+    else:
+        boundary_edges = shell.outer_wire().Edges
+
+    # deferred import -- same circular-import reason as
+    # _boundary_edges_of_merged_faces above (decom_utils_generator.py
+    # itself imports from meta_surfaces_utils.py at module level, which
+    # in turn imports from this file).
+    from ..decompose.decom_utils_generator import get_axis_inertia
+
+    try:
+        wire = Gmake_wire(list(boundary_edges))
+        axis = get_axis_inertia(wire.MatrixOfInertia)
+    except Exception:
+        axis = GVector(0, 0, 0)
+        for e in boundary_edges:
+            axis = axis + get_axis_inertia(e.MatrixOfInertia)
+        axis = axis.normalized()
+
+    contour_points = [v for e in boundary_edges for v in e.Vertexes]
+    material = shell.CenterOfMass
+
+    # orient axis toward the face's own material: the material's own
+    # centroid must project further along axis than every contour point
+    # does, i.e. the contour's own extreme (the plane's position, found
+    # below) sits on the far/outside end, material on the near/inside end.
+    if material.dot(axis) < max(p.dot(axis) for p in contour_points):
+        axis = -axis
+
+    position = min(contour_points, key=lambda p: p.dot(axis))
+
+    return (GeounedSurface(("Plane", (position, axis, 1, 1))),)
+
+
+def gen_plane_sphere(shell):
+
+    if type(shell.Surface) is not GSphere:
+        return None
+
+    center = shell.Surface.Center
+    if type(shell) is ShellFaceGu:
+        normal = GVector(0, 0, 0)
+        for f in shell.Faces:
+            normal = normal + f.Area * (f.CenterOfMass - center)
+    else:
+        normal = shell.CenterOfMass - center
+
     normal = normal.normalized()
+    radius = shell.Surface.Radius
 
     # A plane clipped to a box centered on the sphere (side = 2*radius, +1%
     # margin) is enough: same_faces are all faces of this exact sphere, so
     # every point we measure distToShape against is within `radius` of
     # sphere_center in every direction -- well inside the box. No need for
     # a true infinite Part.Plane.
-    half_side = face.Surface.Radius * 1.01
+    half_side = radius * 1.01
     box = GBoundBox(
         center.x - half_side,
         center.y - half_side,
@@ -228,10 +681,13 @@ def gen_plane_sphere(face, solidFaces):
     )
     tmp_plane = plane_polygon_from_box(normal, normal.dot(center), box)
 
-    dmin = 2 * face.Surface.Radius
-    for f in same_faces:
-        dist = tmp_plane.distance_to(f)
-        dmin = min(dmin, dist)
+    dmin = 2 * radius
+    if type(shell) is ShellFaceGu:
+        for f in shell.Faces:
+            dist = tmp_plane.distance_to(f)
+            dmin = min(dmin, dist)
+    else:
+        dmin = tmp_plane.distance_to(shell)
 
     if dmin > 1e-6:
         new_center = center + 0.95 * dmin * normal
@@ -241,93 +697,62 @@ def gen_plane_sphere(face, solidFaces):
         return None
 
 
-def gen_plane_cylinder(face, solidFaces, tolerances):
+def gen_plane_cylinder(shell):
 
-    surf = face.Surface
-    rad = surf.Radius
-
-    if type(surf) is not GCylinder:
+    if type(shell.Surface) is not GCylinder:
         return None
 
-    my_index = face.Index
-    face_index = [my_index]
-
-    for face2 in solidFaces:
-        if face2.Area < tolerances.min_area:
-            logger.warning(
-                f"surface {str(surf)} removed from cell definition. Face area < Min area ({face2.Area} < {tolerances.min_area})"
-            )
-            continue
-        if type(face2.Surface) is GCylinder and face2.Index != face.Index:
-            if (
-                face2.Surface.Axis.is_equal(face.Surface.Axis, 1e-5)
-                and face2.Surface.Radius == rad
-                and is_in_line(face2.Surface.Center, face.Surface.Axis, face.Surface.Center)
-            ):
-                # print 'Warning: coincident cylinder faces are the same'
-                face_index.append(face2.Index)
-
-    u_min, u_max = get_u_value_boundary(solidFaces, face_index, my_index)
+    u_min, u_max = get_u_value_boundary(shell, 0)
     if u_min is None:
         return None
 
     u_1, i1 = u_min
     u_2, i2 = u_max
 
-    v_1 = solidFaces[i1].ParameterRange[2]
-    v_2 = solidFaces[i2].ParameterRange[2]
-
-    p1 = solidFaces[i1].value_at(u_1, v_1)
-    p2 = solidFaces[i2].value_at(u_2, v_2)
+    if type(shell) is ShellFaceGu:
+        v_1 = shell.Faces[i1].ParameterRange[2]
+        v_2 = shell.Faces[i2].ParameterRange[2]
+        p1 = shell.Faces[i1].value_at(u_1, v_1)
+        p2 = shell.Faces[i2].value_at(u_2, v_2)
+    else:
+        v_1 = shell.ParameterRange[2]
+        v_2 = shell.ParameterRange[2]
+        p1 = shell.value_at(u_1, v_1)
+        p2 = shell.value_at(u_2, v_2)
 
     if p1.is_equal(p2, 1e-5):
         logger.error("Error in the additional place definition")
         return None
 
-    normal = (p2 - p1).cross(face.Surface.Axis).normalized()
-    if normal.dot(face.CenterOfMass - p1) < 0:
+    normal = (p2 - p1).cross(shell.Surface.Axis).normalized()
+    if normal.dot(shell.CenterOfMass - p1) < 0:
         normal = -normal
 
     return GeounedSurface(("Plane", (p1, normal, 1, 1)))
 
 
-def gen_plane_cone(face, solidFaces, tolerances):
-
-    Surf = face.Surface
-    if type(Surf) is not GCone:
+def gen_plane_cone(shell):
+    if type(shell.Surface) is not GCone:
         return None
+    cone_apex = shell.Surface.Apex
 
-    cone_apex = face.Surface.Apex
-
-    myIndex = solidFaces.index(face)
-    face_index = [myIndex]
-
-    for face2 in solidFaces:
-        if face2.Area < tolerances.min_area:
-            logger.warning(
-                f"{str(Surf)} surface removed from cell definition. Face area < Min area ({face2.Area} < {tolerances.min_area})"
-            )
-            continue
-        if type(face2.Surface) is GCone and not (face2.isEqual(face)):
-            if (
-                face2.Surface.Axis.is_equal(face.Surface.Axis, 1e-5)
-                and face2.Surface.Apex.is_equal(face.Surface.Apex, 1e-5)
-                and (face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1e-6
-            ):
-                face_index.append(face2.Index)
-
-    u_min, u_max = get_u_value_boundary(solidFaces, face_index, myIndex)
+    u_min, u_max = get_u_value_boundary(shell, 0)
     if u_min is None:
         return None
 
     u_1, i1 = u_min
     u_2, i2 = u_max
 
-    v_1 = solidFaces[i1].ParameterRange[2]
-    v_2 = solidFaces[i2].ParameterRange[2]
-
-    p1 = solidFaces[i1].value_at(u_1, v_1)
-    p2 = solidFaces[i2].value_at(u_2, v_2)
+    if type(shell) is ShellFaceGu:
+        v_1 = shell.Faces[i1].ParameterRange[2]
+        v_2 = shell.Faces[i2].ParameterRange[2]
+        p1 = shell.Faces[i1].value_at(u_1, v_1)
+        p2 = shell.Faces[i2].value_at(u_2, v_2)
+    else:
+        v_1 = shell.ParameterRange[2]
+        v_2 = shell.ParameterRange[2]
+        p1 = shell.value_at(u_1, v_1)
+        p2 = shell.value_at(u_2, v_2)
 
     if p1.is_equal(p2, 1e-5):
         logger.error("in the additional place definition")
@@ -336,32 +761,36 @@ def gen_plane_cone(face, solidFaces, tolerances):
     v1 = p1 - cone_apex
     v2 = p2 - cone_apex
     normal = v1.cross(v2).normalized()
-    if normal.dot(face.CenterOfMass - cone_apex) < 0:
+    if normal.dot(shell.CenterOfMass - cone_apex) < 0:
         normal = -normal
 
     return GeounedSurface(("Plane", (cone_apex, normal, 1, 1)))
 
 
-def get_u_value_boundary(solidFaces, face_index, my_index):
+def get_u_value_boundary(face, face_index):
 
-    face_u_ranges, closed_face = get_closed_ranges(solidFaces, face_index)
+    face_u_ranges, closed_face = get_closed_ranges(face)
     if closed_face:
         return None, None
 
     for face_u_range in face_u_ranges:
-        if my_index in face_u_range[2]:
+        if face_index in face_u_range[2]:
             u_min, u_max = face_u_range[0:2]
             return u_min, u_max
 
 
-def get_closed_ranges(solidFaces, face_index):
+def get_closed_ranges(face):
 
-    u_nodes = []
-    for index in face_index:
-        URange = solidFaces[index].ParameterRange
-        u_nodes.append((URange[0], index))
-        u_nodes.append((URange[1], index))
-    u_nodes.sort()
+    if type(face) is ShellFaceGu:
+        u_nodes = []
+        for index, f in enumerate(face):
+            URange = f.ParameterRange
+            u_nodes.append((URange[0], index))
+            u_nodes.append((URange[1], index))
+        u_nodes.sort()
+    else:
+        URange = face.ParameterRange
+        u_nodes = [(URange[0], 0), (URange[1], 0)]
 
     closed_range = get_intervals(u_nodes)
 

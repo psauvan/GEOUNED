@@ -8,7 +8,8 @@
 import logging
 import math
 
-from .basic_functions_part1 import is_same_value
+from .data_constants import twoPi
+from .basic_functions_part1 import is_same_value, twoPimod
 from .basic_functions_part2 import is_same_torus
 from .data_classes import Tolerances
 from ...geo import vector_geometry
@@ -132,24 +133,6 @@ class SolidGu(GSolid):
                 sameSurfaces.append(current)
         return sameSurfaces
 
-    # TODO check if this function is used as it appears to be nut used in the code
-    def merge_no_periodic_uv(self, parameter, faceList):
-        if parameter == "U":
-            i1 = 0
-            i2 = 2
-        elif parameter == "V":
-            i1 = 2
-            i2 = 4
-
-        v_min, v_max = self.Faces[faceList[0]].ParameterRange[i1:i2]
-        for face in faceList[1:]:
-            V0, V1 = self.Faces[face].ParameterRange[i1:i2]
-            v_min = min(v_min, V0)
-            v_max = max(v_max, V1)
-        mergedParams = (False, (v_min, v_max))
-
-        return mergedParams
-
     def merge_periodic_uv(self, parameter, faceList):
         two_pi = 2.0 * math.pi
         if parameter == "U":
@@ -240,7 +223,7 @@ class FaceGu(GFace):
         # distance query lives in geo (GFace.distance_to) -- ShellGu
         # itself isn't a geo type, so the recursion over its Faces stays
         # here.
-        if isinstance(shape, ShellGu):
+        if isinstance(shape, ShellFaceGu):
             distmin = float("inf")
             for f in shape.Faces:
                 d = self.distToShape(f)
@@ -250,18 +233,66 @@ class FaceGu(GFace):
             return (self.my_distToshape(shape),)
 
 
-class ShellGu:
+class ShellFaceGu:
     def __init__(self, faces):
         self.Faces = faces
+        if not self._check_same_surface_type():
+            logger.info("ShellFaceGu: faces are not of the same type")
+            raise RuntimeError("ShellFaceGu: faces are not of the same type")
+        self.Surface = Gclassify_surface(faces[0].__native__)  # all faces are the same type, so just classify the first one
+
         self.__shell__ = self.makeShell()
-        self.Indexes = [f.Index for f in faces]
+        self.Indexes = {f.Index for f in faces}
         self.Orientation = faces[0].Orientation
+        self.CenterOfMass = self._get_center_of_mass()
+        self.U_parameter_range = self._U_parameter_faces()
+
+    def _U_parameter_faces(self):
+        AngleRange = 0.0
+        Uval, UValmin, UValmax = [], [], []
+        for f in self.Faces:
+            Range = f.ParameterRange
+            AngleRange = AngleRange + abs(Range[1] - Range[0])
+            Uval.append(Range[0:2])
+            UValmin.append(Range[0])
+            UValmax.append(Range[1])
+
+        if twoPimod(AngleRange) == 0:
+            return 0, twoPi, 0, 0
+
+        Umin, Umax = sort_range(Uval)
+        ifacemin = UValmin.index(Umin)
+        ifacemax = UValmax.index(Umax)
+        return Umin, Umax, ifacemin, ifacemax
+
+    def _check_same_surface_type(self):
+        if len(self.Faces) == 0:
+            return False
+        first_type = type(self.Faces[0].Surface)
+        for face in self.Faces[1:]:
+            if type(face.Surface) != first_type:
+                return False
+        return True
 
     def makeShell(self):
         # self.Faces is always FaceGu (its only caller, closed_cylinder_cone,
         # always passes a SolidGu.Faces subset) -- FaceGu already IS a GFace
         # via inheritance, so no unwrap-to-native/rebuild is needed here.
         return Gmake_shell(self.Faces)
+
+    def _get_center_of_mass(self):
+        # every caller passes a ShellGu or something wrapping a native
+        # shape (FaceGu/GFace/GSolid) -- confirmed via grep, no live call
+        # site ever passes a raw native shape here. The actual native
+        # distance query lives in geo (GFace.distance_to) -- ShellGu
+        # itself isn't a geo type, so the recursion over its Faces stays
+        # here.
+        com = vector_geometry.GVector(0, 0, 0)
+        area = 0.0
+        for f in self.Faces:
+            area += f.Area
+            com += f.Area * f.CenterOfMass
+        return com / (area * len(self.Faces))
 
 
 # Aux functions
@@ -346,3 +377,68 @@ def other_face_edge(
                         return found
                 return None
     return None
+
+
+def sort_range(Urange):
+    workRange = Urange[1:]
+    current = Urange[0]
+    for r in reversed(workRange):
+        joined = join_range(current, r)
+        if joined is None:
+            continue
+        current = joined
+        workRange.remove(r)
+    if len(workRange) == 0:
+        return current
+    elif len(workRange) == 1:
+        joined = join_range(current, workRange[0])
+        if joined is None:
+            return adjust_range(current, workRange[0])
+        else:
+            return joined
+    else:
+        workRange.append(current)
+        sorted = sort_range(workRange)
+        return sorted
+
+
+def join_range(U0, U1):
+    if (U0[0] - U1[0] < 1e-5) and (-1e-5 < U0[1] - U1[0]):
+        if U1[1] > U0[1]:
+            return (U0[0], U1[1])
+        else:
+            return U0
+    elif (U0[0] - U1[1] < 1e-5) and (-1e-5 < U0[1] - U1[1]):
+        if U1[0] < U0[0]:
+            return (U1[0], U0[1])
+        else:
+            return U0
+    elif (U1[0] < U0[0]) and (U0[1] < U1[1]):
+        return U1
+
+    elif (U0[0] < U1[0]) and (U1[1] < U0[1]):
+        return U0
+    else:
+        return None
+
+
+def adjust_range(U0, U1):
+
+    V0 = [twoPimod(x) for x in U0]
+    V1 = [twoPimod(x) for x in U1]
+
+    if abs(V0[0] - V1[1]) < 1e-5:
+        imin = 1  # U1[0]
+        imax = 0  # U0[1]
+    elif abs(V1[0] - V0[1]) < 1e-5:
+        imin = 0  # U0[0]
+        imax = 1  # U1[1]
+    elif V1[1] < V0[0]:
+        imin = 0  # U0[0]
+        imax = 1  # U1[1]
+    else:
+        imin = 1  # U1[0]
+        imax = 0  # U1[0]
+
+    mat = (U0, U1)
+    return (mat[imin][0], mat[imax][1])

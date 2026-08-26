@@ -285,10 +285,9 @@ class GeounedSurface:
         elif params[0] == "Torus":
             self.Type = params[0]
             self.Surf = TorusParams(params[1])
-            if len(params) > 2:
-                self.Orientation = params[2]
-            else:
-                self.Orientation = None
+            self.Orientation = params[2]
+            self.Degenerated = params[3]
+
         elif params[0] == "MultiPlane":
             self.Type = params[0]
             self.Surf = MultiPlanesParams(params[1])
@@ -697,10 +696,17 @@ class MetaSurfacesDict(dict):
             psurf.append(pid)
             components[abs(pid)] = tp
 
-        if len(psurf) == 2:
-            torus_region = torus_region * (BoolSurface(0, psurf[0]) + BoolSurface(0, psurf[1]))
-        elif len(psurf) == 1:
-            torus_region = torus_region * BoolSurface(0, psurf[0])
+        if psurf:
+            if torus.Orientation == "Forward" or torus.Degenerated:
+                if len(psurf) == 2:
+                    torus_region = torus_region * (BoolSurface(0, psurf[0]) + BoolSurface(0, psurf[1]))
+                elif len(psurf) == 1:
+                    torus_region = torus_region * BoolSurface(0, psurf[0])
+            else:
+                if len(psurf) == 2:
+                    torus_region = torus_region + ((-BoolSurface(0, psurf[0])) * (-BoolSurface(0, psurf[1])))
+                elif len(psurf) == 1:
+                    torus_region = torus_region - BoolSurface(0, psurf[0])
 
         if torus.Surf.VSurface:
             if torus.Surf.VSurface.Type == "Plane":

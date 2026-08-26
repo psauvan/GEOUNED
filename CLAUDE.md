@@ -8826,6 +8826,185 @@ sign-bug investigations (Can/TCone/RevCC), but for a genuinely different
 part of the pipeline (boolean cleaning, not surface-sign derivation)
 never chased down before.
 
+## Torus branch reorganization: `torus_face_configuration`, region-based
+U-side classification, and two real correctness bugs fixed
+
+Follow-up session, working with the user to reorganize `cell_definition.py`'s
+Torus branch (`simple_solid_definition`) around a single classification
+function rather than the old ad-hoc `Uclosed`/`Vclosed`/`Degenerated`
+if-elif chain. `torus_face_configuration(shell, Urange, Vrange)`
+(`cell_definition_functions.py`) now returns one tuple gathering every
+characteristic needed to pick the right boolean-expression construction for
+a torus face: `(orientation, Uclosed, Vclosed, u_over_180, v_side_value,
+v_arc_class, degenerated, UminSide_planar, UmaxSide_planar)`.
+
+- `v_side(vmin, vmax)`: classifies a V range by which side of the tube it
+  lies on (+1 outer/convex, -1 inner/concave, 0 straddles neither band) --
+  V=0 is the tube's outer equator (farthest from the axis), V=pi the inner
+  equator, per the torus parametrization `P(u,v) = Center + rho(v)*
+  radial(u) + MinorRadius*sin(v)*Axis`.
+- `v_arc_class`: the V arc length bucketed into 3 cases (<=pi/2, pi/2 to
+  pi, >pi).
+- `UminSide_planar`/`UmaxSide_planar`: whether each U-boundary side's own
+  edges are individually planar (`edges_individually_planar`, a NEW
+  `meta_surfaces_utils.py` function -- deliberately different from the
+  existing `planar_edges`, which additionally requires all edges to share
+  ONE common plane; a torus U-side closed by an off-axis-plane cut can
+  legitimately be several distinct planar pieces at different
+  orientations, not one flat boundary). Only computed for the Uopen+Vclosed
+  case for now (Uopen+Vopen deferred as harder, per explicit user scoping).
+
+`torus_u_side_edges(shell, Uparams)` finds which boundary edges belong to
+the Umin side vs the Umax side vs neither (a connector edge bridging the
+two). Two real edge-cases were found and fixed while deriving this,
+neither guessed -- both confirmed via live reproduction on real fixtures
+before and after:
+- **A torus face bounded by a plane NOT through the axis produces a
+  boundary curve where U genuinely varies along a single edge**, including
+  for a topologically closed edge (same start/end vertex) -- confirmed
+  live, `U_open_Fwd_3.stp`: one such edge's own endpoints sit at one U
+  value but dip to a different one (matching Umin exactly) at its own
+  midpoint. `_edge_u_extent` samples multiple points along the edge's own
+  parameter range, not just its 2 endpoints.
+- **Classifying a side by comparing against the midpoint of [Umin, Umax]
+  is wrong** when the two sides aren't symmetric in how far they dip
+  toward the middle (confirmed live, `U_open_Rev_2.stp`: one side's own
+  boundary loop stayed within ~10% of the full span from its own
+  boundary, the other dipped to ~65%, well past the midpoint). Fixed per
+  the user's own direct description of how a connector edge is actually
+  identified: a connector's own U extent reaches BOTH the Umin region and
+  the Umax region (each region being `[boundary, boundary +
+  region_frac*span]`, `region_frac=0.25`, confirmed against 3 independent
+  known cases); a real side edge, however deep it dips, only ever reaches
+  ONE region. `_classify_edge_u_side` implements this directly.
+- **A periodic-seam wraparound bug**: `codo.stp` has `Umax` sitting almost
+  exactly at `2*pi`; naively reducing sampled U values via `twoPimod`
+  (into `[0, 2*pi)`) fractured that side's own edge across the 0/2*pi cut,
+  misclassifying it as the Umin side. Fixed with `_unwrap_near(u,
+  reference)` -- shifts `u` by a multiple of `2*pi` to land closest to a
+  given reference (the midpoint of `[Umin, Umax]`) instead of an
+  unconditional wrap.
+
+A real, unrelated bug in `spline_2D` (`meta_surfaces_utils.py`, used by
+`planar_edges`/`edges_individually_planar` to test whether a BSpline
+edge is planar) was also found and fixed: the condition compared the
+dot product of two binormal vectors against a tiny tolerance directly
+(`if abs(normal_k.dot(norm_0)) > Tolerances().value: return False`) --
+backwards, since two binormals of a genuinely planar curve are parallel
+(dot near +-1), not near 0. Fixed to `if abs(1.0 - abs(normal_k.dot
+(norm_0))) > Tolerances().value: return False`.
+
+### Verification methodology for this whole reorganization
+
+A `torus_face_configuration`-driven table (file, decomposed piece, torus
+face, every characteristic + a d1suned volume-check outcome column) was
+built and run against the full `Solidos/test_models/Torus` corpus (35
+files) repeatedly as the classification logic was refined -- the standard
+"convert with `volSDEF=True`, run d1suned, check F4 tally against 1.0"
+methodology already established elsewhere in this file, scripted this
+session as reusable scratchpad tooling (`torus_table.py`, worth
+recreating if picked up again: per-file rows via `check_torus_bounds` +
+`torus_face_configuration`, plus an outp parser mapping MCNP cell N to
+`meta_list[N-1]`, assuming sequential numbering with no removed
+enclosures -- true for these simple fixtures).
+
+### The user's own 2 fixes, found independently in the same session
+
+While this classification/edge-splitting work was in progress, the user
+found and fixed 2 real, separate bugs of their own, in files this session
+never touched directly:
+
+1. **`vector_geometry.py::torus_sheet_sign`** (which sheet of a
+   self-intersecting/degenerate torus a face vertex belongs to, backing
+   `a_sign`) had its whole formula replaced -- the old version normalized
+   the vertex's radial offset and compared its distance to the tube
+   surface against a tolerance (fragile, tolerance-dependent); the new
+   version is a direct, tolerance-free geometric criterion: `r =
+   vertex - Center; outer = r.length > sqrt(MinorRadius**2 -
+   MajorRadius**2)`.
+2. **`geouned_classes.py::MetaSurfacesDict`'s torus-region construction**
+   (the `Uplanes`/`psurf` combination step) used to always OR the 1 or 2
+   additional U-bounding planes into the torus's own region, regardless
+   of orientation. Now branches: `Forward` orientation (or `Degenerated`)
+   keeps the original OR-combination; `Reversed` non-degenerate tori use
+   a different formula (`torus_region + ((-p1)*(-p2))` for 2 planes,
+   `torus_region - p1` for 1) -- `GeounedSurface`'s own Torus constructor
+   also gained a required 4th tuple element, `Degenerated`, read directly
+   instead of being inferred.
+
+Together these 2 fixes resolved every "volumen incorrecto" (real,
+non-trivial sigma deviation) finding from the pre-fix corpus scan:
+`placa2.stp`/`solid2.stp` (previously exactly 0.0 -- the file this whole
+reorganization effort started from, 2 non-contiguous same-torus faces),
+`U_open_Rev_1.stp` (12.2 sigma), `U_open_Rev_5.stp` (3.9 sigma), and
+`UV_open_inner_face_Fwd.stp` (33.9 sigma, the worst pre-fix finding) --
+all now "volumen correcto" in the post-fix corpus rerun.
+
+### A real, FreeCAD-only regression found via the full 3-engine test suite
+
+Running `tests/geo` + `tests/test_cadtocsg.py` + `tests/test_csgtocad.py`
+under all 3 engines after the above (per this project's own established
+discipline) found `ocp`/`occ` both green (128/128, +2 already-known
+pre-existing `GEOReverse` `test_csgtocad.py` failures -- unrelated, see
+elsewhere in this file), but `freecad` failing 2 of 158:
+`get_join_cone_cyl` (`meta_surfaces_utils.py`, the RevCC chain-following
+function) does `facein.Index = face_or_shell.Index` in its Cone branch --
+but `face_or_shell` can be a `ShellFaceGu` (a merged multi-face group),
+which has `.Indexes` (plural, a set), not `.Index` -- the exact same
+dispatch the function's own top already handles correctly (`face_index =
+list(face_or_shell.Indexes) if type(face_or_shell) is ShellFaceGu else
+[face_or_shell.Index]`). Only `freecad` hit this because its own
+decomposition of these 2 particular fixtures (`testing/inputSTEP/
+placa2.stp`, `DoubleCylinder/placa3.step`) reaches a merged Cone shell
+that `ocp`/`occ`'s own decomposition of the identical files never
+produces -- consistent with this whole project's long-documented history
+of FreeCAD vs pyOCC decomposition divergence. Fixed by reusing the
+already-computed `face_index[0]` instead of `face_or_shell.Index`
+directly (both branches, Cylinder and Cone, had the identical bug; only
+the Cone branch happened to be exercised by these 2 fixtures). Verified:
+all 3 engines green after the fix -- `ocp` 128/128, `occ` 128/128,
+`freecad` 158/158 (all +2 known pre-existing GEOReverse failures on the
+pyOCC engines only).
+
+### Still open
+
+- **`Design1.stp`/`face2.stp` (both degenerate-torus fixtures) regressed**
+  after the user's 2 fixes above -- previously "volumen correcto"/mild
+  "pierde particula", now genuinely broken (`Design1.stp`: 4 solids, tallies
+  12.6/0.0/73.6/42.2, all far from 1.0; `face2.stp`: tally 58.5) -- while
+  `2_degen_torii.stp` (also degenerate) stayed correct. Investigation was
+  requested, then explicitly declined by the user ("no") before it
+  started -- open for a future session. `tank.stp` (also has degenerate
+  torus solids) reverted to "volumen correcto" across all its cells in the
+  post-fix rerun, so the regression isn't universal to every degenerate
+  case either.
+- **`2_degen_torii.stp` shows genuine run-to-run d1suned variability** on
+  the byte-identical `model.mcnp` file -- sometimes a clean tally
+  (~1.0003), sometimes 10 lost particles with tally ~0.036, reproduced
+  across multiple clean reruns (full directory wipe between attempts,
+  ruling out the project's own established stale-outp artifact). Not
+  root-caused -- flagged as a possible genuine marginal/near-degenerate
+  geometric ambiguity that different random particle histories only
+  sometimes hit, not investigated further this session.
+- **`hylife-v06.stp`** (the only file with a torus face anywhere in
+  `Solidos/test_models` outside the dedicated `Torus/` folder, confirmed
+  by scanning all 372 raw solids of all 109 other-folder files) remains
+  unable to fully translate in reasonable time under either `ocp` or
+  `freecad`. Root-caused to `meta_list[45]` specifically: 32 faces
+  including 5 genuine torus faces, 1 sphere, and several cylinders (radius
+  625/500/250mm) each duplicated 3-4 times as separate same-analytic-
+  surface face fragments. Per-`Gsplit`-call instrumentation found ZERO
+  `Gsplit` calls in 10+ minutes, meaning the bottleneck is in the
+  PRE-split candidate-surface detection (Can/RevCC's own
+  `merge_same_surface_faces`/`same_faces` pairwise adjacency walk) --
+  matching an already-documented performance class for this exact file
+  ("hylife-v06.stp solid 17", `min_area` sliver-skip section, earlier in
+  this file) -- not the same duplicated-face pattern exactly, but the same
+  O(n^2)-native-geometric-query mechanism. Not fixed; the user's own
+  hypothesis ("solidos corrupto que geouned intenta corregir") is
+  consistent with this finding but not independently confirmed beyond
+  the O(n^2) mechanism itself.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

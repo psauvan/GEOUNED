@@ -3,7 +3,7 @@
 #
 import math
 
-from .data_constants import mask
+from .data_constants import mask, twoPi
 from .boolean_function import BoolSurface
 from ...geo import vector_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
@@ -58,6 +58,16 @@ def shapes_in_contact(shape1, shape2, tolerance=1e-6):
         GSolid(shape2),
         tolerance,
     )
+
+
+def twoPimod(x):
+    x = x % twoPi
+    if x < 1e-5:
+        return 0.0
+    elif twoPi - x < 1e-5:
+        return 0.0
+    else:
+        return x
 
 
 def points_to_coeffs(points):

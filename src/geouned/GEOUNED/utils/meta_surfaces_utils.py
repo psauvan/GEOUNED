@@ -2,12 +2,13 @@ import math
 
 from collections import OrderedDict
 
-from .geometry_gu import ShellGu, FaceGu, other_face_edge, is_same_surface
+from .geometry_gu import ShellFaceGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .data_classes import Tolerances
+from .basic_functions_part1 import twoPimod
 from .basic_functions_part2 import is_same_plane
 from .data_constants import twoPi, mask
-from ..utils.basic_functions_part1 import is_in_line, is_parallel, shapes_in_contact
+from ..utils.basic_functions_part1 import is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 from ...geo import (
     GEdge,
@@ -105,7 +106,7 @@ def convex_wire(p):
 
 
 def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
-    if type(cyl) is ShellGu:
+    if type(cyl) is ShellFaceGu:
         # cyl is several contiguous pieces of the same analytic surface
         # (see merge_same_surface_faces) -- a corner plane may only be
         # reachable from one specific piece's own edges (e.g. the split
@@ -216,7 +217,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
 
 
 def get_adjacent_cylknesurf(cylkne, Faces):
-    if type(cylkne) is ShellGu:
+    if type(cylkne) is ShellFaceGu:
         adjacent = []
         adjIndexes = set()
         surface = cylkne.Faces[0].Surface
@@ -492,7 +493,7 @@ def _is_closed_by_winding(shape):
     known to share the same analytic surface) genuinely closes a full
     360deg around its cylinder/cone's own axis; None if the surface type
     isn't one this check supports (caller should fall back)."""
-    if type(shape) is ShellGu:
+    if type(shape) is ShellFaceGu:
         params = _surface_axis_origin_e1(shape.Faces[0].Surface)
         if params is None:
             return None
@@ -512,7 +513,7 @@ def is_closed_cylinder_cone(shape):
     if result is not None:
         return result
 
-    if type(shape) is not ShellGu:
+    if type(shape) is not ShellFaceGu:
         umin, umax, vmin, vmax = shape.ParameterRange
         return umax - umin > twoPi - 1e-5
 
@@ -585,7 +586,7 @@ def convex_face_cyl(cyl, edge, otherface):
     return v1.dot(v2) < 0
 
 
-def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
+def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolerances):
     """Real MultiPlane component planes physically adjacent to this RevCC
     segment's own cylinder/cone (`face`, possibly merged into a ShellGu of
     several same-analytic-surface pieces via merge_same_surface_faces --
@@ -625,8 +626,7 @@ def _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances):
 
     candidates = [mpp for mp in multiplanes for mpp in mp.Surf.Planes]
 
-    shell_or_face = merge_same_surface_faces(face, GUFaces)
-    pieces = shell_or_face.Faces if type(shell_or_face) is ShellGu else [shell_or_face]
+    pieces = shell_or_face.Faces if type(shell_or_face) is ShellFaceGu else [shell_or_face]
 
     found = []
     seen_planes = set()
@@ -704,92 +704,38 @@ def _valid_chain_junction(shared_edge, faceA, faceB, tol=1e-6):
     return True
 
 
-def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
-    face_index = [face.Index]
-    faces = [face]
+def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances):
+
+    face_index = list(face_or_shell.Indexes) if type(face_or_shell) is ShellFaceGu else [face_or_shell.Index]
+    faces = face_or_shell.Faces if type(face_or_shell) is ShellFaceGu else [face_or_shell]
     joined_faces = []
 
-    for face2 in GUFaces:
-        if face2.Index in omitFaces:
-            continue
-        if type(face2.Surface) != type(face.Surface):
-            continue
-        if isinstance(face2.Surface, GCylinder) and face2.Index != face.Index:
-            if (
-                face2.Surface.Axis.is_equal(face.Surface.Axis, 1e-5)
-                and abs(face2.Surface.Radius - face.Surface.Radius) < 1e-5
-                and is_in_line(face2.Surface.Center, face.Surface.Axis, face.Surface.Center)
-            ):
-                face_index.append(face2.Index)
-                faces.append(face2)
-        elif isinstance(face2.Surface, GCone) and face2.Index != face.Index:
-            if (
-                face2.Surface.Axis.is_equal(face.Surface.Axis, 1e-5)
-                and abs(face2.Surface.SemiAngle - face.Surface.SemiAngle) < 1.0e-5
-                and (face2.Surface.Apex - face.Surface.Apex).length < 1e-5
-            ):
-                face_index.append(face2.Index)
-                faces.append(face2)
+    if type(face_or_shell) is ShellFaceGu:
+        Umin, Umax, ifacemin, ifacemax = face_or_shell.U_parameter_range
+        if twoPimod(Umax - Umin) == 0:
+            return []
+        emin = extreme_edge(Umin, face_or_shell.Faces[ifacemin])
+        emax = extreme_edge(Umax, face_or_shell.Faces[ifacemax])
+        facemin = face_or_shell.Faces[ifacemin]
+        facemax = face_or_shell.Faces[ifacemax]
+    else:
+        Umin, Umax, _, _ = face_or_shell.ParameterRange
+        if twoPimod(Umax - Umin) == 0:
+            return []
+        facemin = face_or_shell
+        facemax = face_or_shell
+        emin = extreme_edge(Umin, face_or_shell)
+        emax = extreme_edge(Umax, face_or_shell)
 
-    sameface_index = [face.Index]  # la face de entrada
-
-    for k in same_faces(faces, tolerances):
-        sameface_index.append(face_index[k])
-
-    AngleRange = 0.0
-    Uval, UValmin, UValmax = [], [], []
-    for index in sameface_index:
-        Range = GUFaces[index].ParameterRange
-        AngleRange = AngleRange + abs(Range[1] - Range[0])
-        Uval.append(Range[0:2])
-        UValmin.append(Range[0])
-        UValmax.append(Range[1])
-    if twoPimod(AngleRange) == 0:
-        return []
-
-    omitFaces.update(sameface_index)
-    Umin, Umax = sort_range(Uval)
-
-    ifacemin = face_index[UValmin.index(Umin)]
-    ifacemax = face_index[UValmax.index(Umax)]
-
-    du = twoPi
-    umin = twoPimod(Umin)
-    for e in GUFaces[ifacemin].OuterWire.Edges:
-        pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
-        u, v = GUFaces[ifacemin].parameter(pnt)
-        u = twoPimod(u)  # u itself can exceed 2*pi (e.g. a face's own
-        # ParameterRange spanning past a full turn) -- reduce it first, or
-        # the "d, twoPi - d" wraparound correction below can go negative
-        # and win the "closest edge" comparison outright regardless of the
-        # real angular distance (confirmed live on Reversed_Cyl_Cones/
-        # cyl_cone.stp: this silently picked a real but unrelated plane
-        # instead of the true adjacent cylinder, breaking the RevCC chain).
-        d = abs(umin - u)
-        d = min(d, twoPi - d)  # wraparound-aware: umin==0 must also match u near twoPi
-        if d < du:
-            du = d
-            emin = e
-
-    du = twoPi
-    umax = twoPimod(Umax)
-    for e in GUFaces[ifacemax].OuterWire.Edges:
-        pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
-        u, v = GUFaces[ifacemax].parameter(pnt)
-        u = twoPimod(u)  # see the matching comment in the umin loop above
-        d = abs(umax - u)
-        d = min(d, twoPi - d)  # wraparound-aware: umax==0 must also match u near twoPi
-        if d < du:
-            du = d
-            emax = e
+    omitFaces.update(face_index)
 
     # skip_slivers=True: a residual near-zero-area sliver face bridging the
     # cylinder/cone's own Umin/Umax boundary to its real neighboring plane
     # (confirmed live, Solidos/Big_one_cell/modelcell_cut1.stp piece 66) must
     # not be treated as the real adjacent plane itself -- same class of fix
     # already applied to multiplane()/eligible_plane().
-    result1 = other_face_edge(emin, GUFaces[ifacemin], GUFaces, skip_slivers=True)
-    result2 = other_face_edge(emax, GUFaces[ifacemax], GUFaces, skip_slivers=True)
+    result1 = other_face_edge(emin, facemin, GUFaces, skip_slivers=True)
+    result2 = other_face_edge(emax, facemax, GUFaces, skip_slivers=True)
     adjacent1 = result1[2] if result1 is not None else None
     adjacent2 = result2[2] if result2 is not None else None
 
@@ -811,39 +757,41 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
                 # member. 0.1 is a permissive floor (rejects only the
                 # ~last 6deg approaching exactly perpendicular), not a
                 # tight "must be small angle" bound.
-                and abs(face.Surface.Axis.dot(adjacent1.Surface.Axis)) > 0.1
+                and abs(face_or_shell.Surface.Axis.dot(adjacent1.Surface.Axis)) > 0.1
                 and _valid_chain_junction(result1[0], result1[1], adjacent1)
             ):
-                new_adjacent1 = get_join_cone_cyl(adjacent1, GUFaces, multiplanes, omitFaces, tolerances)
+                adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces)
+                new_adjacent1 = get_join_cone_cyl(adjacent1_shell, GUFaces, multiplanes, omitFaces, tolerances)
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
             if (
                 adjacent2.Index not in omitFaces
                 and adjacent2.Orientation == "Reversed"
-                and abs(face.Surface.Axis.dot(adjacent2.Surface.Axis)) > 0.1
+                and abs(face_or_shell.Surface.Axis.dot(adjacent2.Surface.Axis)) > 0.1
                 and _valid_chain_junction(result2[0], result2[1], adjacent2)
             ):
-                new_adjacent2 = get_join_cone_cyl(adjacent2, GUFaces, multiplanes, omitFaces, tolerances)
+                adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces)
+                new_adjacent2 = get_join_cone_cyl(adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances)
 
-    mp_planes = _find_adjacent_multiplane_planes(face, GUFaces, multiplanes, tolerances)
+    mp_planes = _find_adjacent_multiplane_planes(face_or_shell, GUFaces, multiplanes, tolerances)
 
-    if type(face.Surface) is GCylinder:
-        cylOnly = gen_cylinder(face)
-        cylcone_plane = gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, GUFaces)
+    if type(face_or_shell.Surface) is GCylinder:
+        cylOnly = gen_cylinder(face_or_shell)
+        cylcone_plane = gen_plane_cylinder(face_or_shell)
 
         facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, mp_planes))
-        facein.Surf_index.update(sameface_index)
-        facein.Index = face.Index
+        facein.Surf_index.update(face_index)
+        facein.Index = face_index[0]
 
     else:
-        coneOnly = gen_cone(face)
-        apexPlane = cone_apex_plane(face, Tolerances())
-        cylcone_plane = gen_plane_cone(ifacemin, ifacemax, Umin, Umax, GUFaces)
+        coneOnly = gen_cone(face_or_shell)
+        apexPlane = cone_apex_plane(face_or_shell, Tolerances())
+        cylcone_plane = gen_plane_cone(face_or_shell)
 
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, mp_planes))
-        facein.Surf_index.update(sameface_index)
-        facein.Index = face.Index
+        facein.Surf_index.update(face_index)
+        facein.Index = face_index[0]
 
     joined_faces.extend(new_adjacent1)
     joined_faces.extend(new_adjacent2)
@@ -853,45 +801,18 @@ def get_join_cone_cyl(face, GUFaces, multiplanes, omitFaces, tolerances):
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces):
+def gen_plane_cylinder(face_or_shell):
 
-    if ifacemin == ifacemax:
-        face2 = Faces[ifacemin]
-        try:
-            face2.tessellate(0.1)
-            UVNode_min = face2.getUVNodes()
-        except RuntimeError:
-            UVNode_min = ()
-        if not UVNode_min:
-            # tessellate() can succeed (no RuntimeError) yet still return
-            # zero UV nodes on some healed/degenerate faces -- treat that
-            # the same as the tessellation-failed case rather than leaving
-            # the min/max search loop below with nothing to iterate.
-            PR = face2.ParameterRange
-            UVNode1 = (PR[0], PR[2])
-            UVNode2 = (PR[1], PR[3])
-            UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min
+    if type(face_or_shell) is ShellFaceGu:
+        Umin, Umax, ifacemin, ifacemax = face_or_shell.U_parameter_range
+        Faces = face_or_shell.Faces
     else:
-        face2min = Faces[ifacemin]
-        try:
-            face2min.tessellate(0.1)
-            UVNode_min = face2min.getUVNodes()
-        except RuntimeError:
-            UVNode_min = ()
-        if not UVNode_min:
-            PR = face2min.ParameterRange
-            UVNode_min = ((PR[0], PR[2]),)
+        Umin, Umax, _, _ = face_or_shell.ParameterRange
+        ifacemin = 0
+        ifacemax = 0
+        Faces = [face_or_shell]
 
-        face2max = Faces[ifacemax]
-        try:
-            face2max.tessellate(0.1)
-            UVNode_max = face2max.getUVNodes()
-        except RuntimeError:
-            UVNode_max = ()
-        if not UVNode_max:
-            PR = face2max.ParameterRange
-            UVNode_max = ((PR[1], PR[3]),)
+    UVNode_min, UVNode_max = get_shell_UV_nodes(face_or_shell)
 
     Uminr = twoPimod(Umin)
     Umaxr = twoPimod(Umax)
@@ -931,45 +852,18 @@ def gen_plane_cylinder(ifacemin, ifacemax, Umin, Umax, Faces):
 
 # Tolerance in this function are not the general once
 # function should be reviewed
-def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces):
+def gen_plane_cone(face_or_shell):
 
-    if ifacemin == ifacemax:
-        face2 = Faces[ifacemin]
-        try:
-            face2.tessellate(0.1)
-            UVNode_min = face2.getUVNodes()
-        except RuntimeError:
-            UVNode_min = ()
-        if not UVNode_min:
-            # tessellate() can succeed (no RuntimeError) yet still return
-            # zero UV nodes on some healed/degenerate faces -- treat that
-            # the same as the tessellation-failed case rather than leaving
-            # the min/max search loop below with nothing to iterate.
-            PR = face2.ParameterRange
-            UVNode1 = (PR[0], PR[2])
-            UVNode2 = (PR[1], PR[3])
-            UVNode_min = (UVNode1, UVNode2)
-        UVNode_max = UVNode_min
+    if type(face_or_shell) is ShellFaceGu:
+        Umin, Umax, ifacemin, ifacemax = face_or_shell.U_parameter_range
+        Faces = face_or_shell.Faces
     else:
-        face2min = Faces[ifacemin]
-        try:
-            face2min.tessellate(0.1)
-            UVNode_min = face2min.getUVNodes()
-        except RuntimeError:
-            UVNode_min = ()
-        if not UVNode_min:
-            PR = face2min.ParameterRange
-            UVNode_min = ((PR[0], PR[2]),)
+        Umin, Umax, _, _ = face_or_shell.ParameterRange
+        ifacemin = 0
+        ifacemax = 0
+        Faces = [face_or_shell]
 
-        face2max = Faces[ifacemax]
-        try:
-            face2max.tessellate(0.1)
-            UVNode_max = face2max.getUVNodes()
-        except RuntimeError:
-            UVNode_max = ()
-        if not UVNode_max:
-            PR = face2max.ParameterRange
-            UVNode_max = ((PR[1], PR[3]),)
+    UVNode_min, UVNode_max = get_shell_UV_nodes(face_or_shell)
 
     # min()-based search, not a hand-rolled "if d < best" loop -- see the
     # identical comment in gen_plane_cylinder just above this function for
@@ -1027,69 +921,25 @@ def gen_plane_cone(ifacemin, ifacemax, Umin, Umax, Faces):
     return plane
 
 
-def sort_range(Urange):
-    workRange = Urange[1:]
-    current = Urange[0]
-    for r in reversed(workRange):
-        joined = join_range(current, r)
-        if joined is None:
-            continue
-        current = joined
-        workRange.remove(r)
-    if len(workRange) == 0:
-        return current
-    elif len(workRange) == 1:
-        joined = join_range(current, workRange[0])
-        if joined is None:
-            return adjust_range(current, workRange[0])
-        else:
-            return joined
-    else:
-        workRange.append(current)
-        sorted = sort_range(workRange)
-        return sorted
-
-
-def join_range(U0, U1):
-    if (U0[0] - U1[0] < 1e-5) and (-1e-5 < U0[1] - U1[0]):
-        if U1[1] > U0[1]:
-            return (U0[0], U1[1])
-        else:
-            return U0
-    elif (U0[0] - U1[1] < 1e-5) and (-1e-5 < U0[1] - U1[1]):
-        if U1[0] < U0[0]:
-            return (U1[0], U0[1])
-        else:
-            return U0
-    elif (U1[0] < U0[0]) and (U0[1] < U1[1]):
-        return U1
-
-    elif (U0[0] < U1[0]) and (U1[1] < U0[1]):
-        return U0
-    else:
-        return None
-
-
-def adjust_range(U0, U1):
-
-    V0 = [twoPimod(x) for x in U0]
-    V1 = [twoPimod(x) for x in U1]
-
-    if abs(V0[0] - V1[1]) < 1e-5:
-        imin = 1  # U1[0]
-        imax = 0  # U0[1]
-    elif abs(V1[0] - V0[1]) < 1e-5:
-        imin = 0  # U0[0]
-        imax = 1  # U1[1]
-    elif V1[1] < V0[0]:
-        imin = 0  # U0[0]
-        imax = 1  # U1[1]
-    else:
-        imin = 1  # U1[0]
-        imax = 0  # U1[0]
-
-    mat = (U0, U1)
-    return (mat[imin][0], mat[imax][1])
+def extreme_edge(U, face):
+    du = twoPi
+    Umod = twoPimod(U)
+    for e in face.OuterWire.Edges:
+        pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
+        u, v = face.parameter(pnt)
+        u = twoPimod(u)  # u itself can exceed 2*pi (e.g. a face's own
+        # ParameterRange spanning past a full turn) -- reduce it first, or
+        # the "d, twoPi - d" wraparound correction below can go negative
+        # and win the "closest edge" comparison outright regardless of the
+        # real angular distance (confirmed live on Reversed_Cyl_Cones/
+        # cyl_cone.stp: this silently picked a real but unrelated plane
+        # instead of the true adjacent cylinder, breaking the RevCC chain).
+        d = abs(Umod - u)
+        d = min(d, twoPi - d)  # wraparound-aware: Umod==0 must also match u near twoPi
+        if d < du:
+            du = d
+            edge = e
+    return edge
 
 
 #   Check if to faces are joint
@@ -1166,7 +1016,7 @@ def closed_circle_edge(planes):
 
 def most_outer_faces(cyl, faces):
 
-    if type(cyl) is ShellGu:
+    if type(cyl) is ShellFaceGu:
         cylSurf = cyl.Faces[0].Surface
     else:
         cylSurf = cyl.Surface
@@ -1306,7 +1156,7 @@ def commonVertex(e1, e2):
 
 
 def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
-    if type(face1) is ShellGu:
+    if type(face1) is ShellFaceGu:
         for face in face1.Faces:
             edges = commonEdgeFace(face, face2, outer1_only, outer2_only)
             if edges is not None:
@@ -1609,7 +1459,7 @@ def material_direction(pos: GVector, face: GFace | FaceGu, edge: GEdge):
 
 
 def region_sign(s1_in, s2, outAngle=False):
-    if type(s1_in) is ShellGu:
+    if type(s1_in) is ShellFaceGu:
         Edges, s1 = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
     else:
         Edges = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
@@ -1690,7 +1540,7 @@ def angle(v1, v2, operator):
         return twoPi - a
 
 
-def merge_same_surface_faces(cylkne, solidFaces):
+def merge_same_surface_faces(face_in, solidFaces):
     """A boolean cut that splits a single analytic cylinder/cone into
     several contiguous face pieces (e.g. a residual-cut artifact, or a
     genuine multi-piece split) shouldn't be treated as several unrelated
@@ -1716,31 +1566,67 @@ def merge_same_surface_faces(cylkne, solidFaces):
     change the group's real geometry (closure angle, corner-plane
     adjacency) in any way that matters."""
     min_area = Tolerances().min_area
-    CylKne_faces = [cylkne]
-    for ckface in solidFaces:
-        if ckface.Index == cylkne.Index:
+    same_surface = [face_in]
+    for current_face in solidFaces:
+        if current_face.Index == face_in.Index:
             continue
-        if ckface.Area < min_area:
+        if current_face.Area < min_area:
             continue
-        if is_same_surface(cylkne.Surface, ckface.Surface):
-            CylKne_faces.append(ckface)
+        if is_same_surface(face_in.Surface, current_face.Surface):
+            same_surface.append(current_face)
 
-    if len(CylKne_faces) > 1:
+    if len(same_surface) > 1:
         sameIndex = same_faces(
-            CylKne_faces, Tolerances()
+            same_surface, Tolerances()
         )  # return all face connected (direct or indirectly ) to first face (cylinder)
         sameIndex.insert(0, 0)
-        sameSurf = [CylKne_faces[i] for i in sameIndex]
-        if len(sameSurf) > 1:
-            return ShellGu(sameSurf)
+        connected_faces = [same_surface[i] for i in sameIndex]
+        if len(connected_faces) > 1:
+            return ShellFaceGu(connected_faces)
 
-    return cylkne
+    return face_in
 
 
 def closed_cylinder_cone(cylkne, solidFaces):
     ck_shell = merge_same_surface_faces(cylkne, solidFaces)
-    ck_index = set(ck_shell.Indexes) if type(ck_shell) is ShellGu else {cylkne.Index}
+    ck_index = ck_shell.Indexes if type(ck_shell) is ShellFaceGu else {cylkne.Index}
     return ck_shell, ck_index, is_closed_cylinder_cone(ck_shell)
+
+
+def _edge_is_planar(edge):
+    """Whether ONE edge, on its own, lies within a plane -- unlike
+    planar_edges (which additionally requires several edges to share
+    ONE common plane), this makes no claim about any other edge. A
+    straight line or a circle/ellipse is always planar by construction;
+    a BSpline is planar only if spline_2D confirms it (or its own
+    tangent is degenerate, in which case it's effectively a straight
+    segment); any other/unsupported curve type (e.g. Hyperbola/
+    Parabola) is treated as not confirmed planar."""
+    if edge.Length < 1e-5:
+        return False
+    curve = edge.Curve
+    if type(curve) is GBSpline:
+        d0 = edge.derivative1_at(0)
+        if d0.length < 1e-5:
+            return True
+        return spline_2D(edge)
+    if type(curve) in (GCircle, GEllipse):
+        return True
+    if curve is None:
+        return False
+    return True  # GLine
+
+
+def edges_individually_planar(edges):
+    """True if EVERY edge in `edges` is individually planar
+    (_edge_is_planar), regardless of whether they all share one common
+    plane -- unlike planar_edges. Used where a boundary side can
+    legitimately be made of several distinct planar pieces at different
+    orientations (e.g. the torus U-side check), not one single flat
+    boundary."""
+    if len(edges) == 0:
+        return False
+    return all(_edge_is_planar(e) for e in edges)
 
 
 def planar_edges(edges):
@@ -1921,16 +1807,54 @@ def spline_2D(edge):
         # check if derivative orthogonal to curve normal vector
         dk = edge.derivative1_at(k)
         normal_k = dk.cross(edge.normal_at(k)).normalized()
-        if abs(normal_k.dot(norm_0)) > Tolerances().value:
+        if abs(1.0 - abs(normal_k.dot(norm_0))) > Tolerances().value:
             return False
     return True
 
 
-def twoPimod(x):
-    x = x % twoPi
-    if x < 1e-5:
-        return 0.0
-    elif twoPi - x < 1e-5:
-        return 0.0
+def get_shell_UV_nodes(face_or_shell):
+
+    if type(face_or_shell) is ShellFaceGu:
+        _, _, ifacemin, ifacemax = face_or_shell.U_parameter_range
+        Faces = face_or_shell.Faces
     else:
-        return x
+        ifacemin = 0
+        ifacemax = 0
+        Faces = [face_or_shell]
+
+    if ifacemin == ifacemax:
+        face = Faces[ifacemin]
+        UVNode_min = tessellate_face(face)
+        if not UVNode_min:
+            # tessellate() can succeed (no RuntimeError) yet still return
+            # zero UV nodes on some healed/degenerate faces -- treat that
+            # the same as the tessellation-failed case rather than leaving
+            # the min/max search loop below with nothing to iterate.
+            PR = face.ParameterRange
+            UVNode1 = (PR[0], PR[2])
+            UVNode2 = (PR[1], PR[3])
+            UVNode_min = (UVNode1, UVNode2)
+        UVNode_max = UVNode_min
+    else:
+        face_min = Faces[ifacemin]
+        UVNode_min = tessellate_face(face_min)
+        if not UVNode_min:
+            PR = face_min.ParameterRange
+            UVNode_min = ((PR[0], PR[2]),)
+
+        face_max = Faces[ifacemax]
+        UVNode_max = tessellate_face(face_max)
+        if not UVNode_max:
+            PR = face_max.ParameterRange
+            UVNode_max = ((PR[1], PR[3]),)
+
+    return UVNode_min, UVNode_max
+
+
+def tessellate_face(face):
+    try:
+        face.tessellate(0.1)
+        UVNode = face.getUVNodes()
+    except RuntimeError:
+        UVNode = ()
+    return UVNode
