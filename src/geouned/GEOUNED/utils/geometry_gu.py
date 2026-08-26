@@ -396,10 +396,37 @@ def sort_range(Urange):
             return adjust_range(current, workRange[0])
         else:
             return joined
-    else:
+    elif len(workRange) < len(Urange) - 1:
+        # made real progress this pass (fewer ranges remain than entered,
+        # i.e. join_range succeeded at least once) -- safe to keep
+        # recursing, a later pass may converge further.
         workRange.append(current)
         sorted = sort_range(workRange)
         return sorted
+    else:
+        # No progress at all: none of the >= 2 remaining ranges could be
+        # joined to `current`, even once. This is a genuinely disconnected
+        # group -- e.g. two pieces that only touch modulo 2*pi (join_range
+        # has no wraparound awareness) plus a third piece with a real gap
+        # to both (confirmed live on Solidos/test_models/Mixed/
+        # SCDR_90_hollow.stp, where 3 real face fragments of one cone are
+        # topologically connected -- same_faces() correctly groups them --
+        # but their own U-ranges can't be linearly ordered). Recursing
+        # further would never shrink `workRange` (every future pass sees
+        # the identical, unjoinable set), so this used to be an unbounded
+        # recursion (RecursionError) with no caller ever able to guard
+        # against it -- a class of face grouping that only became reachable
+        # once ShellFaceGu started computing U_parameter_range eagerly for
+        # every merge_same_surface_faces() result (Can/TCone/RoundCorner/
+        # RevCC alike), not just the one narrow RevCC-chain call site that
+        # used to be sort_range's only caller. Fold every remaining range
+        # into `current` via the already-trusted adjust_range fallback
+        # (never returns None, so this is guaranteed to terminate) instead
+        # of inventing new merge semantics -- the result is a best-effort
+        # bounding range, not a claim that this group is truly contiguous.
+        for r in workRange:
+            current = adjust_range(current, r)
+        return current
 
 
 def join_range(U0, U1):

@@ -8968,16 +8968,21 @@ pyOCC engines only).
 
 ### Still open
 
-- **`Design1.stp`/`face2.stp` (both degenerate-torus fixtures) regressed**
-  after the user's 2 fixes above -- previously "volumen correcto"/mild
-  "pierde particula", now genuinely broken (`Design1.stp`: 4 solids, tallies
-  12.6/0.0/73.6/42.2, all far from 1.0; `face2.stp`: tally 58.5) -- while
-  `2_degen_torii.stp` (also degenerate) stayed correct. Investigation was
-  requested, then explicitly declined by the user ("no") before it
-  started -- open for a future session. `tank.stp` (also has degenerate
-  torus solids) reverted to "volumen correcto" across all its cells in the
-  post-fix rerun, so the regression isn't universal to every degenerate
-  case either.
+- **`Design1.stp`/`face2.stp` -- CLOSED, 2026-08-26 (later session).** Both
+  re-verified via a full `Solidos/test_models` batch conversion + d1suned
+  run (ocp engine): `Design1.stp`'s 4 cells now all read `0.9912, 1.0204,
+  1.0044, 0.9993` (0.5-2.5% rel. error, all within ~2 sigma) -- the
+  regression documented below (tallies `12.6/0.0/73.6/42.2`) is gone;
+  whatever later fix superseded it wasn't individually traced, but the
+  current state is confirmed correct, not just "not obviously broken".
+  `face2.stp`'s cell 1 is likewise correct (`1.0111`, 2.2% rel. error);
+  cell 2 reads `0.6412` but with a **27.4% relative statistical error** --
+  per the user's own direct explanation, cell 2 is a genuinely tiny sphere
+  with almost no track-length statistics at this NPS, so a value this far
+  from 1.0 is expected noise at that error bar, not a real geometric
+  defect (matching this project's own established distinction, elsewhere
+  in this file, between a real >3-sigma failure and a huge-error-bar
+  "can't tell" result). Both fixtures are considered closed.
 - **`2_degen_torii.stp` shows genuine run-to-run d1suned variability** on
   the byte-identical `model.mcnp` file -- sometimes a clean tally
   (~1.0003), sometimes 10 lost particles with tally ~0.036, reproduced
@@ -9004,6 +9009,88 @@ pyOCC engines only).
   hypothesis ("solidos corrupto que geouned intenta corregir") is
   consistent with this finding but not independently confirmed beyond
   the O(n^2) mechanism itself.
+
+## `SCDR_90_hollow.stp` regression from the same-day torus reorganization
+(`cff5331`): `sort_range`'s eager reach, not a grouping change -- fixed
+with a no-progress fallback in `sort_range`
+
+A full `Solidos/test_models` batch conversion + d1suned run (2026-08-27,
+`ocp` engine) found `Mixed/SCDR_90_hollow.stp` crashing with
+`RecursionError: maximum recursion depth exceeded` inside
+`geometry_gu.py::sort_range` -- a file that had been fully fixed and
+d1suned-verified (tally `0.998967`) just one session earlier (see
+"`SCDR_90_hollow.stp` piece5 resolved" above). Per the user's own direct
+hypothesis: several fixes landed the same day touching this area
+(`3809306`'s `CharacteristicWidth`/coaxial-cone-split work, `30b358d`'s
+`_find_adjacent_multiplane_planes` fix, `cfa7e53`'s sliver-check fix,
+`5eddb05`'s `check_intersection` fix, and the same-session
+`cff5331` torus-branch reorganization) -- plausible that one silently
+undid another.
+
+**Bisected with `git worktree` (6 detached checkouts, `PYTHONPATH`
+pointed at each worktree's own `src/`, main tree never touched -- same
+methodology as the earlier `ac44907` bisection in this file)**:
+`ac44907` -> `3809306` -> `30b358d` -> `cfa7e53` -> `5eddb05` all convert
+`SCDR_90_hollow.stp` cleanly; **`cff5331` (the torus reorganization
+commit) is exactly where the crash starts.** None of the
+`CharacteristicWidth`/coaxial-cone/sliver-check fixes from earlier the
+same day are at fault.
+
+**Root cause, found by instrumenting `sort_range` directly (not
+guessed)**: 3 real face fragments of one cone (topologically connected,
+correctly grouped by `same_faces()`) with U-parameter ranges
+`(3.471, 6.283)`, `(2.865, 3.193)`, `(0.0, 0.328)` -- the first two are
+genuinely adjacent only *modulo 2*pi* (one ends at ~2*pi, the other
+starts at ~0), and the third has a real angular gap to both. `sort_range`'s
+greedy pairwise loop (`join_range`, no wraparound awareness except in the
+1-remaining-range `adjust_range` fallback) can never join any pair of
+these three, in any input order (verified: all 6 permutations tested
+directly, none converge) -- each recursive call re-appends the same
+3-element, still-unjoinable set and recurses again, forever.
+
+**This is a real, pre-existing gap in `sort_range` itself** -- confirmed
+NOT new code (`sort_range`/`join_range`/`adjust_range` are a verbatim
+lift of what used to live at the bottom of `meta_surfaces_utils.py`,
+only the module changed). What IS new: `cff5331` gave `ShellFaceGu`
+(renamed from `ShellGu`) an eager `U_parameter_range` field, computed via
+`_U_parameter_faces()` -> `sort_range()` inside `__init__` -- so
+**every** `merge_same_surface_faces()` result now calls `sort_range`
+unconditionally, reached from every one of its callers (`closed_cylinder_cone`
+for Can/TCone/RoundCorner detection, `_find_adjacent_multiplane_planes`,
+etc.), not just `get_join_cone_cyl`'s own narrow, `omitFaces`-filtered,
+RevCC-chain-only call site that was `sort_range`'s *only* caller before
+today. `merge_same_surface_faces`'s own candidate-matching/connectivity
+logic is byte-identical old vs new (confirmed via a direct instrumented
+side-by-side trace, comparing the exact grouping for the same cone
+identity under both commits) -- the grouping itself never changed; only
+how *widely reachable* `sort_range` became did.
+
+**Fix, `sort_range`** (`geometry_gu.py`): after a pass through
+`workRange` makes zero progress (no pair joined, so recursing again would
+see the identical, still-unjoinable set forever), fold every remaining
+range into `current` via the already-trusted `adjust_range` fallback
+(the same one the 1-remaining-range case already uses, and which never
+returns `None`) instead of recursing further. Guaranteed to terminate
+(a plain loop, no more recursion once triggered); reuses existing,
+already-verified merge semantics rather than inventing new wraparound
+logic (a generalization of `join_range` itself was tried first and
+rejected -- feeding a "wrapped", non-normally-ordered range like
+`(3.471, 0.328)` back into the *other*, non-wraparound-aware branches of
+`join_range` recursively risks a silently wrong merge, not just a slow
+one; the no-progress-fallback approach avoids this entirely by never
+constructing an intermediate wrapped range). Zero behavior change for
+every group that *does* converge today (that code path -- the
+`len(workRange) < len(Urange) - 1` "made progress" branch -- is
+untouched, byte-identical to before).
+
+**Verified**: `SCDR_90_hollow.stp` converts cleanly again; full pipeline
++ d1suned gives `tally=0.998967 +/- 0.37%` (~0.28 sigma), 0 lost
+particles -- byte-identical to the value already established by the
+earlier coaxial-cone-split fix, confirming this is the *same* correct
+geometry, not just crash-avoidance. `tests/geo` + `tests/test_cadtocsg.py`
++ `tests/test_csgtocad.py`: `ocp` 128/128 (+2 known pre-existing
+GEOReverse failures), `occ` 128/128 (+2 known pre-existing GEOReverse
+failures), `freecad` 158/158.
 
 ## Code style preference
 

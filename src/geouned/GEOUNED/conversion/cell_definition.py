@@ -28,8 +28,6 @@ from .cell_definition_functions import (
     check_torus_bounds,
     V_torus_surface,
     U_torus_planes,
-    oneplane_surface,
-    one_torus_plane,
     one_degenerated_torus_plane,
     gen_plane_sphere,
     omit_multiplane_repeated_planes,
@@ -211,7 +209,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                         # depending on which sheet the real face belongs to.
                         face_orientation = "Reversed" if face.Orientation == "Forward" else "Forward"
                     if not (Uclosed and Vclosed) and face_orientation == "Reversed":
-                        Uplanes = one_degenerated_torus_plane(shell, Surfaces)
+                        Uplanes = one_degenerated_torus_plane(shell)
                 else:
                     if Uclosed and not Vclosed:
                         if shell.Orientation == "Reversed":
@@ -219,13 +217,9 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
                     elif not Uclosed and Vclosed:
                         Uplanes = U_torus_planes(shell, Uparams, Surfaces)
                     elif not Uclosed and not Vclosed:
-                        radius_ratio = shell.Surface.MajorRadius / shell.Surface.MinorRadius
-                        if oneplane_surface(Uparams, Vparams, radius_ratio) and False:
-                            Uplanes = one_torus_plane(shell, Uparams, Vparams, Surfaces)
-                        else:
-                            Uplanes = U_torus_planes(shell, Uparams, Surfaces)
-                            if shell.Orientation == "Reversed":
-                                Vsurface, Vconfig = V_torus_surface(shell, Vparams, Surfaces)
+                        Uplanes = U_torus_planes(shell, Uparams, Surfaces)
+                        if shell.Orientation == "Reversed":
+                            Vsurface, Vconfig = V_torus_surface(shell, Vparams, Surfaces)
 
                 torus = GeounedSurface(("Torus", (torusOnly, Uplanes, Vsurface, Vconfig), face_orientation, degenerated))
                 torus_region = Surfaces.add_torus(torus)
