@@ -8800,6 +8800,18 @@ into `expand_regions_to_boolVar()`/`clean()`'s own simplification logic
 for this file's specific 2-torus boolean structure, not into anything
 this patch touches) -- added to the pending list below.
 
+## `2_degen_torii.stp` -- CLOSED, 2026-08-27. Re-verified 3x in a row via
+fresh conversion + d1suned (`ocp` engine): identical `tally=1.00032 +/-
+0.17%` (~0.19 sigma), 0 lost particles, every run -- the run-to-run
+variability documented below is gone, and this file now translates
+cleanly and correctly. Not individually re-traced to a specific fix; the
+combination of every session's own work since this was last checked
+(the `sort_range` fix above being the most recent, but earlier
+degenerate-torus/RevCC-adjacent fixes are equally plausible
+contributors) evidently also resolved this file's own "Cleaning
+definition" collapse. The section below is left as-is for its own
+historical record.
+
 ## Pending: `2_degen_torii.stp`'s solid cell definition collapses to
 `False` during void-cleaning -- pre-existing, unrelated to the torus
 `a_sign` patch, not yet root-caused
@@ -8983,7 +8995,9 @@ pyOCC engines only).
   defect (matching this project's own established distinction, elsewhere
   in this file, between a real >3-sigma failure and a huge-error-bar
   "can't tell" result). Both fixtures are considered closed.
-- **`2_degen_torii.stp` shows genuine run-to-run d1suned variability** on
+- **`2_degen_torii.stp` shows genuine run-to-run d1suned variability**
+  (CLOSED 2026-08-27, see below -- this description is stale, kept for
+  its own history) on
   the byte-identical `model.mcnp` file -- sometimes a clean tally
   (~1.0003), sometimes 10 lost particles with tally ~0.036, reproduced
   across multiple clean reruns (full directory wipe between attempts,
@@ -9091,6 +9105,88 @@ geometry, not just crash-avoidance. `tests/geo` + `tests/test_cadtocsg.py`
 + `tests/test_csgtocad.py`: `ocp` 128/128 (+2 known pre-existing
 GEOReverse failures), `occ` 128/128 (+2 known pre-existing GEOReverse
 failures), `freecad` 158/158.
+
+## `convert_one_ocp.py`/`convert_one_occ.py`'s own `dummyMat=False` was
+producing false-positive "fatal error" batch-scan failures -- fixed
+
+Following straight from the `sort_range` fix above: the same
+2026-08-27 full `Solidos/test_models` batch scan had also flagged
+`Hollow_plates/placa.stp` as broken ("FATAL error in outp"/"no tally
+section found"). Per the user's own direct report -- they get a correct
+volume for this file with their own `myrun.py` -- reproduced and
+confirmed: **not a GEOUNED bug at all**. `convert_one_ocp.py`/
+`convert_one_occ.py` (the batch workers under
+`SolidTestMCNP/scripts/`) call `export_csg(..., dummyMat=False)` with no
+`voidMat` set; for this file, that leaves a cell referencing a real
+material ID (`9005`) with no matching MCNP `M` card, so d1suned aborts
+with `fatal error. no m card for material no. 9005` -- a genuine MCNP
+input-completeness error, unrelated to GEOUNED's own geometry/CSG output.
+Reproducing with the user's own `myrun.py` settings (`dummyMat=True`,
+a real `voidMat`) gives `tally=0.999214 +/- 0.24%`, 0 lost particles --
+clean.
+
+**Fix**: both `convert_one_ocp.py` and `convert_one_occ.py` (workshop
+scripts, not part of the GEOUNED repo) changed to `dummyMat=True`,
+matching every other established test-conversion script in this
+project (`verify_one_solid.py`, the user's own `myrun.py`). Also updated
+the `reference-d1suned-pipeline` memory to flag this class of false
+positive directly -- always check `outp` for a literal `fatal error`
+line before concluding a batch-scan failure is a real GEOUNED bug.
+
+**Full corpus re-verification, both fixes combined** (fresh conversion +
+d1suned, `Solidos/test_models` excluding `Big_*`, 2026-08-27): **138
+run directories, 0 missing outp, 0 fatal errors, 0 missing tally
+sections, 0 stale results.** 172 solid-cell tallies: 93.6% within 2
+sigma, 6.4% marginal (2-3 sigma, the same already-explained set as every
+prior run -- small deviations plus `Torus_face2`'s known low-statistics
+tiny sphere), **0% beyond 3 sigma, 0 lost particles across all 138
+files.** The only non-clean file in the whole corpus is the
+already-accepted, permanent `Mixed/ConeSphere.stp` native crash (see
+"Decision: `ac44907`'s `UnifyFaces=False` ConeSphere.stp crash
+workaround reverted for real" above) -- it never produces a run
+directory to begin with, so it isn't counted in the 138.
+
+## `Solidos/test_models` corpus status, 2026-08-27 (supersedes every
+earlier pending list in this file where they overlap)
+
+Every item that was open going into this session's `SCDR_90_hollow.stp`/
+`placa.stp` investigation is now closed:
+- `SCDR_90_hollow.stp` (`sort_range` recursion) -- fixed, see above.
+- `Hollow_plates/placa.stp` ("fatal error") -- was never a GEOUNED bug,
+  see above.
+- `Design1.stp`/`face2.stp` -- already closed earlier this session (see
+  "Still open" above, now stale framing left in place for its own
+  history but both fixtures are confirmed correct).
+- `Enclosures/w_encl.stp` -- already closed in an earlier session (real
+  `check_intersection` fix plus a user-side CAD sphere-overlap fix).
+
+**Still open, unchanged, carried forward**:
+- `hylife-v06.stp`'s slow decomposition (`meta_list[45]`'s duplicated
+  cylinder/torus face fragments, O(n^2) `same_faces` pairwise adjacency
+  cost) -- root-caused, not fixed, explicitly deprioritized by the user.
+- `Big_complex_cell/modelcell_cut1.stp`, `Big_complex_cell/modelCell_670000.stp`
+  (lost particles, not root-caused) -- still open from earlier sessions,
+  not touched this pass (excluded from this scan by the standing
+  `Big_*`-exclusion convention).
+- `AdjacentMultiplanePlanes` still needs the same RevCC-to-MultiRoundCorner
+  extension flagged since 2026-08-21
+  (`project_mrc_adjacent_multiplane_pending.md`).
+- ~~The raw `occ` engine hasn't had its own dedicated batch+d1suned run~~
+  -- **CLOSED, 2026-08-27**: ran the full `Solidos/test_models`
+  conversion + d1suned batch under `occ` too (`run_all_conversions_occ_parallel.py`
+  + `run_test_models_occ_d1suned.sh` + `analyze_test_models_occ.py`).
+  Result byte-for-byte equivalent to the `ocp` batch above: 134/135
+  converted (same `ConeSphere.stp` crash, accepted), 0 fatal errors, 0
+  missing/stale outp, 171 tallies (93.6% <2 sigma, 6.4% marginal -- the
+  *exact* same 11 files/values as `ocp`'s own run, not just the same
+  bucketing), 0% real failures, **0 lost particles across all 135
+  files**. Confirms `occ` and `ocp` remain fully equivalent across the
+  whole corpus after every fix landed this session.
+- `GEOReverse` (CsgToCad) work remains deliberately deferred per the
+  user's own priority ordering (finish GEOUNED's forward pipeline first)
+  -- `hylife-v06.stp`'s round-trip volume discrepancy and
+  `test_csgtocad.py`'s 2 known pre-existing failures under `occ`/`ocp`
+  are both still open, untouched.
 
 ## Code style preference
 
