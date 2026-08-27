@@ -9524,6 +9524,56 @@ green on all 3 engines after the refactor (`freecad` 158/158+2skip,
 for every already-working case (repair still resolves the same defects
 it did before, just through one shared code path instead of two).
 
+## Silencing OCCT's own STEP-write console banner (`export_step`/`Gexport_step`)
+
+User request: `Gexport_step`/`GSolid.export_step` (any STEP export, e.g.
+the `settings.debug=True` debug-piece dumps in `core.py`) print a real
+OCCT banner straight to the console
+(`***** Statistics on Transfer (Write) *****`, `WorkSession : Sending
+all data`, `Step File Name : ... Write Done`) -- suppress it. Checked
+first whether OCCT exposes a real verbosity/quiet switch rather than
+resorting to output redirection: neither `Interface_Static` (probed
+`write.step.verbosity`, `write.verbosity`, `write.step.trace`, and
+others -- none exist) nor `STEPControl_Writer.WS()` (its `WorkSession`
+only exposes `TraceDumpEntity`/`TraceDumpModel`/`TraceStatics`, no
+numeric trace-level setter) has one -- the banner is written
+unconditionally, directly via `std::cout`, with no documented switch to
+flip.
+
+`vector_geometry.py::suppress_native_stdout()` -- a new, pure-Python,
+engine-agnostic context manager (no native import, shared identically by
+all 3 backends the same way every other `vector_geometry.py` helper is)
+that redirects the real OS file descriptor (`os.dup2` on fd 1) for the
+duration of the block, not just Python's own `sys.stdout` object --
+`contextlib.redirect_stdout` alone does nothing here, since it never
+touches the fd a native library's `std::cout` is bound to. Restores the
+original fd unconditionally (`finally`), even if the wrapped call
+raises.
+
+**A real, non-obvious split found live while wiring this in**: the
+banner isn't printed entirely inside `writer.Write()` -- isolating each
+OCCT call with its own flush-marked `print()` showed the first half
+("Statistics on Transfer (Write)" / "Transfer Mode.../ Transferring
+Shape") prints during `writer.Transfer(shape, ...)`, and only the second
+half ("WorkSession : Sending all data" / "Step File Name ... Write
+Done") prints during `writer.Write()`. An initial version that wrapped
+only `.Write()` left the first half visible. Fixed by wrapping the whole
+`_export_shapes_step` body (both the `Transfer()` loop and `Write()`) in
+one `with suppress_native_stdout():` block, in both `_occ_impl.py` and
+`_ocp_impl.py` (byte-identical fix, same shared helper function).
+`_freecad_impl.py`'s `Part.Shape.exportStep()` wraps the identical OCCT
+writer internally as one call, so wrapping that single call already
+covers both halves there.
+
+**Verified**: a direct before/after check (flush-marked `print()`
+immediately before and after `export_step()`, on a plain box, under all
+3 engines) confirms zero OCCT output appears between them, and the
+written `.stp` file itself is byte-identical in size/content to an
+unsuppressed export (confirms this only silences console output, not
+the export itself). `tests/geo` + `tests/test_cadtocsg.py` +
+`tests/test_csgtocad.py` green on all 3 engines after the change
+(`freecad` 158/158+2skip, `occ` 89/89, `ocp` 89/89).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

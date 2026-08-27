@@ -53,6 +53,7 @@ from .vector_geometry import (
     find_short_edges,
     plane_tangent_at,
     plane_value_at,
+    suppress_native_stdout,
     to_gboundbox,
     to_gmatrix,
     to_gvector,
@@ -702,7 +703,12 @@ class GEdge:
         return (c2 - c1).Length
 
     def export_step(self, filename: str) -> None:
-        Part.makeCompound([self.__native__]).exportStep(filename)
+        # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
+        # every backend uses -- same unconditional "Statistics on Transfer
+        # (Write)" banner, same lack of a verbosity switch. See
+        # vector_geometry.py's suppress_native_stdout docstring.
+        with suppress_native_stdout():
+            Part.makeCompound([self.__native__]).exportStep(filename)
 
 
 class GWire:
@@ -847,7 +853,12 @@ class GFace:
         return not solid.__native__.isInside(probe, 1e-7, False)
 
     def export_step(self, filename: str) -> None:
-        Part.makeCompound([self.__native__]).exportStep(filename)
+        # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
+        # every backend uses -- same unconditional "Statistics on Transfer
+        # (Write)" banner, same lack of a verbosity switch. See
+        # vector_geometry.py's suppress_native_stdout docstring.
+        with suppress_native_stdout():
+            Part.makeCompound([self.__native__]).exportStep(filename)
 
     def distance_to(self, other: "GFace") -> float:
         """Minimum distance between this face and `other` (0 if they touch or overlap). Native boolean/distance query, no GVector equivalent."""
@@ -920,7 +931,12 @@ class GShell:
         self.Orientation = native.Orientation
 
     def export_step(self, filename: str) -> None:
-        Part.makeCompound([self.__native__]).exportStep(filename)
+        # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
+        # every backend uses -- same unconditional "Statistics on Transfer
+        # (Write)" banner, same lack of a verbosity switch. See
+        # vector_geometry.py's suppress_native_stdout docstring.
+        with suppress_native_stdout():
+            Part.makeCompound([self.__native__]).exportStep(filename)
 
 
 class GSolid:
@@ -1074,7 +1090,8 @@ class GSolid:
 
     def export_step(self, filename: str) -> None:
         """Export all of this solid's shapes to a single STEP file."""
-        self.__native__.exportStep(filename)
+        with suppress_native_stdout():
+            self.__native__.exportStep(filename)
 
     def copy(self) -> "GSolid":
         return GSolid(self.__native__.copy())
@@ -1236,7 +1253,8 @@ def Gload_step_labels(filename: str) -> list[GLabelNode]:
 def Gexport_step(shapes: list[GShape], filename: str) -> None:
     """Export a list of shapes (any mix of GSolid/GFace/GEdge/GShell) to a single STEP file."""
     compound = Part.makeCompound([shape.__native__ for shape in shapes])
-    compound.exportStep(filename)
+    with suppress_native_stdout():
+        compound.exportStep(filename)
 
 
 # ---------------------------------------------------------------------------

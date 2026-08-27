@@ -146,6 +146,7 @@ from .vector_geometry import (
     find_short_edges,
     plane_tangent_at,
     plane_value_at,
+    suppress_native_stdout,
     to_gvector,
     torus_sheet_sign,
 )
@@ -1457,10 +1458,19 @@ class SplitResult:
 
 
 def _export_shapes_step(native_shapes: list, filename: str) -> None:
-    writer = STEPControl_Writer()
-    for shape in native_shapes:
-        writer.Transfer(shape, STEPControl_AsIs)
-    status = writer.Write(filename)
+    # STEPControl_Writer prints its own "Statistics on Transfer (Write)"
+    # banner directly via std::cout, unconditionally, split across TWO
+    # calls (confirmed live, 2026-08-27, by isolating each call with its
+    # own flush-marked print: the first half prints during Transfer(),
+    # the second half during Write() -- wrapping only Write() leaves the
+    # first half visible). No Interface_Static parameter or WorkSession
+    # trace-level setter exists to silence it either way; see
+    # vector_geometry.py's suppress_native_stdout docstring.
+    with suppress_native_stdout():
+        writer = STEPControl_Writer()
+        for shape in native_shapes:
+            writer.Transfer(shape, STEPControl_AsIs)
+        status = writer.Write(filename)
     if status != IFSelect_RetDone:
         raise RuntimeError(f"STEP export failed for {filename} (status={status})")
 

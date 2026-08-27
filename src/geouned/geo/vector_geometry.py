@@ -11,7 +11,10 @@ descriptors' fields -- never on a native shape. This is what a future
 
 from __future__ import annotations
 
+import contextlib
 import math
+import os
+import sys
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -881,3 +884,42 @@ def cylinder_tangent_at(cylinder, u: float, v: float) -> tuple[GVector, GVector]
     y_dir = cylinder.Axis.cross(x_dir)
     tangent_u = y_dir * math.cos(u) - x_dir * math.sin(u)
     return tangent_u, cylinder.Axis
+
+
+# ---------------------------------------------------------------------------
+# I/O helper -- not geometry math, but shared across all 3 backends since
+# none of them expose a clean way to silence this natively
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def suppress_native_stdout():
+    """Silences C/C++-level writes to stdout for the duration of the block
+    -- e.g. OCCT's STEPControl_Writer (used by every export_step()/
+    Gexport_step() in all 3 backends, including FreeCAD's own
+    Part.Shape.exportStep(), which wraps the identical OCCT writer), which
+    prints its own "Statistics on Transfer (Write)" banner directly via
+    std::cout, unconditionally, with no verbosity/quiet flag exposed
+    anywhere -- confirmed live (2026-08-27): none of Interface_Static's
+    known parameter names ("write.step.verbosity", "write.verbosity",
+    "write.step.trace", ...) exist, so there is no OCCT-side switch to
+    flip instead.
+
+    contextlib.redirect_stdout has no effect on this kind of write --
+    it only reroutes Python's own sys.stdout object, not the OS file
+    descriptor a native library's std::cout is bound to. This redirects
+    the real file descriptor (fd 1) instead, so it silences a native
+    library's own direct writes too, not just Python's print(). Restores
+    the original fd unconditionally, even if the block raises.
+    """
+    sys.stdout.flush()
+    saved_fd = os.dup(1)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 1)
+        yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(saved_fd, 1)
+        os.close(devnull_fd)
+        os.close(saved_fd)
