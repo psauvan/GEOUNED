@@ -50,6 +50,7 @@ from .vector_geometry import (
     is_inside_plane,
     is_inside_sphere,
     is_inside_torus,
+    find_short_edges,
     plane_tangent_at,
     plane_value_at,
     to_gboundbox,
@@ -1090,6 +1091,57 @@ class GSolid:
         """
         shape = self.__native__.copy()
         return GSolid(shape.transformGeometry(matrix))
+
+
+MAX_DEFEATURE_VOLUME_REL_CHANGE = 0.01
+"""See _ocp_impl.py's own identical constant for the full story -- a
+real, dangerous false-pass (BRepAlgoAPI_Defeaturing "successfully"
+removing a real mirror-symmetry-cut plane alongside a genuine sliver,
+silently doubling the solid's own volume, while passing validity AND a
+clean short-edge re-check) confirmed live 2026-08-27 under ocp; this
+volume-conservation guard is the fix, ported here for parity."""
+
+
+def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
+    """Attempt to remove `faces` (typically vector_geometry.find_short_edges'
+    own output) from `solid` via `Part.Shape.defeaturing()` (FreeCAD's own
+    wrapper over OCCT's `BRepAlgoAPI_Defeaturing`), verifying the result is
+    genuinely usable before trusting it -- see _ocp_impl.py's own identical
+    docstring for the full story (confirmed live under ocp, 2026-08-27:
+    a successful-looking defeaturing call is NOT enough on its own to
+    trust -- it can return a topologically valid but silently wrong
+    solid). Not independently re-verified under this engine yet --
+    ported for backend symmetry, same safety net as the other two
+    engines (isValid() + find_short_edges() + volume-conservation
+    re-check).
+
+    Deliberately a single, fast, one-shot attempt, not an iterative or
+    graph-based search for the "correct" minimal face set -- per
+    explicit user direction, detecting a genuine CAD defect matters more
+    than perfectly auto-repairing it, and any repair kept here must stay
+    general and fast. Returning None and letting the caller fall back to
+    "flag as corrupted, don't convert" is the intended outcome when this
+    single attempt doesn't cleanly resolve the defect.
+
+    Returns None whenever defeaturing raises, the healed result isn't
+    valid, find_short_edges() still finds a short edge in it, or its own
+    Volume has drifted from the input by more than
+    MAX_DEFEATURE_VOLUME_REL_CHANGE."""
+    if not faces:
+        return None
+    native_faces = [f.__native__ for f in faces]
+    try:
+        healed_native = solid.__native__.defeaturing(native_faces)
+    except Exception:
+        return None
+    if not healed_native.isValid():
+        return None
+    healed = GSolid(healed_native)
+    if find_short_edges(healed):
+        return None
+    if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+        return None
+    return healed
 
 
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).

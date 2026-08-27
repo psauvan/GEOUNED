@@ -9188,6 +9188,219 @@ Every item that was open going into this session's `SCDR_90_hollow.stp`/
   `test_csgtocad.py`'s 2 known pre-existing failures under `occ`/`ocp`
   are both still open, untouched.
 
+## `corrupted_solids` load-time check: generic CAD-defect detection via
+pathologically short edges, plus a fast one-shot repair attempt -- new
+`geo.find_short_edges`/`geo.Gdefeature`, wired into `load_step_file`
+
+Motivated by a real fixture, `Solidos/working_solids/"beltline left.stp"`,
+where the user spotted a visually-obvious spurious plane in FreeCAD's own
+3D view (a flat patch poking out past the piece's natural curved
+silhouette) that they suspected was making conversion fail. Investigated
+end to end with the user, working from "can this class of defect be
+identified generically" through to a real, shipped detection+repair
+feature.
+
+### Root-causing the beltline fixture itself
+
+The solid's outer wall is a single R=2191.5mm cylinder almost its entire
+height, except a short (4.85mm) band near the top where it steps out to
+R=2192.39mm before stepping back down through a razor-thin (0.029mm)
+sliver to the true top cap. `BRepCheck_Analyzer` reports the whole solid
+fully valid; `GFace.CharacteristicWidth` (this project's own established
+sliver-width metric) flags only the 0.029mm sliver itself, not the
+plane the user actually pointed at (its own width is an unremarkable
+~1mm) -- neither existing tool catches the defect the user could see by
+eye.
+
+**The real, general signature, found by direct topological investigation
+(not by comparing surface parameters)**: the suspicious plane's own
+4 boundary edges connect directly to 2 different cylinders of *nearly*
+but not exactly the same radius (2191.5 vs 2192.39mm, 0.04% apart) --
+but per direct user pushback ("me parece demasiado superficial... mira
+si no se puede entroncar algo más de 'topológico' patológico"), pure
+radius-comparison was rejected as too shallow a signal. The genuinely
+topological signature, confirmed by dumping every edge length in the
+model against the solid's own scale: the defect's own edges measure
+0.029mm/0.888mm/4.85mm, four to five orders of magnitude below the
+model's ~7246mm BoundBox diagonal, while every legitimate edge in the
+model is in the thousands-of-mm range -- a clean, unambiguous gap, with
+no surface-type or parameter comparison needed at all.
+
+### `geo/vector_geometry.py::find_short_edges(solid, rel_tol=1e-4)`
+
+Pure math, zero native calls, identical across all 3 engines (duck-typed
+on `solid.Faces`/`GFace.Edges`/`GEdge.Length`/`solid.BoundBox.DiagonalLength`,
+all of which already existed). Flags every face touching at least one
+edge whose length falls in `[DEGENERATE_EDGE_LENGTH_FLOOR, threshold)`,
+where `threshold = max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)`:
+
+- `rel_tol=1e-4` (0.01% of the solid's own diagonal) -- per explicit
+  user correction from an initial 1e-3 default: "podemos tener modelos
+  del orden del metro con detalles del orden del mm," so the relative
+  tolerance alone needs real headroom against legitimate small features
+  on a large model.
+- `MIN_SLIVER_EDGE_LENGTH = 1e-3mm` -- an absolute floor on the upper
+  bound, per direct user instruction, so a tiny decomposed piece's own
+  small diagonal can't collapse the relative threshold below any
+  meaningful working tolerance.
+- `DEGENERATE_EDGE_LENGTH_FLOOR = 1e-9mm` -- a lower floor excluding
+  genuine OCCT *degenerate* edges (pole singularities on a closed
+  sphere/cone, where the surface parametrization collapses to a single
+  point -- a completely normal, correct part of BRep topology, not a
+  defect). Found and fixed only after this feature's own first "stop by
+  default" rollout broke `tests/test_cadtocsg.py` outright on 2
+  real, long-working fixtures (`testing/inputSTEP/Torus/face2.stp` and
+  `tank.stp`, both containing real sphere faces) -- their own pole edges
+  measure ~7.7e-15mm (floating-point noise around a mathematically exact
+  zero), which the detector wrongly flagged as corrupted before this
+  floor existed. Initially set to 1e-6, then lowered to 1e-9 per direct
+  user instruction ("seguimos estando lejos del 1e-15") for more margin
+  on the real-defect side while staying 6 orders of magnitude above the
+  observed noise floor.
+
+**Validated with zero false positives** across a subprocess-isolated
+(crash-resilient) scan of the full `Solidos/test_models` corpus (raw
+loaded solids AND their decomposed pieces alike) -- including the one
+case that looked most likely to trip it up:
+`Decomposed/modelcell_cut1_v2_piece66.stp`, a tiny (Volume=0.072mm^3)
+decomposed fragment with independently-documented real, legitimate
+~0.026mm-wide faces (see this file's own earlier `Tolerances.scaled()`
+section) -- confirmed the detector correctly leaves those alone and
+instead finds a genuinely separate, much smaller (0.0004mm-edge) sliver
+elsewhere on the same piece.
+
+### `geo/_ocp_impl.py`/`_occ_impl.py`/`_freecad_impl.py::Gdefeature(solid, faces)`
+
+Wraps `BRepAlgoAPI_Defeaturing` (FreeCAD: `Part.Shape.defeaturing()`, its
+own native wrapper over the same OCCT algorithm) -- a single, fast,
+one-shot removal attempt, deliberately **not** an iterative or
+graph-based search for a "correct" minimal face set. Explored 3
+candidate refinement strategies first (any face touching a short edge;
+connected components of the short-edges-only graph; iterative growth
+from a minimal CharacteristicWidth-based seed, re-checking after each
+partial repair) -- **none reliably found beltline's own true minimal
+4-face defect set in general**: the model's own mirror-symmetry-cut
+planes act as a "hub" that every real feature's own short edge touches
+(since every feature's cross-section at the X=0 cut is inherently thin),
+so both graph-based strategies over-include real, legitimate geometry
+(the symmetry planes, the true end caps); the iterative-growth strategy
+failed differently, since a partial `Gdefeature` attempt can synthesize
+entirely new spurious faces with no counterpart in the original solid to
+map remaining defects back onto.
+
+**Per explicit, direct user redirection, this was the right point to
+stop chasing a general algorithm**: "Si no consigues sanear el sólido de
+forma general y rápida, pues no se repara. Es más importante detectar
+fallo que repararlos." -- a real CAD defect wrongly blamed on GEOUNED's
+own conversion (a translation failure, or an MCNP lost-particle result)
+is worse than an honest "this solid could not be auto-repaired, fix the
+CAD externally." `Gdefeature` therefore stays simple: try once with
+whatever `find_short_edges` returns; verify the result via 3 checks
+(topological validity, no remaining short edges, and volume conservation
+-- see next); return `None` on any failure, letting the caller correctly
+fall through to "flag as corrupted, don't convert" rather than force a
+repair.
+
+**A real, dangerous false-pass found and fixed while finalizing this**:
+at the (then-default) `rel_tol=1e-3`, `find_short_edges` flagged the
+sliver *and both mirror-symmetry planes* together (all 3 share the
+sliver's own short edge) -- `Gdefeature` "succeeded" removing all 3:
+`IsDone()==True`, the result topologically valid, AND with zero
+remaining short edges (passing every check that existed at the time) --
+while silently **doubling the solid's own volume**. Structural checks
+alone are not sufficient. Fixed by adding a 4th check,
+`MAX_DEFEATURE_VOLUME_REL_CHANGE=0.01` (1% relative volume-change
+tolerance, matching the project's own established `GSolid.refine()`/
+`_try_coaxial_cone_split` volume-invariance-guard pattern) -- every
+previously-confirmed *legitimate* repair on this same fixture changed
+volume by at most ~0.11%, several orders of magnitude below this bound,
+while reliably catching the runaway 100% case.
+
+### `corrupted_solids` parameter: `stop`/`ignore`/`repair-stop`/`repair-ignore`
+
+Wired into `load_step.py::load_cad` and `core.py::load_step_file`,
+mirroring the exact shape of the already-existing `spline_surfaces`/
+`invalid_solids` parameters. Per direct user instruction, the most
+conservative mode, `"stop"`, is the default -- matching `spline_surfaces`'s
+own precedent. `"repair-stop"`/`"repair-ignore"` attempt `Gdefeature`
+first; on failure, behave exactly like `"stop"`/`"ignore"` respectively.
+
+**Verified end to end** on `beltline left.stp` itself, all 4 modes: `stop`
+halts with a clear message naming the corrupted solid; `ignore` drops it
+(0 real solids in `meta_list`); `repair-stop`/`repair-ignore` both
+correctly attempt repair, the volume-conservation guard rejects the
+would-be runaway fix, and both fall through to their respective
+stop/ignore behavior -- no silent wrong conversion.
+
+### Verification
+
+`tests/geo` + `tests/test_cadtocsg.py` + `tests/test_csgtocad.py`, all 3
+engines, at the final tuned values (`rel_tol=1e-4`,
+`MIN_SLIVER_EDGE_LENGTH=1e-3`, `DEGENERATE_EDGE_LENGTH_FLOOR=1e-9`):
+`ocp` 128/128 (+2 known pre-existing GEOReverse failures), `occ` 128/128
+(+2 known pre-existing GEOReverse failures), `freecad` 158/158 clean.
+Reached only after 2 real regressions were caught and fixed by actually
+running the full suite rather than trusting the corpus scan alone (which
+only covered `Solidos/test_models`, not the repo's own
+`testing/inputSTEP` corpus) -- both `face2.stp`/`tank.stp`'s degenerate-
+pole false positive and the volume-doubling false-pass were found this
+way, not anticipated in advance.
+
+### Follow-up: log-file reporting, `_set_geometry_bounding_box`'s empty-meta_list guard, and a real batch scan of `Solidos/test_models`
+
+Three small closing items from re-running the whole `Solidos/test_models`
+corpus (`corrupted_solids` left at its new default, `"stop"`) through the
+full convert+d1suned pipeline:
+
+- **Confirmed, not fixed**: `load_cad`'s scan loop already collected
+  every corrupted solid's index across the *entire* file before deciding
+  whether to `exit()` (never stopped mid-loop on the first one found) --
+  verified live on `tank.stp`, which reports all 4 of its own flagged
+  solids (`0, 1, 3, 5`) together, matching the user's own explicit
+  requirement for this behavior, already correct before they asked.
+- **Real gap, fixed**: the corrupted-solids report only ever reached the
+  prompt (`print`), never the log file -- `general_logger`'s own
+  `setup_logger()` attaches only a `FileHandler`, no console handler
+  (`utils/log_utils.py`), so nothing printed there was ever recoverable
+  after the terminal session ended. Added one `logger.warning(...)` call
+  alongside the existing `print()`, for every `corrupted_solids` mode
+  (not just "stop"/"repair-stop") per direct user instruction -- verified
+  live, the identifiers now land in `<outPath>/log_files/geouned_general.log`.
+- **Real gap, fixed**: `core.py::_set_geometry_bounding_box` crashed with
+  a raw `meta_list[0]` `IndexError` whenever every solid in a
+  single-solid file gets dropped (`corrupted_solids="ignore"`/
+  `"repair-ignore"` with a failed repair leaves `meta_list` completely
+  empty, not just missing one entry) -- confirmed live on all 5 of the
+  corpus's own genuinely-unrepairable files. Fixed with an explicit
+  `ValueError` guard, matching the exact style of the already-existing
+  "no solids to export" guard in `_export_solids` a few lines above.
+
+**Full-corpus re-run, `Solidos/test_models` excluding `Big_*`, with the
+new `corrupted_solids="stop"` default active for the first time**:
+132/138 converted (the 6 that don't: `Mixed/ConeSphere.stp`, the
+already-accepted native crash, unrelated to this feature; and 5 real,
+newly-and-correctly-detected corrupted solids --
+`Decomposed/SCDR_90_piece2.stp`, `Decomposed/modelcell_cut1_v2_piece66.stp`,
+`Mixed/SCDR_90_hollow.stp`, `RevCC_regression/modelcell_cut1_piece51_lost_particles.stp`,
+`esfera/Barrel_bottom.stp` -- several of these names match this file's
+own long lost-particle/bad-volume investigation history, so this is very
+plausibly the detector correctly flagging root causes this project spent
+real effort chasing symptomatically before). Re-tried all 5 under
+`corrupted_solids="repair-ignore"`: the single-shot `Gdefeature` repair
+genuinely fails for every one (matching this whole feature's own
+"detect first, only repair when it's fast and reliable" design) -- these
+5 files need external CAD repair, not a GEOUNED-side fix.
+
+d1suned on the 132 successful conversions: 93.0% within 2 sigma, 6.4%
+marginal, **0 lost particles across all 143 run directories** -- and
+exactly **one** genuine >3-sigma failure, `Cans/barrel_right.stp`
+(tally=6.85, ~355 sigma, ~6.8x too much material) -- confirmed via
+`find_short_edges` to have **zero** flagged faces, so this is a real,
+separate, currently-unexplained GEOUNED bug, unrelated to this session's
+own corrupted-solids work. Not investigated further this session (the
+user is looking into it separately) -- flagged here as a fresh, open
+item for whenever that continues.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

@@ -6,7 +6,8 @@ import os
 import re
 
 from ..utils.geouned_classes import GeounedSolid
-from ...geo import Gload_step, Gload_step_labels
+from ..utils.data_classes import Tolerances
+from ...geo import Gload_step, Gload_step_labels, Gdefeature, find_short_edges
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -28,7 +29,10 @@ def extract_materials(filename):
     return m_dict
 
 
-def load_cad(filename, spline_surf, settings, options, invalid_solids="remove"):
+def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", corrupted_solids="stop", tolerances=None):
+
+    if tolerances is None:
+        tolerances = Tolerances()
 
     if settings.matFile != "":
         if os.path.exists(settings.matFile):
@@ -43,8 +47,11 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove"):
     meta_list = []
     spline_solids = []
     bad_solids = []
+    corrupted_solids_list = []
     loop = spline_surf.lower() in ("remove", "stop")
     loop_invalid = invalid_solids.lower() in ("remove", "stop")
+    try_repair = corrupted_solids.lower() in ("repair-stop", "repair-ignore")
+    loop_corrupted = corrupted_solids.lower() in ("ignore", "repair-ignore")
     for i, s in enumerate(Solids):
         # Same integrity check GEOUNED already applies for spline surfaces,
         # but for topological validity: a solid that's still invalid right
@@ -72,6 +79,27 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove"):
             if loop:
                 meta_list.append(LF.GeounedSolid(i + 1))
                 continue
+        # A purely topological corruption check, independent of the two
+        # above: an edge whose own length is pathologically small
+        # relative to the solid's own BoundBox diagonal is a real,
+        # generalizable signature of a spurious/degenerate CAD feature
+        # (confirmed live, 2026-08-27, Solidos/working_solids/"beltline
+        # left.stp" -- a spurious plane invisible to both s.is_valid()
+        # and to CharacteristicWidth, caught immediately this way). See
+        # geo.find_short_edges/geo.Gdefeature for the full story.
+        degenerate_faces = find_short_edges(s, tolerances.sliver_edge_rel_tol)
+        if degenerate_faces:
+            repaired_ok = False
+            if try_repair:
+                healed = Gdefeature(s, degenerate_faces)
+                if healed is not None:
+                    s = healed
+                    repaired_ok = True
+            if not repaired_ok:
+                corrupted_solids_list.append(str(i))
+                if loop_corrupted:
+                    meta_list.append(LF.GeounedSolid(i + 1))
+                    continue
         meta_list.append(GeounedSolid(i + 1, s))
 
     if len(bad_solids) > 0:
@@ -86,6 +114,22 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove"):
         print(", ".join(spline_solids))
         if spline_surf.lower() == "stop":
             print("spline surfaces found. Exit.")
+            exit()
+
+    if len(corrupted_solids_list) > 0:
+        verb = "could not be repaired" if try_repair else "were not repaired (repair not requested)"
+        # Per direct user instruction: whatever the corrupted_solids mode,
+        # the moment any corrupted solid is found this must be flagged both
+        # on the prompt (print, already the case above/below) AND recorded
+        # in the log file (logger.warning -- general_logger's own FileHandler,
+        # set up once per CadToCsg in core.py's __init__, has no console
+        # handler at all, see utils/log_utils.py::setup_logger, so this is
+        # the only way these identifiers survive past the current terminal).
+        print(f"following solids have corrupted/degenerate geometry and {verb}:")
+        print(", ".join(corrupted_solids_list))
+        logger.warning(f"following solids have corrupted/degenerate geometry and {verb}: {', '.join(corrupted_solids_list)}")
+        if corrupted_solids.lower() in ("stop", "repair-stop"):
+            print("corrupted solids found. Exit.")
             exit()
 
     i_solid = 0

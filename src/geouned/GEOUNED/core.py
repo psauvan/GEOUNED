@@ -277,6 +277,7 @@ class CadToCsg:
         skip_solids: typing.Sequence[int] = [],
         spline_surfaces: str = "stop",
         invalid_solids: str = "remove",
+        corrupted_solids: str = "stop",
     ):
         """
         Load STEP file(s) and extract solid volumes and enclosure volumes.
@@ -289,6 +290,14 @@ class CadToCsg:
             invalid_solids (str): Behavior of the code for solids that are topologically invalid (BRepCheck_Analyzer) right after
                                    loading, once a repair attempt has failed to fix them: 'stop' execution, 'remove' solid,
                                    'ignore' solid is included for translation as-is (may lead to translation errors)
+            corrupted_solids (str): Behavior of the code for solids carrying a spurious/degenerate CAD feature -- detected as a
+                                   purely topological signature (an edge whose own length is pathologically small relative to the
+                                   solid's own BoundBox diagonal, see geo.find_short_edges -- a real example: a plane invisible to
+                                   both BRepCheck_Analyzer and CharacteristicWidth, bridging a solid's real wall to a near-zero-height
+                                   sliver). 'stop': execution stops if any is found; 'ignore': solid is dropped from the list to
+                                   convert without attempting a repair; 'repair-stop': attempt to repair (geo.Gdefeature) each one,
+                                   execution stops if any repair attempt fails; 'repair-ignore': attempt to repair each one, any
+                                   solid whose repair attempt fails is dropped from the list to convert instead of stopping.
         Returns:
             tuple: A tuple containing the solid volumes list and enclosure volumes list extracted from the STEP files.
         """
@@ -317,6 +326,13 @@ class CadToCsg:
         if invalid_solids.lower() not in ("stop", "remove", "ignore"):
             raise TypeError(f'available values for invalid_solids are: "stop", "remove" or "ignore" ')
 
+        if not isinstance(corrupted_solids, str):
+            raise TypeError(f"corrupted_solids should be a str, not a {type(corrupted_solids)}")
+        if corrupted_solids.lower() not in ("stop", "ignore", "repair-stop", "repair-ignore"):
+            raise TypeError(
+                f'available values for corrupted_solids are: "stop", "ignore", "repair-stop" or "repair-ignore" '
+            )
+
         self.filename = filename
         self.skip_solids = skip_solids
 
@@ -333,7 +349,9 @@ class CadToCsg:
         EnclosureChunk = []
         for step_file in tqdm(step_files, desc="Loading CAD files"):
             logger.info(f"read step file : {step_file}")
-            Meta, Enclosure = Load.load_cad(step_file, spline_surfaces, self.settings, self.options, invalid_solids)
+            Meta, Enclosure = Load.load_cad(
+                step_file, spline_surfaces, self.settings, self.options, invalid_solids, corrupted_solids, self.tolerances
+            )
             MetaChunk.append(Meta)
             EnclosureChunk.append(Enclosure)
         self.meta_list = join_meta_lists(MetaChunk)
@@ -595,6 +613,20 @@ class CadToCsg:
         """
         # set up Universe
         meta_list = self.meta_list
+
+        if not meta_list:
+            # A real, reachable case, not just a defensive guard: every
+            # solid in a single-solid file can legitimately end up
+            # dropped from meta_list (corrupted_solids="ignore"/
+            # "repair-ignore", with the repair attempt failing -- see
+            # geo.Gdefeature) -- confirmed live, 2026-08-27, on 5 real
+            # Solidos/test_models fixtures. Without this guard,
+            # meta_list[0] below raised a raw, unhelpful IndexError.
+            raise ValueError(
+                "No solids in CadToCsg.meta_list to build a geometry bounding box from. "
+                "Every loaded solid was dropped (see load_step_file's corrupted_solids/"
+                "invalid_solids/spline_surfaces settings), or load_step_file was never called."
+            )
 
         Box = meta_list[0].optimalBoundingBox()
         xmin = Box.XMin

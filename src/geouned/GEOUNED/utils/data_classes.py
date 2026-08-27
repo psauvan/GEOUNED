@@ -243,6 +243,17 @@ class Tolerances:
             regardless of its raw Area. Defaults to 0.1 (mm) -- verified, 2026-08-23, against a 109-file/
             1733-face corpus: every known real face's own characteristic width is >=0.19mm and every known
             sliver's is <=0.055mm, a clean >0.5-decade gap with 0.1 sitting in the middle.
+        sliver_edge_rel_tol (float, optional): threshold, as a fraction of a solid's own BoundBox
+            diagonal, below which an edge length is treated as a purely topological signature of a
+            corrupted/spurious CAD feature (see geo.find_short_edges) -- unlike min_area/min_face_width,
+            this is already relative to each solid's own scale, so it needs no scaled() accommodation.
+            Defaults to 1.0e-4 (0.01% of the model's own diagonal, per direct user instruction: real
+            models can be meter-scale with legitimate millimeter-scale details) -- verified, 2026-08-27,
+            with zero false positives across a 109-file test_models corpus scan (raw solids and decomposed
+            pieces alike), including on a fixture with independently-documented real ~0.026mm-wide faces
+            that this value correctly leaves alone (see geo.find_short_edges' own docstring for the full
+            story). geo.find_short_edges also enforces an absolute floor, MIN_SLIVER_EDGE_LENGTH=1e-3mm,
+            so this relative value alone never needs to account for very small solids either.
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -274,6 +285,7 @@ class Tolerances:
         add_pln_distance: float = 1.0e-2,
         add_pln_angle: float = 1.0e-2,
         min_face_width: float = 0.1,
+        sliver_edge_rel_tol: float = 1.0e-4,
     ):
 
         self.relativeTol = relativeTol
@@ -294,6 +306,7 @@ class Tolerances:
         self.add_pln_distance = add_pln_distance
         self.add_pln_angle = add_pln_angle
         self.min_face_width = min_face_width
+        self.sliver_edge_rel_tol = sliver_edge_rel_tol
 
     @property
     def relativeTol(self):
@@ -475,6 +488,18 @@ class Tolerances:
             raise TypeError(f"geouned.Tolerances.min_face_width should be a float, not a {type(min_face_width)}")
         self._min_face_width = min_face_width
 
+    @property
+    def sliver_edge_rel_tol(self):
+        return self._sliver_edge_rel_tol
+
+    @sliver_edge_rel_tol.setter
+    def sliver_edge_rel_tol(self, sliver_edge_rel_tol: float):
+        if not isinstance(sliver_edge_rel_tol, float):
+            raise TypeError(
+                f"geouned.Tolerances.sliver_edge_rel_tol should be a float, not a {type(sliver_edge_rel_tol)}"
+            )
+        self._sliver_edge_rel_tol = sliver_edge_rel_tol
+
     def scaled(self, volume: float) -> "Tolerances":
         """Returns a copy of this Tolerances with min_area/min_face_width
         scaled down for a solid whose own Volume is small relative to
@@ -538,6 +563,7 @@ class Tolerances:
             add_pln_distance=self.add_pln_distance,
             add_pln_angle=self.add_pln_angle,
             min_face_width=scaled_min_face_width,
+            sliver_edge_rel_tol=self.sliver_edge_rel_tol,
         )
 
 

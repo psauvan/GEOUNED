@@ -75,7 +75,7 @@ from OCP.BOPAlgo import BOPAlgo_Splitter
 from OCP.Bnd import Bnd_Box
 from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse, BRepAlgoAPI_Splitter
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Defeaturing, BRepAlgoAPI_Fuse, BRepAlgoAPI_Splitter
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_Copy,
@@ -143,6 +143,7 @@ from .vector_geometry import (
     is_inside_plane,
     is_inside_sphere,
     is_inside_torus,
+    find_short_edges,
     plane_tangent_at,
     plane_value_at,
     to_gvector,
@@ -1357,6 +1358,87 @@ class GSolid:
         (GEOReverse, this method's only real consumer, is FreeCAD-only),
         kept for backend symmetry."""
         return GSolid(BRepBuilderAPI_Transform(self.__native__, matrix, True).Shape())
+
+
+MAX_DEFEATURE_VOLUME_REL_CHANGE = 0.01
+"""Gdefeature's own volume-conservation safety net -- reject a healed
+result whose Volume differs from the input by more than 1% relative.
+Added after a real, dangerous false-pass was found live (2026-08-27,
+"beltline left.stp" at the default rel_tol=1e-4): find_short_edges'
+own short-edge signature can, on a "half" model with a mirror-symmetry
+cut, flag a real symmetry-cut plane alongside a genuine sliver (both
+touch the same short edge) -- BRepAlgoAPI_Defeaturing then "successfully"
+removed both, IsDone()==True, the result topologically valid AND with
+zero remaining short edges (passing every check that existed before this
+one) -- while silently DOUBLING the solid's own volume. Every previously-
+confirmed *legitimate* repair on this same fixture changed volume by at
+most ~0.11%, several orders of magnitude below this bound -- 1% is a
+generous, safe margin for a real defect repair (which, by definition,
+targets near-zero-volume slivers) while reliably catching a runaway case
+like this one."""
+
+
+def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
+    """Attempt to remove `faces` (typically vector_geometry.find_short_edges'
+    own output) from `solid` via BRepAlgoAPI_Defeaturing, verifying the
+    result is genuinely usable before trusting it -- confirmed live
+    (2026-08-27, Solidos/working_solids/"beltline left.stp") that
+    `defeat.IsDone()==True` alone is NOT sufficient: it can return a
+    topologically *valid* solid that's still silently wrong (a real
+    volume change and spurious new faces left behind by the algorithm's
+    own attempt to patch the gap it was given).
+
+    Deliberately a single, fast, one-shot attempt -- NOT an iterative or
+    graph-based search for the "correct" minimal face set to remove. Per
+    explicit user direction: detecting a genuine CAD defect is more
+    valuable than perfectly auto-repairing it (a real translation
+    failure or MCNP lost-particle result wrongly blamed on GEOUNED is
+    worse than an honest "this solid could not be auto-repaired, fix the
+    CAD externally"), and any repair attempt kept in this pipeline must
+    stay general and fast -- not a bespoke, slow reconstruction tuned to
+    one fixture. Confirmed on "beltline left.stp" itself that no simple
+    face-selection strategy (touching a short edge, connected components
+    of short edges alone, iterative growth from a minimal seed) reliably
+    finds the true minimal repair set in general -- its own real defect
+    needs 4 specific faces removed together, none of the tried
+    strategies reproduced exactly that set without also risking pulling
+    in legitimate geometry (mirror-symmetry-cut planes, real end caps)
+    elsewhere. Returning None here and letting the caller fall back to
+    "flag as corrupted, don't convert" is the intended, accepted outcome
+    for a case like this -- not a gap to close later.
+
+    Returns None whenever defeaturing doesn't complete, the healed
+    result isn't topologically valid, find_short_edges() still finds a
+    short edge in it, or its own Volume has drifted from the input by
+    more than MAX_DEFEATURE_VOLUME_REL_CHANGE (see that constant's own
+    docstring for the real, dangerous false-pass that motivated adding
+    it -- structural validity and a clean short-edge re-check are BOTH
+    insufficient on their own) -- never raises, matching this project's
+    own "silent not-applicable, not a crash" convention for every other
+    geometry repair fallback (see e.g. _try_coaxial_cone_split above)."""
+    if not faces:
+        return None
+    defeat = BRepAlgoAPI_Defeaturing()
+    defeat.SetShape(solid.__native__)
+    face_list = TopTools_ListOfShape()
+    for f in faces:
+        face_list.Append(f.__native__)
+    defeat.AddFacesToRemove(face_list)
+    try:
+        defeat.Build()
+    except Exception:
+        return None
+    if not defeat.IsDone():
+        return None
+    healed_native = defeat.Shape()
+    if not BRepCheck_Analyzer(healed_native).IsValid():
+        return None
+    healed = GSolid(healed_native)
+    if find_short_edges(healed):
+        return None
+    if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+        return None
+    return healed
 
 
 GShape = GSolid | GFace | GEdge | GShell

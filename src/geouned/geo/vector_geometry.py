@@ -558,6 +558,109 @@ def torus_sheet_sign(vertex: GVector, torus, tol: float = 1e-8) -> int:
     return 1 if outer else -1
 
 
+MIN_SLIVER_EDGE_LENGTH = 1.0e-3
+"""Absolute floor (mm) for find_short_edges' own threshold -- per direct
+user instruction: the effective threshold must never drop below this,
+even for a solid whose own BoundBox diagonal is small enough that
+`rel_tol * diagonal` alone would push it below the model's own working
+geometric tolerance (e.g. a tiny decomposed piece), which would make the
+detector unable to catch even a genuinely near-zero-length degenerate
+edge there."""
+
+DEGENERATE_EDGE_LENGTH_FLOOR = 1.0e-9
+"""Lower floor (mm): an edge shorter than this is treated as a
+legitimate OCCT *degenerate* edge (a pole singularity on a closed
+sphere/cone, where the surface parametrization collapses to a single
+point) rather than a genuine CAD defect -- confirmed live, 2026-08-27,
+`testing/inputSTEP/Torus/face2.stp` and `tank.stp`: both real,
+long-working fixtures have real sphere faces whose own pole edges
+measure ~7.7e-15mm (floating-point noise around a mathematically exact
+zero, not a real gap), which find_short_edges' own detection wrongly
+flagged as corrupted before this floor was added -- a real false
+positive that broke `tests/test_cadtocsg.py` outright (the new
+"stop"-by-default behavior halted on 2 previously-clean files). Per
+direct user instruction, set well below the smallest genuine defect
+found anywhere in this project's own corpus work (~4e-4mm, Decomposed/
+modelcell_cut1_v2_piece66.stp's own real sliver) while still staying
+comfortably above the ~1e-15 floating-point noise floor -- 1e-9 keeps
+6 orders of magnitude of margin on the noise side and 5 on the real-
+defect side."""
+
+
+def find_short_edges(solid, rel_tol: float = 1e-4) -> list:
+    """Faces of `solid` (a GSolid) touching at least one edge whose own
+    length is pathologically small relative to the solid's overall scale
+    (edge.Length / solid.BoundBox.DiagonalLength < rel_tol) -- a purely
+    topological signature of a degenerate/spurious feature (a residual
+    boolean-cut artifact, an accidental sliver from a CAD export),
+    independent of surface type or parameters. Duck-typed on
+    `solid.Faces` (each a GFace with `.Edges`, each a GEdge with
+    `.Length`) and `solid.BoundBox.DiagonalLength` -- identical across
+    all 3 engines, no native calls needed.
+
+    Confirmed live on a real fixture (`Solidos/working_solids/
+    "beltline left.stp"`): a visually-obvious spurious plane, invisible
+    to both `BRepCheck_Analyzer` (reports the solid fully valid) and to
+    `GFace.CharacteristicWidth` (the plane's own width is unremarkable,
+    ~1mm) -- is caught immediately this way: its own boundary edges
+    connecting to the model's real geometry measure 0.888mm, and its
+    neighboring sliver face's edges measure 0.029mm, both several orders
+    of magnitude below the model's own ~7246mm diagonal, while every
+    other edge in the model is in the thousands-of-mm range. Default
+    `rel_tol=1e-4` (0.01% of the model's own scale, per direct user
+    instruction: real models can be meter-scale with legitimate
+    millimeter-scale details, which a looser 1e-3 default risks flagging
+    as false positives) -- comfortably below both tiers above; a
+    109-file corpus scan (Solidos/test_models, raw solids and
+    decomposed pieces alike) found zero false positives at this value,
+    including on a fixture with independently-documented real, legitimate
+    ~0.026mm-wide faces (Decomposed/modelcell_cut1_v2_piece66.stp) --
+    confirmed to correctly distinguish that real feature from a
+    genuinely separate, much smaller (0.0004mm-edge) sliver on the same
+    piece. Unlike `Tolerances.min_face_width`, this needs no per-solid
+    `scaled()` accommodation -- being already relative to each solid's
+    own BoundBox, it doesn't suffer the "small decomposed piece" failure
+    mode that motivated `scaled()` in the first place.
+
+    NOTE on repair, not detection: this function is deliberately simple
+    and fast -- it returns every face touching a short edge, not a
+    minimal "just the spurious cluster" set (which would need real
+    topological reasoning: on "beltline left.stp" specifically, this
+    returns 8 faces, including 2 legitimate mirror-symmetry-cut planes
+    and 2 legitimate end caps that merely happen to touch the same short
+    edges as the 4 real defect faces -- confirmed live, no candidate
+    graph-based refinement tried gave a general, reliably-correct
+    minimal set for this fixture). Per explicit user direction, this is
+    accepted: detecting a genuine CAD defect is more valuable than
+    perfectly auto-repairing it (a false "translation failure" wrongly
+    blamed on GEOUNED is worse than an honest "this solid could not be
+    auto-repaired, fix the CAD" -- see geo.Gdefeature's own docstring for
+    how repair is attempted and safely abandoned when it doesn't
+    converge cleanly).
+
+    Returns each offending face once (never duplicated, even if it has
+    several short edges); empty list if none found. The effective
+    threshold is `max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)` -- never
+    below the 1e-3mm absolute floor, per direct user instruction (guards
+    the small-solid case where `diag` alone would otherwise push the
+    relative threshold below any meaningful working tolerance). An edge
+    shorter than DEGENERATE_EDGE_LENGTH_FLOOR is never flagged, however
+    small the effective threshold gets -- see that constant's own
+    docstring for why (a legitimate OCCT pole-degenerate edge, not a
+    defect)."""
+    diag = solid.BoundBox.DiagonalLength
+    if diag <= 0.0:
+        return []
+    threshold = max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)
+    flagged = []
+    for face in solid.Faces:
+        for edge in face.Edges:
+            if DEGENERATE_EDGE_LENGTH_FLOOR <= edge.Length < threshold:
+                flagged.append(face)
+                break
+    return flagged
+
+
 def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None:
     """Real roots of a*t^2 + b*t + c = 0, ordered (smaller, larger).
     None if there are 0 real roots, or if the equation degenerates to
