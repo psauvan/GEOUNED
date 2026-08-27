@@ -29,7 +29,64 @@ def extract_materials(filename):
     return m_dict
 
 
-def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", corrupted_solids="stop", tolerances=None):
+def check_solid_defects(solid, tolerances):
+    """
+    Run every known corrupted/degenerate-geometry check against a loaded
+    solid and return the reasons it currently fails (empty list if the
+    solid is clean). One function, one place to extend: any future check
+    should be added here so both the repair attempt and the reporting in
+    load_cad automatically pick it up, instead of the two separate,
+    parallel checks this replaced (one for topological validity, one for
+    slivers -- the user never cared which specific check fired, only
+    whether the solid is usable as-is).
+
+    Checks currently implemented:
+      - topological validity (BRepCheck_Analyzer / equivalent, via
+        GSolid.is_valid()).
+      - pathologically short edges relative to the solid's own BoundBox
+        diagonal (geo.find_short_edges) -- a real, generalizable signature
+        of a spurious/degenerate CAD feature invisible to is_valid() alone
+        (confirmed live, 2026-08-27, Solidos/working_solids/"beltline
+        left.stp" -- a spurious plane bridging a solid's real wall to a
+        near-zero-height sliver).
+    """
+    reasons = []
+    if not solid.is_valid():
+        reasons.append("invalid topology")
+    if find_short_edges(solid, tolerances.sliver_edge_rel_tol):
+        reasons.append("degenerate/sliver geometry")
+    return reasons
+
+
+def repair_solid(solid, tolerances):
+    """
+    Attempt to repair a solid flagged by check_solid_defects, trying the
+    fastest and most generally-applicable method first and only falling
+    back to a more targeted (and more expensive) one if the cheap attempt
+    doesn't fully clear every check. Returns the repaired solid once
+    check_solid_defects(result) comes back empty, or None if nothing
+    tried leaves the solid fully clean.
+    """
+    # fix() is cheap, general-purpose, and already the standard repair
+    # for invalid topology; it can also incidentally clear some sliver
+    # cases (face/edge unification), so it's always worth trying first.
+    repaired = solid.fix(1e-6)
+    if not check_solid_defects(repaired, tolerances):
+        return repaired
+
+    # Still failing (typically: a sliver fix() doesn't touch) -- try the
+    # more targeted, more expensive BRepAlgoAPI_Defeaturing pass, seeded
+    # from whichever short edges remain after fix().
+    degenerate_faces = find_short_edges(repaired, tolerances.sliver_edge_rel_tol)
+    if degenerate_faces:
+        healed = Gdefeature(repaired, degenerate_faces)
+        if healed is not None and not check_solid_defects(healed, tolerances):
+            return healed
+
+    return None
+
+
+def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", tolerances=None):
 
     if tolerances is None:
         tolerances = Tolerances()
@@ -46,32 +103,28 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", 
     Solids = Gload_step(filename)
     meta_list = []
     spline_solids = []
-    bad_solids = []
     corrupted_solids_list = []
     loop = spline_surf.lower() in ("remove", "stop")
-    loop_invalid = invalid_solids.lower() in ("remove", "stop")
-    try_repair = corrupted_solids.lower() in ("repair-stop", "repair-ignore")
-    loop_corrupted = corrupted_solids.lower() in ("ignore", "repair-ignore")
+    loop_corrupted = corrupted_solids.lower() == "ignore"
     for i, s in enumerate(Solids):
-        # Same integrity check GEOUNED already applies for spline surfaces,
-        # but for topological validity: a solid that's still invalid right
-        # after loading (Gload_step's own load-time healing already tried
-        # and failed, or -- for the FreeCAD backend, which doesn't call
-        # fix() at load -- never got a repair attempt at all) is exactly
-        # the class of geometry that silently corrupts later Gsplit/BOP
-        # operations. A second, explicit repair attempt here is cheap (runs
-        # once per solid, right at load) and, unlike repairing mid-
-        # decomposition on intermediate BOP fragments (tried and reverted
-        # earlier this session after it reproduced a stack overflow), is
-        # safe: GSolid.fix() only risks the native UnifyEdges crash path
-        # when its OWN input is valid, which by construction it isn't here.
-        if not s.is_valid():
-            repaired = s.fix(1e-6)
-            if repaired.is_valid():
-                s = repaired
+        # One unified check (check_solid_defects: topological validity +
+        # sliver/degenerate-edge detection today, any future check added
+        # there automatically) instead of two separate, differently-gated
+        # checks -- the user doesn't care which specific check fired, only
+        # whether the solid is usable. A repair is always attempted
+        # (repair_solid: fix() first, since it's cheap/general-purpose and
+        # already the standard repair for invalid topology; falls back to
+        # the more targeted Gdefeature only if fix() alone doesn't clear
+        # every check) -- the corrupted_solids mode is only consulted for
+        # what to do once repair has genuinely failed, not to gate whether
+        # repair is attempted at all.
+        if check_solid_defects(s, tolerances):
+            healed = repair_solid(s, tolerances)
+            if healed is not None:
+                s = healed
             else:
-                bad_solids.append(str(i))
-                if loop_invalid:
+                corrupted_solids_list.append(str(i))
+                if loop_corrupted:
                     meta_list.append(LF.GeounedSolid(i + 1))
                     continue
         if LF.spline(s):
@@ -79,35 +132,7 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", 
             if loop:
                 meta_list.append(LF.GeounedSolid(i + 1))
                 continue
-        # A purely topological corruption check, independent of the two
-        # above: an edge whose own length is pathologically small
-        # relative to the solid's own BoundBox diagonal is a real,
-        # generalizable signature of a spurious/degenerate CAD feature
-        # (confirmed live, 2026-08-27, Solidos/working_solids/"beltline
-        # left.stp" -- a spurious plane invisible to both s.is_valid()
-        # and to CharacteristicWidth, caught immediately this way). See
-        # geo.find_short_edges/geo.Gdefeature for the full story.
-        degenerate_faces = find_short_edges(s, tolerances.sliver_edge_rel_tol)
-        if degenerate_faces:
-            repaired_ok = False
-            if try_repair:
-                healed = Gdefeature(s, degenerate_faces)
-                if healed is not None:
-                    s = healed
-                    repaired_ok = True
-            if not repaired_ok:
-                corrupted_solids_list.append(str(i))
-                if loop_corrupted:
-                    meta_list.append(LF.GeounedSolid(i + 1))
-                    continue
         meta_list.append(GeounedSolid(i + 1, s))
-
-    if len(bad_solids) > 0:
-        print("following solids are topologically invalid and could not be repaired:")
-        print(", ".join(bad_solids))
-        if invalid_solids.lower() == "stop":
-            print("invalid solids found. Exit.")
-            exit()
 
     if len(spline_solids) > 0:
         print("following solids have Spline surfaces:")
@@ -117,7 +142,6 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", 
             exit()
 
     if len(corrupted_solids_list) > 0:
-        verb = "could not be repaired" if try_repair else "were not repaired (repair not requested)"
         # Per direct user instruction: whatever the corrupted_solids mode,
         # the moment any corrupted solid is found this must be flagged both
         # on the prompt (print, already the case above/below) AND recorded
@@ -125,10 +149,12 @@ def load_cad(filename, spline_surf, settings, options, invalid_solids="remove", 
         # set up once per CadToCsg in core.py's __init__, has no console
         # handler at all, see utils/log_utils.py::setup_logger, so this is
         # the only way these identifiers survive past the current terminal).
-        print(f"following solids have corrupted/degenerate geometry and {verb}:")
+        print("following solids have corrupted/degenerate geometry and could not be repaired:")
         print(", ".join(corrupted_solids_list))
-        logger.warning(f"following solids have corrupted/degenerate geometry and {verb}: {', '.join(corrupted_solids_list)}")
-        if corrupted_solids.lower() in ("stop", "repair-stop"):
+        logger.warning(
+            f"following solids have corrupted/degenerate geometry and could not be repaired: {', '.join(corrupted_solids_list)}"
+        )
+        if corrupted_solids.lower() == "stop":
             print("corrupted solids found. Exit.")
             exit()
 

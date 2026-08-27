@@ -9469,6 +9469,61 @@ within 2 sigma, 0 lost particles** -- `barrel_right.stp` itself and all
 3 of the regression files are confirmed clean, with no new failures
 introduced anywhere else in the corpus.
 
+## `invalid_solids` merged into `corrupted_solids`: one unified defect
+check, repair always attempted, 2 modes instead of 2+4
+
+User pushback, direct: `invalid_solids` and `corrupted_solids` were two
+separate parameters doing conceptually the same thing (load-time solid
+check -> optional repair -> stop/ignore per user choice) with two
+different, differently-shaped call sites and mode sets -- from the
+user's own point of view this distinction is meaningless ("para el
+usuario esto no le importa"). Explicit instruction: fold both into one
+general check function covering every known defect type (`is_valid()`
+today, `find_short_edges` today, any future check added to the same
+place), attempt repair with whichever method is fastest/most
+appropriate, and only consult the user's mode once repair has genuinely
+failed.
+
+**`load_step.py`**: `check_solid_defects(solid, tolerances) -> list[str]`
+replaces the two separate, independently-gated checks with one function
+returning every reason a solid currently fails (`"invalid topology"`,
+`"degenerate/sliver geometry"` -- both, one, or neither); any future
+check is added here and both the repair attempt and the reporting pick
+it up automatically. `repair_solid(solid, tolerances) -> GSolid | None`
+replaces the two separate repair code paths with one cascade: `fix(1e-6)`
+first (cheap, general-purpose, already the standard repair for invalid
+topology, and known to sometimes incidentally clear a sliver case too
+via face/edge unification) -- if `check_solid_defects` on the result is
+still non-empty, fall back to `Gdefeature` (the more targeted, more
+expensive `BRepAlgoAPI_Defeaturing` pass) seeded from whatever short
+edges remain. Returns `None` only once neither step leaves the solid
+fully clean.
+
+**Repair is now unconditional, not opt-in via a `"repair-*"` mode**: per
+the user's own framing ("Despues se intente reparar... Si no se puede
+reparar hacemos lo que diga el usuario"), the mode is only consulted for
+the "couldn't repair" outcome, never to decide whether repair is
+attempted at all -- since both repair steps are already cheap/fast by
+design (`fix()` always was; `Gdefeature` is a single one-shot attempt,
+never an iterative search, per this feature's own original "detect
+first, repair only when fast and reliable" design documented above).
+This collapses `corrupted_solids` from 4 modes (`stop`/`ignore`/
+`repair-stop`/`repair-ignore`) to 2 (`stop`/`ignore`) -- what used to be
+`"repair-ignore"` is now just `"ignore"` (repair is tried regardless;
+`"ignore"` only decides what happens if it fails). `invalid_solids` is
+gone entirely: `load_step_file`/`load_cad` no longer take it, and
+`core.py`'s empty-`meta_list` guard message was updated to stop naming
+it as a place to look. No test or workshop script referenced
+`invalid_solids`/`"repair-stop"`/`"repair-ignore"` by name (confirmed by
+grep before removing), so this is a clean removal, not a compatibility
+break within this repo.
+
+**Verified**: `tests/geo` + `tests/test_cadtocsg.py` + `tests/test_csgtocad.py`
+green on all 3 engines after the refactor (`freecad` 158/158+2skip,
+`occ` 89/89, `ocp` 89/89) -- confirms the merge is behavior-preserving
+for every already-working case (repair still resolves the same defects
+it did before, just through one shared code path instead of two).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
