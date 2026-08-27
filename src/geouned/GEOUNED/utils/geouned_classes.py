@@ -1237,15 +1237,21 @@ class MetaSurfacesDict(dict):
         # own stored (material-pointing) axis -- so the RevCC's restriction
         # only applies on its own local side of that boundary, and stops
         # applying (reads True, non-restrictive) beyond it.
-        for mpp in reversedCC.Surf.AdjacentMultiplanePlanes:
-            pid, exist = self.primitive_surfaces.add_plane(mpp, True)
-            if exist:
-                p = self.get_primitive_surface(pid)
-                if is_opposite(mpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
-                    pid = -pid
-            components[abs(pid)] = mpp
-            reversedCC_region = reversedCC_region + (-BoolSurface(0, pid))
-
+        
+        multiplane_set_region = None
+        for mp_list in reversedCC.Surf.AdjacentMultiplanePlanes:
+            multiplane_region = None
+            for mpp in mp_list:
+                pid, exist = self.primitive_surfaces.add_plane(mpp, True)
+                if exist:
+                    p = self.get_primitive_surface(pid)
+                    if is_opposite(mpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                        pid = -pid
+                components[abs(pid)] = mpp
+                multiplane_region = BoolSurface.mult(multiplane_region, -BoolSurface(0, pid))
+            multiplane_set_region = BoolSurface.add(multiplane_set_region, multiplane_region)
+        reversedCC_region = BoolSurface.add(reversedCC_region, multiplane_set_region)
+        
         add_cc = True
         for cs_surf in self["RevCC"]:
             boundary = reversedCC_region.isSameInterface(cs_surf.region)

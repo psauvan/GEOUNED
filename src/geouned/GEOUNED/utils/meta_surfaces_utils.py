@@ -621,10 +621,8 @@ def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolera
     strictly no more expensive than it looks: `multiplanes` is normally a
     handful of planes at most, and a MultiPlane-adjacent RevCC segment is
     already a narrow, uncommon case."""
-    if not multiplanes:
-        return []
 
-    candidates = [mpp for mp in multiplanes for mpp in mp.Surf.Planes]
+    candidates = multiplanes.Surf.Planes
 
     pieces = shell_or_face.Faces if type(shell_or_face) is ShellFaceGu else [shell_or_face]
 
@@ -774,13 +772,17 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                 adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces)
                 new_adjacent2 = get_join_cone_cyl(adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances)
 
-    mp_planes = _find_adjacent_multiplane_planes(face_or_shell, GUFaces, multiplanes, tolerances)
+    mp_list = []
+    for mp in multiplanes:
+        mp_planes = _find_adjacent_multiplane_planes(face_or_shell, GUFaces, mp, tolerances)
+        if mp_planes:
+            mp_list.append(mp_planes)
 
     if type(face_or_shell.Surface) is GCylinder:
         cylOnly = gen_cylinder(face_or_shell)
         cylcone_plane = gen_plane_cylinder(face_or_shell)
 
-        facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, mp_planes))
+        facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, mp_list))
         facein.Surf_index.update(face_index)
         facein.Index = face_index[0]
 
@@ -789,7 +791,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
         apexPlane = cone_apex_plane(face_or_shell, Tolerances())
         cylcone_plane = gen_plane_cone(face_or_shell)
 
-        facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, mp_planes))
+        facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, mp_list))
         facein.Surf_index.update(face_index)
         facein.Index = face_index[0]
 

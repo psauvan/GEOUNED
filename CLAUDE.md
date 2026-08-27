@@ -9401,6 +9401,74 @@ own corrupted-solids work. Not investigated further this session (the
 user is looking into it separately) -- flagged here as a fresh, open
 item for whenever that continues.
 
+## `Cans_barrel_right.stp`'s 355-sigma failure: a real RevCC/MultiPlane
+boolean-region bug, found and fixed by the user directly
+
+Follow-up to the item immediately above -- the user investigated
+`Cans/barrel_right.stp`'s own ~6.8x-too-much-material result independently
+("ya he corregido el problema con Cans_barrel_right, era que construíamos
+mal la definicion booleana de la parte del multiplane del RevCC") and
+fixed it in `utils/functions.py`, `utils/geouned_classes.py`, and
+`utils/meta_surfaces_utils.py`.
+
+**The bug**: `ReversedConeCylParams.AdjacentMultiplanePlanes` used to be a
+single, flat, deduplicated list of every plane found adjacent to any
+segment of the RevCC's chain, regardless of which physical `MultiPlane`
+surface each one belonged to (`build_RCC_params` merged every
+`mp_planes` list it collected across all `cylcones` into one
+`adjacent_mp_planes` list via a dedup-by-identity loop). `MetaSurfacesDict`'s
+region-building then combined every one of those planes into
+`reversedCC_region` via a single flat chain of OR terms, one plane at a
+time (`reversedCC_region = reversedCC_region + (-BoolSurface(0, pid))`
+repeated for each plane in the flattened list). This is wrong whenever
+more than one distinct `MultiPlane` surface borders the RevCC: being
+"outside" a single `MultiPlane`'s own OR-escape region correctly requires
+being outside *every one* of that MultiPlane's own facets simultaneously
+(an AND over that one group's planes) -- but flattening every group's
+planes into one list and OR-ing them individually let a point outside
+just *one* facet of *one* group satisfy the whole escape condition, even
+while still being inside every other facet of that same group -- silently
+widening the RevCC's own material region far beyond what the real
+geometry allows. `barrel_right.stp`'s own multi-facet MultiPlane
+component next to its RevCC is exactly the configuration this manifests
+on.
+
+**The fix**: `AdjacentMultiplanePlanes` is now a list of lists -- one
+inner list per distinct adjacent `MultiPlane` group, built directly in
+`get_join_cone_cyl` (`meta_surfaces_utils.py`) by calling
+`_find_adjacent_multiplane_planes` once per candidate `MultiPlane` (was
+once per chain segment, internally flattening across every candidate);
+`build_RCC_params` (`functions.py`) no longer deduplicates/merges across
+groups at all, since the grouping itself is now the point.
+`MetaSurfacesDict`'s region-building (`geouned_classes.py`) mirrors the
+grouping: for each group, ANDs (`BoolSurface.mult`) the negated planes of
+that one group together into `multiplane_region` (outside all of that
+group's own facets at once); ORs (`BoolSurface.add`) the different
+groups' own `multiplane_region`s together into `multiplane_set_region`
+(outside *any* one full group is enough); then ORs that combined result
+into `reversedCC_region` -- AND within a group, OR across groups, OR
+into the main region, replacing the old flat AND-of-individual-planes
+chain entirely.
+
+**A real regression surfaced by this fix, found and fixed by the user in
+the same pass**: the first version of this fix broke 3 other RevCC/
+MultiPlane files -- `Cans/series_solid2_complement.stp` (143.33 sigma),
+`Mixed/series_solid2_complement.stp` (92.11 sigma), and
+`Mixed/multiplane_add_plane_cyl.stp` (4.61 sigma) -- found via the same
+full-corpus parallel conversion + d1suned batch methodology used
+throughout this project. The user investigated and corrected this
+independently before the fix was considered final.
+
+**Verified** (full `Solidos/test_models` corpus, excluding `Big_*`,
+`corrupted_solids="ignore"`, parallel conversion + parallel d1suned,
+`ocp` engine): 132/138 files convert (same 6 non-convertions as
+documented above -- `ConeSphere.stp`'s accepted native crash plus the 5
+genuinely-corrupted-CAD files `find_short_edges` already correctly
+flags); of the resulting run directories, **0% beyond 3 sigma, 93.6%
+within 2 sigma, 0 lost particles** -- `barrel_right.stp` itself and all
+3 of the regression files are confirmed clean, with no new failures
+introduced anywhere else in the corpus.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

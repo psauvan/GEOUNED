@@ -325,11 +325,8 @@ def build_RCC_params(rc):
             cone, apexPlane, plane, mp_planes = cc.Params
             gcylcone = GeounedSurface(("Cone", (cone, apexPlane, plane)))
         cylcones.append(gcylcone)
-        for mpp in mp_planes:
-            if not any(mpp is existing for existing in adjacent_mp_planes):
-                adjacent_mp_planes.append(mpp)
 
-    return cylcones, adjacent_mp_planes
+    return cylcones, mp_planes
 
 
 def _closing_plane(cyl, edges, kind, secondary):
