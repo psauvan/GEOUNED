@@ -106,6 +106,7 @@ from .surface_geometry import (
 )
 from .solid_defects import (
     MIN_SLIVER_EDGE_LENGTH,
+    check_solid_defects,
     count_split_ring_pairs,
     find_short_edges,
     find_split_ring_faces,
@@ -1659,6 +1660,56 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     if abs(result.Volume - solid.Volume) > MAX_SLIVER_HEAL_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
         return None
     return result
+
+
+def Gcheck_and_repair(
+    solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
+) -> "tuple[GSolid, bool]":
+    """Load-time CAD-defect check + repair cascade, run once per solid
+    right after `Gload_step` (2026-08-28, per direct user request: this
+    is fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,
+    ShapeBuild_ReShape, BRepBuilderAPI_Sewing -- not GEOUNED-level
+    classification, so it belongs entirely in `geo`, not orchestrated
+    from Python-level GEOUNED code calling into several separate `geo`
+    functions one at a time).
+
+    Deliberately does NOT call `.fix()` first, unlike an earlier version
+    of this cascade -- `Gload_step` already applies `GSolid.fix(1e-6)`
+    unconditionally to every solid it returns (a separate, load-bearing
+    fix for a totally different problem: raw STEPControl_Reader output
+    can silently hang later Gsplit calls even when BRepCheck_Analyzer
+    calls it valid -- see `Gload_step`'s own docstring), so a caller
+    that calls this right after `Gload_step`, as `load_cad` does, would
+    otherwise pay for a second, wasted fix() pass recomputing an
+    already-clean result. This function's own precondition is exactly
+    that: `solid` must already be `Gload_step`-fixed.
+
+    Returns `(solid, True)` unchanged if already clean. Otherwise tries,
+    in order, the same cascade `Gcheck_and_repair`'s own predecessor
+    (GEOUNED/loadfile/load_step.py's now-removed `repair_solid`) used --
+    `Gcollapse_split_rings`, `Gsliver_heal`, then `find_short_edges` +
+    `Gdefeature` -- returning `(repaired, True)` on the first one that
+    both fires and leaves `check_solid_defects` empty. Returns
+    `(solid, False)` -- the ORIGINAL, unrepaired solid, never a partial
+    or fabricated result -- if nothing clears every check."""
+    if not check_solid_defects(solid, sliver_edge_rel_tol):
+        return solid, True
+
+    collapsed = Gcollapse_split_rings(solid, min_face_width)
+    if collapsed is not None:
+        return collapsed, True
+
+    sliver_healed = Gsliver_heal(solid, min_face_width)
+    if sliver_healed is not None:
+        return sliver_healed, True
+
+    degenerate_faces = find_short_edges(solid, sliver_edge_rel_tol)
+    if degenerate_faces:
+        healed = Gdefeature(solid, degenerate_faces)
+        if healed is not None and not check_solid_defects(healed, sliver_edge_rel_tol):
+            return healed, True
+
+    return solid, False
 
 
 GShape = GSolid | GFace | GEdge | GShell

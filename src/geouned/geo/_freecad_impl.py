@@ -1172,8 +1172,9 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     ``BRepBuilderAPI_Sewing`` + ``ShapeFix_Shape`` pipeline -- see
     ``geo._ocp_impl.Gcollapse_split_rings`` for the full account and the
     verified fixture). No FreeCAD ``Part`` equivalent is wired: this is a
-    None-returning stub so the caller (``repair_solid``) simply falls
-    through to its existing behavior under the freecad engine."""
+    None-returning stub so the caller (``Gcheck_and_repair``, itself a
+    no-op bypass under this engine -- see below) never actually reaches
+    it under freecad."""
     return None
 
 
@@ -1184,9 +1185,28 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     the freed hole on the kept plane, sew last).
 
     ocp/occ only -- see ``geo._ocp_impl.Gsliver_heal`` for the algorithm
-    and the verified fixture (``LR.stp``). A ``None``-returning stub here
-    so ``repair_solid`` falls through unchanged under the freecad engine."""
+    and the verified fixture (``LR.stp``). A ``None``-returning stub here,
+    same reasoning as ``Gcollapse_split_rings`` above."""
     return None
+
+
+def Gcheck_and_repair(
+    solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
+) -> "tuple[GSolid, bool]":
+    """FreeCAD has none of the native CAD-defect-repair tools this
+    cascade needs (``Gdefeature`` exists here via ``Part.Shape.
+    defeaturing()``, but ``Gcollapse_split_rings``/``Gsliver_heal`` are
+    both ``None``-returning stubs above -- no ``Part`` pipeline is wired
+    for either) -- per direct user instruction ("no tiene las
+    herramientas para realizar las operaciones"), bypass the whole
+    check+repair process entirely for this engine and return `solid`
+    exactly as loaded, `True`, unconditionally. No `check_solid_defects`
+    call, no attempt. `GeounedSolid.__init__` already applies its own
+    `.refine()` unconditionally downstream regardless of this bypass, so
+    a basic level of cleanup still happens -- just not this dedicated
+    corrupted-solid detection/repair pass, which needs tools this engine
+    doesn't have."""
+    return solid, True
 
 
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).

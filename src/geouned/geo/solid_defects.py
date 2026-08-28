@@ -278,3 +278,33 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
         return _near(abs(surf_a.Radius - surf_b.Radius))
 
     return None
+
+
+def check_solid_defects(solid, sliver_edge_rel_tol: float = 1e-4) -> list:
+    """Run every known corrupted/degenerate-geometry check against a
+    loaded solid and return the reasons it currently fails (empty list
+    if the solid is clean). One function, one place to extend: any
+    future check should be added here so every caller (a backend's own
+    ``Gcheck_and_repair`` cascade, GEOUNED's own reporting) picks it up
+    automatically, instead of several separate, differently-gated checks.
+
+    Checks currently implemented:
+      - topological validity (BRepCheck_Analyzer / equivalent, via
+        ``GSolid.is_valid()``).
+      - pathologically short edges relative to the solid's own BoundBox
+        diagonal (``find_short_edges``) -- a real, generalizable
+        signature of a spurious/degenerate CAD feature invisible to
+        ``is_valid()`` alone (confirmed live, 2026-08-27, Solidos/
+        working_solids/"beltline left.stp" -- a spurious plane bridging
+        a solid's real wall to a near-zero-height sliver).
+
+    Takes the raw tolerance value, not a `Tolerances` object -- this file
+    has no dependency on anything outside `geo`, GEOUNED's own
+    `Tolerances` class included; callers read `tolerances.sliver_edge_rel_tol`
+    themselves before calling in."""
+    reasons = []
+    if not solid.is_valid():
+        reasons.append("invalid topology")
+    if find_short_edges(solid, sliver_edge_rel_tol):
+        reasons.append("degenerate/sliver geometry")
+    return reasons

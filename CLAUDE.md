@@ -9650,6 +9650,80 @@ run concurrently) rather than sequentially: `freecad` 158/158+2skip,
 4-way split and again after the follow-up `GLabelNode` move, both times
 with zero regressions.
 
+## Load-time CAD-defect check/repair moved into `geo` -- `Gcheck_and_repair`,
+FreeCAD gets a real bypass
+
+Direct follow-up to the split above, same session, per explicit user
+request ("ahora mismo"). The user's own framing: `load_cad`
+(`GEOUNED/loadfile/load_step.py`) used to load a solid via `Gload_step`
+(native shape -> `GSolid`), then call two Python-level functions
+(`check_solid_defects`/`repair_solid`) that, in the end, only ever do
+native CAD-repair work (`BRepCheck_Analyzer`, `BRepAlgoAPI_Defeaturing`,
+`ShapeBuild_ReShape`, `BRepBuilderAPI_Sewing` -- via `Gdefeature`/
+`Gcollapse_split_rings`/`Gsliver_heal`, all already native-backed) --
+"para hacer todo esto en definitiva trabajamos con objetos nativos no de
+GEOUNED, así que no tiene sentido pasarlo a GEOUNED [antes]." A second,
+concrete inefficiency this exposed: `repair_solid`'s own cascade started
+with an unconditional `solid.fix(1e-6)` -- but `Gload_step` (occ/ocp)
+*already* applies `GSolid.fix(1e-6)` to every solid it returns (a
+separate, load-bearing fix, unrelated to defect detection -- see
+`Gload_step`'s own docstring for why it's unconditional: raw
+`STEPControl_Reader` output can silently hang a later `Gsplit` call even
+when `BRepCheck_Analyzer` already calls it valid). So every corrupted
+solid was being `fix()`-ed twice, each `fix()` call itself constructing
+a full, eagerly-parsed `GSolid` (every face/edge wrapped, classified,
+`CharacteristicWidth` computed) only to discard it a moment later.
+
+**Fix**: `check_solid_defects`/`repair_solid` (previously Python-level
+functions in `load_step.py`, engine-agnostic *in name* but calling
+straight into engine-specific `geo` functions anyway) collapsed into one
+new `geo` function per backend, `Gcheck_and_repair(solid,
+sliver_edge_rel_tol=1e-4, min_face_width=0.1) -> tuple[GSolid, bool]`:
+- **occ/ocp**: the exact same cascade `repair_solid` used
+  (`check_solid_defects` -> `Gcollapse_split_rings` -> `Gsliver_heal` ->
+  `find_short_edges` + `Gdefeature`), minus the redundant leading
+  `.fix()` -- its own docstring states the precondition explicitly: the
+  caller must pass an already-`Gload_step`-fixed solid (true for its
+  only current caller, `load_cad`, called right after `Gload_step`).
+  `check_solid_defects` itself moved to `geo/solid_defects.py` (a pure,
+  engine-agnostic function operating on `GSolid.is_valid()` +
+  `find_short_edges` -- no dependency on GEOUNED's own `Tolerances`
+  class, takes the raw float tolerance value instead, matching this
+  file's own "no dependency on anything outside `geo`" discipline) so
+  the trivial "what's wrong" logic isn't duplicated between occ and ocp,
+  only the genuinely backend-specific repair cascade is.
+- **freecad**: a real, unconditional bypass -- `return solid, True`,
+  no `check_solid_defects` call, nothing. Per direct user instruction
+  ("no tiene las herramientas para realizar las operaciones"):
+  `Gcollapse_split_rings`/`Gsliver_heal` are already `None`-returning
+  stubs under this engine (no `Part` pipeline wired for either), so a
+  real cascade here would just fall through to `Gdefeature` alone every
+  time anyway -- explicitly skipped instead, matching the project's own
+  established precedent for FreeCAD-infeasible features.
+  `GeounedSolid.__init__` already applies its own `.refine()`
+  unconditionally downstream regardless of this bypass, so a baseline
+  level of cleanup still happens under this engine, just not this
+  dedicated corrupted-solid detection/repair pass.
+
+`load_cad`'s own loop collapsed from ~90 lines (two locally-defined
+functions plus the loop body) to a single `Gcheck_and_repair(s,
+tolerances.sliver_edge_rel_tol, tolerances.min_face_width)` call whose
+boolean result feeds the exact same `corrupted_solids_list`/stop/ignore
+logic as before -- `load_cad` no longer imports or references
+`Gdefeature`/`Gcollapse_split_rings`/`Gsliver_heal`/`find_short_edges`
+at all, only `Gcheck_and_repair`.
+
+**Verified**: `tests/geo` + `tests/test_cadtocsg.py` (+ `test_csgtocad.py`
+for freecad) green on all 3 engines, run in parallel again -- `freecad`
+158/158+2skip, `occ` 89/89, `ocp` 89/89. A direct, live end-to-end check
+against the 2 real fixtures this project's own "split boundary ring"
+recipe was built on (`Solidos/working_solids/"barrel bottom.stp"`,
+`"beltline left.step"`) confirms `Gcheck_and_repair` still detects and
+repairs both correctly (volume-conserving, `ok=True`) via the relocated
+cascade; a full `load_step_file(..., corrupted_solids="stop")` run on
+`"barrel bottom.stp"` completes without stopping (auto-repaired, exactly
+the intended behavior).
+
 ## CAD-defect recipe session: "split boundary ring" / duplicated micro-trim — `geo.Gcollapse_split_rings`
 
 New working mode (separate session, own memory file

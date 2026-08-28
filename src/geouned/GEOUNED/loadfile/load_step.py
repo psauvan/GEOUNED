@@ -7,7 +7,7 @@ import re
 
 from ..utils.geouned_classes import GeounedSolid
 from ..utils.data_classes import Tolerances
-from ...geo import Gload_step, Gload_step_labels, Gdefeature, Gcollapse_split_rings, Gsliver_heal, find_short_edges
+from ...geo import Gload_step, Gload_step_labels, Gcheck_and_repair
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -27,96 +27,6 @@ def extract_materials(filename):
             matname = " ".join(vals[2:])
             m_dict[mat_label] = (rho_real, matname)
     return m_dict
-
-
-def check_solid_defects(solid, tolerances):
-    """
-    Run every known corrupted/degenerate-geometry check against a loaded
-    solid and return the reasons it currently fails (empty list if the
-    solid is clean). One function, one place to extend: any future check
-    should be added here so both the repair attempt and the reporting in
-    load_cad automatically pick it up, instead of the two separate,
-    parallel checks this replaced (one for topological validity, one for
-    slivers -- the user never cared which specific check fired, only
-    whether the solid is usable as-is).
-
-    Checks currently implemented:
-      - topological validity (BRepCheck_Analyzer / equivalent, via
-        GSolid.is_valid()).
-      - pathologically short edges relative to the solid's own BoundBox
-        diagonal (geo.find_short_edges) -- a real, generalizable signature
-        of a spurious/degenerate CAD feature invisible to is_valid() alone
-        (confirmed live, 2026-08-27, Solidos/working_solids/"beltline
-        left.stp" -- a spurious plane bridging a solid's real wall to a
-        near-zero-height sliver).
-    """
-    reasons = []
-    if not solid.is_valid():
-        reasons.append("invalid topology")
-    if find_short_edges(solid, tolerances.sliver_edge_rel_tol):
-        reasons.append("degenerate/sliver geometry")
-    return reasons
-
-
-def repair_solid(solid, tolerances):
-    """
-    Attempt to repair a solid flagged by check_solid_defects, trying the
-    fastest and most generally-applicable method first and only falling
-    back to a more targeted (and more expensive) one if the cheap attempt
-    doesn't fully clear every check. Returns the repaired solid once
-    check_solid_defects(result) comes back empty (or, for the split-ring
-    branch, once geo.Gcollapse_split_rings' own valid + volume-conserved
-    check passes -- see below), or None if nothing tried leaves the solid
-    usable.
-    """
-    # fix() is cheap, general-purpose, and already the standard repair
-    # for invalid topology; it can also incidentally clear some sliver
-    # cases (face/edge unification), so it's always worth trying first.
-    repaired = solid.fix(1e-6)
-    if not check_solid_defects(repaired, tolerances):
-        return repaired
-
-    # Targeted: "split boundary ring" / duplicated micro-trim -- a single
-    # trimming surface duplicated at a sub-tolerance offset, with parasitic
-    # curved "riser" faces bridging the thin slab and every curved face on
-    # the trim carrying a doubled boundary ring. Every generic OCCT healer
-    # (fix/refine/UnifySameDomain/Defeaturing) and any boolean re-cut
-    # no-ops or fails on this. Gcollapse_split_rings removes the riser
-    # faces and re-sews; it validates valid + |dV| < 1% internally and
-    # returns None when it doesn't apply or doesn't converge. Its result
-    # may keep residual sub-0.05mm connector edges (an internal-wire
-    # micro-tab sewing can't weld) -- HARMLESS, verified via an MCNP
-    # stochastic-volume check (barrel bottom.stp: tally 0.9997, 0 lost
-    # particles) -- so accept it on its own return, NOT on a clean
-    # check_solid_defects re-check (which would reject it for those edges).
-    collapsed = Gcollapse_split_rings(repaired, tolerances.min_face_width)
-    if collapsed is not None:
-        return collapsed
-
-    # sliver_healing (v0): when the split-ring leftover is a genuine
-    # *near-coincident* (not exactly-coincident) surface pair that blind
-    # sewing can't reconcile -- Gcollapse_split_rings rejects those. It
-    # drops the smaller face of the pair, re-trims any quadric whose rim
-    # sat on the dropped plane, caps the freed hole on the kept plane,
-    # and sews LAST; validates valid + |dV| < 5e-4 internally (no pair
-    # count -- its own cap is a thin annulus that metric false-counts).
-    # Verified on LR.stp (cylindrical collapsed-step): healed dV 8.6e-7,
-    # d1suned tally 0.9985 / 0 lost (was 0.0 / 24 lost).
-    # Accept on its own return, same as the collapse branch.
-    sliver_healed = Gsliver_heal(repaired, tolerances.min_face_width)
-    if sliver_healed is not None:
-        return sliver_healed
-
-    # Still failing (typically: a sliver fix() doesn't touch) -- try the
-    # more targeted, more expensive BRepAlgoAPI_Defeaturing pass, seeded
-    # from whichever short edges remain after fix().
-    degenerate_faces = find_short_edges(repaired, tolerances.sliver_edge_rel_tol)
-    if degenerate_faces:
-        healed = Gdefeature(repaired, degenerate_faces)
-        if healed is not None and not check_solid_defects(healed, tolerances):
-            return healed
-
-    return None
 
 
 def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", tolerances=None):
@@ -140,26 +50,23 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     loop_spline = spline_surf.lower() in ("remove", "stop")
     loop_corrupted = corrupted_solids.lower() == "remove"
     for i, s in enumerate(Solids):
-        # One unified check (check_solid_defects: topological validity +
-        # sliver/degenerate-edge detection today, any future check added
-        # there automatically) instead of two separate, differently-gated
-        # checks -- the user doesn't care which specific check fired, only
-        # whether the solid is usable. A repair is always attempted
-        # (repair_solid: fix() first, since it's cheap/general-purpose and
-        # already the standard repair for invalid topology; falls back to
-        # the more targeted Gdefeature only if fix() alone doesn't clear
-        # every check) -- the corrupted_solids mode is only consulted for
-        # what to do once repair has genuinely failed, not to gate whether
-        # repair is attempted at all.
-        if check_solid_defects(s, tolerances):
-            healed = repair_solid(s, tolerances)
-            if healed is not None:
-                s = healed
-            else:
-                corrupted_solids_list.append(i)
-                if loop_corrupted:
-                    meta_list.append(LF.GeounedSolid(i + 1))
-                    continue
+        # geo.Gcheck_and_repair does the whole check+repair cascade
+        # natively, per backend (2026-08-28, per direct user request:
+        # this is fundamentally native-shape repair work -- BRepAlgoAPI_
+        # Defeaturing, ShapeBuild_ReShape, BRepBuilderAPI_Sewing -- not
+        # GEOUNED-level classification, so it belongs in geo, not
+        # orchestrated here by calling several separate geo functions one
+        # at a time; see its own docstring in each _*_impl.py). Under
+        # FreeCAD it's an unconditional no-op bypass -- that engine has
+        # none of the native tools this cascade needs. A repair is always
+        # attempted (never opt-in) -- the corrupted_solids mode is only
+        # consulted for what to do once repair has genuinely failed.
+        s, ok = Gcheck_and_repair(s, tolerances.sliver_edge_rel_tol, tolerances.min_face_width)
+        if not ok:
+            corrupted_solids_list.append(i)
+            if loop_corrupted:
+                meta_list.append(LF.GeounedSolid(i + 1))
+                continue
         if LF.spline(s):
             spline_solids.append(i)
             if loop_spline:
