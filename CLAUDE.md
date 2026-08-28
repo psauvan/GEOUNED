@@ -9574,6 +9574,182 @@ the export itself). `tests/geo` + `tests/test_cadtocsg.py` +
 `tests/test_csgtocad.py` green on all 3 engines after the change
 (`freecad` 158/158+2skip, `occ` 89/89, `ocp` 89/89).
 
+## CAD-defect recipe session: "split boundary ring" / duplicated micro-trim — `geo.Gcollapse_split_rings`
+
+New working mode (separate session, own memory file
+`reference_cad_defect_recipes.md`): a growing catalog of recognized CAD
+geometry defects, one recipe each — observable symptom, a general
+geometric/topological detection signature (not the parameters of one
+specific surface), root cause, an automatic repair if it is fast and
+reliable, else how it is detected and flagged; plus a minimal STEP
+fixture and a d1suned `volSDEF=True` verification. Same 3-engine test
+discipline and "use the existing `SolidTestMCNP/scripts/`, don't
+reinvent them" rule as the refactoring sessions.
+
+### Recipe 1: split boundary ring (duplicated micro-trim / collapsed step)
+
+First fixture: `Solidos/working_solids/"barrel bottom.stp"` (also
+`Solidos/test_models/esfera/Barrel_bottom.stp` — same solid), a
+2179.7/2129.4mm spherical barrel bottom. Related earlier case:
+`beltline left.step` (cylindrical variant, see 1b).
+
+**Symptom**: a curved analytic face (sphere / cylinder / cone / torus)
+whose boundary loop contains **two circular edges that are meant to be
+one** — nearly equal radius, coaxial, concentric — bridged by a chain of
+pathologically short connector edges. Often accompanied by two
+near-coincident parallel plane faces and a ring of parasitic sub-mm-tall
+curved "riser" faces between them. `BRepCheck_Analyzer` reports the solid
+fully valid.
+
+`barrel bottom.stp` concrete numbers: BoundBox diag ≈ 5603.7mm. A single
+bottom trim plane at z ≈ −1000 is **duplicated** into z = −1000.0000 and
+z = −999.9777 (Δ = 0.0223mm ≈ 4e-6 of scale). The inner sphere
+(R = 2129.41) is bounded by rings R = 1880.000000 @ z=−1000.0 and
+R = 1880.011859 @ z=−999.9777 (ΔR/R = 6.3e-6), bridged by `GLine` edges
+of 0.036mm. Parasitic risers: two R=1879.6 cylinders 0.0223mm tall
+(Area ≈ 62, CharWidth ≈ 0.023) and four R=200 cylinders 0.0223mm tall
+(Area ≈ 0.022).
+
+**Detection** — `geo.vector_geometry.find_split_ring_faces(solid,
+min_face_width=0.1, rel_tol=1e-4)` (new, duck-typed, all 3 engines,
+next to `find_short_edges`): returns the "riser" faces — an analytic
+curved face (cyl/cone/sphere/torus) that is BOTH sliver-scale
+(`CharacteristicWidth < min_face_width`) AND touches at least one
+pathologically short edge (same threshold as `find_short_edges`,
+`max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)`). On the fixture: selects
+exactly the 6 riser cylinders, leaves the 2 real spheres
+(`CharacteristicWidth` ~3100-3200) and 3 real planes.
+
+**What does NOT work** (all confirmed live, ocp): `find_short_edges`
+already flags this solid (7 faces), so `corrupted_solids` catches it;
+`repair_solid`'s existing cascade (`fix(1e-6)` → `Gdefeature`) all no-op.
+`ShapeFix_Shape` / `ShapeUpgrade_UnifySameDomain` (linear tol up to 0.1)
+/ `ShapeFix_Wireframe.FixSmallEdges` alone: no-ops (Unify only merges
+*adjacent* coplanar faces; the two trim planes are not adjacent).
+`BRepAlgoAPI_Defeaturing` refuses the near-degenerate riser faces (broad,
+narrow, or incremental seed) — same as `beltline left.stp`.
+`BRepAlgoAPI_Common`/`_Cut` with a plane half-space or a finite box
+(via `Gmake_half_space`/`Gcommon`/`Gcut` or raw OCP): returns
+EMPTY or unchanged — the source degeneracy breaks *every* boolean op on
+this solid; a boolean re-cut is only viable *after* the slivers are
+removed.
+
+**The repair** — `geo.Gcollapse_split_rings(solid, min_face_width=0.1)
+-> GSolid | None` (new, `_ocp_impl.py` + `_occ_impl.py`;
+`_freecad_impl.py` is a `None`-returning stub — no `Part` pipeline
+wired, matching `_try_coaxial_cone_split`'s ocp/occ-only precedent):
+1. `find_split_ring_faces` → the riser faces.
+2. Remove them via `ShapeBuild_ReShape` (non-mutating `.Apply`).
+3. Re-sew the remaining shell (`BRepBuilderAPI_Sewing` at
+   `sew_tol ≈ 3× max riser edge length`, clamped to `[10·MIN_SLIVER_EDGE_LENGTH,
+   min_face_width]`) — welds the two trim surfaces' shared rims and each
+   curved face's doubled boundary ring into one.
+4. `BRep_Builder`/`MakeShell` → `BRepBuilderAPI_MakeSolid` →
+   `ShapeFix_Shape(sew_tol)`.
+
+**Acceptance — 3 checks, valid + volume alone are a FALSE PASS** (same
+lesson as `Gdefeature`'s `MAX_DEFEATURE_VOLUME_REL_CHANGE` history, found
+here via `LR.stp` — see 1b):
+- `result.is_valid()`;
+- `|dV| / max(|V|, 1) < MAX_SPLIT_RING_VOLUME_REL_CHANGE` = **3e-4** (new
+  constant, tighter than `Gdefeature`'s 1%) — a genuine collapse only
+  removes micron-scale riser volume, so dV ~1e-4 or better
+  (`barrel bottom`: 6.4e-5);
+- `count_split_ring_pairs(result) < count_split_ring_pairs(solid)` (new
+  `vector_geometry.py` helper, exported) — the *direct* success test:
+  "did the doubled boundary rings actually merge". Counts near-coincident
+  concentric circular-edge pairs on the same face (coaxial, concentric,
+  `|dR|/R < 1e-3`, centre gap `> 0` and `< 1e-3·diag`). `barrel bottom`:
+  18 → 12 (pass).
+
+Residual sub-`sew_tol` connector edges may remain on the kept faces (an
+internal-wire micro-tab sewing can't weld) — HARMLESS: `barrel bottom`
+keeps 2 faces with ~0.029mm edges and still converts with a tally of
+0.9997. So acceptance does NOT require `find_short_edges` empty.
+**NOT used**: `ShapeFix_Wireframe.FixSmallEdges` clears the residual edges
+but reshapes the trimmed sphere boundary → **~0.22% volume drift on a
+STEP round-trip** (the in-memory dV is a misleading ~1e-4; the
+exported/reloaded solid is ~2.2e-3 off). Fails the guard, deliberately
+left out.
+
+**Wired into `repair_solid`** (`loadfile/load_step.py`): a
+`Gcollapse_split_rings` branch after `fix(1e-6)`, before the `Gdefeature`
+step; accepted **on the geo function's own return** (it validates
+internally), NOT re-gated on `check_solid_defects` (which would reject it
+for the residual edges).
+
+**Verified**: `Gcollapse_split_rings(barrel bottom)` → valid, 11→5 faces,
+dV 6.4e-5, exactly the 6 risers detected; a clean solid
+(`testing/inputSTEP/BC.stp`) → `None`. **End-to-end**: raw
+`barrel bottom.stp` → `load_step_file` (defaults) → `repair_solid` →
+`Gcollapse_split_rings` → converts → d1suned `volSDEF=True`: **tally
+0.999738 ± 0.27%, 0 lost particles**. `tests/geo` freecad 106+2skip / ocp
+39 / occ 39; `tests/test_cadtocsg.py` 50 / 50 / 50.
+`tests/test_csgtocad.py` 2 fails ocp/occ — **pre-existing**, confirmed
+unrelated via `git stash` (GEOReverse, cone-tool-free reconstruction).
+Full `Solidos/test_models` parallel d1suned corpus (138 files, no
+`Big_*`): 133 convert, 173 tallies — **93.6% <2σ, 0% >3σ, 0 lost
+particles**, marginal set unchanged, **matches the documented baseline
+exactly**. Bonus: `esfera/Barrel_bottom.stp` (was on the "5
+newly-detected corrupted, need external CAD fix" list in the
+`corrupted_solids` section above) is now **auto-repaired** by this branch
+→ tally 0.999738.
+
+### Recipe 1b: the CYLINDRICAL variant does NOT repair — `LR.stp` (beltline family)
+
+`Solidos/working_solids/LR.stp` (== the `beltline left.step` family): a
+cylindrical shell, R=2191.5 inner / 2197.1 outer, z ∈ [−1300, 4025.9],
+5.6mm wall. Near the top: the R=2191.5 inner wall goes up to z=4021.017,
+then a **real** 0.888mm × 4.854mm outward rebate to R=2192.39 (FACE 2,
+bounded by two 0.888mm annular planes), then a **spurious** 0.029mm
+R=2191.5 sliver band (FACE 5) up to the top cap at z=4025.9.
+
+`find_split_ring_faces` DOES fire (1 riser: FACE 5, CharWidth 0.034) —
+and the user separately noted the near-equal cross-face radii
+(R=2192.39 vs R=2191.5, rel ~4e-4). But `Gcollapse_split_rings`'s
+first version (accept on valid + `|dV| < 1%`) produced a topologically
+valid, ~volume-conserving solid (dV 7.0e-4) whose **CSG translation is
+broken**: end-to-end GEOUNED + d1suned gave **tally 0.0, 24 lost
+particles** ("no cell found in subroutine newcel"). This is the
+*cylindrical* duplicated-trim / collapsed-step: removing a lone riser
+band from a cylinder and re-sewing the 0.029mm gap distorts the R=2191.5
+wall — the `beltline left.stp` investigation (see the `corrupted_solids`
+section above) already established that no OCCT healing route works on
+this class ("the gap needs real surface extension, not edge-sewing").
+
+**This was a real FALSE PASS** — fixed by the 3-check acceptance above:
+LR's collapse has `|dV| = 7.0e-4 > 3e-4` AND `count_split_ring_pairs`
+2 → 2 (unchanged), so both new checks reject it. `Gcollapse_split_rings`
+now returns `None` for `LR.stp` → `repair_solid` falls through → LR is
+flagged corrupted (honest refusal, not silent broken CSG). Confirmed:
+`barrel bottom` / `esfera/Barrel_bottom` still ACCEPTED (tally 0.999738,
+unchanged); a scan of all 137 `test_models` files finds only
+`esfera/Barrel_bottom` triggers the collapse at all (ACCEPT, unchanged) —
+the strengthened gate has **zero corpus effect**. `LR.stp` remains an
+**unsolved cylindrical collapsed-step** — needs a future
+surface-extension repair, out of scope of the sew-collapse recipe.
+
+### `load_cad` refactor committed alongside (user's own work this session)
+
+- `stop_process` is now guarded by `if removed_indexes:` — the previous
+  form (`stop_process = (spline_surf == "stop") or (corrupted_solids ==
+  "stop")`, both defaulting to `"stop"`) unconditionally `exit()`ed
+  `load_cad` on **every** file regardless of whether anything was
+  flagged. Found while testing the recipe against the corpus.
+- `corrupted_solids` valid values renamed `"ignore"` → `"remove"` (in
+  `core.py`'s validation + docstring); `loop`/`loop_corrupted` renamed
+  `loop_spline`/`loop_corrupted`; `corrupted_solids_list`/`spline_solids`
+  now hold ints, not strs.
+- New `load_functions.py::display_removed_solids(corrupted_solids_list,
+  spline_solids, removed_labels)` — prints AND `logger.warning`s the
+  identifiers + their comment-tree labels (the `general_logger` has only
+  a `FileHandler`, so `logger.warning` is the only way these survive the
+  terminal session).
+- **Workshop-script fix**: `SolidTestMCNP/scripts/convert_one_ocp.py` /
+  `convert_one_occ.py` passed `corrupted_solids="ignore"` — now rejected
+  by the API — changed to `"remove"`. The whole corpus batch was failing
+  rc=1 on every file until this.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

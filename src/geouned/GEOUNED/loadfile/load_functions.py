@@ -348,3 +348,29 @@ def solid_generator(doclist):
         if last is None:
             break
         yield check_index(doclist, last, True)
+
+
+def display_removed_solids(corrupted_solids_list, spline_solids, removed_labels):   
+
+    if len(spline_solids) > 0:
+        print("Warning, following solids have Spline surfaces:")
+        print(", ".join([str(i) for i in spline_solids]))
+        text = 'following solids have Spline surfaces:\n'
+        for i in spline_solids:
+            text += f"solid {i:<5d} : {removed_labels[i]}\n" 
+        logger.warning(text)
+
+    if len(corrupted_solids_list) > 0:
+        # Per direct user instruction: whatever the corrupted_solids mode,
+        # the moment any corrupted solid is found this must be flagged both
+        # on the prompt (print, already the case above/below) AND recorded
+        # in the log file (logger.warning -- general_logger's own FileHandler,
+        # set up once per CadToCsg in core.py's __init__, has no console
+        # handler at all, see utils/log_utils.py::setup_logger, so this is
+        # the only way these identifiers survive past the current terminal).
+        print("Warning, following solids have corrupted/degenerate geometry and could not be repaired:")
+        print(", ".join([str(i) for i in corrupted_solids_list]))
+        text = 'following solids have corrupted/degenerate geometry and could not be repaired:\n'
+        for i in corrupted_solids_list:
+            text += f"solid {i:<5d} : {removed_labels[i]}\n" 
+        logger.warning(text)

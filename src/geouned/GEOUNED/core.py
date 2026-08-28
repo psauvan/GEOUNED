@@ -294,7 +294,7 @@ class CadToCsg:
                                    corrupted-geometry check is added to the same single check, so this parameter covers it too).
                                    A repair (geo.Gdefeature, falling back from a cheap geo.GSolid.fix()) is always attempted first,
                                    regardless of this setting. Only once that repair genuinely fails does this setting apply:
-                                   'stop' execution, or 'ignore' -- drop the solid from the list to convert.
+                                   'stop' execution, or 'remove' -- drop the solid from the list to convert.
         Returns:
             tuple: A tuple containing the solid volumes list and enclosure volumes list extracted from the STEP files.
         """
@@ -320,8 +320,8 @@ class CadToCsg:
 
         if not isinstance(corrupted_solids, str):
             raise TypeError(f"corrupted_solids should be a str, not a {type(corrupted_solids)}")
-        if corrupted_solids.lower() not in ("stop", "ignore"):
-            raise TypeError(f'available values for corrupted_solids are: "stop" or "ignore" ')
+        if corrupted_solids.lower() not in ("stop", "remove"):
+            raise TypeError(f'available values for corrupted_solids are: "stop" or "remove" ')
 
         self.filename = filename
         self.skip_solids = skip_solids

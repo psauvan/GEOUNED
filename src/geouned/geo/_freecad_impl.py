@@ -1161,6 +1161,21 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     return healed
 
 
+def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+    """Repair a "split boundary ring" / duplicated micro-trim defect --
+    a single trimming surface duplicated at a sub-tolerance offset, with
+    parasitic "riser" faces bridging the thin slab and every curved face
+    on the trim carrying a doubled boundary ring.
+
+    Implemented for the ocp/occ backends only (a ``ShapeBuild_ReShape`` +
+    ``BRepBuilderAPI_Sewing`` + ``ShapeFix_Shape`` pipeline -- see
+    ``geo._ocp_impl.Gcollapse_split_rings`` for the full account and the
+    verified fixture). No FreeCAD ``Part`` equivalent is wired: this is a
+    None-returning stub so the caller (``repair_solid``) simply falls
+    through to its existing behavior under the freecad engine."""
+    return None
+
+
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).
 GShape = GSolid | GFace | GEdge | GShell
 

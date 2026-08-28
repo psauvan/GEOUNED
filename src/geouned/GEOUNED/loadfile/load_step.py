@@ -7,7 +7,7 @@ import re
 
 from ..utils.geouned_classes import GeounedSolid
 from ..utils.data_classes import Tolerances
-from ...geo import Gload_step, Gload_step_labels, Gdefeature, find_short_edges
+from ...geo import Gload_step, Gload_step_labels, Gdefeature, Gcollapse_split_rings, find_short_edges
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -64,8 +64,10 @@ def repair_solid(solid, tolerances):
     fastest and most generally-applicable method first and only falling
     back to a more targeted (and more expensive) one if the cheap attempt
     doesn't fully clear every check. Returns the repaired solid once
-    check_solid_defects(result) comes back empty, or None if nothing
-    tried leaves the solid fully clean.
+    check_solid_defects(result) comes back empty (or, for the split-ring
+    branch, once geo.Gcollapse_split_rings' own valid + volume-conserved
+    check passes -- see below), or None if nothing tried leaves the solid
+    usable.
     """
     # fix() is cheap, general-purpose, and already the standard repair
     # for invalid topology; it can also incidentally clear some sliver
@@ -73,6 +75,23 @@ def repair_solid(solid, tolerances):
     repaired = solid.fix(1e-6)
     if not check_solid_defects(repaired, tolerances):
         return repaired
+
+    # Targeted: "split boundary ring" / duplicated micro-trim -- a single
+    # trimming surface duplicated at a sub-tolerance offset, with parasitic
+    # curved "riser" faces bridging the thin slab and every curved face on
+    # the trim carrying a doubled boundary ring. Every generic OCCT healer
+    # (fix/refine/UnifySameDomain/Defeaturing) and any boolean re-cut
+    # no-ops or fails on this. Gcollapse_split_rings removes the riser
+    # faces and re-sews; it validates valid + |dV| < 1% internally and
+    # returns None when it doesn't apply or doesn't converge. Its result
+    # may keep residual sub-0.05mm connector edges (an internal-wire
+    # micro-tab sewing can't weld) -- HARMLESS, verified via an MCNP
+    # stochastic-volume check (barrel bottom.stp: tally 0.9997, 0 lost
+    # particles) -- so accept it on its own return, NOT on a clean
+    # check_solid_defects re-check (which would reject it for those edges).
+    collapsed = Gcollapse_split_rings(repaired, tolerances.min_face_width)
+    if collapsed is not None:
+        return collapsed
 
     # Still failing (typically: a sliver fix() doesn't touch) -- try the
     # more targeted, more expensive BRepAlgoAPI_Defeaturing pass, seeded
@@ -104,8 +123,8 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     meta_list = []
     spline_solids = []
     corrupted_solids_list = []
-    loop = spline_surf.lower() in ("remove", "stop")
-    loop_corrupted = corrupted_solids.lower() == "ignore"
+    loop_spline = spline_surf.lower() in ("remove", "stop")
+    loop_corrupted = corrupted_solids.lower() == "remove"
     for i, s in enumerate(Solids):
         # One unified check (check_solid_defects: topological validity +
         # sliver/degenerate-edge detection today, any future check added
@@ -123,47 +142,30 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
             if healed is not None:
                 s = healed
             else:
-                corrupted_solids_list.append(str(i))
+                corrupted_solids_list.append(i)
                 if loop_corrupted:
                     meta_list.append(LF.GeounedSolid(i + 1))
                     continue
         if LF.spline(s):
-            spline_solids.append(str(i))
-            if loop:
+            spline_solids.append(i)
+            if loop_spline:
                 meta_list.append(LF.GeounedSolid(i + 1))
                 continue
-        meta_list.append(GeounedSolid(i + 1, s))
-
-    if len(spline_solids) > 0:
-        print("following solids have Spline surfaces:")
-        print(", ".join(spline_solids))
-        if spline_surf.lower() == "stop":
-            print("spline surfaces found. Exit.")
-            exit()
-
-    if len(corrupted_solids_list) > 0:
-        # Per direct user instruction: whatever the corrupted_solids mode,
-        # the moment any corrupted solid is found this must be flagged both
-        # on the prompt (print, already the case above/below) AND recorded
-        # in the log file (logger.warning -- general_logger's own FileHandler,
-        # set up once per CadToCsg in core.py's __init__, has no console
-        # handler at all, see utils/log_utils.py::setup_logger, so this is
-        # the only way these identifiers survive past the current terminal).
-        print("following solids have corrupted/degenerate geometry and could not be repaired:")
-        print(", ".join(corrupted_solids_list))
-        logger.warning(
-            f"following solids have corrupted/degenerate geometry and could not be repaired: {', '.join(corrupted_solids_list)}"
-        )
-        if corrupted_solids.lower() == "stop":
-            print("corrupted solids found. Exit.")
-            exit()
+        meta_list.append(GeounedSolid(i + 1, s))   
 
     i_solid = 0
     missing_mat = set()
 
     nodes = Gload_step_labels(filename)
+    removed_labels = dict()
+    removed_indexes = corrupted_solids_list + spline_solids
+    
+    if removed_indexes:
+        stop_process = (spline_surf.lower() == "stop") or (corrupted_solids.lower() == "stop")
+    else:
+        stop_process = False    
 
-    for node in nodes:
+    for i,node in enumerate(nodes):
         comment = LF.getCommentTree(node, options)
         tempre_mat = None
         tempre_dil = None
@@ -171,6 +173,8 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
         # MIO: lightly modification of label if required
         label = LF.get_label(node.label, options)
         comment = comment + "/" + label
+        if i in removed_indexes :
+            removed_labels[i] = comment
         if node.parent is not None:
             # MIO: lightly modification of label if required
             label_in_list = LF.get_label(node.parent.label, options)
@@ -251,6 +255,12 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
                 meta_list[i_solid].IsEnclosure = True
                 meta_list[i_solid].CellType = "envelope"
             i_solid += 1
+
+    LF.display_removed_solids(corrupted_solids_list, spline_solids, removed_labels )
+    if stop_process: 
+        print("Corrupted solids or solids with splines found. More information in log file.")
+        print("Exit process")
+        exit()
 
     LF.joinEnvelopes(meta_list)
     if missing_mat:

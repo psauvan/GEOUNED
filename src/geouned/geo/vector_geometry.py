@@ -664,6 +664,116 @@ def find_short_edges(solid, rel_tol: float = 1e-4) -> list:
     return flagged
 
 
+_SPLIT_RING_SURFACE_TYPES = ("GCylinder", "GCone", "GSphere", "GTorus")
+
+
+def find_split_ring_faces(solid, min_face_width: float = 0.1, rel_tol: float = 1e-4) -> list:
+    """Faces that are the parasitic "riser" walls of a *duplicated
+    micro-trim* -- the "split boundary ring" CAD defect (a.k.a. collapsed
+    micro-step). A single trimming surface (a plane, or a cylinder)
+    appears twice at a sub-tolerance offset, so a curved analytic face
+    that meets it is bounded by two near-coincident concentric circular
+    edges (bridged by pathologically short connector edges) instead of
+    one, and the thin slab between the two trim copies is filled by these
+    riser faces. `BRepCheck_Analyzer` reports the solid fully valid.
+
+    A face qualifies when ALL of:
+      - its `Surface` is one of the 4 analytic curved types
+        (GCylinder / GCone / GSphere / GTorus). A plane is never a riser
+        here -- the two duplicate trim planes themselves must be KEPT;
+        only the curved walls bridging them are spurious.
+      - it is sliver-scale: `CharacteristicWidth < min_face_width`. A
+        real cylinder / sphere / cone face has a width of tens to
+        thousands of mm; a riser band is tens of microns.
+      - it touches at least one pathologically short edge, using the
+        same threshold as `find_short_edges`
+        (``max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)``).
+
+    Returns the list of GFace objects to drop (each once); empty if the
+    solid shows no such pattern (nothing to collapse). Duck-typed on
+    ``GSolid.Faces`` / ``GFace`` (``.Surface``, ``.CharacteristicWidth``,
+    ``.Edges``) / ``GEdge.Length`` / ``GSolid.BoundBox.DiagonalLength`` --
+    identical across all 3 engines, no native calls.
+
+    Confirmed live on ``Solidos/working_solids/"barrel bottom.stp"``
+    (2026-08-28): selects exactly the 6 riser cylinders (two R=1879.6,
+    four R=200, each ~0.022mm tall) out of 11 faces; the 2 real sphere
+    faces (``CharacteristicWidth`` ~3100-3200) and 3 real planes are
+    correctly left. After removing these and re-sewing the shell
+    (``geo.Gcollapse_split_rings``) the doubled boundary rings collapse
+    into one and the solid converts with an MCNP stochastic-volume tally
+    of 0.9997 (0 lost particles)."""
+    diag = solid.BoundBox.DiagonalLength
+    if diag <= 0.0:
+        return []
+    threshold = max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)
+    risers = []
+    for face in solid.Faces:
+        if type(face.Surface).__name__ not in _SPLIT_RING_SURFACE_TYPES:
+            continue
+        width = getattr(face, "CharacteristicWidth", None)
+        if width is None or width >= min_face_width:
+            continue
+        if any(DEGENERATE_EDGE_LENGTH_FLOOR <= edge.Length < threshold for edge in face.Edges):
+            risers.append(face)
+    return risers
+
+
+def count_split_ring_pairs(solid, rel_tol: float = 1e-3) -> int:
+    """Number of *near-coincident concentric circular-edge pairs* on the
+    faces of `solid` -- the direct fingerprint of a "split boundary ring"
+    (see `find_split_ring_faces`). Two circular edges of the SAME face
+    count as a pair when they are coaxial (|axis dot| ~ 1), concentric
+    (centre offset perpendicular to the axis ~ 0), have `|dR| / max(R) <
+    rel_tol`, and are separated (centre gap > 0) by less than
+    `rel_tol * BoundBox.DiagonalLength` -- i.e. two circles that "should
+    be one".
+
+    Used as the success criterion for `Gcollapse_split_rings`: a genuine
+    collapse merges the doubled rings, so this count must strictly
+    DECREASE. If it comes back unchanged after the repair, the collapse
+    did not actually resolve the defect (confirmed live 2026-08-28 on
+    ``Solidos/working_solids/LR.stp`` -- a *cylindrical* collapsed-step
+    variant where removing the lone riser band + re-sewing produces a
+    topologically valid, ~volume-conserving solid whose CSG translation
+    is nonetheless broken: d1suned tally 0.0, 24 lost particles; the
+    pair count stays at 2 before and after, vs. barrel bottom.stp's
+    18 -> 12).
+
+    Duck-typed on `GSolid.Faces` / `GFace.Edges` / `GEdge.Curve` (a
+    `GCircle` with `.Radius` / `.Axis` / `.Center`) / `GSolid.BoundBox` --
+    identical across all 3 engines."""
+    diag = solid.BoundBox.DiagonalLength
+    if diag <= 0.0:
+        return 0
+    gap_limit = rel_tol * diag
+    count = 0
+    for face in solid.Faces:
+        circles = [
+            edge.Curve
+            for edge in face.Edges
+            if edge.Curve is not None and type(edge.Curve).__name__ == "GCircle"
+        ]
+        for i in range(len(circles)):
+            for j in range(i + 1, len(circles)):
+                c1, c2 = circles[i], circles[j]
+                if abs(abs(c1.Axis.dot(c2.Axis)) - 1.0) > 1e-4:
+                    continue
+                max_r = max(c1.Radius, c2.Radius)
+                if abs(c1.Radius - c2.Radius) / max_r >= rel_tol:
+                    continue
+                offset = c2.Center - c1.Center
+                gap = offset.length
+                if not (0.0 < gap < gap_limit):
+                    continue
+                axial = abs(offset.dot(c1.Axis))
+                perp_sq = gap * gap - axial * axial
+                perp = perp_sq**0.5 if perp_sq > 0.0 else 0.0
+                if perp / max_r < rel_tol:
+                    count += 1
+    return count
+
+
 def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None:
     """Real roots of a*t^2 + b*t + c = 0, ordered (smaller, larger).
     None if there are 0 real roots, or if the equation degenerates to

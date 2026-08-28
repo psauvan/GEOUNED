@@ -120,6 +120,7 @@ from OCP.GProp import GProp_GProps
 from OCP.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Trsf, gp_Vec
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeAnalysis import ShapeAnalysis_Surface
+from OCP.ShapeBuild import ShapeBuild_ReShape
 from OCP.ShapeFix import ShapeFix_Shape
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer
@@ -134,6 +135,7 @@ from .vector_geometry import (
     GLabelNode,
     GMatrix,
     GVector,
+    MIN_SLIVER_EDGE_LENGTH,
     cylinder_tangent_at,
     cylinder_value_at,
     is_coaxial_cone_cylinder_pair,
@@ -143,7 +145,9 @@ from .vector_geometry import (
     is_inside_plane,
     is_inside_sphere,
     is_inside_torus,
+    count_split_ring_pairs,
     find_short_edges,
+    find_split_ring_faces,
     plane_tangent_at,
     plane_value_at,
     suppress_native_stdout,
@@ -1361,6 +1365,16 @@ class GSolid:
         return GSolid(BRepBuilderAPI_Transform(self.__native__, matrix, True).Shape())
 
 
+MAX_SPLIT_RING_VOLUME_REL_CHANGE = 3.0e-4
+"""Gcollapse_split_rings' own (tighter) volume-conservation net. Unlike
+Gdefeature -- whose target slivers can carry a real fraction of a "half"
+model's volume, hence its generous 1% -- a split-ring collapse removes
+only micron-scale riser bands, so a genuine repair conserves volume to
+~1e-4 or better (barrel bottom.stp: 6.4e-5). A larger drift means the
+re-sew moved a real adjacent surface: LR.stp (a cylindrical
+collapsed-step) comes back valid, dV 7e-4, and CSG-broken (d1suned tally
+0.0, 24 lost particles) -- caught by this bound, not by is_valid()."""
+
 MAX_DEFEATURE_VOLUME_REL_CHANGE = 0.01
 """Gdefeature's own volume-conservation safety net -- reject a healed
 result whose Volume differs from the input by more than 1% relative.
@@ -1440,6 +1454,119 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
         return None
     return healed
+
+
+def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+    """Repair a "split boundary ring" / duplicated micro-trim defect.
+
+    A single trimming surface (plane or cylinder) appears twice at a
+    sub-tolerance offset; the thin slab between the two copies is filled
+    by parasitic "riser" faces, and every curved analytic face that
+    meets the trim is bounded by two near-coincident concentric circular
+    edges (bridged by pathologically short connector edges) instead of
+    one. `BRepCheck_Analyzer` reports the solid valid, and every generic
+    OCCT healer (`ShapeFix_Shape`, `ShapeUpgrade_UnifySameDomain`,
+    `ShapeFix_Wireframe`, `BRepAlgoAPI_Defeaturing`) no-ops on it -- and
+    any boolean re-cut returns empty/unchanged, the source degeneracy
+    breaking every BOP on the solid.
+
+    This repair: identify the riser faces
+    (``vector_geometry.find_split_ring_faces``), remove them
+    (``ShapeBuild_ReShape``), re-sew the remaining shell at a tolerance a
+    few times the ring gap -- welding the two trim surfaces' shared rims
+    and each curved face's doubled boundary ring into one --
+    ``BRepBuilderAPI_MakeSolid`` + ``ShapeFix_Shape``.
+
+    ACCEPTANCE (all three required -- valid + volume alone are NOT enough,
+    same lesson as `Gdefeature`'s own false-pass history):
+      - ``result.is_valid()``;
+      - ``|dV| / max(|V|, 1) < MAX_SPLIT_RING_VOLUME_REL_CHANGE`` (3e-4).
+        A genuine collapse only removes sliver-volume risers, so it
+        conserves volume to ~1e-4 or better (barrel bottom.stp: 6.4e-5).
+        The generous 1% net (`MAX_DEFEATURE_VOLUME_REL_CHANGE`) is too
+        loose here -- a sew that distorts a *real* adjacent surface stays
+        "valid" and near-volume-conserving while producing CSG-broken
+        geometry (LR.stp: dV 7e-4, valid, but d1suned tally 0.0 / 24 lost
+        particles);
+      - ``count_split_ring_pairs`` strictly DECREASED -- the direct
+        success test, "did the doubled boundary rings actually merge".
+        barrel bottom.stp: 18 -> 12 (pass). LR.stp: 2 -> 2 (fail -- a
+        *cylindrical* collapsed-step where sew-collapse leaves the
+        fingerprint intact; this is the beltline-family case CLAUDE.md
+        already documents as unsolved -- correctly rejected, so the
+        caller flags it corrupted rather than silently mis-repairing).
+
+    Residual sub-sew-tolerance connector edges may remain on the (kept)
+    curved/planar faces -- an internal-wire micro-tab sewing cannot weld
+    -- and are HARMLESS: on ``barrel bottom.stp`` the repaired solid
+    keeps 2 faces with ~0.029mm edges yet converts with a tally of
+    0.9997 +/- 0.27% and 0 lost particles. So acceptance does NOT require
+    `find_short_edges` to come back empty.
+
+    NOT attempted: ``ShapeFix_Wireframe.FixSmallEdges`` clears the
+    residual edges but reshapes the trimmed sphere boundary -> ~0.22%
+    volume drift on a STEP round-trip (the in-memory dV is a misleading
+    ~1e-4; the exported/reloaded solid is ~2.2e-3 off). It fails the
+    guard and is deliberately left out.
+
+    ocp/occ only -- ``ShapeBuild_ReShape`` + ``BRepBuilderAPI_Sewing`` is
+    the pipeline used; the freecad backend's `Gcollapse_split_rings` is a
+    None-returning stub. Never raises, matching this project's
+    "silent not-applicable, not a crash" convention for every geometry
+    repair fallback."""
+    risers = find_split_ring_faces(solid, min_face_width)
+    if not risers:
+        return None
+    pairs_before = count_split_ring_pairs(solid)
+
+    edge_lengths = [edge.Length for face in risers for edge in face.Edges if edge.Length > 0.0]
+    max_short = max(edge_lengths) if edge_lengths else MIN_SLIVER_EDGE_LENGTH
+    sew_tol = min(max(3.0 * max_short, 10.0 * MIN_SLIVER_EDGE_LENGTH), min_face_width)
+
+    try:
+        reshaper = ShapeBuild_ReShape()
+        for face in risers:
+            reshaper.Remove(face.__native__)
+        reduced = reshaper.Apply(solid.__native__)
+
+        sewer = BRepBuilderAPI_Sewing(sew_tol, True, True, True, False)
+        explorer = TopExp_Explorer(reduced, TopAbs_FACE)
+        while explorer.More():
+            sewer.Add(explorer.Current())
+            explorer.Next()
+        sewer.Perform()
+        sewed = sewer.SewedShape()
+
+        builder = BRep_Builder()
+        shell = TopoDS_Shell()
+        builder.MakeShell(shell)
+        seen = False
+        face_explorer = TopExp_Explorer(sewed, TopAbs_FACE)
+        while face_explorer.More():
+            builder.Add(shell, TopoDS.Face(face_explorer.Current()))
+            seen = True
+            face_explorer.Next()
+        if not seen:
+            return None
+
+        solid_maker = BRepBuilderAPI_MakeSolid(shell)
+        if not solid_maker.IsDone():
+            return None
+
+        fixer = ShapeFix_Shape(solid_maker.Solid())
+        fixer.SetPrecision(sew_tol)
+        fixer.Perform()
+        result = GSolid(fixer.Shape())
+    except Exception:
+        return None
+
+    if not result.is_valid():
+        return None
+    if abs(result.Volume - solid.Volume) > MAX_SPLIT_RING_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+        return None
+    if count_split_ring_pairs(result) >= pairs_before:
+        return None
+    return result
 
 
 GShape = GSolid | GFace | GEdge | GShell
