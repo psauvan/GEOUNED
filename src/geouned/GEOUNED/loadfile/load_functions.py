@@ -343,14 +343,14 @@ def solid_generator(doclist):
         yield check_index(doclist, last, True)
 
 
-def display_removed_solids(corrupted_solids_list, spline_solids, removed_labels):   
+def display_removed_solids(corrupted_solids_list, spline_solids, removed_labels):
 
     if len(spline_solids) > 0:
         print("Warning, following solids have Spline surfaces:")
         print(", ".join([str(i) for i in spline_solids]))
-        text = 'following solids have Spline surfaces:\n'
+        text = "following solids have Spline surfaces:\n"
         for i in spline_solids:
-            text += f"solid {i:<5d} : {removed_labels[i]}\n" 
+            text += f"solid {i:<5d} : {removed_labels[i]}\n"
         logger.warning(text)
 
     if len(corrupted_solids_list) > 0:
@@ -363,7 +363,7 @@ def display_removed_solids(corrupted_solids_list, spline_solids, removed_labels)
         # the only way these identifiers survive past the current terminal).
         print("Warning, following solids have corrupted/degenerate geometry and could not be repaired:")
         print(", ".join([str(i) for i in corrupted_solids_list]))
-        text = 'following solids have corrupted/degenerate geometry and could not be repaired:\n'
+        text = "following solids have corrupted/degenerate geometry and could not be repaired:\n"
         for i in corrupted_solids_list:
-            text += f"solid {i:<5d} : {removed_labels[i]}\n" 
+            text += f"solid {i:<5d} : {removed_labels[i]}\n"
         logger.warning(text)

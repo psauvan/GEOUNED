@@ -67,13 +67,13 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     nodes = Gload_step_labels(filename)
     removed_labels = dict()
     removed_indexes = corrupted_solids_list + spline_solids
-    
+
     if removed_indexes:
         stop_process = (spline_surf.lower() == "stop") or (corrupted_solids.lower() == "stop")
     else:
-        stop_process = False    
+        stop_process = False
 
-    for i,node in enumerate(nodes):
+    for i, node in enumerate(nodes):
         comment = LF.getCommentTree(node, options)
         tempre_mat = None
         tempre_dil = None
@@ -81,7 +81,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
         # MIO: lightly modification of label if required
         label = LF.get_label(node.label, options)
         comment = comment + "/" + label
-        if i in removed_indexes :
+        if i in removed_indexes:
             removed_labels[i] = comment
         if node.parent is not None:
             # MIO: lightly modification of label if required
@@ -164,8 +164,8 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
                 meta_list[i_solid].CellType = "envelope"
             i_solid += 1
 
-    LF.display_removed_solids(corrupted_solids_list, spline_solids, removed_labels )
-    if stop_process: 
+    LF.display_removed_solids(corrupted_solids_list, spline_solids, removed_labels)
+    if stop_process:
         print("Corrupted solids or solids with splines found. More information in log file.")
         print("Exit process")
         exit()

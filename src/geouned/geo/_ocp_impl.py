@@ -1815,9 +1815,7 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
         fixer = ShapeFix_Shape(solid_maker.Solid())
         fixer.SetPrecision(dist_tol)
         fixer.Perform()
-        unify = ShapeUpgrade_UnifySameDomain(
-            fixer.Shape(), UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True
-        )
+        unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
         unify.SetLinearTolerance(dist_tol)
         unify.Build()
         result = GSolid(unify.Shape())
@@ -1831,9 +1829,7 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     return result
 
 
-def Gcheck_and_repair(
-    solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple[GSolid, bool]":
+def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
     fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,

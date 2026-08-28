@@ -209,11 +209,7 @@ def count_split_ring_pairs(solid, rel_tol: float = 1e-3) -> int:
     gap_limit = rel_tol * diag
     count = 0
     for face in solid.Faces:
-        circles = [
-            edge.Curve
-            for edge in face.Edges
-            if edge.Curve is not None and type(edge.Curve).__name__ == "GCircle"
-        ]
+        circles = [edge.Curve for edge in face.Edges if edge.Curve is not None and type(edge.Curve).__name__ == "GCircle"]
         for i in range(len(circles)):
             for j in range(i + 1, len(circles)):
                 c1, c2 = circles[i], circles[j]

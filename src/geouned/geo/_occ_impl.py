@@ -30,7 +30,13 @@ from OCC.Core.BOPAlgo import BOPAlgo_Splitter
 from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRep import BRep_Builder, BRep_Tool
 from OCC.Core.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
-from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Defeaturing, BRepAlgoAPI_Fuse, BRepAlgoAPI_Splitter
+from OCC.Core.BRepAlgoAPI import (
+    BRepAlgoAPI_Common,
+    BRepAlgoAPI_Cut,
+    BRepAlgoAPI_Defeaturing,
+    BRepAlgoAPI_Fuse,
+    BRepAlgoAPI_Splitter,
+)
 from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_Copy,
@@ -269,7 +275,6 @@ def _native_fix(native, tolerance: float):
     fixer.SetPrecision(tolerance)
     fixer.Perform()
     return fixer.Shape()
-
 
 
 # ---------------------------------------------------------------------------
@@ -1649,9 +1654,7 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     return result
 
 
-def Gcheck_and_repair(
-    solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple[GSolid, bool]":
+def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
     fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,
@@ -1818,9 +1821,7 @@ def Gspline_surface(solid) -> bool:
     return False
 
 
-def Gload_and_process_step(
-    filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple":
+def Gload_and_process_step(filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> "tuple":
     """GEOUNED's own load-time pass: load every solid, natively fix it
     (`_native_fix`, the same healing `Gload_step` applies, required
     regardless of defect detection -- see `Gload_step`'s own docstring),

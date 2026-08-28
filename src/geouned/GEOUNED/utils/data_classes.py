@@ -495,9 +495,7 @@ class Tolerances:
     @sliver_edge_rel_tol.setter
     def sliver_edge_rel_tol(self, sliver_edge_rel_tol: float):
         if not isinstance(sliver_edge_rel_tol, float):
-            raise TypeError(
-                f"geouned.Tolerances.sliver_edge_rel_tol should be a float, not a {type(sliver_edge_rel_tol)}"
-            )
+            raise TypeError(f"geouned.Tolerances.sliver_edge_rel_tol should be a float, not a {type(sliver_edge_rel_tol)}")
         self._sliver_edge_rel_tol = sliver_edge_rel_tol
 
     def scaled(self, volume: float) -> "Tolerances":
