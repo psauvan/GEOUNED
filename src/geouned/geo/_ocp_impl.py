@@ -132,10 +132,11 @@ from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_Lis
 
 from .vector_geometry import (
     GBoundBox,
-    GLabelNode,
     GMatrix,
     GVector,
-    MIN_SLIVER_EDGE_LENGTH,
+    to_gvector,
+)
+from .surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
     is_coaxial_cone_cylinder_pair,
@@ -145,16 +146,18 @@ from .vector_geometry import (
     is_inside_plane,
     is_inside_sphere,
     is_inside_torus,
+    plane_tangent_at,
+    plane_value_at,
+    torus_sheet_sign,
+)
+from .solid_defects import (
+    MIN_SLIVER_EDGE_LENGTH,
     count_split_ring_pairs,
     find_short_edges,
     find_split_ring_faces,
     near_surface_pair,
-    plane_tangent_at,
-    plane_value_at,
-    suppress_native_stdout,
-    to_gvector,
-    torus_sheet_sign,
 )
+from .io_utils import GLabelNode, suppress_native_stdout
 
 
 def _unimplemented(name):
@@ -1395,7 +1398,7 @@ like this one."""
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
-    """Attempt to remove `faces` (typically vector_geometry.find_short_edges'
+    """Attempt to remove `faces` (typically solid_defects.find_short_edges'
     own output) from `solid` via BRepAlgoAPI_Defeaturing, verifying the
     result is genuinely usable before trusting it -- confirmed live
     (2026-08-27, Solidos/working_solids/"beltline left.stp") that
@@ -1472,7 +1475,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     breaking every BOP on the solid.
 
     This repair: identify the riser faces
-    (``vector_geometry.find_split_ring_faces``), remove them
+    (``solid_defects.find_split_ring_faces``), remove them
     (``ShapeBuild_ReShape``), re-sew the remaining shell at a tolerance a
     few times the ring gap -- welding the two trim surfaces' shared rims
     and each curved face's doubled boundary ring into one --
@@ -1864,7 +1867,7 @@ def _export_shapes_step(native_shapes: list, filename: str) -> None:
     # the second half during Write() -- wrapping only Write() leaves the
     # first half visible). No Interface_Static parameter or WorkSession
     # trace-level setter exists to silence it either way; see
-    # vector_geometry.py's suppress_native_stdout docstring.
+    # io_utils.py's suppress_native_stdout docstring.
     with suppress_native_stdout():
         writer = STEPControl_Writer()
         for shape in native_shapes:
@@ -2388,7 +2391,7 @@ def _find_cone_face(shape) -> "GFace | None":
 def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
     """Groups of `base_faces` whose own cone surface is coaxial with, and
     shares the same |SemiAngle| as, `tool_cone` (see
-    vector_geometry.is_coaxial_cone_pair) -- each group sharing one exact
+    surface_geometry.is_coaxial_cone_pair) -- each group sharing one exact
     (Apex, Axis, SemiAngle) among its own members, i.e. real fragments of
     the *same* second cone (a solid can have that cone split into several
     faces by an earlier cut)."""
@@ -2416,7 +2419,7 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
 def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
     """Cylinder counterpart of `_group_coaxial_cone_faces`: groups of
     `base_faces` whose own cylinder surface is coaxial with `tool_cone`
-    (see vector_geometry.is_coaxial_cone_cylinder_pair) -- each group
+    (see surface_geometry.is_coaxial_cone_cylinder_pair) -- each group
     sharing one exact (Center-on-axis ignored, Axis, Radius) among its
     own members, i.e. real fragments of the *same* cylinder."""
     groups: list[list[GFace]] = []
@@ -2523,7 +2526,7 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) ->
     fix (see Gsplit). Targets a specific, real degeneracy: `tool`'s own
     cutting surface is a cone that is coaxial
     with, and shares the same semi-angle as, a *different* cone already on
-    `base`'s own boundary (see vector_geometry.is_coaxial_cone_pair). Two
+    `base`'s own boundary (see surface_geometry.is_coaxial_cone_pair). Two
     coaxial cones with equal semi-angle intersect in an exact circle,
     which is a genuinely degenerate case for OCCT's own quadric-quadric
     solver (confirmed 2026-08-18 against a real fixture,
@@ -2560,7 +2563,7 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) ->
     caller falls through to today's existing unchanged-solid behavior.
 
     Also tries the cone/cylinder counterpart of the same degeneracy (see
-    vector_geometry.is_coaxial_cone_cylinder_pair): `tool`'s cone reaching
+    surface_geometry.is_coaxial_cone_cylinder_pair): `tool`'s cone reaching
     a coaxial cylinder's own radius at one exact height on `base`'s
     boundary. Confirmed live (2026-08-23) on a real fixture where this
     was the *actual* blocking degeneracy and the cone-cone search alone

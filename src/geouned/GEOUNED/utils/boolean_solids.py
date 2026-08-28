@@ -6,7 +6,7 @@ import logging
 
 from .boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
-from ...geo import GSolid, GVector, Gdistance, Gsplit, vector_geometry
+from ...geo import GSolid, GVector, Gdistance, Gsplit, surface_geometry
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -600,11 +600,11 @@ def check_sign(solid_or_point, surf):
 
 
 _IS_INSIDE_PRIMITIVE = {
-    "Plane": vector_geometry.is_inside_plane,
-    "CylinderOnly": vector_geometry.is_inside_cylinder,
-    "SphereOnly": vector_geometry.is_inside_sphere,
-    "ConeOnly": vector_geometry.is_inside_cone,
-    "TorusOnly": vector_geometry.is_inside_torus,
+    "Plane": surface_geometry.is_inside_plane,
+    "CylinderOnly": surface_geometry.is_inside_cylinder,
+    "SphereOnly": surface_geometry.is_inside_sphere,
+    "ConeOnly": surface_geometry.is_inside_cone,
+    "TorusOnly": surface_geometry.is_inside_torus,
 }
 
 
@@ -612,7 +612,7 @@ def check_sign_primitive(point, surf):
     # surf.Surf is a *OnlyParams (PlaneParams/CylinderOnlyParams/...), not
     # a geo descriptor (GPlane/GCylinder/...) -- but both store the same
     # fields under the same names since the Tier-1 GVector-storage
-    # migration, so the same duck-typed vector_geometry.is_inside_*
+    # migration, so the same duck-typed surface_geometry.is_inside_*
     # formula GPlane.is_inside/etc themselves call works directly here,
     # with no transient GPlane/etc construction on this hot path.
     return 1 if _IS_INSIDE_PRIMITIVE[surf.Type](point, surf.Surf) else -1

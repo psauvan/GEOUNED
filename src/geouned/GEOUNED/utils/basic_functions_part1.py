@@ -5,33 +5,33 @@ import math
 
 from .data_constants import mask, twoPi
 from .boolean_function import BoolSurface
-from ...geo import vector_geometry
+from ...geo import surface_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
 
-# The functions below are thin adapters over `vector_geometry.py` (the
+# The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
 # expected to already pass GVector.
 
 
 def is_same_value(v1, v2, tolerance=1e-6):
-    return vector_geometry.is_same_value(v1, v2, tolerance)
+    return surface_geometry.is_same_value(v1, v2, tolerance)
 
 
 def is_opposite(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_opposite(vector_1, vector_2, tolerance)
+    return surface_geometry.is_opposite(vector_1, vector_2, tolerance)
 
 
 def is_parallel(vector_1, vector_2, tolerance=1e-3):
-    return vector_geometry.is_parallel(vector_1, vector_2, tolerance)
+    return surface_geometry.is_parallel(vector_1, vector_2, tolerance)
 
 
 def is_in_line(point, dir, pnt_line, tolerance=1e-6):
-    return vector_geometry.is_in_line(point, dir, pnt_line, tolerance)
+    return surface_geometry.is_in_line(point, dir, pnt_line, tolerance)
 
 
 def is_in_plane(point, plane, d_tolerance=1e-7):
     plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return vector_geometry.is_in_plane(point, plane_params, d_tolerance)
+    return surface_geometry.is_in_plane(point, plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -47,7 +47,7 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
 
 def sign_plane(point, plane):
     plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return vector_geometry.sign_plane(point, plane_params)
+    return surface_geometry.sign_plane(point, plane_params)
 
 
 def shapes_in_contact(shape1, shape2, tolerance=1e-6):
@@ -445,7 +445,7 @@ class TorusOnlyParams:
         self.MinorRadius = params[3]
         # A self-intersecting (degenerate) torus has two geometrically
         # distinct sheets sharing the same (Center, Axis, MajorRadius,
-        # MinorRadius) -- see geo/vector_geometry.py's torus_sheet_sign
+        # MinorRadius) -- see geo/surface_geometry.py's torus_sheet_sign
         # docstring. Callers that already know which sheet a face
         # belongs to (its GTorus descriptor's own .a_sign, computed once
         # at classification time from a real face vertex) pass it as an

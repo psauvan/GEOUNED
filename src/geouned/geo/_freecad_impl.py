@@ -40,9 +40,13 @@ from FreeCAD import Import
 
 from .vector_geometry import (
     GBoundBox,
-    GLabelNode,
     GMatrix,
     GVector,
+    to_gboundbox,
+    to_gmatrix,
+    to_gvector,
+)
+from .surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
     is_inside_cone,
@@ -50,15 +54,12 @@ from .vector_geometry import (
     is_inside_plane,
     is_inside_sphere,
     is_inside_torus,
-    find_short_edges,
     plane_tangent_at,
     plane_value_at,
-    suppress_native_stdout,
-    to_gboundbox,
-    to_gmatrix,
-    to_gvector,
     torus_sheet_sign,
 )
+from .solid_defects import find_short_edges
+from .io_utils import GLabelNode, suppress_native_stdout
 
 
 def to_native_vector(vector: GVector) -> FreeCAD.Vector:
@@ -149,7 +150,7 @@ class GPlane:
 
     def is_inside(self, point: GVector) -> bool:
         """Which side of the (infinite) plane `point` is on -- True on the
-        side `Axis` points toward. Delegates to `vector_geometry.is_inside_plane`,
+        side `Axis` points toward. Delegates to `surface_geometry.is_inside_plane`,
         shared with `boolean_solids.check_sign_primitive`'s Plane branch
         (which calls it directly on a PlaneParams, not a GPlane -- both
         store the same fields, so the same formula works on either)."""
@@ -706,7 +707,7 @@ class GEdge:
         # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
         # every backend uses -- same unconditional "Statistics on Transfer
         # (Write)" banner, same lack of a verbosity switch. See
-        # vector_geometry.py's suppress_native_stdout docstring.
+        # io_utils.py's suppress_native_stdout docstring.
         with suppress_native_stdout():
             Part.makeCompound([self.__native__]).exportStep(filename)
 
@@ -856,7 +857,7 @@ class GFace:
         # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
         # every backend uses -- same unconditional "Statistics on Transfer
         # (Write)" banner, same lack of a verbosity switch. See
-        # vector_geometry.py's suppress_native_stdout docstring.
+        # io_utils.py's suppress_native_stdout docstring.
         with suppress_native_stdout():
             Part.makeCompound([self.__native__]).exportStep(filename)
 
@@ -934,7 +935,7 @@ class GShell:
         # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
         # every backend uses -- same unconditional "Statistics on Transfer
         # (Write)" banner, same lack of a verbosity switch. See
-        # vector_geometry.py's suppress_native_stdout docstring.
+        # io_utils.py's suppress_native_stdout docstring.
         with suppress_native_stdout():
             Part.makeCompound([self.__native__]).exportStep(filename)
 
@@ -1120,7 +1121,7 @@ volume-conservation guard is the fix, ported here for parity."""
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
-    """Attempt to remove `faces` (typically vector_geometry.find_short_edges'
+    """Attempt to remove `faces` (typically solid_defects.find_short_edges'
     own output) from `solid` via `Part.Shape.defeaturing()` (FreeCAD's own
     wrapper over OCCT's `BRepAlgoAPI_Defeaturing`), verifying the result is
     genuinely usable before trusting it -- see _ocp_impl.py's own identical

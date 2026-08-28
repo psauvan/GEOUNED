@@ -41,7 +41,7 @@ from geouned.geo import (
     Gsplit,
     kernel_version,
 )
-from geouned.geo import vector_geometry
+from geouned.geo import surface_geometry
 
 
 @pytest.fixture
@@ -387,8 +387,8 @@ def test_plane_value_and_tangent_at_match_native(unit_box):
     expected_point = face.value_at(u, v)
     expected_tangent_u, expected_tangent_v = face.tangent_at(u, v)
 
-    point = vector_geometry.plane_value_at(plane, u, v)
-    tangent_u, tangent_v = vector_geometry.plane_tangent_at(plane, u, v)
+    point = surface_geometry.plane_value_at(plane, u, v)
+    tangent_u, tangent_v = surface_geometry.plane_tangent_at(plane, u, v)
 
     assert point.is_equal(expected_point, 1e-6)
     assert tangent_u.is_equal(expected_tangent_u, 1e-6)
@@ -409,8 +409,8 @@ def test_cylinder_value_and_tangent_at_match_native_off_axis():
     expected_point = side_face.value_at(u, v)
     expected_tangent_u, expected_tangent_v = side_face.tangent_at(u, v)
 
-    point = vector_geometry.cylinder_value_at(cylinder, u, v)
-    tangent_u, tangent_v = vector_geometry.cylinder_tangent_at(cylinder, u, v)
+    point = surface_geometry.cylinder_value_at(cylinder, u, v)
+    tangent_u, tangent_v = surface_geometry.cylinder_tangent_at(cylinder, u, v)
 
     assert point.is_equal(expected_point, 1e-6)
     assert tangent_u.is_equal(expected_tangent_u, 1e-6)

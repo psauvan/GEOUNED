@@ -3,7 +3,8 @@ import math
 import pytest
 
 from geouned.geo import GBoundBox, GCylinder, GPlane, GVector
-from geouned.geo.vector_geometry import (
+from geouned.geo.vector_geometry import to_gboundbox
+from geouned.geo.surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
     is_in_line,
@@ -14,7 +15,6 @@ from geouned.geo.vector_geometry import (
     plane_tangent_at,
     plane_value_at,
     sign_plane,
-    to_gboundbox,
 )
 
 

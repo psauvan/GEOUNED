@@ -9574,6 +9574,82 @@ the export itself). `tests/geo` + `tests/test_cadtocsg.py` +
 `tests/test_csgtocad.py` green on all 3 engines after the change
 (`freecad` 158/158+2skip, `occ` 89/89, `ocp` 89/89).
 
+## `vector_geometry.py` split into 4 files: `vector_geometry.py` /
+`surface_geometry.py` / `solid_defects.py` / `io_utils.py`
+
+User request, direct: the file had grown to 1081 lines mixing 3 (really
+4, once `suppress_native_stdout` and `GLabelNode` are counted) unrelated
+layers -- neutral vector/matrix/boundbox types, analytic-surface
+predicates, whole-solid CAD-defect detection, and a process-level I/O
+utility. Proposed and confirmed with the user before executing (a real
+naming/scope decision, not purely mechanical): split into 4 files
+instead of the user's own initial 2-file proposal, since the "vector
+classes + predicates" half was itself two unrelated layers.
+
+- **`vector_geometry.py`** (314 lines) -- kept the name, trimmed to only
+  the neutral, dependency-free data types: `GVector`/`to_gvector`,
+  `GMatrix`/`to_gmatrix`, `GBoundBox`/`to_gboundbox`. No dependency on
+  any other file in the package.
+- **`surface_geometry.py`** (500 lines, new) -- "the geometric predicates
+  created at the start of this migration," grown with everything added
+  since that operates on the analytic surface descriptors
+  (`GPlane`/`GCylinder`/`GCone`/`GSphere`/`GTorus`), duck-typed, never on
+  a native shape: `is_same_value`/`is_opposite`/`is_parallel`/`is_in_line`/
+  `is_in_plane`/`sign_plane`, every `is_same_*_surface`/
+  `is_coaxial_cone_*_pair`, every `is_inside_*`, `torus_sheet_sign`,
+  `plane_value_at`/`tangent_at`, `cylinder_value_at`/`tangent_at`,
+  `find_can_plane`/`_solve_quadratic`.
+- **`solid_defects.py`** (280 lines, new) -- load-time, whole-`GSolid`
+  CAD-defect detection (as opposed to `surface_geometry.py`'s per-
+  surface/per-point predicates): `find_short_edges`,
+  `find_split_ring_faces`, `count_split_ring_pairs`,
+  `MIN_SLIVER_EDGE_LENGTH`/`DEGENERATE_EDGE_LENGTH_FLOOR`, and
+  `near_surface_pair` -- the user's own explicit call to keep this one
+  here rather than in `surface_geometry.py` (it compares two surface
+  descriptors, like its `is_same_*_surface` siblings, but its only
+  consumer is `Gsliver_heal`, a repair function -- "por qué después de
+  esto quiero mover el chequeo de los sólido al nivel nativo," see below).
+- **`io_utils.py`** (68 lines, new) -- process-level/loading utilities
+  unrelated to vector math: `suppress_native_stdout`, and `GLabelNode`
+  (moved here in a follow-up correction -- the user's own direct
+  pushback: a STEP assembly/label-tree node is loading data, not a
+  geometric quantity, so it didn't belong alongside `GVector`/`GBoundBox`
+  either; `io_utils.py` was judged the least-bad of the 4 existing files
+  for it rather than adding a 5th).
+
+**Mechanics**: `geo/__init__.py`'s single `from .vector_geometry import
+(...)` block split into 4 matching blocks, same names, same alphabetical
+order within each. All 3 `_*_impl.py` backends' own import blocks split
+the same way. 5 GEOUNED-side files that did `from ...geo import
+vector_geometry` then called `vector_geometry.X` module-qualified
+(`basic_functions_part1.py`, `boolean_solids.py`, `functions.py`,
+`geometry_gu.py`, `meta_surfaces_utils.py`) were repointed to `from
+...geo import surface_geometry` (`geometry_gu.py` alone keeps both
+imports, since it uses `vector_geometry.GVector(0, 0, 0)` directly
+alongside 5 `is_same_*_surface` predicate lookups). 2 files that only
+ever imported base types directly (`GEOReverse/Modules/_freecad_impl.py`'s
+`GVector`, `decompose/decom_utils_generator.py`'s `GMatrix`) needed no
+change at all, since those two names stayed in `vector_geometry.py`.
+2 test files (`tests/geo/test_vector_geometry.py`,
+`tests/geo/test_freecad_impl.py`) had the same
+`from geouned.geo.vector_geometry import (...)`/`from geouned.geo import
+vector_geometry` pattern and needed the identical split.
+
+Stale docstring/comment cross-references (e.g. "see
+`vector_geometry.py`'s suppress_native_stdout docstring", "see
+`vector_geometry.is_coaxial_cone_pair`") in the 3 backend files were
+swept and corrected to point at the function's real new home, not just
+left as prose pointing at the wrong file.
+
+**Verified**: syntax-checked all 13+ touched files; full `tests/geo` +
+`tests/test_cadtocsg.py` (+ `test_csgtocad.py` for freecad) on all 3
+engines, run in parallel (per explicit user request -- "correr en
+parallelo! tienes los scripts por alli," i.e. don't serialize what can
+run concurrently) rather than sequentially: `freecad` 158/158+2skip,
+`occ` 128/128, `ocp` 128/128 -- confirmed twice, once right after the
+4-way split and again after the follow-up `GLabelNode` move, both times
+with zero regressions.
+
 ## CAD-defect recipe session: "split boundary ring" / duplicated micro-trim — `geo.Gcollapse_split_rings`
 
 New working mode (separate session, own memory file

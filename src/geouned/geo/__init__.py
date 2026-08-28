@@ -34,14 +34,16 @@ read by GEOReverse's own dispatch so its export follows the same
 
 from .vector_geometry import (
     GBoundBox,
-    GLabelNode,
     GMatrix,
     GVector,
-    count_split_ring_pairs,
+    to_gboundbox,
+    to_gmatrix,
+    to_gvector,
+)
+from .io_utils import GLabelNode
+from .surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
-    find_short_edges,
-    find_split_ring_faces,
     is_in_line,
     is_in_plane,
     is_opposite,
@@ -53,13 +55,15 @@ from .vector_geometry import (
     is_same_sphere_surface,
     is_same_torus_surface,
     is_same_value,
-    near_surface_pair,
     plane_tangent_at,
     plane_value_at,
     sign_plane,
-    to_gboundbox,
-    to_gmatrix,
-    to_gvector,
+)
+from .solid_defects import (
+    count_split_ring_pairs,
+    find_short_edges,
+    find_split_ring_faces,
+    near_surface_pair,
 )
 
 if _engine == "occ":

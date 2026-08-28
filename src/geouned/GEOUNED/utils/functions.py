@@ -15,7 +15,7 @@ from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edg
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
-from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, vector_geometry
+from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, surface_geometry
 from .basic_functions_part1 import shapes_in_contact
 
 
@@ -337,13 +337,13 @@ def _closing_plane(cyl, edges, kind, secondary):
     BSpline) tangency has no such center; the plane there is computed
     analytically from the two real surfaces themselves, not guessed
     from the tangency curve's shape -- see
-    vector_geometry.find_can_plane. Returns None if that analytic
+    surface_geometry.find_can_plane. Returns None if that analytic
     computation finds the main cylinder isn't actually split into two
     disjoint pieces by the secondary surface -- the caller must treat
     that as "this isn't a valid Can", not fall back to a guess."""
     if planar_edges(edges):
         return cks_edge_plane(cyl, edges)
-    result = vector_geometry.find_can_plane(cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, kind, secondary)
+    result = surface_geometry.find_can_plane(cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, kind, secondary)
     if result is None:
         return None
     position, normal = result

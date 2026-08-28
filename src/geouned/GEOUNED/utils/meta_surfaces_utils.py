@@ -24,7 +24,7 @@ from ...geo import (
     GEllipse,
     GBSpline,
     Gclassify_curve,
-    vector_geometry,
+    surface_geometry,
 )
 
 
@@ -46,7 +46,7 @@ def remove_twice_parallel(mplanes):
         for p2 in mplanes[i + 1 :]:
             if p2.Index in omit:
                 continue
-            if vector_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface):
+            if surface_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface):
                 parallel.append(p2)
                 omit.add(p2.Index)
         if len(parallel) > 1:
@@ -73,9 +73,9 @@ def remove_twice_parallel(mplanes):
             continue
 
         for p in reversed(parallel):
-            if vector_geometry.is_same_plane_surface(p.Surface, pmin.Surface):
+            if surface_geometry.is_same_plane_surface(p.Surface, pmin.Surface):
                 parallel.remove(p)
-            elif vector_geometry.is_same_plane_surface(p.Surface, pmax.Surface):
+            elif surface_geometry.is_same_plane_surface(p.Surface, pmax.Surface):
                 parallel.remove(p)
 
         for p in parallel:

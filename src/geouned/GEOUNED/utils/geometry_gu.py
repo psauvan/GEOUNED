@@ -12,7 +12,7 @@ from .data_constants import twoPi
 from .basic_functions_part1 import is_same_value, twoPimod
 from .basic_functions_part2 import is_same_torus
 from .data_classes import Tolerances
-from ...geo import vector_geometry
+from ...geo import vector_geometry, surface_geometry
 from ...geo import (
     GCone,
     GCylinder,
@@ -29,11 +29,11 @@ from ...geo import (
 logger = logging.getLogger("general_logger")
 
 _SAME_SURFACE_PREDICATE = {
-    GPlane: vector_geometry.is_same_plane_surface,
-    GCylinder: vector_geometry.is_same_cylinder_surface,
-    GCone: vector_geometry.is_same_cone_surface,
-    GSphere: vector_geometry.is_same_sphere_surface,
-    GTorus: vector_geometry.is_same_torus_surface,
+    GPlane: surface_geometry.is_same_plane_surface,
+    GCylinder: surface_geometry.is_same_cylinder_surface,
+    GCone: surface_geometry.is_same_cone_surface,
+    GSphere: surface_geometry.is_same_sphere_surface,
+    GTorus: surface_geometry.is_same_torus_surface,
 }
 
 
