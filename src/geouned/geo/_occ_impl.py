@@ -247,6 +247,31 @@ def _bnd_box(shape) -> GBoundBox:
     return GBoundBox(xmin, ymin, zmin, xmax, ymax, zmax)
 
 
+def _native_fix(native, tolerance: float):
+    """Native-in/native-out extraction of `GSolid.fix()`'s own body --
+    see that method's docstring for the full, hard-won history of why
+    every step here is exactly what it is (UnifyEdges-only-when-already-
+    valid, unify_edges' own confirmed native-crash risk kept on
+    unconditionally per explicit user decision, the fallback repair
+    running on the original `native` rather than UnifyEdges' own
+    possibly-corrupted output). `GSolid.fix()` itself is a thin wrapper
+    around this (`GSolid(_native_fix(self.__native__, tolerance))`) --
+    single source of this fragile logic, not two copies to keep in sync,
+    while still letting `Gload_and_process_step` call it directly on the
+    raw loaded shape, before that loop builds its own `GSolid`."""
+    if BRepCheck_Analyzer(native).IsValid():
+        unify = ShapeUpgrade_UnifySameDomain(native, True, True, True)
+        unify.Build()
+        unified = unify.Shape()
+        if BRepCheck_Analyzer(unified).IsValid():
+            return unified
+    fixer = ShapeFix_Shape(BRepBuilderAPI_Copy(native).Shape())
+    fixer.SetPrecision(tolerance)
+    fixer.Perform()
+    return fixer.Shape()
+
+
+
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's classified surface, not
 # the face itself; the backend only knows about these 5 -- composite
@@ -1141,58 +1166,20 @@ class GSolid:
         return BRepCheck_Analyzer(self.__native__).IsValid()
 
     def fix(self, tolerance: float) -> "GSolid":
-        # UnifyEdges is only attempted when the input is already known-valid
-        # -- on an already-invalid solid it's a confirmed native crash/hang
-        # risk (see remove_solids._refine_if_valid's docstring for the real
-        # reproduction), not just a wasted simplification pass. ShapeFix_Shape
-        # is the actual repair step either way.
-        #
-        # UnifyEdges' own *output* can itself be invalid even when its input
-        # was valid (confirmed live, 2026-08-19, rev_pipe.stp's raw loaded
-        # solid: BRepCheck_Analyzer says valid=True going in, valid=False
-        # coming out of UnifyEdges alone) -- so the fallback ShapeFix_Shape
-        # repair below must run on the original, untouched `native`, never on
-        # UnifyEdges' own (possibly corrupted) result. An earlier version of
-        # this method reassigned `native` to UnifyEdges' output before this
-        # check, so the fallback repair silently worked on already-broken
-        # input and could never recover -- confirmed empirically: ShapeFix_
-        # Shape on the corrupted UnifyEdges output stayed invalid, while the
-        # identical call on the original raw solid came back valid.
-        native = self.__native__
-        if BRepCheck_Analyzer(native).IsValid():
-            # unify_edges=True is a confirmed native-crash source (access
-            # violation, not a catchable Python exception) under this
-            # engine specifically: reproduced live, 2026-08-23, on
-            # Solidos/test_models/Mixed/ConeSphere.stp's own valid,
-            # loaded solid (this crashes right here, at load time, since
-            # Gload_step calls .fix() unconditionally on every solid).
-            # A same-day attempt to disable unify_edges here was reverted
-            # the next day (2026-08-24), matching _ocp_impl.py's own
-            # reversal: per explicit user decision, trading a single
-            # known-crashing file (ConeSphere.stp) for a wider, harder-
-            # to-spot regression elsewhere is the wrong direction, even
-            # though this specific occ-engine change was not directly
-            # implicated in the ocp-side regression that motivated the
-            # reversal (ocp's crash-triggering flag is unify_faces, not
-            # unify_edges -- the two bindings' native crash behavior on
-            # identical OCCT 7.9.3 geometry is confirmed asymmetric, see
-            # this file's own module docstring) -- kept symmetric with
-            # ocp on principle rather than re-deriving a separate,
-            # engine-specific tradeoff without the same corpus-level
-            # evidence. unify_edges=True is restored; ConeSphere.stp is
-            # accepted as a known, unresolved crash/hang under this
-            # engine too (matching the FreeCAD engine's own unaffected
-            # status -- it uses Part.Shape.removeSplitter(), not this
-            # OCCT-7.9.x-specific function).
-            unify = ShapeUpgrade_UnifySameDomain(native, True, True, True)
-            unify.Build()
-            unified = unify.Shape()
-            if BRepCheck_Analyzer(unified).IsValid():
-                return GSolid(unified)
-        fixer = ShapeFix_Shape(BRepBuilderAPI_Copy(native).Shape())
-        fixer.SetPrecision(tolerance)
-        fixer.Perform()
-        return GSolid(fixer.Shape())
+        # Thin wrapper -- see _native_fix's own docstring for the full,
+        # hard-won history of every step in this repair (UnifyEdges-only-
+        # when-already-valid, unify_edges' confirmed native-crash risk
+        # kept on unconditionally per explicit user decision -- matching
+        # _ocp_impl.py's own symmetric reversal, even though this
+        # specific engine's crash-triggering flag is unify_edges, not
+        # ocp's unify_faces, see this file's own module docstring -- the
+        # fallback repair running on the original native shape rather
+        # than UnifyEdges' own possibly-corrupted output). Extracted to a
+        # module-level, native-in/native-out function so
+        # Gload_and_process_step/Gcheck_and_repair can call it without
+        # ever constructing a GSolid first -- one copy of this fragile
+        # logic, not two to keep in sync.
+        return GSolid(_native_fix(self.__native__, tolerance))
 
     def reverse(self) -> "GSolid":
         return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape().Reversed())
@@ -1665,33 +1652,44 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
 def Gcheck_and_repair(
     solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
 ) -> "tuple[GSolid, bool]":
-    """Load-time CAD-defect check + repair cascade, run once per solid
-    right after `Gload_step` (2026-08-28, per direct user request: this
-    is fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,
+    """Load-time CAD-defect check + repair cascade -- `GSolid` in,
+    `GSolid` out (2026-08-28, per direct user request: this is
+    fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,
     ShapeBuild_ReShape, BRepBuilderAPI_Sewing -- not GEOUNED-level
-    classification, so it belongs entirely in `geo`, not orchestrated
-    from Python-level GEOUNED code calling into several separate `geo`
-    functions one at a time).
+    classification, so the *orchestration* belongs entirely in `geo`,
+    not driven from Python-level GEOUNED code calling several separate
+    `geo` functions one at a time).
 
-    Deliberately does NOT call `.fix()` first, unlike an earlier version
-    of this cascade -- `Gload_step` already applies `GSolid.fix(1e-6)`
-    unconditionally to every solid it returns (a separate, load-bearing
-    fix for a totally different problem: raw STEPControl_Reader output
-    can silently hang later Gsplit calls even when BRepCheck_Analyzer
-    calls it valid -- see `Gload_step`'s own docstring), so a caller
-    that calls this right after `Gload_step`, as `load_cad` does, would
-    otherwise pay for a second, wasted fix() pass recomputing an
-    already-clean result. This function's own precondition is exactly
-    that: `solid` must already be `Gload_step`-fixed.
+    Takes an already-constructed `GSolid`, per explicit user direction
+    (2026-08-28, later the same session): `Gload_and_process_step`'s own
+    loop builds the `GSolid` right after the native fix step,
+    unconditionally, one clear step per solid, rather than this function
+    trying to avoid that construction via its own native pre-check --
+    an earlier version of this function did exactly that (`BRepCheck_
+    Analyzer` + a native short-edge scan, `GSolid` built lazily only once
+    a defect was confirmed) and was reverted once the caller settled on
+    always building the `GSolid` in the loop itself; keeping a second,
+    separate native pre-check here would have bought nothing once that
+    was true (the `GSolid` already exists by the time this function
+    runs), while `Gcollapse_split_rings`/`Gsliver_heal`/`Gdefeature`
+    genuinely need the per-face surface classification `GSolid`/`GFace`
+    already compute once, correctly -- reimplementing that dispatch a
+    second time at the native level would just duplicate `Gclassify_
+    surface`/`GFace.CharacteristicWidth` outside `geo`'s own single
+    source of truth for it, risking the two drifting apart.
 
     Returns `(solid, True)` unchanged if already clean. Otherwise tries,
-    in order, the same cascade `Gcheck_and_repair`'s own predecessor
+    in order, the same cascade this function's own predecessor
     (GEOUNED/loadfile/load_step.py's now-removed `repair_solid`) used --
     `Gcollapse_split_rings`, `Gsliver_heal`, then `find_short_edges` +
     `Gdefeature` -- returning `(repaired, True)` on the first one that
-    both fires and leaves `check_solid_defects` empty. Returns
-    `(solid, False)` -- the ORIGINAL, unrepaired solid, never a partial
-    or fabricated result -- if nothing clears every check."""
+    both fires and leaves `check_solid_defects` empty. Each of those 3
+    repair functions already builds its own fresh `GSolid` internally
+    from the truly-repaired native shape (never reusing `solid`'s own,
+    possibly-defective, already-parsed `.Faces`), so the caller never
+    needs to re-wrap the result itself. Returns `(solid, False)` -- the
+    ORIGINAL, unrepaired `GSolid`, never a partial or fabricated result
+    -- if nothing clears every check."""
     if not check_solid_defects(solid, sliver_edge_rel_tol):
         return solid, True
 
@@ -1789,6 +1787,112 @@ def Gload_step(filename: str) -> list[GSolid]:
         solids.append(GSolid(topods.Solid(explorer.Current())).fix(1e-6))
         explorer.Next()
     return solids
+
+
+_ALLOWED_SURFACE_TYPES = (GeomAbs_Plane, GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Sphere, GeomAbs_Torus)
+
+
+def Gspline_surface(solid) -> bool:
+    """True if `solid` (any native shape -- a whole solid, typically) has
+    at least one face whose underlying surface is NOT one of the 5
+    analytic types GEOUNED can classify (Plane/Cylinder/Cone/Sphere/
+    Torus) -- a BSpline, Bezier, or other freeform/swept surface
+    `Gclassify_surface` would reject (returning None for it). Despite the
+    name (matching the user's own "las llamo Bspline" framing, and
+    `load_functions.py`'s former `spline()` helper this replaces),
+    that's "any unsupported surface type", not literally only BSpline.
+
+    Operates directly on the native shape via `TopExp_Explorer`, with no
+    `GSolid`/`GFace` ever constructed -- but deliberately delegates the
+    actual per-face classification to `Gclassify_surface` itself (the
+    same dispatch `GFace.__init__` calls) rather than re-checking
+    `adaptor.GetType()` against an allowed set by hand here: this is the
+    single place that dispatch is defined, and duplicating it would risk
+    the two drifting apart."""
+    explorer = TopExp_Explorer(solid, TopAbs_FACE)
+    while explorer.More():
+        face = topods.Face(explorer.Current())
+        if Gclassify_surface(face) is None:
+            return True
+        explorer.Next()
+    return False
+
+
+def Gload_and_process_step(
+    filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
+) -> "tuple":
+    """GEOUNED's own load-time pass: load every solid, natively fix it
+    (`_native_fix`, the same healing `Gload_step` applies, required
+    regardless of defect detection -- see `Gload_step`'s own docstring),
+    build its `GSolid` right there in the loop, then run `Gcheck_and_
+    repair` and `Gspline_surface` on it -- one pass over the solids,
+    per explicit user direction (2026-08-28): read and process each
+    solid in the same loop, with the `GSolid` built as one clear,
+    unconditional step rather than deferred/optimized away.
+
+    Returns `(gsolids, corrupted_indices, spline_indices)`:
+      - `gsolids[i]` is the (possibly repaired) `GSolid` for solid `i`,
+        positionally aligned with the original solid order (never
+        dropped -- matching `Gload_step_labels`' own node/solid-count
+        alignment contract), or `None` only when `i` is
+        corrupted-and-unrepairable. A solid with an unsupported
+        ("spline") surface still gets its real `GSolid` here --
+        `Gload_and_process_step` itself has no concept of
+        `spline_surfaces`' 3-way stop/remove/ignore mode
+        (`corrupted_solids` only has 2 modes, stop/remove, with no
+        "keep it anyway" option, so `None` is always correct there
+        instead) -- `load_cad` is the one that knows the mode and
+        decides whether to null this entry out for "remove"/"stop", or
+        genuinely attempt translation on the as-loaded spline geometry
+        for "ignore".
+      - `corrupted_indices`/`spline_indices` are plain solid indices
+        (0-based, matching `gsolids`' own positions) -- NOT `GSolid`
+        objects -- since `GEOUNED/loadfile/load_step.py::load_cad` uses
+        them directly for `i in removed_indexes` membership tests and to
+        look up each one's own label/comment for reporting.
+
+    If `Gcheck_and_repair` actually repairs the solid, the `GSolid` it
+    returns is already a fresh one built from the truly-repaired native
+    shape (each repair function -- `Gcollapse_split_rings`/
+    `Gsliver_heal`/`Gdefeature` -- constructs its own `GSolid` internally
+    from its own repaired result) -- so if the original solid had a
+    sliver face, that sliver is gone from the `GSolid` this loop keeps,
+    not just from some intermediate native shape never actually used.
+
+    Checked in the same order `load_cad`'s own predecessor loop used:
+    repair first (a solid that gets successfully repaired is still
+    eligible for the spline check on its own, possibly-different,
+    repaired geometry), corrupted-and-unrepaired short-circuits to a
+    placeholder without ever reaching the spline check (matching the old
+    loop's own `continue` there -- safe regardless of `corrupted_solids`
+    mode, since "stop" mode exits before `gsolids` is ever used further
+    anyway)."""
+    reader = STEPControl_Reader()
+    status = reader.ReadFile(filename)
+    if status != IFSelect_RetDone:
+        raise RuntimeError(f"STEP read failed for {filename} (status={status})")
+    reader.TransferRoots()
+    shape = reader.OneShape()
+    gsolids = []
+    corrupted_indices = []
+    spline_indices = []
+    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    index = 0
+    while explorer.More():
+        native_solid = _native_fix(topods.Solid(explorer.Current()), 1e-6)
+        gsolid = GSolid(native_solid)
+        gsolid, ok = Gcheck_and_repair(gsolid, sliver_edge_rel_tol, min_face_width)
+        if not ok:
+            corrupted_indices.append(index)
+            gsolids.append(None)
+        else:
+            if Gspline_surface(gsolid.__native__):
+                spline_indices.append(index)
+            gsolids.append(gsolid)
+        index += 1
+        explorer.Next()
+
+    return gsolids, corrupted_indices, spline_indices
 
 
 def Gload_step_labels(filename: str) -> list[GLabelNode]:

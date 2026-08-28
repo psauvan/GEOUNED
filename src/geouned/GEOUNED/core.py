@@ -607,9 +607,10 @@ class CadToCsg:
         if not meta_list:
             # A real, reachable case, not just a defensive guard: every
             # solid in a single-solid file can legitimately end up
-            # dropped from meta_list (corrupted_solids="ignore", with the
-            # repair attempt failing -- see geo.Gdefeature) -- confirmed
-            # live, 2026-08-27, on 5 real Solidos/test_models fixtures.
+            # dropped from meta_list (corrupted_solids="remove", with the
+            # repair attempt failing -- see geo.Gcheck_and_repair) --
+            # confirmed live, 2026-08-27, on 5 real Solidos/test_models
+            # fixtures.
             # Without this guard, meta_list[0] below raised a raw,
             # unhelpful IndexError.
             raise ValueError(

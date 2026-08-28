@@ -333,13 +333,6 @@ def next_index(docList, lastIndex=None):
                 return None
 
 
-def spline(solid):
-    for f in solid.Faces:
-        if f.Surface is None:
-            return True
-    return False
-
-
 # TODO check this function is used in the code
 def solid_generator(doclist):
     last = None

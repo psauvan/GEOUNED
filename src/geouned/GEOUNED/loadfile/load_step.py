@@ -5,9 +5,8 @@ import logging
 import os
 import re
 
-from ..utils.geouned_classes import GeounedSolid
 from ..utils.data_classes import Tolerances
-from ...geo import Gload_step, Gload_step_labels, Gcheck_and_repair
+from ...geo import Gload_and_process_step, Gload_step_labels
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -43,36 +42,24 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     else:
         m_dict = {}
 
-    Solids = Gload_step(filename)
-    meta_list = []
-    spline_solids = []
-    corrupted_solids_list = []
+    gsolid_list, corrupted_solids_list, spline_solids = Gload_and_process_step(
+        filename, tolerances.sliver_edge_rel_tol, tolerances.min_face_width
+    )
+
+    # Gload_and_process_step always keeps a spline-bearing solid's real
+    # geometry (it has no notion of spline_surfaces' own 3-way stop/
+    # remove/ignore mode -- see its own docstring) -- only "stop"/"remove"
+    # null it out here; "ignore" genuinely attempts translation on the
+    # as-loaded geometry, exactly as it did before this loop moved into
+    # geo. corrupted_solids has no such 3rd mode (stop/remove only, no
+    # "keep it anyway"), so Gload_and_process_step already returns None
+    # for those unconditionally -- nothing to gate here.
     loop_spline = spline_surf.lower() in ("remove", "stop")
-    loop_corrupted = corrupted_solids.lower() == "remove"
-    for i, s in enumerate(Solids):
-        # geo.Gcheck_and_repair does the whole check+repair cascade
-        # natively, per backend (2026-08-28, per direct user request:
-        # this is fundamentally native-shape repair work -- BRepAlgoAPI_
-        # Defeaturing, ShapeBuild_ReShape, BRepBuilderAPI_Sewing -- not
-        # GEOUNED-level classification, so it belongs in geo, not
-        # orchestrated here by calling several separate geo functions one
-        # at a time; see its own docstring in each _*_impl.py). Under
-        # FreeCAD it's an unconditional no-op bypass -- that engine has
-        # none of the native tools this cascade needs. A repair is always
-        # attempted (never opt-in) -- the corrupted_solids mode is only
-        # consulted for what to do once repair has genuinely failed.
-        s, ok = Gcheck_and_repair(s, tolerances.sliver_edge_rel_tol, tolerances.min_face_width)
-        if not ok:
-            corrupted_solids_list.append(i)
-            if loop_corrupted:
-                meta_list.append(LF.GeounedSolid(i + 1))
-                continue
-        if LF.spline(s):
-            spline_solids.append(i)
-            if loop_spline:
-                meta_list.append(LF.GeounedSolid(i + 1))
-                continue
-        meta_list.append(GeounedSolid(i + 1, s))   
+    meta_list = []
+    for i, s in enumerate(gsolid_list):
+        if i in spline_solids and loop_spline:
+            s = None
+        meta_list.append(LF.GeounedSolid(i + 1, s))
 
     i_solid = 0
     missing_mat = set()

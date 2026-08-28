@@ -1191,8 +1191,8 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
 
 
 def Gcheck_and_repair(
-    solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple[GSolid, bool]":
+    solid: FreeCAD.Solid, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
+) -> "tuple[FreeCAD.Solid, bool]":
     """FreeCAD has none of the native CAD-defect-repair tools this
     cascade needs (``Gdefeature`` exists here via ``Part.Shape.
     defeaturing()``, but ``Gcollapse_split_rings``/``Gsliver_heal`` are
@@ -1207,6 +1207,29 @@ def Gcheck_and_repair(
     corrupted-solid detection/repair pass, which needs tools this engine
     doesn't have."""
     return solid, True
+
+
+def Gspline_surface(solid) -> bool:
+    """True if `solid` (any native shape -- a whole solid, typically) has
+    at least one face whose underlying surface is NOT one of the 5
+    analytic types GEOUNED can classify (Plane/Cylinder/Cone/Sphere/
+    Torus) -- a BSpline, Bezier, or other freeform/swept surface
+    `Gclassify_surface` would reject (returning None for it). Replaces
+    the former `load_functions.py::spline()` helper (which read this off
+    an already-built `GSolid.Faces`) -- this version works directly on
+    the native shape, no `GSolid`/`GFace` construction needed, matching
+    the other 2 engines' own `Gspline_surface`.
+
+    Delegates the actual per-face classification to `Gclassify_surface`
+    itself (the same dispatch `GFace.__init__` calls) rather than
+    re-checking the surface type against an allowed set by hand here --
+    this is the single place that dispatch is defined (including
+    FreeCAD's own "BSplineSurface secretly a flat plane" `findPlane()`
+    fallback), and duplicating it would risk the two drifting apart."""
+    for native_face in solid.Faces:
+        if Gclassify_surface(native_face) is None:
+            return True
+    return False
 
 
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).
@@ -1257,10 +1280,44 @@ def Gload_step(filename: str) -> list[GSolid]:
     transformation from the file's assembly/placement hierarchy already
     applied (baked into each solid's own geometry) -- callers never need
     to apply a separate placement themselves.
+
+    This is the plain loading primitive -- no defect check/repair, no
+    spline detection -- kept exactly as-is for every caller that just
+    wants solids back (tests, GEOReverse's own round-trip checks). See
+    `Gload_and_process_step` for GEOUNED's own richer load-time pass.
     """
     shape = Part.Shape()
     shape.read(filename)
     return [GSolid(solid) for solid in shape.Solids]
+
+
+def Gload_and_process_step(
+    filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
+) -> "tuple[list[GSolid], list[int], list[int]]":
+    """GEOUNED's own load-time pass: load every solid and run
+    `Gspline_surface` on it. `Gcheck_and_repair` is deliberately never
+    called here -- under this engine it's an unconditional `(solid,
+    True)` no-op (see its own docstring: no native CAD-repair tools are
+    wired for FreeCAD), so calling it would only add overhead for zero
+    effect; `corrupted_indices` is therefore always empty.
+
+    Returns `(gsolids, corrupted_indices, spline_indices)`, positionally
+    aligned with the original solid order (matching `Gload_step_labels`'
+    own node/solid-count alignment contract) -- see `_ocp_impl.py`'s own
+    `Gload_and_process_step` docstring for the full contract, including
+    why a spline-bearing solid still gets its real `GSolid` here rather
+    than `None` (GEOUNED/loadfile/load_step.py::load_cad is the one that
+    knows `spline_surfaces`' own stop/remove/ignore mode and decides
+    whether to null it out)."""
+    shape = Part.Shape()
+    shape.read(filename)
+    gsolids = []
+    spline_indices = []
+    for index, native_solid in enumerate(shape.Solids):
+        if Gspline_surface(native_solid):
+            spline_indices.append(index)
+        gsolids.append(GSolid(native_solid))
+    return gsolids, [], spline_indices
 
 
 def Gload_step_labels(filename: str) -> list[GLabelNode]:

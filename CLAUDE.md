@@ -9724,6 +9724,135 @@ cascade; a full `load_step_file(..., corrupted_solids="stop")` run on
 `"barrel bottom.stp"` completes without stopping (auto-repaired, exactly
 the intended behavior).
 
+## `Gload_and_process_step`/`Gspline_surface`: the user's own draft, real
+bugs found and fixed, ported to `occ`, then simplified back per direct
+feedback
+
+Follow-up session, same day. The user made their own changes to
+`load_step.py`/`_ocp_impl.py`/`_freecad_impl.py`, pushing further toward
+"process solids at load time" and asked 3 things: (1) a function
+identifying an "unsupported" surface (their own "Bspline" shorthand for
+anything not plane/quadric/torus) operating on native CAD solids; (2)
+adapt every check/repair call site since they now work on native
+solids; (3) find and fix whatever they'd missed -- plus a direct
+question: is this change useful, cosmetic, or a step backward?
+
+**Answer given, before touching code**: mixed. Merging load + check +
+repair + spline detection into one pass over the solids (instead of
+`Gload_step` then a separate Python-level loop) is a real, clean
+improvement. But taking `Gcheck_and_repair`'s own signature all the way
+to raw native shapes, if followed through completely, means
+reimplementing the whole repair cascade's surface classification a
+second time outside `geo`'s own single source of truth for it
+(`Gclassify_surface`/`GFace.CharacteristicWidth`) -- exactly the kind of
+duplication this project's whole history has fought to consolidate.
+Recommended a hybrid instead: a cheap native pre-check (no `GSolid`
+constructed for the common clean case), `GSolid` built once, lazily,
+only when a real defect is found, with the existing repair cascade
+(`Gcollapse_split_rings`/`Gsliver_heal`/`Gdefeature`) left untouched and
+GSolid-based.
+
+**Real bugs found in the user's own draft, confirmed live, all fixed**:
+1. `TopoDS.Solid(explorer.Current()).fix(1e-6)` -- `.fix()` is a `GSolid`
+   method, doesn't exist on a raw `TopoDS_Solid`; would crash
+   immediately. Fixed by extracting `GSolid.fix()`'s own body into a new
+   module-level `_native_fix(native, tolerance)` (native-in/native-out,
+   single source of that fragile UnifyEdges/UnifyFaces-crash-history
+   logic -- `GSolid.fix()` itself becomes a one-line wrapper around it),
+   ported identically to `occ` (positional `ShapeUpgrade_UnifySameDomain`
+   args there, matching that binding's own established convention vs.
+   ocp's keyword form).
+2. `Gcheck_and_repair`'s own body was untouched even though its type hint
+   changed to `TopoDS` -- it still called `check_solid_defects(solid,
+   ...)`/`solid.is_valid()` on what was now a raw native shape, an
+   immediate crash the moment a defect needed checking.
+3. The loop inside `Gload_and_process_step` had no `continue`/`elif` --
+   `explorer.Next()` was called up to 3 times per iteration across 3
+   un-exclusive `if` branches (corrupted, spline, and the final
+   unconditional append), silently skipping/duplicating/misaligning
+   solids.
+4. `corrupted_solids_list`/`spline_solids` were built as lists of
+   `GSolid` objects, but `load_cad`'s own downstream code (`i in
+   removed_indexes`, `LF.display_removed_solids`'s `f"{i:<5d}"`
+   formatting and `removed_labels[i]` dict lookup, both by integer
+   index) needs plain indices -- would have crashed
+   (`TypeError`/`KeyError`) the moment any solid was actually flagged.
+5. A duplicate, dead `spline_surface(solid: TopoDS) -> bool: pass` stub
+   was left lower in `_ocp_impl.py` (near `Gmake_compound`), separate
+   from the one actually wired into the loop -- deleted.
+6. **A real regression in the user's own design, found while tracing
+   through it, not just left as originally written**: `Gload_and_
+   process_step` always nulled out a spline-bearing solid's `GSolid`
+   (`gsolids.append(None)`), with no way to express `spline_surfaces`'
+   own 3rd mode, `"ignore"` (keep the real, as-loaded geometry and
+   attempt translation anyway -- a real, still-valid mode, confirmed via
+   `core.py`'s own validation: `spline_surfaces` still accepts
+   `"stop"`/`"remove"`/`"ignore"`, unlike `corrupted_solids`, which the
+   user had already independently collapsed to just `"stop"`/`"remove"`
+   in this same round of edits). Fixed: `Gload_and_process_step` now
+   always keeps a spline-bearing solid's real `GSolid` (it has no
+   concept of the 3-way mode at all) and only reports its index in
+   `spline_indices`; `load_cad` is the one that knows the mode and nulls
+   the entry out itself for `"stop"`/`"remove"`, leaving it alone for
+   `"ignore"`.
+
+**`Gload_step` (the plain "just load, no processing" primitive) was
+restored** in `ocp`/`freecad` (it had been replaced outright by
+`Gload_and_process_step`, which would have broken the ~11 other call
+sites -- tests, GEOReverse's own round-trip checks -- that only want
+solids back, no defect handling) -- `occ` never had it removed in the
+first place (only `ocp`/`freecad` were touched by the user's own draft).
+Both functions now coexist in all 3 backends.
+
+**`Gspline_surface(native_shape) -> bool`** (real implementation, all 3
+backends, matching the user's own explicit ask #1): walks the native
+shape's faces via `TopExp_Explorer`/`topods.Face`, but deliberately
+delegates the actual classification to `Gclassify_surface` itself
+(`Gclassify_surface(face) is None` -> unsupported) rather than
+re-checking `BRepAdaptor_Surface(face).GetType()` against an allowed set
+by hand -- reuses the exact same dispatch `GFace.__init__` already uses,
+so there's no second copy of "which surface types GEOUNED can model" to
+drift out of sync. Replaces `load_functions.py::spline()` (deleted by
+the user's own edit), which read the identical thing off an
+already-built `GSolid.Faces`.
+
+**Landed as the hybrid** (native pre-check inside `Gcheck_and_repair`,
+`GSolid` built lazily) and fully verified (all 3 engines green, live
+checks against `barrel bottom.stp`/`beltline left.step`) -- **then
+reverted back to a simpler design per direct, later feedback**: "cojo tu
+argumento que utilizar sólidos nativos para hacer reparación no va a
+aportar mucho más... pero prefiero leer y procesar los sólidos en el
+mismo bucle" -- the user accepted the "don't duplicate classification"
+argument but wanted the loop itself simpler: build the `GSolid`
+unconditionally, right after `_native_fix`, as one clear step, rather
+than have `Gcheck_and_repair` try to avoid that construction via its own
+native pre-check. Final settled design, all 3 backends:
+- `Gcheck_and_repair(solid: GSolid, ...) -> (GSolid, bool)` -- back to
+  `GSolid`-in/`GSolid`-out (no native pre-check at all now -- once the
+  caller always builds the `GSolid` first, a separate pre-check inside
+  this function buys nothing, since the `GSolid` already exists by the
+  time it runs). `_native_has_short_edge` (the native pre-check helper)
+  removed as dead code from `occ`/`ocp` as a direct consequence.
+- `Gload_and_process_step`'s loop: `native_solid = _native_fix(...)` ->
+  `gsolid = GSolid(native_solid)` -> `gsolid, ok = Gcheck_and_repair(gsolid,
+  ...)` -- one GSolid built per solid, unconditionally, one clear step.
+  If repair fires, the `GSolid` the loop keeps is already the fresh one
+  `Gcollapse_split_rings`/`Gsliver_heal`/`Gdefeature` build internally
+  from their own truly-repaired native result (never `solid`'s own,
+  possibly-defective, already-parsed `.Faces`) -- so a sliver face
+  present at the top of the loop is genuinely gone from what the loop
+  ends up keeping, with no extra explicit re-wrap step needed.
+  `Gspline_surface` stays native-input (`gsolid.__native__`), unchanged
+  -- this was always meant to be native, per the user's own original
+  ask, and nothing about the revert affects it.
+
+**Verified, final state**: `tests/geo` + `tests/test_cadtocsg.py` (+
+`test_csgtocad.py` for freecad) green on all 3 engines after every
+round of this back-and-forth -- `freecad` 158/158+2skip, `occ` 89/89,
+`ocp` 89/89 -- plus live end-to-end checks against `barrel bottom.stp`/
+`beltline left.step` under all 3 engines confirming identical repair
+results (byte-identical volumes) to the pre-revert hybrid design.
+
 ## CAD-defect recipe session: "split boundary ring" / duplicated micro-trim — `geo.Gcollapse_split_rings`
 
 New working mode (separate session, own memory file
