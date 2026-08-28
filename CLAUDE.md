@@ -9750,6 +9750,117 @@ surface-extension repair, out of scope of the sew-collapse recipe.
   by the API — changed to `"remove"`. The whole corpus batch was failing
   rc=1 on every file until this.
 
+## `sliver_healing` (v0) implemented as `geo.Gsliver_heal` — the cylindrical collapsed-step (`LR.stp`) now translates
+
+Follow-up to the recipe-1b dead end above. The user dictated a proper
+multi-step repair (`sliver_healing`, version 0 — recorded in
+`reference_cad_defect_recipes.md`) and confirmed `LR.stp` is solvable by
+it **without hard surface extension**, via case 4-1: the part genuinely
+has 3 distinct real cylinders (R=2191.5 inner wall / R=2192.39 a real
+0.888mm×4.854mm rebate near the top / R=2197.1 outer wall); only the
+0.0289mm R=2191.5 sliver band and one redundant near-coincident plane
+get removed.
+
+**Why `Gcollapse_split_rings` can't do this** (answer to the user's own
+sew question): `BRepBuilderAPI_Sewing` **never fabricates surfaces** — it
+only merges free edges within tolerance. `Gcollapse_split_rings` sews
+*immediately after removing the sliver faces*, before deciding the face
+set. On `barrel bottom` that is right (the two exactly-coincident sphere
+halves *should* be welded). On `LR` it is wrong: the sew stitches the two
+near-coincident R=2191.5 plane rims together and keeps **both** planes,
+when the correct move is delete the smaller one, keep the larger (real
+extremity), and rebuild its inner rim at R=2192.39. `sliver_healing`
+fixes this by **sewing only at the very end**.
+
+### `geo.Gsliver_heal(solid, min_face_width=0.1) -> GSolid | None`
+
+`_ocp_impl.py` + `_occ_impl.py` (byte-parallel, engine-name differences
+only); `_freecad_impl.py` = `None`-returning stub — "FreeCAD no tiene las
+herramientas para realizar las operaciones" (user, confirmed). Exported
+from `geo/__init__.py` (all 3 engine blocks). Never raises (broad
+`except -> None`). `Gcollapse_split_rings` is **left exactly as it is**
+(zero regression risk for barrel); `repair_solid` tries it first, then
+`Gsliver_heal` if it returned `None`, then `Gdefeature`.
+
+New shared helper `vector_geometry.near_surface_pair(surf_a, surf_b,
+dist_tol) -> float | None` (duck-typed, all 3 engines): same-kind
+surfaces, coincident axis (plane/cylinder/cone), one varying parameter
+(plane offset / cylinder radius / sphere radius) differing by
+`1e-5 < gap < dist_tol` — strictly *near*, not exact (`gap <= 1e-5` is a
+legitimate symmetry split, left to the final sew). cone/torus → `None`
+(no fixture yet).
+
+Steps as built (**sew is LAST**):
+1. `slivers = find_split_ring_faces(solid, min_face_width)`. Empty →
+   `None`. `dist_tol = max(BoundBoxDiag * 1e-4, MIN_SLIVER_EDGE_LENGTH)`.
+2. Among the non-sliver faces, collect `near_surface_pair`s. **v0
+   requires exactly one** — 0 (nothing `Gcollapse_split_rings` didn't
+   already cover) or ≥2 (out of scope) → `None`.
+3. `ShapeBuild_ReShape`: `.Remove` every sliver face, then `.Remove` the
+   **smaller-area** face of the pair (case 4-1: keep the larger). `.Apply`.
+4. `_retrim_freed_quadrics`: any cylinder/cone face left with a free
+   circular rim whose centre sits on the *dropped* plane gets its V range
+   re-trimmed so that rim lands on the *kept* plane — `z_at(v)` sampled at
+   `u_mid`, local `slope` via a `1e-3` finite difference,
+   `v_free += (keep_offset − z_free)/slope`,
+   `BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, tol)`,
+   `reshaper.Replace`. Re-trim of an **unbounded** quadric — not surface
+   extension.
+5. `_snapped_planar_cap`: project every free edge's endpoints (and circle
+   centre) onto the kept plane; **drop connector edges whose snapped
+   endpoints coincide** (`< 1e-7` — the sliver's own axial extent);
+   rebuild each survivor as a snapped `gp_Circ`/line (circle/line only,
+   else `None`); `MakeWire` → `BRepBuilderAPI_MakeFace(gp_Pln, wire,
+   True)`. Returns `[face]`, `[]` (nothing open — barrel-style, no cap),
+   or `None`.
+6. Sew (reduced faces + cap) → `MakeShell` → `BRepBuilderAPI_MakeSolid` →
+   `ShapeFix_Shape(dist_tol)` → `ShapeUpgrade_UnifySameDomain` (merges the
+   cap into the kept coplanar face).
+7. **Gate = `is_valid()` + `|dV| < MAX_SLIVER_HEAL_VOLUME_REL_CHANGE`
+   (5e-4)**. NO `count_split_ring_pairs` check — the planar cap is a thin
+   annulus whose two coplanar rims that metric false-counts. With step 4 a
+   correct heal conserves volume to ~1e-6 (LR: dV 8.6e-7); a
+   fabricated-cap failure is ~1e-2, so the dV bound alone is a tight gate.
+   `2e-3` was tried first and tightened.
+
+### Verification (2026-08-28)
+
+- `Gsliver_heal(LR.stp)` → valid, faces 13→9, dV 8.6e-7 (raw *or*
+  `Gload_step`-healed input both work). `barrel bottom.stp` /
+  `testing/inputSTEP/BC.stp` (clean) → `None` (no near-pair — barrel's
+  sphere halves are exactly coincident, `Gcollapse_split_rings`'s job).
+- **End-to-end**: raw `LR.stp` → `load_step_file` (defaults) →
+  `repair_solid` → `Gsliver_heal` → converts → d1suned `volSDEF=True`:
+  **tally 0.998895, 0 lost particles** (the input's own translation was
+  tally 0.0 / 24 lost — Recipe 1b's original dead end).
+- `barrel bottom.stp` unchanged — still repaired by
+  `Gcollapse_split_rings` (never reaches `Gsliver_heal`), d1suned tally
+  0.999738, 0 lost.
+- `tests/geo`: ocp 39/39, occ 39/39, freecad 106+2skip.
+  `tests/test_cadtocsg.py`: ocp 50/50, occ 50/50, freecad 50/50.
+  (`tests/test_csgtocad.py` 2 fails ocp/occ — pre-existing GEOReverse,
+  git-stash-confirmed unrelated.)
+- Full `Solidos/test_models` parallel d1suned corpus (138 files, no
+  `Big_*`; 143 run dirs incl. manual beltline runs): 173 tallies,
+  **93.6% <2σ, 6.4% marginal, 0% >3σ, 0 lost particles across all 143** —
+  same marginal set, **matches the documented baseline exactly, zero
+  regression**. (Consistent with the recipe-1 corpus scan: only
+  `esfera/Barrel_bottom` triggers `find_split_ring_faces` at all, and
+  it's caught by `Gcollapse_split_rings` first — `Gsliver_heal` never
+  fires on the corpus.)
+
+### Recipe 1b status update
+
+`LR.stp` / the beltline family is **no longer an "unsolved cylindrical
+collapsed-step"** — the "needs hard surface extension" conclusion was
+wrong. `Gcollapse_split_rings` still correctly *rejects* it (its 3-check
+gate: valid + `|dV| < 3e-4` + `count_split_ring_pairs` strictly
+decreased); `repair_solid` then falls through to `Gsliver_heal`, which
+repairs it. Out of scope for v0: `near_surface_pair` cases 4-3 (heal from
+neighbouring-face edges) / 4-4, cone/torus near-pairs, and ≥2 near-pairs
+in one solid — all → `None` (solid flagged corrupted, unchanged
+behaviour).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

@@ -7,7 +7,7 @@ import re
 
 from ..utils.geouned_classes import GeounedSolid
 from ..utils.data_classes import Tolerances
-from ...geo import Gload_step, Gload_step_labels, Gdefeature, Gcollapse_split_rings, find_short_edges
+from ...geo import Gload_step, Gload_step_labels, Gdefeature, Gcollapse_split_rings, Gsliver_heal, find_short_edges
 from . import load_functions as LF
 
 logger = logging.getLogger("general_logger")
@@ -92,6 +92,20 @@ def repair_solid(solid, tolerances):
     collapsed = Gcollapse_split_rings(repaired, tolerances.min_face_width)
     if collapsed is not None:
         return collapsed
+
+    # sliver_healing (v0): when the split-ring leftover is a genuine
+    # *near-coincident* (not exactly-coincident) surface pair that blind
+    # sewing can't reconcile -- Gcollapse_split_rings rejects those. It
+    # drops the smaller face of the pair, re-trims any quadric whose rim
+    # sat on the dropped plane, caps the freed hole on the kept plane,
+    # and sews LAST; validates valid + |dV| < 5e-4 internally (no pair
+    # count -- its own cap is a thin annulus that metric false-counts).
+    # Verified on LR.stp (cylindrical collapsed-step): healed dV 8.6e-7,
+    # d1suned tally 0.9985 / 0 lost (was 0.0 / 24 lost).
+    # Accept on its own return, same as the collapse branch.
+    sliver_healed = Gsliver_heal(repaired, tolerances.min_face_width)
+    if sliver_healed is not None:
+        return sliver_healed
 
     # Still failing (typically: a sliver fix() doesn't touch) -- try the
     # more targeted, more expensive BRepAlgoAPI_Defeaturing pass, seeded

@@ -71,7 +71,7 @@ from OCC.Core.GeomAbs import (
 from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnCurve, GeomAPI_ProjectPointOnSurf
 from OCC.Core.GeomLProp import GeomLProp_CLProps, GeomLProp_SLProps
 from OCC.Core.GProp import GProp_GProps
-from OCC.Core.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Trsf, gp_Vec
+from OCC.Core.gp import gp_Ax1, gp_Ax2, gp_Ax3, gp_Circ, gp_Dir, gp_Dir2d, gp_Pln, gp_Pnt, gp_Pnt2d, gp_Trsf, gp_Vec
 from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.ShapeAnalysis import ShapeAnalysis_Surface
 from OCC.Core.ShapeBuild import ShapeBuild_ReShape
@@ -102,6 +102,7 @@ from .vector_geometry import (
     count_split_ring_pairs,
     find_short_edges,
     find_split_ring_faces,
+    near_surface_pair,
     plane_tangent_at,
     plane_value_at,
     suppress_native_stdout,
@@ -1433,6 +1434,226 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     if abs(result.Volume - solid.Volume) > MAX_SPLIT_RING_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
         return None
     if count_split_ring_pairs(result) >= pairs_before:
+        return None
+    return result
+
+
+MAX_SLIVER_HEAL_VOLUME_REL_CHANGE = 5.0e-4
+"""Gsliver_heal's volume net -- looser than Gcollapse_split_rings' 3e-4
+-- the sole numeric gate for Gsliver_heal (no count_split_ring_pairs
+check: its planar cap is a thin annulus that metric false-counts). See
+_ocp_impl.py's own identical constant: with _retrim_freed_quadrics a
+correct heal conserves volume to ~1e-6 (LR.stp: dV 8.6e-7, d1suned tally
+0.9985 / 0 lost, vs the input's tally 0.0 / 24 lost)."""
+
+
+def _edge_endpoints(native_edge):
+    pts = []
+    vexp = TopExp_Explorer(native_edge, TopAbs_VERTEX)
+    while vexp.More():
+        pts.append(BRep_Tool.Pnt(topods.Vertex(vexp.Current())))
+        vexp.Next()
+    return pts
+
+
+def _free_edges(shape):
+    edge_face_map = TopTools_IndexedDataMapOfShapeListOfShape()
+    topexp.MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edge_face_map)
+    return [
+        topods.Edge(edge_face_map.FindKey(i))
+        for i in range(1, edge_face_map.Size() + 1)
+        if edge_face_map.FindFromIndex(i).Size() == 1
+    ]
+
+
+def _retrim_freed_quadrics(reduced_shape, drop_plane, keep_plane, tol):
+    """See _ocp_impl.py::_retrim_freed_quadrics -- re-trim the V range of
+    any cylinder/cone face whose free rim landed on the dropped plane so
+    it lands on the kept plane instead (re-trim of an unbounded quadric,
+    not surface extension). Returns the (possibly unchanged) shape."""
+    axis = keep_plane.Axis
+    drop_offset = axis.dot(drop_plane.Position)
+    keep_offset = axis.dot(keep_plane.Position)
+    free = _free_edges(reduced_shape)
+
+    reshaper = ShapeBuild_ReShape()
+    changed = 0
+    face_explorer = TopExp_Explorer(reduced_shape, TopAbs_FACE)
+    while face_explorer.More():
+        face = topods.Face(face_explorer.Current())
+        face_explorer.Next()
+        surf_adaptor = BRepAdaptor_Surface(face, True)
+        if surf_adaptor.GetType() not in (GeomAbs_Cylinder, GeomAbs_Cone):
+            continue
+        rim_on_drop = False
+        edge_explorer = TopExp_Explorer(face, TopAbs_EDGE)
+        while edge_explorer.More():
+            edge = topods.Edge(edge_explorer.Current())
+            edge_explorer.Next()
+            if not any(edge.IsSame(fe) for fe in free):
+                continue
+            curve_adaptor = BRepAdaptor_Curve(edge)
+            if curve_adaptor.GetType() != GeomAbs_Circle:
+                continue
+            centre = curve_adaptor.Circle().Location()
+            if abs(axis.dot(GVector(centre.X(), centre.Y(), centre.Z())) - drop_offset) < tol:
+                rim_on_drop = True
+                break
+        if not rim_on_drop:
+            continue
+
+        surface = BRep_Tool.Surface(face)
+        u1, u2, v1, v2 = breptools.UVBounds(face)
+        u_mid = 0.5 * (u1 + u2)
+
+        def z_at(v):
+            p = surface.Value(u_mid, v)
+            return axis.dot(GVector(p.X(), p.Y(), p.Z()))
+
+        z1, z2 = z_at(v1), z_at(v2)
+        if abs(z1 - drop_offset) <= abs(z2 - drop_offset):
+            slope = (z_at(v1 + 1e-3) - z1) / 1e-3
+            if abs(slope) < 1e-6:
+                continue
+            v1 = v1 + (keep_offset - z1) / slope
+        else:
+            slope = (z_at(v2 + 1e-3) - z2) / 1e-3
+            if abs(slope) < 1e-6:
+                continue
+            v2 = v2 + (keep_offset - z2) / slope
+        if v1 >= v2:
+            continue
+        new_face = BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, tol)
+        if not new_face.IsDone():
+            continue
+        reshaper.Replace(face, new_face.Face())
+        changed += 1
+
+    return reshaper.Apply(reduced_shape) if changed else reduced_shape
+
+
+def _snapped_planar_cap(reduced_shape, keep_plane):
+    """See _ocp_impl.py::_snapped_planar_cap. Returns [TopoDS_Face], []
+    (nothing open), or None (not a single planar loop v0 can cap)."""
+    plane_offset = keep_plane.Axis.dot(keep_plane.Position)
+    axis = keep_plane.Axis
+
+    def snap(pnt):
+        v = GVector(pnt.X(), pnt.Y(), pnt.Z())
+        v = v + axis * (plane_offset - axis.dot(v))
+        return gp_Pnt(v.x, v.y, v.z)
+
+    free_edges = _free_edges(reduced_shape)
+    if not free_edges:
+        return []
+
+    new_edges = []
+    for edge in free_edges:
+        adaptor = BRepAdaptor_Curve(edge)
+        curve_type = adaptor.GetType()
+        pts = _edge_endpoints(edge)
+        if len(pts) != 2:
+            return None
+        a, b = snap(pts[0]), snap(pts[1])
+        if a.Distance(b) < 1e-7:
+            continue
+        if curve_type == GeomAbs_Circle:
+            circ = adaptor.Circle()
+            axes = gp_Ax2(snap(circ.Location()), circ.Axis().Direction())
+            new_edges.append(BRepBuilderAPI_MakeEdge(gp_Circ(axes, circ.Radius()), a, b).Edge())
+        elif curve_type == GeomAbs_Line:
+            new_edges.append(BRepBuilderAPI_MakeEdge(a, b).Edge())
+        else:
+            return None
+    if not new_edges:
+        return None
+
+    wire_maker = BRepBuilderAPI_MakeWire()
+    edge_list = TopTools_ListOfShape()
+    for e in new_edges:
+        edge_list.Append(e)
+    wire_maker.Add(edge_list)
+    if not wire_maker.IsDone():
+        return None
+    plane = gp_Pln(snap(gp_Pnt(0.0, 0.0, 0.0)), gp_Dir(axis.x, axis.y, axis.z))
+    face_maker = BRepBuilderAPI_MakeFace(plane, wire_maker.Wire(), True)
+    if not face_maker.IsDone():
+        return None
+    return [face_maker.Face()]
+
+
+def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+    """`sliver_healing` (version 0). See _ocp_impl.py::Gsliver_heal for the
+    full algorithm/spec and the verified `LR.stp` fixture. ocp/occ only;
+    the freecad backend's `Gsliver_heal` is a `None`-returning stub."""
+    slivers = list(find_split_ring_faces(solid, min_face_width))
+    if not slivers:
+        return None
+    diag = solid.BoundBox.DiagonalLength
+    dist_tol = max(diag * 1e-4, MIN_SLIVER_EDGE_LENGTH)
+
+    sliver_native = [f.__native__ for f in slivers]
+    others = [f for f in solid.Faces if not any(f.__native__.IsSame(s) for s in sliver_native)]
+    near = []
+    for i in range(len(others)):
+        for j in range(i + 1, len(others)):
+            if near_surface_pair(others[i].Surface, others[j].Surface, dist_tol) is not None:
+                near.append((others[i], others[j]))
+    if len(near) != 1:
+        return None
+
+    try:
+        reshaper = ShapeBuild_ReShape()
+        for f in slivers:
+            reshaper.Remove(f.__native__)
+        face_a, face_b = near[0]
+        keep, drop = (face_a, face_b) if face_a.Area >= face_b.Area else (face_b, face_a)
+        reshaper.Remove(drop.__native__)
+        reduced = reshaper.Apply(solid.__native__)
+
+        reduced = _retrim_freed_quadrics(reduced, drop.Surface, keep.Surface, dist_tol)
+
+        caps = _snapped_planar_cap(reduced, keep.Surface)
+        if caps is None:
+            return None
+
+        sewer = BRepBuilderAPI_Sewing(dist_tol, True, True, True, False)
+        explorer = TopExp_Explorer(reduced, TopAbs_FACE)
+        while explorer.More():
+            sewer.Add(explorer.Current())
+            explorer.Next()
+        for cap in caps:
+            sewer.Add(cap)
+        sewer.Perform()
+        sewed = sewer.SewedShape()
+
+        builder = BRep_Builder()
+        shell = TopoDS_Shell()
+        builder.MakeShell(shell)
+        seen = False
+        face_explorer = TopExp_Explorer(sewed, TopAbs_FACE)
+        while face_explorer.More():
+            builder.Add(shell, topods.Face(face_explorer.Current()))
+            seen = True
+            face_explorer.Next()
+        if not seen:
+            return None
+        solid_maker = BRepBuilderAPI_MakeSolid(shell)
+        if not solid_maker.IsDone():
+            return None
+        fixer = ShapeFix_Shape(solid_maker.Solid())
+        fixer.SetPrecision(dist_tol)
+        fixer.Perform()
+        unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), True, True, True)
+        unify.SetLinearTolerance(dist_tol)
+        unify.Build()
+        result = GSolid(unify.Shape())
+    except Exception:
+        return None
+
+    if not result.is_valid():
+        return None
+    if abs(result.Volume - solid.Volume) > MAX_SLIVER_HEAL_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
         return None
     return result
 

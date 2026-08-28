@@ -488,6 +488,52 @@ def is_same_torus_surface(torus_1, torus_2) -> bool:
     return abs(torus_1.Axis.dot(torus_2.Axis)) >= 0.99999
 
 
+def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
+    """Step 3 of `sliver_healing` (see reference_cad_defect_recipes.md): two
+    analytic surfaces of the SAME kind whose single varying parameter
+    differs by a *small but nonzero* amount -- a near-duplicate that a
+    just-removed sliver face was bridging, which the healer must reconcile.
+
+    Returns the parameter gap when `1e-5 < gap < dist_tol` (strictly near --
+    an exactly-coincident pair, `gap <= 1e-5`, is a legitimate symmetry
+    split handled by the final sew, not by this step), else None. Requires
+    coincident axes for plane / cylinder / cone. Duck-typed on
+    `.Axis`/`.Position`/`.Radius`/`.Center`/`.Apex`/`.SemiAngle` -- works
+    on a `geo` descriptor or a Tier-1 `*OnlyParams`.
+
+    v0: plane, cylinder, sphere. cone / torus -> None (no fixture yet)."""
+    ta, tb = type(surf_a).__name__, type(surf_b).__name__
+    if ta != tb:
+        return None
+
+    def _near(gap: float):
+        return gap if 1e-5 < gap < dist_tol else None
+
+    if ta == "GPlane":
+        axis_dot = surf_a.Axis.dot(surf_b.Axis)
+        if abs(axis_dot) < 0.99999:
+            return None
+        d_a = surf_a.Axis.dot(surf_a.Position)
+        d_b = surf_b.Axis.dot(surf_b.Position)
+        return _near(abs(d_a - d_b) if axis_dot > 0 else abs(d_a + d_b))
+
+    if ta == "GCylinder":
+        if abs(surf_a.Axis.dot(surf_b.Axis)) < 0.99999:
+            return None
+        offset = surf_b.Center - surf_a.Center
+        along = offset.dot(surf_a.Axis)
+        if (offset - surf_a.Axis * along).length > dist_tol:
+            return None
+        return _near(abs(surf_a.Radius - surf_b.Radius))
+
+    if ta == "GSphere":
+        if (surf_b.Center - surf_a.Center).length > dist_tol:
+            return None
+        return _near(abs(surf_a.Radius - surf_b.Radius))
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Point-classification predicates ("is `point` outside this analytic
 # surface"). Free functions, duck-typed on .Axis/.Position/.Center/etc,

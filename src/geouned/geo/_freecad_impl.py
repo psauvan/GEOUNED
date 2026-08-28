@@ -1176,6 +1176,18 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     return None
 
 
+def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+    """`sliver_healing` (version 0) -- the fuller form of
+    `Gcollapse_split_rings` (remove sliver faces, resolve a
+    near-coincident surface pair by dropping the smaller face + capping
+    the freed hole on the kept plane, sew last).
+
+    ocp/occ only -- see ``geo._ocp_impl.Gsliver_heal`` for the algorithm
+    and the verified fixture (``LR.stp``). A ``None``-returning stub here
+    so ``repair_solid`` falls through unchanged under the freecad engine."""
+    return None
+
+
 # A shape-like argument accepted by generic spatial queries (Gin_contact...).
 GShape = GSolid | GFace | GEdge | GShell
 
