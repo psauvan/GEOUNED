@@ -1868,7 +1868,7 @@ def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_fa
     needs to re-wrap the result itself. Returns `(solid, False)` -- the
     ORIGINAL, unrepaired `GSolid`, never a partial or fabricated result
     -- if nothing clears every check."""
-    if not check_solid_defects(solid, sliver_edge_rel_tol):
+    if not check_solid_defects(solid, sliver_edge_rel_tol, min_face_width):
         return solid, True
 
     collapsed = Gcollapse_split_rings(solid, min_face_width)
@@ -1882,7 +1882,7 @@ def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_fa
     degenerate_faces = find_short_edges(solid, sliver_edge_rel_tol)
     if degenerate_faces:
         healed = Gdefeature(solid, degenerate_faces)
-        if healed is not None and not check_solid_defects(healed, sliver_edge_rel_tol):
+        if healed is not None and not check_solid_defects(healed, sliver_edge_rel_tol, min_face_width):
             return healed, True
 
     return solid, False

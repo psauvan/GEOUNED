@@ -276,7 +276,7 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
     return None
 
 
-def check_solid_defects(solid, sliver_edge_rel_tol: float = 1e-4) -> list:
+def check_solid_defects(solid, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> list:
     """Run every known corrupted/degenerate-geometry check against a
     loaded solid and return the reasons it currently fails (empty list
     if the solid is clean). One function, one place to extend: any
@@ -287,20 +287,33 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = 1e-4) -> list:
     Checks currently implemented:
       - topological validity (BRepCheck_Analyzer / equivalent, via
         ``GSolid.is_valid()``).
-      - pathologically short edges relative to the solid's own BoundBox
-        diagonal (``find_short_edges``) -- a real, generalizable
-        signature of a spurious/degenerate CAD feature invisible to
-        ``is_valid()`` alone (confirmed live, 2026-08-27, Solidos/
-        working_solids/"beltline left.stp" -- a spurious plane bridging
-        a solid's real wall to a near-zero-height sliver).
+      - a pathologically short edge (``find_short_edges``, relative to the
+        solid's own BoundBox diagonal) that ALSO leads to a genuine
+        sliver *face* -- one whose ``CharacteristicWidth < min_face_width``
+        (confirmed live, 2026-08-27, Solidos/working_solids/"beltline
+        left.stp" -- a spurious plane bridging a solid's real wall to a
+        near-zero-height sliver band, that band being the sliver face).
 
-    Takes the raw tolerance value, not a `Tolerances` object -- this file
+        A short edge whose faces are all otherwise normal is NOT a
+        defect for this check's purposes (2026-08-29, per direct user
+        direction, Solidos/working_solids/L4_pipes.stp): the
+        decomposition pipeline already tolerates sliver edges on
+        well-formed faces, and no repair function removes such an edge
+        without a sliver face to anchor on -- so flagging it here only
+        wrongly drops a perfectly translatable solid. If a future case
+        shows edge-only slivers do need repair, add a dedicated
+        edge-repair function and re-widen this check (option 2 in that
+        discussion); until then this stays face-anchored.
+
+    Takes raw tolerance values, not a `Tolerances` object -- this file
     has no dependency on anything outside `geo`, GEOUNED's own
-    `Tolerances` class included; callers read `tolerances.sliver_edge_rel_tol`
-    themselves before calling in."""
+    `Tolerances` class included; callers read
+    `tolerances.sliver_edge_rel_tol` / `.min_face_width` themselves
+    before calling in."""
     reasons = []
     if not solid.is_valid():
         reasons.append("invalid topology")
-    if find_short_edges(solid, sliver_edge_rel_tol):
+    short_edge_faces = find_short_edges(solid, sliver_edge_rel_tol)
+    if any(getattr(face, "CharacteristicWidth", float("inf")) < min_face_width for face in short_edge_faces):
         reasons.append("degenerate/sliver geometry")
     return reasons

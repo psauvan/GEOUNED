@@ -10140,6 +10140,42 @@ neighbouring-face edges) / 4-4, cone/torus near-pairs, and ≥2 near-pairs
 in one solid — all → `None` (solid flagged corrupted, unchanged
 behaviour).
 
+## `check_solid_defects` no longer rejects a solid for a sliver edge on a normal face
+
+`Solidos/working_solids/L4_pipes.stp` (2026-08-29): 3 valid pipe solids
+where some faces carry short (sliver) edges, but the faces themselves are
+perfectly well-formed (`CharacteristicWidth` ~10–53 mm, no defect) and no
+repair function removes such an edge without a sliver *face* to anchor
+on. `check_solid_defects` flagged them `"degenerate/sliver geometry"`
+purely because `find_short_edges` was non-empty, so `Gload_and_process_step`
+put all 3 on the corrupted list and (`corrupted_solids` default `"stop"`)
+the file wouldn't translate at all.
+
+**Two options weighed** (user's own framing): (1) stop rejecting a solid
+for a sliver edge that doesn't lead to a sliver face — the decomposition
+pipeline already tolerates sliver edges on well-formed faces; (2) write a
+function that removes such edges and repairs them. The user chose **option
+1**, with option 2 held for later if a case ever shows edge-only slivers
+genuinely need repair.
+
+**Change**: `solid_defects.check_solid_defects(solid, sliver_edge_rel_tol,
+min_face_width=0.1)` — the short-edge branch now flags only when a
+short-edge face is *also* sliver-scale
+(`getattr(face, "CharacteristicWidth", inf) < min_face_width`). Both
+`Gcheck_and_repair` call sites (`_ocp_impl.py` / `_occ_impl.py`) pass
+`min_face_width` through; `_freecad_impl.py`'s `Gcheck_and_repair` is a
+pure bypass, untouched. `find_short_edges` itself is unchanged (still used
+directly to seed `Gdefeature`).
+
+**Verified**: `L4_pipes.stp` → `check_solid_defects` `[]` for all 3
+solids, `Gload_and_process_step` keeps all 3 (`corrupted_idx=[]`).
+`barrel bottom.stp` / `LR.stp` still flagged raw (their sliver bands are
+genuine sliver faces, `CharWidth` ~0.02–0.03) → still repaired by
+`Gcollapse_split_rings` / `Gsliver_heal` respectively → `corrupted_idx=[]`
+after processing. A solid with a real sliver face that no repair handles
+is still correctly rejected. `tests/geo` + `tests/test_cadtocsg.py` green:
+`ocp` 128, `occ` 128, `freecad` 158.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
