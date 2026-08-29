@@ -10383,10 +10383,27 @@ acceptance):
    SOLID/SHELL report `NoError`). NOT a sliver — the fragment is huge.
 2. `valid_solid` (`decom_utils_generator.py`) accepts it: it only checks
    volume/area geometry, **never `BRepCheck_Analyzer`**.
-3. The invalid fragment flows forward; `GFace.wires()` on its invalid
-   cylinder face returns **empty `GWire`s** → `pick_outer_wire([])` →
-   `None` → `FaceGu.OuterWire = None`.
-4. `get_adjacent_cylplane` has no `None` guard → crash.
+3. The invalid fragment flows forward; `GFace.wires()` on its bad
+   cylinder face returns **empty `GWire`s** (`BRepTools_WireExplorer`
+   can't walk the malformed wire) → `pick_outer_wire([])` → `None` →
+   `OuterWire = None`.
+4. `get_adjacent_cylplane` / `cks_bound_planes` / `torus_bound_planes`
+   have no `None` guard → crash on `face.OuterWire.Edges`.
+
+**Two faces of the same defect** (the user's own observation, from
+`L4-WCS_3.stp` — an assembly whose solid 75 *is* `L4_body.stp`):
+- `L4_body.stp` **alone**: the bad face is `BRepCheck_InvalidImbricationOfWires`
+  (native-invalid) → the fragment fails `solid.is_valid()` → crashes in
+  `get_adjacent_cylplane` (via `next_roundCorner`).
+- The **same solid inside `L4-WCS_3.stp`** (skip 0..74 to reach it):
+  assembly tolerances make the bad face just barely pass `BRepCheck`
+  (`native valid=True`!), so the fragment's `solid.is_valid()` is `True`
+  — yet `BRepTools_WireExplorer` still can't walk face 12's wires, so
+  `GWire.Edges`/`OrderedVertexes` come back empty and `pick_outer_wire`
+  still returns `None`. Because `is_valid()` is `True`, the original
+  `remove_solids` heal trigger never fired → it got *past*
+  `get_adjacent_cylplane`'s new `None` guard and crashed one generator
+  later, in `cks_bound_planes` (via `plane_generator`).
 
 Confirmed **not** caused by this session's `_separate_edge_joined_components`
 change (reverting `c663a08` reproduces it identically).
@@ -10417,14 +10434,19 @@ not the public `Gexport_step`.
   `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE = 1e-3` (looser than the sliver/
   split-ring gates: the failed split inflates the input volume and the
   rebuild corrects it). Never raises.
-- **`remove_solids`** — a fragment that passes `valid_solid` but fails
-  `solid.is_valid()` now tries `Gheal_topology`; uses the healed solid
-  if it returns one, else **keeps the original fragment unchanged**
-  (the pre-existing behaviour). Dropping the un-healable case was tried
-  first and reverted: it loses real volume — `rev_pipe.stp`'s own
-  un-healable non-manifold remnant went `0.998 -> 0.952` d1suned when
-  dropped. The `get_adjacent_cylplane` `OuterWire is None` guard is what
-  keeps a surviving invalid fragment from crashing downstream.
+- **`remove_solids`** — a fragment that passes `valid_solid` but that
+  GEOUNED's own face-analysis can't process — **either** `not
+  solid.is_valid()` **or** `any(face.outer_wire() is None for face in
+  solid.Faces)` (the native-valid-but-unwalkable-wire case above) — now
+  tries `Gheal_topology`; uses the healed solid if it returns one, else
+  **keeps the original fragment unchanged** (the pre-existing behaviour).
+  Dropping the un-healable case was tried first and reverted: it loses
+  real volume — `rev_pipe.stp`'s own un-healable non-manifold remnant
+  went `0.998 -> 0.952` d1suned when dropped.
+- **`get_adjacent_cylplane`, `cks_bound_planes`, `torus_bound_planes`**
+  — defensive `if face.OuterWire is None: return` / `return []` guards,
+  for any fragment `Gheal_topology` couldn't repair (also covers the
+  pre-existing `Solidos/Cans/pipe.stp` edgeless-wire case).
 - **`get_adjacent_cylplane`** — defensive `if cyl.OuterWire is None:
   return planes` guard (also covers the pre-existing
   `Solidos/Cans/pipe.stp` edgeless-wire case).

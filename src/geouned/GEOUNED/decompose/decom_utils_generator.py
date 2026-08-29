@@ -41,6 +41,12 @@ def torus_bound_planes(solidFaces, face, tolerances):
     planes = []
     if is_same_value(params[1] - params[0], twoPi, tolerances.value):
         return planes
+    if face.OuterWire is None:
+        # malformed face whose boundary wire GEOUNED can't walk (see
+        # remove_solids' Gheal_topology note) and that a heal couldn't
+        # repair -- it contributes no bounding planes; skip rather than
+        # crash on .OuterWire.Edges.
+        return planes
 
     Edges = face.OuterWire.Edges
 
@@ -81,6 +87,12 @@ def torus_bound_planes(solidFaces, face, tolerances):
 def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
 
     if Edges is None:
+        if face.OuterWire is None:
+            # malformed face whose boundary wire GEOUNED can't walk (see
+            # remove_solids' Gheal_topology note) and that a heal couldn't
+            # repair -- contributes no bounding planes; skip rather than
+            # crash on .OuterWire.Edges.
+            return []
         Edges = face.OuterWire.Edges
     planes = []
 
@@ -311,23 +323,25 @@ def remove_solids(Solids: list[GSolid], Volume) -> list[GSolid]:
         if not valid_solid(solid, Volume):
             logger.warning(f"remove_solids degenerated solids are produced bad dimensions")
             continue
-        if not solid.is_valid():
-            # A failed / degenerate BOP split can hand back a fragment with
-            # real geometry (so valid_solid passes it) but broken topology
-            # -- e.g. a face with BRepCheck_InvalidImbricationOfWires, which
-            # ShapeFix/refine/fix cannot repair (see Gheal_topology's own
-            # docstring + reference_cad_defect_recipes.md Recipe 3). Feeding
-            # such a fragment forward can crash later face-analysis code
-            # (get_adjacent_cylplane on a face whose wires() came back
-            # empty). Try the in-memory STEP serialize->deserialize rebuild;
-            # use it only if it comes back valid and volume-conserved.
-            # If it can't heal (a non-manifold _repair_non_manifold_solid
-            # remnant etc.), keep the original fragment unchanged -- the
-            # pre-existing behaviour, since dropping it here loses real
-            # volume (confirmed: dropping rev_pipe.stp's un-healable
-            # fragment sends its d1suned tally 0.998 -> 0.952). The
-            # `cyl.OuterWire is None` guard in get_adjacent_cylplane keeps
-            # such a survivor from crashing downstream.
+        # A failed / degenerate BOP split can hand back a fragment that
+        # passes valid_solid (real dimensions) but that GEOUNED's own
+        # face-analysis code can't process -- either topologically invalid
+        # (BRepCheck_InvalidImbricationOfWires), OR BRepCheck-valid yet
+        # with a face whose boundary wire BRepTools_WireExplorer can't
+        # walk, so GFace.wires() comes back edgeless and
+        # pick_outer_wire()/OuterWire is None (confirmed: L4_body.stp
+        # alone hits the first, the same solid inside L4-WCS_3.stp hits
+        # the second -- assembly tolerances make it just pass BRepCheck).
+        # Either way, feeding it forward crashes on `face.OuterWire.Edges`
+        # in cks_bound_planes / get_adjacent_cylplane / etc. Try the
+        # in-memory STEP serialize->deserialize rebuild (Gheal_topology);
+        # it re-instantiates every wire and both defects clear. Use the
+        # result only if valid + volume-conserved; if it can't heal
+        # (a non-manifold _repair_non_manifold_solid remnant etc.), keep
+        # the original unchanged -- dropping it loses real volume
+        # (rev_pipe.stp: d1suned 0.998 -> 0.952 when dropped) and the
+        # `OuterWire is None` guards downstream keep it from crashing.
+        if not solid.is_valid() or any(face.outer_wire() is None for face in solid.Faces):
             healed = Gheal_topology(solid)
             if healed is not None:
                 solid = healed
