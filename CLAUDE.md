@@ -10217,25 +10217,60 @@ Piece_1 face-as-GShell, 1e-4)`:
   (all-valid + volume-conserved) rejects it, so `Gsplit` falls back to
   the single merged invalid solid.
 
-### Agreed approach (to implement when picked up — not yet coded)
+### Implemented (2026-08-29) — `_separate_edge_joined_components` (ocp + occ)
 
-Ask **"should this piece be N parts?" BEFORE any healing** — this is not
-saneamiento, it's the correct reading of the cut. Concretely, run on
-**every** BOPAlgo output solid (not only the invalid ones — a
-phantom-merge can come back `IsValid()==True`, as the beltline family
-showed):
+`geo/_ocp_impl.py` + `geo/_occ_impl.py` (byte-parallel; **not**
+`_freecad_impl.py` — the phantom cut is precisely what FreeCAD cannot do,
+it's the migration's whole reason, so FreeCAD is out of scope here).
+`_raw_bop_split`'s per-raw-solid loop now calls
+`_separate_edge_joined_components(s)` **first**, before the
+`IsValid()`/`_repair_non_manifold_solid` path — runs on **every** BOPAlgo
+output, not only invalid ones (a phantom-merge can report
+`IsValid()==True`). Fast-returns `None` for anything that is not this
+case.
 
-1. Build the face-adjacency graph, **edges = manifold edges only**
-   (shared by exactly 2 faces); connected components.
-2. If 1 component → existing path (valid → keep; invalid → heal/reject).
-3. If ≥2 components → **separate**: partition faces by component,
-   assemble a shell per component, make a solid. **No donor faces** — a
-   true phantom cut already has each half's full closed boundary
-   (that's why the seam edges carry 4 faces).
-4. Per resulting piece: check individual validity **and orientation** —
-   a shell that encloses "inward" is an internal **cavity**, not a
-   separate part; it stays with its parent.
-5. Same safety net as today: `|Σvol − vol_orig| ≤ 1e-6·max(vol_orig,1)`.
+The function:
+1. Collect faces; build `_edge_face_map`; `non_manifold_edge_keys` =
+   edges with `FindFromIndex(i).Size() != 2`. **If none → `None`** (a
+   clean solid, or a plain solid-with-cavity — a cavity's inner shell
+   shares no edge with the outer, so it has zero non-manifold edges;
+   this one check is what keeps a valid solid-with-cavity from being
+   wrongly torn in two).
+2. Union-find over faces, **manifold edges only** → `manifold_components`.
+   If `< 2` → `None`.
+3. Union-find over **all** edges → full components. If
+   `len(manifold_components) <= len(full)` → `None` (the non-manifold
+   edges weren't the load-bearing connection — e.g. two genuinely
+   disjoint shells in one solid, or the ≥3-nested case).
+4. Per manifold component: `BRepBuilderAPI_Sewing(1e-6)` its faces
+   (**no donor/capping faces** — a true phantom cut already carries each
+   region's full closed boundary; that's why the seam edges show 4
+   faces, 2 per side), rebuild the shell, `BRepBuilderAPI_MakeSolid`.
+   Bail to `None` on any failure.
+5. Accept only if `>= 2` pieces, **every piece `BRepCheck_Analyzer`-valid**,
+   and `|Σ|vol| − |vol_orig|| ≤ 1e-6·max(|vol_orig|,1)` — same safety net
+   as `_raw_bop_split`'s own repair gate. Return the native solids;
+   `Gsplit` reports `degenerate_case_handled=True`.
+
+The orientation/cavity sub-check from the plan is covered implicitly: a
+component that is really an internal cavity produces a solid whose
+`abs(volume)` doesn't make the sum match (or fails validity), so the gate
+rejects the whole separation and `Gsplit` falls back — the ≥3-nested case
+stays a documented blind spot, not silently mishandled.
+
+**Verified**: `Piece_1.stp` (cutting plane) + `Tool_1.stp` (piece) →
+`Gsplit` now returns **2 valid solids** (6 + 9 faces), summed volume
+matching the fused input to ~3.6e-8 relative, under **both** ocp and occ
+(was: 1 invalid merged solid). `tests/geo` (`test_ocp_impl` /
+`test_occ_impl` + `test_vector_geometry`) + `tests/test_cadtocsg.py`:
+114 passed under ocp, 114 under occ. Full `Solidos/test_models` d1suned
+corpus (143 run dirs): **byte-identical to the documented baseline** —
+93.6 % <2σ, 6.4 % marginal (same 11 files, same values), 0 % >3σ, 0 lost
+particles; 133/138 convert (same 5 baseline non-conversions). The change
+is inert on the whole corpus — no `test_models` file exercises the
+phantom-cut path (as expected: those are clean decomposition splits where
+BOPAlgo already returns separate solids). `Piece_1.stp`/`Tool_1.stp` is
+the only fixture that reaches it.
 
 ### Coverage reflection (user asked to keep this on record; do NOT build extra machinery for it now — nothing to test against)
 
