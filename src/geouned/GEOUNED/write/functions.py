@@ -56,13 +56,13 @@ class CellString:
 
         self.str = self.str.strip()
         self.str = re.sub(" +", " ", self.str)
-        self.str = re.sub(" *\( *", "(", self.str)
-        self.str = re.sub(" *\) *", ")", self.str)
+        self.str = re.sub(r" *\( *", "(", self.str)
+        self.str = re.sub(r" *\) *", ")", self.str)
         self.str = re.sub(" *: *", ":", self.str)
-        self.str = re.sub("\)\(", ") (", self.str)
-        self.str = re.sub("(?P<num>\d)\(", "\g<num> (", self.str)
-        self.str = re.sub("\)(?P<num>\d)", ") \g<num>", self.str)
-        self.str = re.sub("\)-", ") -", self.str)
+        self.str = re.sub(r"\)\(", ") (", self.str)
+        self.str = re.sub(r"(?P<num>\d)\(", r"\g<num> (", self.str)
+        self.str = re.sub(r"\)(?P<num>\d)", r") \g<num>", self.str)
+        self.str = re.sub(r"\)-", ") -", self.str)
 
         if len(self.str) + offset <= self.lineSize:
             return

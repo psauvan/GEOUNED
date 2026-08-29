@@ -100,7 +100,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
             while current is not None and not tempre_mat:
                 # MIO: Modification of label if required
                 temp_label = LF.get_label(current.label, options)
-                tempre_mat = re.search("_m(?P<mat>\d+)_", "_" + temp_label)
+                tempre_mat = re.search(r"_m(?P<mat>\d+)_", "_" + temp_label)
                 current = current.parent
 
             # Search for dilution definition in tree
@@ -108,7 +108,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
             while current is not None and not tempre_dil:
                 # MIO: Modification of label if required
                 temp_label = LF.get_label(current.label, options)
-                tempre_dil = re.search("_d(?P<dil>\d*\.\d*)_", temp_label)
+                tempre_dil = re.search(r"_d(?P<dil>\d*\.\d*)_", temp_label)
                 current = current.parent
             # Paco end
         else:
