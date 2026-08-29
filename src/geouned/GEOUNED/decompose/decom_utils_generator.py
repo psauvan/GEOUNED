@@ -24,6 +24,7 @@ from ...geo import (
     GBSpline,
     GVector,
     Gclassify_curve,
+    Gheal_topology,
     Gmake_wire,
 )
 from ..utils.basic_functions_part1 import (
@@ -310,6 +311,26 @@ def remove_solids(Solids: list[GSolid], Volume) -> list[GSolid]:
         if not valid_solid(solid, Volume):
             logger.warning(f"remove_solids degenerated solids are produced bad dimensions")
             continue
+        if not solid.is_valid():
+            # A failed / degenerate BOP split can hand back a fragment with
+            # real geometry (so valid_solid passes it) but broken topology
+            # -- e.g. a face with BRepCheck_InvalidImbricationOfWires, which
+            # ShapeFix/refine/fix cannot repair (see Gheal_topology's own
+            # docstring + reference_cad_defect_recipes.md Recipe 3). Feeding
+            # such a fragment forward can crash later face-analysis code
+            # (get_adjacent_cylplane on a face whose wires() came back
+            # empty). Try the in-memory STEP serialize->deserialize rebuild;
+            # use it only if it comes back valid and volume-conserved.
+            # If it can't heal (a non-manifold _repair_non_manifold_solid
+            # remnant etc.), keep the original fragment unchanged -- the
+            # pre-existing behaviour, since dropping it here loses real
+            # volume (confirmed: dropping rev_pipe.stp's un-healable
+            # fragment sends its d1suned tally 0.998 -> 0.952). The
+            # `cyl.OuterWire is None` guard in get_adjacent_cylplane keeps
+            # such a survivor from crashing downstream.
+            healed = Gheal_topology(solid)
+            if healed is not None:
+                solid = healed
         Solids_Clean.append(solid)
 
     return [_refine_if_valid(sol) for sol in Solids_Clean]

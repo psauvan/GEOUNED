@@ -10362,6 +10362,84 @@ pieces). No general "malformed face wire" repair is planned — see the
 recipe catalog (`reference_cad_defect_recipes.md`) entry for the full
 list of what was tried.
 
+## `L4_body.stp` — a failed BOP split leaves an invalid fragment; `Gheal_topology` (in-memory STEP rebuild) repairs it
+
+2026-08-29. Unlike `L4_support.stp` (a corrupt *source* solid, correctly
+rejected), `L4_body.stp` is a **valid** source solid (33 faces,
+`check_solid_defects=[]`) — GEOUNED *crashed* decomposing it:
+`AttributeError: 'NoneType' object has no attribute 'Edges'` at
+`meta_surfaces_utils.py::get_adjacent_cylplane` (`for e in
+cyl.OuterWire.Edges`).
+
+**Root-cause chain** (found by tracing every `Gsplit` call + `valid_solid`
+acceptance):
+1. A recursive `generic_split` `Gsplit` (plain `BOPAlgo_Splitter`,
+   `degenerate_case_handled=False` — not phantom-cut, not coaxial-cone)
+   is a **failed cut**: it returns piece 0 ≈ 100 % of the base volume
+   (slightly *inflated*, 142946.158 vs true base 142946.121) + a small
+   spurious overlapping piece. Piece 0 carries **one `BRepCheck`-invalid
+   face** — status **`BRepCheck_InvalidImbricationOfWires`** (its 2
+   boundary wires, both individually valid, are improperly nested in UV;
+   SOLID/SHELL report `NoError`). NOT a sliver — the fragment is huge.
+2. `valid_solid` (`decom_utils_generator.py`) accepts it: it only checks
+   volume/area geometry, **never `BRepCheck_Analyzer`**.
+3. The invalid fragment flows forward; `GFace.wires()` on its invalid
+   cylinder face returns **empty `GWire`s** → `pick_outer_wire([])` →
+   `None` → `FaceGu.OuterWire = None`.
+4. `get_adjacent_cylplane` has no `None` guard → crash.
+
+Confirmed **not** caused by this session's `_separate_edge_joined_components`
+change (reverting `c663a08` reproduces it identically).
+
+**Nothing in-place repairs `InvalidImbricationOfWires`** (all tried live
+on the isolated fragment): `GSolid.fix()` / `ShapeUpgrade_UnifySameDomain`
+/ `GSolid.refine()`; `ShapeFix_Face` with orientation / intersecting-wire
+/ wire modes forced; the `ShapeProcessAPI` `read.step.sequence`; a
+from-scratch pcurve rebuild (`ShapeFix_Edge.FixAddPCurve` per edge) +
+`ShapeFix_Face`. The `Gcheck_and_repair` cascade all-returns-`None` (no
+riser, no split-ring, no short edges).
+
+**Only a STEP serialize → deserialize round trip repairs it** — and
+also corrects the inflated volume. Why an in-place `ShapeFix` can't
+match it: `STEPControl_Writer` re-instantiates every sub-shape from
+scratch and **freezes each face's outer-vs-hole wire choice into the
+entity type** (`FACE_OUTER_BOUND` / `FACE_BOUND`), so `STEPControl_Reader`
+rebuilds with no runtime imbrication inference left to get wrong. Per
+explicit user requirement, done **entirely in memory** — no temp file,
+not the public `Gexport_step`.
+
+**Fix (implemented, ocp + occ; freecad stub)**:
+- **`geo.Gheal_topology(solid) -> GSolid | None`** — STEP write→read via
+  `io.BytesIO` under ocp (`writer.WriteStream(buffer)`) and via
+  pythonocc-core's no-arg `(status, text) = writer.WriteStream()` tuple
+  form under occ, wrapped in `suppress_native_stdout()`. Accepts the
+  rebuilt solid only if `BRepCheck`-valid and volume-conserved to
+  `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE = 1e-3` (looser than the sliver/
+  split-ring gates: the failed split inflates the input volume and the
+  rebuild corrects it). Never raises.
+- **`remove_solids`** — a fragment that passes `valid_solid` but fails
+  `solid.is_valid()` now tries `Gheal_topology`; uses the healed solid
+  if it returns one, else **keeps the original fragment unchanged**
+  (the pre-existing behaviour). Dropping the un-healable case was tried
+  first and reverted: it loses real volume — `rev_pipe.stp`'s own
+  un-healable non-manifold remnant went `0.998 -> 0.952` d1suned when
+  dropped. The `get_adjacent_cylplane` `OuterWire is None` guard is what
+  keeps a surviving invalid fragment from crashing downstream.
+- **`get_adjacent_cylplane`** — defensive `if cyl.OuterWire is None:
+  return planes` guard (also covers the pre-existing
+  `Solidos/Cans/pipe.stp` edgeless-wire case).
+
+**Verified**: `L4_body.stp` — was a hard crash — now converts under both
+ocp and occ; d1suned **0 lost particles**, cell 1 tally `1.00576 ± 0.28%`
+(~2.06 σ — marginal, not a failure; CAD volume reproduced to ~0.6 %).
+`tests/geo` (`test_ocp_impl` / `test_occ_impl` + `test_vector_geometry`)
++ `tests/test_cadtocsg.py`: 114 passed ocp / 114 occ. Full
+`Solidos/test_models` corpus: 134/139 convert (same 5 baseline
+non-conversions — 4 genuinely-corrupt CAD + `ConeSphere.stp` native
+crash), d1suned batch unchanged from baseline. freecad not run
+(`Gheal_topology` is a stub there — out of scope, FreeCAD heals on its
+own load path).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

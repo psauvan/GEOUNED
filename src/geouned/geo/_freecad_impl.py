@@ -1190,6 +1190,17 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     return None
 
 
+def Gheal_topology(solid: "GSolid") -> "GSolid | None":
+    """Repair a topologically-invalid decomposition fragment via an
+    in-memory STEP serialize -> deserialize rebuild (see
+    ``geo._ocp_impl.Gheal_topology`` and reference_cad_defect_recipes.md
+    Recipe 3). A ``None``-returning stub under the freecad engine:
+    FreeCAD already heals on its own ``Part.Shape().read()`` load path and
+    exposes no in-memory STEP stream API, so this repair has no place in
+    the freecad pipeline."""
+    return None
+
+
 def Gcheck_and_repair(
     solid: FreeCAD.Solid, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
 ) -> "tuple[FreeCAD.Solid, bool]":

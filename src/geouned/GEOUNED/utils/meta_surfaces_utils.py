@@ -126,6 +126,16 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
 
     planes = []
 
+    if cyl.OuterWire is None:
+        # pick_outer_wire returned None -- the face has no usable outer
+        # boundary (all its wires are edgeless, e.g. a decomposition
+        # fragment with a malformed face -- see Solidos/Cans/pipe.stp and,
+        # for the failed-BOP-split case now healed upstream by
+        # Gheal_topology in remove_solids, Solidos/.../L4_body.stp). Such a
+        # face contributes no corner/closing planes; skip it rather than
+        # crash on .OuterWire.Edges.
+        return planes
+
     if cornerPlanes:
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is not GLine:

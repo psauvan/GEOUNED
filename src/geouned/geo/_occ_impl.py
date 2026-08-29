@@ -2400,6 +2400,77 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
     return pieces
 
 
+MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE = 1.0e-3
+"""Gheal_topology's volume-conservation gate. Looser than the sliver/
+split-ring gates: a failed BOP split can leave the fragment's volume
+slightly *inflated* (spurious overlap), and the STEP serialize->deserialize
+rebuild that heals it *corrects* that inflation -- so the healed volume
+legitimately differs from the (already-wrong) input by more than float
+noise. Confirmed on L4_body.stp's Gsplit-#24 fragment: input vol
+142946.158 (inflated), healed vol 142946.121 (the true base), dV ~2.6e-7
+-- still 3+ orders inside this bound. A genuinely lossy heal (STEP
+dropping a real face) would be percent-scale and is rejected."""
+
+
+def Gheal_topology(solid: "GSolid") -> "GSolid | None":
+    """Repair a topologically-invalid solid (`BRepCheck_Analyzer` fails)
+    via a STEP serialize -> deserialize rebuild, done **entirely in memory**
+    (no temp file, not the public `Gexport_step`).
+
+    This is the only thing found to fix the `BRepCheck_InvalidImbricationOfWires`
+    class of defect a *failed* BOPAlgo split can leave on a decomposition
+    fragment (see reference_cad_defect_recipes.md Recipe 3, and CLAUDE.md).
+    `ShapeFix_Shape` / `ShapeUpgrade_UnifySameDomain` (i.e. `GSolid.fix()` /
+    `.refine()`) do NOT repair it -- confirmed live; nor does `ShapeFix_Face`
+    with orientation/intersecting-wire modes forced, nor a from-scratch
+    pcurve rebuild. What the round trip does that an in-place `ShapeFix`
+    cannot: `STEPControl_Writer` re-instantiates every sub-shape from
+    scratch and *freezes* each face's outer-vs-hole wire designation into
+    the entity type (`FACE_OUTER_BOUND` / `FACE_BOUND`), so `STEPControl_Reader`
+    rebuilds the face with no runtime imbrication inference left to get
+    wrong.
+
+    Returns a fresh `GSolid` when the rebuilt solid is `BRepCheck`-valid
+    and its volume matches the input to `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`
+    (1e-3 relative -- the failed split can inflate the input volume and the
+    rebuild corrects it, so this is deliberately looser than the other
+    heal gates); `None` otherwise (the caller in `remove_solids` then
+    keeps the original invalid fragment unchanged). Never raises.
+
+    ocp/occ only; the freecad backend's `Gheal_topology` is a
+    `None`-returning stub (FreeCAD already heals on its own load path and
+    has no in-memory STEP stream API). NOTE: pythonocc-core's
+    `WriteStream()` takes no argument and returns a `(status, text)`
+    tuple (a Python string), where OCP's takes an `io.BytesIO` -- this
+    file uses the pythonocc-core form."""
+    try:
+        native = solid.__native__
+        original_volume = abs(_volume_props(native).Mass())
+        with suppress_native_stdout():
+            writer = STEPControl_Writer()
+            writer.Transfer(native, STEPControl_AsIs)
+            status, step_text = writer.WriteStream()
+            if status != IFSelect_RetDone:
+                return None
+            reader = STEPControl_Reader()
+            if reader.ReadStream("in-memory", step_text) != IFSelect_RetDone:
+                return None
+            reader.TransferRoots()
+            rebuilt = reader.OneShape()
+        rebuilt_solids = _exploded_solids(rebuilt)
+        if len(rebuilt_solids) != 1:
+            return None
+        healed = rebuilt_solids[0]
+        if not BRepCheck_Analyzer(healed).IsValid():
+            return None
+        healed_volume = abs(_volume_props(healed).Mass())
+        if abs(healed_volume - original_volume) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(original_volume, 1.0):
+            return None
+        return GSolid(healed)
+    except Exception:
+        return None
+
+
 def _raw_bop_split(base_native, tool_native, tolerance: float) -> tuple[list, bool, bool]:
     """The actual BOPAlgo_Splitter call plus non-manifold repair, factored
     out of Gsplit so `_try_coaxial_cone_split`'s own internal retry (on a
