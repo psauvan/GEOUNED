@@ -2442,7 +2442,13 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     has no in-memory STEP stream API). NOTE: pythonocc-core's
     `WriteStream()` takes no argument and returns a `(status, text)`
     tuple (a Python string), where OCP's takes an `io.BytesIO` -- this
-    file uses the pythonocc-core form."""
+    file uses the pythonocc-core form.
+
+    NOT WIRED INTO THE PIPELINE (2026-08-29): this was implemented +
+    verified against L4_body.stp / L4-WCS_3.stp (Recipe 3), then the
+    approach was set aside -- kept here, callable, in case it's needed
+    later, but the L4_body defect is being addressed via the
+    face-deduplication path instead. See CLAUDE.md."""
     try:
         native = solid.__native__
         original_volume = abs(_volume_props(native).Mass())

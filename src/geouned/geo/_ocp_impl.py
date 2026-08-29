@@ -2642,7 +2642,13 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
 
     ocp/occ only; the freecad backend's `Gheal_topology` is a
     `None`-returning stub (FreeCAD already heals on its own load path and
-    has no in-memory STEP stream API)."""
+    has no in-memory STEP stream API).
+
+    NOT WIRED INTO THE PIPELINE (2026-08-29): implemented + verified
+    against L4_body.stp / L4-WCS_3.stp (Recipe 3), then the approach was
+    set aside -- kept here, callable, in case it's needed later, but the
+    L4_body defect is being addressed via the face-deduplication path
+    instead. See CLAUDE.md."""
     try:
         native = solid.__native__
         original_volume = abs(_volume_props(native).Mass())
