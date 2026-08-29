@@ -10176,6 +10176,104 @@ after processing. A solid with a real sliver face that no repair handles
 is still correctly rejected. `tests/geo` + `tests/test_cadtocsg.py` green:
 `ocp` 128, `occ` 128, `freecad` 158.
 
+## Phantom-cut ("corte fantasma") — the migration's founding motivation, revisited; agreed `Gsplit` approach + a coverage reflection
+
+2026-08-29. Went back to the original reason for the whole FreeCAD→pyOCC
+migration (see "Motivating problem" at the top of this file): FreeCAD's
+`Cut`/`slice` would take a solid whose cut leaves two regions touching
+**only along edges** (zero-area contact) and return **one** solid,
+treating the shared edges as connective tissue between the two halves.
+GEOUNED needs the opposite interpretation: edges are not volume, so the
+two regions must come back as **two solids that touch along edges**.
+
+### Reproduction — `Piece_1.stp` / `Tool_1.stp`, current OCP `Gsplit`
+
+New fixture pair in `Solidos/working_solids/` (**names are swapped vs.
+their roles**): `Tool_1.stp` is the piece to cut (12-face closed solid,
+vol 2 031 246 065.38); `Piece_1.stp` is the cutting tool (a single open
+`GPlane` face). Running the *current* OCP `Gsplit(Tool_1 solid,
+Piece_1 face-as-GShell, 1e-4)`:
+
+- returns **1 solid, not 2** — `degenerate_case_handled=False` (no special
+  branch fired);
+- that solid is `BRepCheck_Analyzer`-**invalid**, but *only the SOLID
+  itself* — its shell, all 15 faces, all 66 edges, all 132 vertices are
+  individually valid. **No unrelated defect.**
+- The invalidity is entirely the junction: **4 non-manifold edges** —
+  two long seam edges (#8 len 1727.7, #13 len 2253.2) each shared by
+  **4 faces** (2 per half — BOPAlgo already gave each half its own copy
+  of the cut plane), plus two 0.0007-length dangling stubs shared by 1
+  face each.
+- Face-adjacency graph **excluding the non-manifold edges → exactly 2
+  clean connected components** (6 faces `[1,2,3,5,6,8]` / 9 faces
+  `[4,7,9,10,11,12,13,14,15]`) — the two solids that should have been
+  returned. With *all* edges → 1 component (connected only through the
+  seam).
+- `_raw_bop_split` **does** call `_repair_non_manifold_solid` here, and it
+  *does* produce 2 pieces — but its donor-face capping is wrong for this
+  case (each half already has a complete closed boundary; it needs
+  *separation*, not added faces): piece 0 comes back invalid, total
+  volume +0.5 % (2 041 366 692 vs 2 031 246 130). The safety gate
+  (all-valid + volume-conserved) rejects it, so `Gsplit` falls back to
+  the single merged invalid solid.
+
+### Agreed approach (to implement when picked up — not yet coded)
+
+Ask **"should this piece be N parts?" BEFORE any healing** — this is not
+saneamiento, it's the correct reading of the cut. Concretely, run on
+**every** BOPAlgo output solid (not only the invalid ones — a
+phantom-merge can come back `IsValid()==True`, as the beltline family
+showed):
+
+1. Build the face-adjacency graph, **edges = manifold edges only**
+   (shared by exactly 2 faces); connected components.
+2. If 1 component → existing path (valid → keep; invalid → heal/reject).
+3. If ≥2 components → **separate**: partition faces by component,
+   assemble a shell per component, make a solid. **No donor faces** — a
+   true phantom cut already has each half's full closed boundary
+   (that's why the seam edges carry 4 faces).
+4. Per resulting piece: check individual validity **and orientation** —
+   a shell that encloses "inward" is an internal **cavity**, not a
+   separate part; it stays with its parent.
+5. Same safety net as today: `|Σvol − vol_orig| ≤ 1e-6·max(vol_orig,1)`.
+
+### Coverage reflection (user asked to keep this on record; do NOT build extra machinery for it now — nothing to test against)
+
+For the phantom cut *as defined* (≥2 volumetric regions whose only
+contact is zero-area — along edges/vertices), the check above is a
+**reliable, essentially complete detector, not a heuristic**: a
+zero-area contact between two regions can only surface in a BOPAlgo
+output as either non-manifold edges (→ excluded → graph disconnects) or
+an already-disconnected edge graph. Either way → ≥2 components.
+
+Known blind spots, ranked — each is either a *different* defect class or
+needs an extra step; deferred until a real case forces it:
+
+1. **Upstream: BOPAlgo must actually generate the cut.** If the fuzzy
+   tolerance is wrong and BOPAlgo doesn't cut at all (returns the input
+   untouched) or fuses the two halves into genuinely-shared faces, there
+   is no non-manifold structure to detect — the check only sees what
+   BOPAlgo produced, it cannot recover a separation BOPAlgo dissolved.
+   This is the `tool_missed_entirely` / coaxial-cone-degeneracy path,
+   already handled separately (`_try_coaxial_cone_split`, the
+   engine-conditional `splitTolerance` default).
+2. **Near-zero but nonzero volume bridge** (a real sliver neck, microns
+   of cross-section): the neck's faces are manifold → graph stays
+   connected → 1 component → not caught here. This is genuinely a
+   *different* defect (there IS material joining them) — the sliver
+   family (`find_short_edges` / `Gcollapse_split_rings` / `Gsliver_heal`).
+3. **≥3 components with nesting** (part B inside a cavity of part A,
+   part C separate): the orientation sub-check distinguishes cavity from
+   part, but *pairing* each cavity with its correct outer part needs
+   point-in-solid containment tests — an extra step, not free.
+4. **Point (single-vertex) contact**: fine as long as the graph is
+   strictly edge-based (two face-sets sharing only a vertex are already
+   disconnected in an edge graph → 2 components → caught).
+
+Scope decision (explicit, 2026-08-29): implement the minimal version
+above and nothing more; add improvements only when the project turns up
+concrete cases that need them.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
