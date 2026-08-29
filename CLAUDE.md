@@ -10309,6 +10309,59 @@ Scope decision (explicit, 2026-08-29): implement the minimal version
 above and nothing more; add improvements only when the project turns up
 concrete cases that need them.
 
+## `L4_support.stp` — a genuinely-corrupt face wire (`UnorientableShape`), no repair; `check_solid_defects` correctly rejects it
+
+2026-08-29. Companion to the `L4_pipes.stp` fix (which loosened
+`check_solid_defects` to stop flagging a sliver *edge* on a well-formed
+face). `L4_support.stp` is the opposite outcome — the check's
+`"invalid topology"` verdict here is a **true positive**, and there is
+**no repair**.
+
+**The defect**: 1 solid, 13 faces. `BRepCheck_Analyzer`: SOLID + SHELL +
+**FACE #0** invalid (edges/vertices all fine; `find_short_edges` empty —
+no sliver, matching the user's read). Face #0 is a cylinder
+(`Geom_CylindricalSurface`, area 19659) whose single boundary wire has
+**8 edges** but vertices A and B of **degree 4** — it is really 2+ loops
+crammed into one wire. 5 of the 8 edges are `BSpline`s that are genuine
+cylinder-cylinder intersection curves (face #0's neighbours across them
+are cylinders 1/9/10, confirmed via the edge→faces map — *not* a planar
+region, an early guess the user corrected). Status:
+`BRepCheck_UnorientableShape` — OCCT can't orient the face because the
+wire doesn't cleanly bound a 2D region.
+
+**No repair works** (all tried live, ocp):
+- `ShapeFix_Shape` at tol 1e-6 → 1.0: no change.
+- `ShapeUpgrade_UnifySameDomain`, every `(UnifyEdges, UnifyFaces)` combo:
+  no change.
+- `ShapeFix_Face` with `FixOrientation`/`FixMissingSeam`/`FixWire`/
+  `FixSplitFace` modes forced on, tol up to 2.0: no change, still
+  `UnorientableShape`.
+- Partition the wire into its 2 loops `{e0,e1,e2}` (A-B-C triangle) and
+  `{e3,e4,e5,e6,e7}` (A-B-D-E-F), then rebuild face #0 as (a) a 2-wire
+  face (outer + hole) or (b) two separate faces: the triangle loop
+  *still* can't be made a valid face on the cylinder (bad pcurves), and
+  the solid volume shifts +1.7 – 2.4 %.
+- Drop face #0 entirely: volume +31 % — the boundary is real and needed,
+  so this isn't a spurious/removable loop.
+
+**Forced translation** (monkeypatch `check_solid_defects` → `[]`,
+`Gspline_surface` → `False`, then the standard `volSDEF=True` pipeline):
+converts without crashing, but d1suned → **10 lost particles**, run
+aborts by history ~56 (cell 1 tally 1.15 ± 44 %, no statistics). The CSG
+is genuinely broken.
+
+**Decision (user, 2026-08-29)**: no repair — the solid stays as-is and
+is excluded from conversion via `corrupted_solids` (`"stop"` default, or
+`"remove"`). SpaceClaim renders it "correct" only because it smooths the
+contour for display; FreeCAD and OCCT's `BRepCheck` both see the real
+corruption. Fixture moved to `Solidos/Detected_corrupted/L4_support.stp`
+(+ its `scan_solid` dump `L4_support.txt`) — a new triage folder for
+source solids GEOUNED correctly flags as corrupt (as opposed to
+`BadCAD_decomposition/`, which holds bad *decomposition-artifact*
+pieces). No general "malformed face wire" repair is planned — see the
+recipe catalog (`reference_cad_defect_recipes.md`) entry for the full
+list of what was tried.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
