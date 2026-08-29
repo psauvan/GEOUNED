@@ -78,6 +78,10 @@ class CadToCsg:
         logger.info(f"GEOUNED version {version('geouned')}")
         logger.info(f"FreeCAD version {kernel_version()}")
 
+        if self.settings.debug:
+            self.debug_output_folder = Path(self.settings.outPath) / "debug"
+            self.debug_output_folder.mkdir(parents=True, exist_ok=True)
+
     @property
     def options(self):
         return self._options
@@ -654,10 +658,6 @@ class CadToCsg:
         else:
             meta_list = self.enclosure_list
             description = "Decomposing enclosure solids"
-
-        if self.settings.debug:
-            self.debug_output_folder = Path(self.settings.outPath) / "debug"
-            self.debug_output_folder.mkdir(parents=True, exist_ok=True)
 
         if self.options.n_thread > 1:
             ThreadPoolExecutor(
