@@ -10682,6 +10682,205 @@ single-candidate and full-solid), `diag_l4wcs3_faulthandler.py` (the
 `faulthandler`-instrumented reproduction that produced the exact stack
 trace above).
 
+## `geo`'s 3 backend implementation files split into per-engine folders,
+plus a new shared `constants.py`
+
+Long-pending item (see the earlier "to-do list" entry in this file):
+`_freecad_impl.py`/`_occ_impl.py`/`_ocp_impl.py` had grown to
+1730/2973/3186 lines. User confirmed the proposed split -- one folder
+per engine (`geo/freecad/`, `geo/occ/`, `geo/ocp/`), several files
+inside grouped by function, matching what the earlier `vector_geometry.py`
+4-way split already established as this project's own convention.
+
+### `geo/constants.py`, added first
+
+Every SCREAMING_SNAKE_CASE tuning constant scattered across the 3
+backend files (5 -- `MAX_SPLIT_RING_VOLUME_REL_CHANGE`, `MAX_DEFEATURE_
+VOLUME_REL_CHANGE`, `MAX_SLIVER_HEAL_VOLUME_REL_CHANGE`,
+`OCCT_FIX_TOLERANCE`, `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE` -- duplicated
+verbatim, byte-for-byte, between `occ`/`ocp`; `MAX_DEFEATURE_VOLUME_REL_
+CHANGE` alone also in `freecad`) plus `solid_defects.py`'s own 2
+(`MIN_SLIVER_EDGE_LENGTH`, `DEGENERATE_EDGE_LENGTH_FLOOR`) consolidated
+into one new `geo/constants.py`, at the same level as `vector_geometry.py`/
+`surface_geometry.py`/`solid_defects.py`/`io_utils.py`. Each backend now
+imports what it needs from there instead of defining its own copy --
+zero duplicate literals left anywhere in `geo`.
+
+### The split itself: `geo/freecad/`, `geo/occ/`, `geo/ocp/`
+
+Same file-group names in all 3 engine folders, so a fix found in one
+engine stays easy to locate and port to the others (a repeated, explicit
+requirement throughout this project's history): `_native_utils.py`
+(native-conversion helpers, `kernel_version`), `topology.py` (analytic
+surface descriptors + curve descriptors + the neutral topology classes
+GEdge/GWire/GFace/GShell/GSolid, all in ONE file -- a real dependency
+analysis found these genuinely mutually recursive, e.g. GFace needs
+Gclassify_surface and GWire/GEdge, GEdge/GWire need GFace for
+pick_outer_wire, GSolid needs GFace; splitting further would need
+scattered function-local imports to dodge circularity, defeating the
+point), `repair.py` (Gdefeature/Gcollapse_split_rings/Gsliver_heal/
+Gcheck_and_repair/Gspline_surface/Gheal_topology -- assembled from
+several non-contiguous ranges of the original file in `occ`/`ocp`, since
+`Gspline_surface`/`Gheal_topology` physically sat in the I/O and boolean/
+split sections respectively, grouped here by what they do instead),
+`io.py`, `primitives.py`, `boolean.py`, `split.py`, `queries.py`. `occ`/
+`ocp` additionally split their own much larger `Gsplit` cascade into 2
+extra files: `split_repair.py` (non-manifold/phantom-cut repair of a raw
+BOPAlgo_Splitter result) and `split_coaxial_cone.py` (the coaxial-cone/
+cylinder degeneracy fallback) -- `freecad`'s own `Gsplit` has no
+equivalent complexity, so it stays inside its own `split.py`.
+
+`GShape` (the `GSolid | GFace | GEdge | GShell` type alias) is defined in
+`topology.py` in all 3 engines, even though it sits physically elsewhere
+in each original file (usually right before `SplitResult`) -- moved to
+live with the classes it names.
+
+**2 genuine circular dependencies found and broken with function-local
+(lazy) imports** (not module-top imports -- Python only executes a
+function body's own `import` statement when that function actually
+runs, by which point every module in the package has already finished
+loading, so this is the standard, safe way to break a real cycle):
+- `split.py`'s `Gsplit` needs `split_coaxial_cone.py`'s own
+  `_try_coaxial_cone_split`; that module's own coaxial-cone retry loop
+  needs `split.py`'s `_raw_bop_split` right back -- the retry loop's own
+  `from .split import _raw_bop_split` is lazy, everything else top-level.
+- `topology.py`'s `GEdge`/`GFace`/`GShell`/`GSolid` each have their own
+  `export_step()` method calling `io.py`'s `_export_shapes_step`; `io.py`
+  needs those same 4 classes from `topology.py` right back -- each
+  `export_step()` method's own `from .io import _export_shapes_step` is
+  lazy (`occ`/`ocp` only -- `freecad`'s own `export_step` doesn't need
+  this, that engine's `Gexport_step` isn't split-cascade-adjacent the
+  same way).
+
+Each engine folder's own `__init__.py` re-exports the exact same public
+surface `geo/__init__.py` already expected from the old single-file
+module (verified against the existing `from ._freecad_impl import
+(...)`/`._occ_impl`/`._ocp_impl` lists before deleting anything) --
+`geo/__init__.py`'s own 3-way `if`/`elif`/`else` just changed `from
+._freecad_impl import (...)` / `._occ_impl` / `._ocp_impl` to `from
+.freecad import (...)` / `.occ` / `.ocp`, otherwise untouched.
+
+**A real, pre-existing latent bug found and fixed while deleting
+`geo/_freecad_impl.py`**: `GEOReverse/Modules/_freecad_impl.py` (a
+*different* file, GEOReverse's own, not `geo`'s) had `from
+...geo._freecad_impl import GSolid, to_native_vector` -- a direct
+import bypassing `geo/__init__.py`'s single-import-point convention,
+which would have broken the moment the target module moved. Fixed to
+`from ...geo.freecad import GSolid, to_native_vector`. Checked `occ`/
+`ocp` for the same pattern -- neither GEOReverse sibling file had it
+(their own export functionality is still a stub, so this direct-import
+need never arose there).
+
+### Extraction methodology: 2 real bug classes found, both from the
+extraction process itself, not from the original code
+
+**`freecad/` split (first, done via manual line-range slicing + a
+custom AST cross-reference checker)**: raw code slices preserved
+verbatim by construction (Python string slicing can't introduce a
+typo), but manually *choosing* the line-range boundaries is exactly as
+error-prone as it sounds -- caught via a purpose-built AST checker
+(walks each new file's real, non-annotation `Name` usages in `Load`
+context, checks whether each resolves locally or needs a cross-file
+import) several real missed imports (`_to_gvector`, most of
+`_native_utils.py`'s other helpers, `Gcheck_and_repair`, `_find_cone_face`,
+`Gmake_shell`/`Gmake_solid`, `GCylinder`/`GCone` isinstance checks, and
+the `topology.py`<->`io.py` circular `_export_shapes_step` need) before
+ever running the real test suite -- confirmed via a full reconciliation
+(sum of every slice's line count against the original file's own body
+line count, gap fully accounted for by intentional exclusions like
+`GShape`'s relocation) that no function was silently dropped or
+duplicated in this pass.
+
+**`occ/` split (second) -- 3 real truncation bugs, found only by running
+the actual test suite, not by static checking**: the same manual
+line-range approach, this time genuinely miscounted 3 function
+boundaries by 1-2 lines each, all cutting the function body short of its
+own real end -- `Gspline_surface` was missing `explorer.Next()` +
+`return False` (**a genuine infinite loop**: the `while explorer.More():`
+loop never advanced, discovered as an apparent "hang" on the full test
+suite that turned out, via `faulthandler`/`py-spy` live-process
+inspection -- see the `L4-WCS_3.stp` section above for the same
+technique used earlier this session -- to be 572,955+ real calls to
+`Gclassify_surface` in under a minute, each fast individually, the sheer
+call count exploding because the same face was reprocessed forever;
+confirmed definitively non-infinite-*recursion* first, since the call
+stack never grew past 9 frames, before finding the real cause),
+`Gload_step` was missing its final `return solids` (silently returning
+`None`), `check_changed_ok` was missing its final `return repaired, not
+not_sane_solid, change_ok` (also silently returning `None`, which would
+crash the moment `_raw_bop_split`'s own repair cascade unpacked it).
+Root-caused by: (1) noticing a real, severe timing regression (`BC.stp`,
+a 30-face fixture, went from 0.049s pre-split to 80+s post-split);
+(2) confirming it wasn't an environment/antivirus/cold-cache artifact by
+directly re-testing the OLD pre-split code (via `git show HEAD:...` into
+a scratch file, with `geo/__init__.py`'s own import line temporarily
+reverted) on the exact same reproduction -- 0.049s, confirming the
+regression was real and specific to the new code, not the machine;
+(3) instrumenting the suspect function directly (monkeypatching
+`Gclassify_surface` with a call counter) rather than continuing to guess
+from stack samples alone. Once found, **every one of the 80 top-level
+functions/classes was verified byte-for-byte against the original file
+via a script comparing each one's exact `ast.get_source_segment(...)`
+text against the concatenation of all new files** (not just the 3 that
+were actually broken) -- confirmed clean, so no 4th instance was lurking
+unnoticed.
+
+**`ocp/` split (third) -- adopted `ast.get_source_segment(node)` with
+the parser's own `end_lineno` for every boundary from the start**,
+specifically to eliminate the whole "hand-counted range 1-2 lines short"
+bug class the `occ` split found 3 times. Verified all 81 functions/
+classes byte-for-byte *immediately after generation*, before running
+anything else -- 0 mismatches on the first attempt, confirming the
+method itself is sound. But this method has its own distinct failure
+mode, found immediately by the test suite (`SplitResult() takes no
+arguments`): **`ast.get_source_segment` does not include a node's own
+decorator** -- a decorated function/class's `node.lineno` in Python's
+AST points at the `def`/`class` keyword line, not the `@decorator` line
+above it (decorators live in `node.decorator_list`, a separate
+attribute never consulted by the naive `SEGMENTS[name] =
+ast.get_source_segment(src, node)` construction). `SplitResult`'s
+`@dataclass(frozen=True)` was silently dropped in both `occ` and `ocp`'s
+own generation the same way -- caught in `occ` only because manual
+counting happened to include it there by luck, never actually verified
+by the AST check either (the byte-for-byte comparison only ever covered
+each node's own un-decorated body, so a missing decorator is invisible
+to it by construction, a real blind spot in the verification method
+itself, not just the generation method). Confirmed via `grep "^@"` on
+the original file that `SplitResult` was the *only* decorated top-level
+definition in the whole `ocp` file (and, separately confirmed, in
+`occ`), so no other split file needed the same fix -- but this is a
+genuine, generalizable lesson for any future use of this same technique:
+**AST-based verbatim extraction still needs its byte-for-byte check to
+explicitly include each node's own decorator_list, and the "found 0
+mismatches" result of the check is only as trustworthy as what the
+check actually covers.**
+
+**2 smaller misses in the same vein, both caught by direct import
+before the test suite ran**: `occ`/`ocp` both needed `from dataclasses
+import dataclass` in `split.py` (used by `SplitResult`'s own decorator,
+which -- per the point above -- isn't part of any function/class body
+my `used_names()` regex scan ever looks at, since the decorator line
+itself was never included in what got scanned); `ocp` needed a bare
+`import OCP` in `_native_utils.py` (`kernel_version`'s own
+`OCP.__version__` read) -- both are bare-module-level literal
+references my `IMPORTS`/`SHARED_IMPORTS` tracking tables were never
+built to catch, since those tables only enumerate *names imported via
+`from X import Y`*, not standalone `import X` statements referenced by
+their own bare module name.
+
+### Verification
+
+Ran the full 3-engine suite after every one of the 3 checkpoints (one
+git commit per engine, `85eb607`/`8d81afa`/`0feb5e7`, each only after
+its own engine's suite -- and, per this project's own established
+discipline for any change touching shared `geo` code, the *other 2*
+engines' suites too -- were independently green): `freecad` 155/158
+(3 already-known, pre-existing, unrelated failures --
+`test_conversion[input_step_file13]`'s own `Gfirst_shell` `IndexError`,
+the 2 long-documented `GEOReverse` `test_csgtocad.py` failures), `occ`
+89/89, `ocp` 89/89 -- all 3 confirmed together, multiple times, at the
+end.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
