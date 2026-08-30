@@ -122,7 +122,7 @@ if _engine == "occ":
         to_native_vector,
     )
 elif _engine == "ocp":
-    from ._ocp_impl import (
+    from .ocp import (
         GBSpline,
         GCircle,
         GCone,
