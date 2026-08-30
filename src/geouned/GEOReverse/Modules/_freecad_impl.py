@@ -76,7 +76,7 @@ import Import
 import Part
 
 from ...geo.vector_geometry import GVector
-from ...geo._freecad_impl import GSolid, to_native_vector
+from ...geo.freecad import GSolid, to_native_vector
 
 # ---------------------------------------------------------------------------
 # CAD export

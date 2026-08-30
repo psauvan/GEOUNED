@@ -177,7 +177,7 @@ elif _engine == "ocp":
         to_native_vector,
     )
 else:
-    from ._freecad_impl import (
+    from .freecad import (
         GBSpline,
         GCircle,
         GCone,

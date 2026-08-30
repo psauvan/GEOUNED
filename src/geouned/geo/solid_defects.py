@@ -21,33 +21,7 @@ across all 3 engines, exactly like `vector_geometry.py`/
 
 from __future__ import annotations
 
-MIN_SLIVER_EDGE_LENGTH = 1.0e-3
-"""Absolute floor (mm) for find_short_edges' own threshold -- per direct
-user instruction: the effective threshold must never drop below this,
-even for a solid whose own BoundBox diagonal is small enough that
-`rel_tol * diagonal` alone would push it below the model's own working
-geometric tolerance (e.g. a tiny decomposed piece), which would make the
-detector unable to catch even a genuinely near-zero-length degenerate
-edge there."""
-
-DEGENERATE_EDGE_LENGTH_FLOOR = 1.0e-9
-"""Lower floor (mm): an edge shorter than this is treated as a
-legitimate OCCT *degenerate* edge (a pole singularity on a closed
-sphere/cone, where the surface parametrization collapses to a single
-point) rather than a genuine CAD defect -- confirmed live, 2026-08-27,
-`testing/inputSTEP/Torus/face2.stp` and `tank.stp`: both real,
-long-working fixtures have real sphere faces whose own pole edges
-measure ~7.7e-15mm (floating-point noise around a mathematically exact
-zero, not a real gap), which find_short_edges' own detection wrongly
-flagged as corrupted before this floor was added -- a real false
-positive that broke `tests/test_cadtocsg.py` outright (the new
-"stop"-by-default behavior halted on 2 previously-clean files). Per
-direct user instruction, set well below the smallest genuine defect
-found anywhere in this project's own corpus work (~4e-4mm, Decomposed/
-modelcell_cut1_v2_piece66.stp's own real sliver) while still staying
-comfortably above the ~1e-15 floating-point noise floor -- 1e-9 keeps
-6 orders of magnitude of margin on the noise side and 5 on the real-
-defect side."""
+from .constants import DEGENERATE_EDGE_LENGTH_FLOOR, MIN_SLIVER_EDGE_LENGTH
 
 
 def find_short_edges(solid, rel_tol: float = 1e-4) -> list:

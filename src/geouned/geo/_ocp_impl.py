@@ -152,13 +152,20 @@ from .surface_geometry import (
     torus_sheet_sign,
 )
 from .solid_defects import (
-    MIN_SLIVER_EDGE_LENGTH,
     check_solid_defects,
     count_split_ring_pairs,
     find_sliver_faces,
     find_short_edges,
     find_split_ring_faces,
     near_surface_pair,
+)
+from .constants import (
+    MAX_DEFEATURE_VOLUME_REL_CHANGE,
+    MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE,
+    MAX_SLIVER_HEAL_VOLUME_REL_CHANGE,
+    MAX_SPLIT_RING_VOLUME_REL_CHANGE,
+    MIN_SLIVER_EDGE_LENGTH,
+    OCCT_FIX_TOLERANCE,
 )
 from .io_utils import GLabelNode, suppress_native_stdout
 
@@ -1358,34 +1365,6 @@ class GSolid:
         return GSolid(BRepBuilderAPI_Transform(self.__native__, matrix, True).Shape())
 
 
-MAX_SPLIT_RING_VOLUME_REL_CHANGE = 3.0e-4
-"""Gcollapse_split_rings' own (tighter) volume-conservation net. Unlike
-Gdefeature -- whose target slivers can carry a real fraction of a "half"
-model's volume, hence its generous 1% -- a split-ring collapse removes
-only micron-scale riser bands, so a genuine repair conserves volume to
-~1e-4 or better (barrel bottom.stp: 6.4e-5). A larger drift means the
-re-sew moved a real adjacent surface: LR.stp (a cylindrical
-collapsed-step) comes back valid, dV 7e-4, and CSG-broken (d1suned tally
-0.0, 24 lost particles) -- caught by this bound, not by is_valid()."""
-
-MAX_DEFEATURE_VOLUME_REL_CHANGE = 0.01
-"""Gdefeature's own volume-conservation safety net -- reject a healed
-result whose Volume differs from the input by more than 1% relative.
-Added after a real, dangerous false-pass was found live (2026-08-27,
-"beltline left.stp" at the default rel_tol=1e-4): find_short_edges'
-own short-edge signature can, on a "half" model with a mirror-symmetry
-cut, flag a real symmetry-cut plane alongside a genuine sliver (both
-touch the same short edge) -- BRepAlgoAPI_Defeaturing then "successfully"
-removed both, IsDone()==True, the result topologically valid AND with
-zero remaining short edges (passing every check that existed before this
-one) -- while silently DOUBLING the solid's own volume. Every previously-
-confirmed *legitimate* repair on this same fixture changed volume by at
-most ~0.11%, several orders of magnitude below this bound -- 1% is a
-generous, safe margin for a real defect repair (which, by definition,
-targets near-zero-volume slivers) while reliably catching a runaway case
-like this one."""
-
-
 def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "GSolid | None":
     """Attempt to remove `faces` (typically solid_defects.find_short_edges'
     own output) from `solid` via BRepAlgoAPI_Defeaturing, verifying the
@@ -1562,17 +1541,6 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     return result
 
 
-MAX_SLIVER_HEAL_VOLUME_REL_CHANGE = 5.0e-4
-"""Gsliver_heal's volume-conservation net -- the sole numeric gate (no
-`count_split_ring_pairs` check: this repair's own planar cap is a thin
-annulus whose two coplanar rims that metric would false-count). With the
-`_retrim_freed_quadrics` step, a correct heal conserves volume to ~1e-6
-(LR.stp: healed dV 8.6e-7, d1suned tally 0.9985 +/- 0.28%, 0 lost
-particles -- the input's own translation was tally 0.0 / 24 lost). A
-genuinely wrong fabricated-cap result is ~1e-2, so 5e-4 has ~3 orders of
-margin on the good side and ~1.5 on the bad side."""
-
-
 def _edge_endpoints(native_edge):
     pts = []
     vexp = TopExp_Explorer(native_edge, TopAbs_VERTEX)
@@ -1716,27 +1684,6 @@ def _snapped_planar_cap(reduced_shape, keep_plane):
     if not face_maker.IsDone():
         return None
     return [face_maker.Face()]
-
-
-OCCT_FIX_TOLERANCE = 1.0e-6
-"""Fixed (never model-scaled) tolerance for native repair/unify calls
-whose own algorithm is confirmed crash-prone when given a loose,
-geometry-derived tolerance instead -- `ShapeUpgrade_UnifySameDomain.
-SetLinearTolerance` specifically (2026-08-30, Solidos/working_solids/
-L4-WCS_3.stp solid 75: `unify.Build()` segfaulted -- Windows access
-violation, uncatchable by Python -- when given `dist_tol`, a value
-scaled to the solid's own BoundBox diagonal; switching to this fixed,
-tight value avoided it with zero measurable volume change). Matches
-the two other `ShapeUpgrade_UnifySameDomain` call sites in this file
-(`_native_fix`, `GSolid.refine()`), both already proven stable across
-this whole project's history -- neither ever overrides the linear
-tolerance at all, relying on OCCT's own shape-intrinsic default,
-which this constant approximates. Only for calls whose own tolerance
-argument does not need to track a real physical gap (contrast
-`Gcollapse_split_rings`' `sew_tol`, which must scale with the actual
-gap it is welding, or `Gdefeature`/`near_surface_pair`'s own tolerance
-parameters -- none of those are implicated in this crash class and
-must stay variable)."""
 
 
 def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
@@ -2630,18 +2577,6 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
     if abs(summed_volume - original_volume) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(original_volume, 1.0):
         return None
     return pieces
-
-
-MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE = 1.0e-3
-"""Gheal_topology's volume-conservation gate. Looser than the sliver/
-split-ring gates: a failed BOP split can leave the fragment's volume
-slightly *inflated* (spurious overlap), and the STEP serialize->deserialize
-rebuild that heals it *corrects* that inflation -- so the healed volume
-legitimately differs from the (already-wrong) input by more than float
-noise. Confirmed on L4_body.stp's Gsplit-#24 fragment: input vol
-142946.158 (inflated), healed vol 142946.121 (the true base), dV ~2.6e-7
--- still 3+ orders inside this bound. A genuinely lossy heal (STEP
-dropping a real face) would be percent-scale and is rejected."""
 
 
 def Gheal_topology(solid: "GSolid") -> "GSolid | None":
