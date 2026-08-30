@@ -67,7 +67,7 @@ from .solid_defects import (
 )
 
 if _engine == "occ":
-    from ._occ_impl import (
+    from .occ import (
         GBSpline,
         GCircle,
         GCone,
