@@ -36,7 +36,7 @@ def joinBase(baseList):
 
 
 # TODO rename this function as there are two with the name name
-def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
+def SplitSolid(base, surfacesCut, cellObj, split_tolerance, tolerances):  
     # split Base (shape Object or list/tuple of shapes)
     # with selected surfaces (list of surfaces objects) cutting the base(s) (surfacesCut)
     # cellObj is the CAD object of the working cell to reconstruction.
@@ -48,10 +48,10 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
     cutPart = []
 
     # part if several base in input
-
+    
     if type(base) is list or type(base) is tuple:
         for b in base:
-            fullList, cutList = SplitSolid(b, surfacesCut, cellObj, tolerance=tolerance)
+            fullList, cutList = SplitSolid(b, surfacesCut, cellObj, split_tolerance, tolerances)
             fullPart.extend(fullList)
             cutPart.extend(cutList)
         return fullPart, cutPart
@@ -66,7 +66,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
 
     Tools = tuple(s.shape for s in surfacesCut)
     if Tools[0] is not None:
-        result = Gsplit(base.base, GSolid(Tools[0]), tolerance)
+        result = Gsplit(base.base, GSolid(Tools[0]), tolerances)
         Solids = result.solids
     else:
         Solids = [base.base]

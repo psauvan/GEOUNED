@@ -141,12 +141,12 @@ def getPart(slist):
     return sol
 
 
-def BuildDepth(cell, base):
+def BuildDepth(cell, base, tolerances):
     cell.definition.group_single()
     if cell.definition.level == 0:
         # if base is None build solid from cell boundBox
         # else base is build solid split by cell surfaces
-        base, cut = BuildSolidParts(cell, base)
+        base, cut = BuildSolidParts(cell, base, tolerances)
         return base
 
     if type(base) is not list:
@@ -174,14 +174,14 @@ def BuildDepth(cell, base):
                                 part = []
                                 break
 
-                        part, keep = filterparts(part, subcell)
+                        part, keep = filterparts(part, subcell, tolerances)
                         if len(part) == 0:
                             if len(keep) == 0:
                                 break
                             else:
                                 part = keep
                                 continue
-                    part = BuildDepth(subcell, part)
+                    part = BuildDepth(subcell, part, tolerances)
                     part.extend(keep)
                 newBase.extend(part)
             else:
@@ -197,13 +197,13 @@ def BuildDepth(cell, base):
                                 else:
                                     cellParts.extend(CS)
                             continue
-                        part, keep = filterparts(CS, subcell)
+                        part, keep = filterparts(CS, subcell, tolerances)
                         cellParts.extend(keep)
                         if len(part) == 0:
                             continue
                     else:
                         part = CS
-                    part = BuildDepth(subcell, part)
+                    part = BuildDepth(subcell, part, tolerances)
                     cellParts.extend(part)
 
                 # newBase.extend(cellParts)
@@ -217,7 +217,7 @@ def BuildDepth(cell, base):
     return newBase
 
 
-def BuildSolidParts(cell, base):
+def BuildSolidParts(cell, base, tolerances):
 
     # part if several base in input
     if isinstance(base, (list, tuple)):
@@ -225,7 +225,7 @@ def BuildSolidParts(cell, base):
         cutPart = []
 
         for b in base:
-            fullList, cutList = BuildSolidParts(cell, b)
+            fullList, cutList = BuildSolidParts(cell, b, tolerances)
             fullPart.extend(fullList)
             cutPart.extend(cutList)
 
@@ -261,14 +261,15 @@ def BuildSolidParts(cell, base):
 
     cut = base
     full = []
+    split_tolerance = tolerances.split_tolerance
     for p in planes:
-        newf, cut = SplitSolid(cut, (p,), cell, tolerance=1e-12)
+        newf, cut = SplitSolid(cut, (p,), cell, split_tolerance, tolerances)
         full.extend(newf)
         if len(cut) == 0:
             break
 
     for surf in others:
-        newf, cut = SplitSolid(cut, (surf,), cell, tolerance=1e-12)
+        newf, cut = SplitSolid(cut, (surf,), cell, split_tolerance, tolerances)
         full.extend(newf)
         if len(cut) == 0:
             break
@@ -284,7 +285,7 @@ def BuildSolidParts(cell, base):
     return full, cut
 
 
-def filterparts(parts, cell):
+def filterparts(parts, cell, tolerances):
     process_part = []
     keep_part = []
     cellBox = cell.boundBox
@@ -310,7 +311,7 @@ def filterparts(parts, cell):
                     keep_part.append(p)
                     if not built:
                         built = True
-                        cellpart = BuildDepth(cell, None)
+                        cellpart = BuildDepth(cell, None, tolerances)
                         keep_part.extend(cellpart)
         else:
             process_part.append(p)

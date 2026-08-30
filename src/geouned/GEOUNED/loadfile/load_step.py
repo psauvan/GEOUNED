@@ -42,8 +42,8 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     else:
         m_dict = {}
 
-    gsolid_list, corrupted_solids_list, spline_solids = Gload_and_process_step(
-        filename, tolerances.sliver_edge_rel_tol, tolerances.min_face_width
+    gsolid_list, corrupted_solids_id, spline_solids_id = Gload_and_process_step(
+        filename, tolerances
     )
 
     # Gload_and_process_step always keeps a spline-bearing solid's real
@@ -57,7 +57,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     loop_spline = spline_surf.lower() in ("remove", "stop")
     meta_list = []
     for i, s in enumerate(gsolid_list):
-        if i in spline_solids and loop_spline:
+        if i in spline_solids_id and loop_spline:
             s = None
         meta_list.append(LF.GeounedSolid(i + 1, s))
 
@@ -66,7 +66,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
 
     nodes = Gload_step_labels(filename)
     removed_labels = dict()
-    removed_indexes = corrupted_solids_list + spline_solids
+    removed_indexes = corrupted_solids_id + spline_solids_id
 
     if removed_indexes:
         stop_process = (spline_surf.lower() == "stop") or (corrupted_solids.lower() == "stop")
@@ -164,7 +164,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
                 meta_list[i_solid].CellType = "envelope"
             i_solid += 1
 
-    LF.display_removed_solids(corrupted_solids_list, spline_solids, removed_labels)
+    LF.display_removed_solids(corrupted_solids_id, spline_solids_id, removed_labels)
     if stop_process:
         print("Corrupted solids or solids with splines found. More information in log file.")
         print("Exit process")

@@ -179,6 +179,29 @@ def find_split_ring_faces(solid, min_face_width: float = 0.1, rel_tol: float = 1
     return risers
 
 
+def find_sliver_faces(solid, min_face_width: float) -> list:
+    sliver_faces = []
+    for face in solid.Faces:
+        width = getattr(face, "CharacteristicWidth", None)
+        if width is None:
+            continue
+        if is_sliver_face(face, min_face_width):
+            sliver_faces.append(face)
+    return sliver_faces
+
+
+def is_sliver_face(face, min_face_width: float) -> bool :
+    """GEOUNED's own face-sliver criteria: Area < Tolerances.min_area OR
+    CharacteristicWidth < Tolerances.min_face_width (the metric
+    find_split_ring_faces / cell_definition use)."""
+    try:
+        cw = getattr(face, "CharacteristicWidth", None)
+        if cw is not None and cw < min_face_width:
+            return True
+    except Exception:
+        pass
+    return False
+
 def count_split_ring_pairs(solid, rel_tol: float = 1e-3) -> int:
     """Number of *near-coincident concentric circular-edge pairs* on the
     faces of `solid` -- the direct fingerprint of a "split boundary ring"

@@ -1202,8 +1202,7 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
 
 
 def Gcheck_and_repair(
-    solid: FreeCAD.Solid, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple[FreeCAD.Solid, bool]":
+    solid: FreeCAD.Solid, tolerances) -> "tuple[FreeCAD.Solid, bool]":
     """FreeCAD has none of the native CAD-defect-repair tools this
     cascade needs (``Gdefeature`` exists here via ``Part.Shape.
     defeaturing()``, but ``Gcollapse_split_rings``/``Gsliver_heal`` are
@@ -1302,9 +1301,7 @@ def Gload_step(filename: str) -> list[GSolid]:
     return [GSolid(solid) for solid in shape.Solids]
 
 
-def Gload_and_process_step(
-    filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1
-) -> "tuple[list[GSolid], list[int], list[int]]":
+def Gload_and_process_step(filename: str, tolerances) -> "tuple[list[GSolid], list[int], list[int]]":
     """GEOUNED's own load-time pass: load every solid and run
     `Gspline_surface` on it. `Gcheck_and_repair` is deliberately never
     called here -- under this engine it's an unconditional `(solid,
@@ -1529,8 +1526,19 @@ def Gfuse(solids: list[GSolid]) -> GSolid:
     fused = shapes[0].fuse(shapes[1:]) if len(shapes) > 1 else shapes[0]
     return GSolid(fused)
 
-
 def Gsplit(
+    base: GSolid,
+    tool: GShape,
+    tolerances,
+) -> SplitResult:
+
+    scale = 0.1
+    split_tolerance = tolerances.split_tolerance
+    scale_up_floor = tolerances.scale_up_floor
+    scale = tolerances.scale
+    return recursive_freecad_Gsplit(base, tool, split_tolerance, scale, scale_up_floor) 
+
+def recursive_freecad_Gsplit(
     base: GSolid,
     tool: GShape,
     tolerance: float,
@@ -1560,33 +1568,119 @@ def Gsplit(
     elif tolerance < 1e-12:
         if scale_up_floor is not None:
             floor = 1e-13 if scale_up_floor == 0 else scale_up_floor
-            return Gsplit(base, tool, floor / scale, scale=1.0 / scale, scale_up_floor=scale_up_floor)
+            return recursive_freecad_Gsplit(base, tool, floor / scale, scale=1.0 / scale, scale_up_floor=scale_up_floor)
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
     else:
         try:
             compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
         except Exception:
-            retried = Gsplit(base, tool, tolerance * scale, scale, scale_up_floor)
+            retried = recursive_freecad_Gsplit(base, tool, tolerance * scale, scale, scale_up_floor)
             return SplitResult(
                 solids=retried.solids,
                 degenerate_case_handled=True,
                 notes=f"retried at tolerance={tolerance * scale}",
             )
 
-    if not compound.Solids:
+    return check_out_solids(base, compound.Solids)
+
+
+def check_out_solids(original, split_solids):
+    if not split_solids:
         # tool doesn't intersect solid at all (e.g. a cutting plane
         # entirely outside the solid's extent) -- slice() reports this as
         # an empty compound rather than raising. Not a fragmentation, so
         # fall back to the solid unchanged instead of reporting "no
         # solids".
         return SplitResult(
-            solids=[base],
+            solids=[original],
             degenerate_case_handled=True,
             notes="tool did not intersect solid; returning it unchanged",
         )
-    return SplitResult(solids=[GSolid(s) for s in compound.Solids])
+
+    if sum(s.Volume for s in split_solids) < 1e-3:
+        return SplitResult(
+            solids=[original],
+            degenerate_case_handled=True,
+            notes="tool did not intersect solid; returning it unchanged",
+        )
+    elif len(split_solids) == 1:
+        return SplitResult(solids=[original])
+    else:
+        cleaned = remove_solids(split_solids, original.Volume)
+        if len(cleaned) < len(split_solids):
+            return SplitResult(
+                solids=[GSolid(s) for s in cleaned],
+                degenerate_case_handled=True,
+                notes="tool did not intersect solid; returning it unchanged",
+            )
+        else:    
+            return SplitResult(solids=[GSolid(s) for s in cleaned])
 
 
+def remove_solids(Solids: list, Volume) -> list:
+    # `Solids` here are native Part.Solid (straight from BOPTools.SplitAPI.
+    # slice()'s own compound, via check_out_solids) -- valid_solid/
+    # _refine_if_valid are GSolid-typed (per their own signatures), so wrap
+    # on the way in and unwrap on the way out, matching check_out_solids'
+    # own expectation that `cleaned` stays native.
+    Solids_Clean = []
+    for solid in Solids:
+        if not valid_solid(GSolid(solid), Volume):
+            continue
+        Solids_Clean.append(solid)
+
+    return [_refine_if_valid(GSolid(sol)).__native__ for sol in Solids_Clean]
+
+
+def valid_solid(solid: GSolid, Volume) -> bool:
+    if solid.Volume < 0:
+        return False
+    Vol_tol = 1e-2
+    Vol_area_ratio = 1e-3
+    if solid.Area == 0 or abs(solid.Volume / solid.Area) < Vol_area_ratio:
+        return False
+    if abs(solid.Volume) < Vol_tol:
+        return False
+    return True
+
+
+def _refine_if_valid(solid: GSolid) -> GSolid:
+    # refine() (ShapeUpgrade_UnifySameDomain/removeSplitter) is a cosmetic
+    # simplification of an already-valid solid, not a repair tool -- on a
+    # solid that's already topologically invalid (BRepCheck_Analyzer), its
+    # UnifyEdges step is a confirmed, previously-documented crash/hang
+    # risk (see GSolid.refine()'s own docstring, the ConeSphere.stp case
+    # under occ/ocp) that no amount of Python try/except can catch, since
+    # it's a native process crash, not a raised exception. Confirmed live
+    # (2026-08-19, Solidos/Big_one_cell/modelcell_cut1.stp under ocp): a
+    # BOP-produced fragment that's already invalid before refine() ever
+    # runs reliably segfaults the process inside refine()'s own UnifyEdges
+    # call.
+    #
+    # A real repair attempt via .fix() (ShapeFix_Shape) was tried here
+    # twice, both reverted. The first attempt crashed even earlier than
+    # refine() itself did; that specific crash traced back to a real bug in
+    # .fix() (fixed 2026-08-19: it used to reassign its own `native`
+    # variable to UnifyEdges' own possibly-corrupted output before checking
+    # that output's validity, so its ShapeFix_Shape fallback silently
+    # repaired the *corrupted* intermediate instead of the true original
+    # input). With that fixed, calling .fix() *after* a full decomposition
+    # had already completed (on the final, already-produced invalid
+    # fragments, as a separate manual pass) worked cleanly with no crash on
+    # this exact modelcell_cut1.stp reproduction. But wiring the fixed
+    # .fix() into this function -- called *during* decomposition, on
+    # intermediate fragments that then flow into further Gsplit calls, not
+    # just on final output -- reproduced a crash again on the same file,
+    # this time STATUS_STACK_OVERFLOW (0xC00000FD) rather than the original
+    # UnifyEdges access violation. So repairing a fragment mid-decomposition
+    # and feeding the repaired result back into further cuts is its own,
+    # separately confirmed, still-unresolved crash risk -- distinct from
+    # (and not fixed by) the .fix() bug fix above. Reverted back to the
+    # simple, confirmed-safe form: leave an already-invalid solid untouched
+    # rather than risk repairing it here. GSolid.fix() itself remains a
+    # real, safe repair tool for use *after* decomposition is complete (on
+    # final output only), just not at this specific, mid-pipeline call site.
+    return solid.refine() if solid.is_valid() else solid
 # ---------------------------------------------------------------------------
 # Spatial queries between two independent shapes
 # ---------------------------------------------------------------------------

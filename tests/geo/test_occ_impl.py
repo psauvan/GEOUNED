@@ -1,5 +1,6 @@
 import math
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -269,7 +270,20 @@ def test_gfuse():
 def test_gsplit_box_by_half_space():
     box = Gmake_box(0, 0, 0, 10, 10, 10)
     tool = Gmake_half_space(GPlane.from_values(GVector(5, 0, 0), GVector(-1, 0, 0)))
-    result = Gsplit(box, tool, 1e-6)
+    # Gsplit's own `tolerances` param is duck-typed (not literally
+    # GEOUNED.utils.data_classes.Tolerances -- geo must not depend on
+    # GEOUNED) -- a SimpleNamespace carrying exactly the fields Gsplit/
+    # _raw_bop_split/_repair_non_manifold_solid read keeps this test
+    # file's own established independence from the GEOUNED subpackage.
+    tolerances = SimpleNamespace(
+        split_tolerance=1e-6,
+        scale_up_floor=None,
+        min_solid_volume=1e-6,
+        min_face_width=0.1,
+        fix_tolerance=1e-6,
+        volume_tolerance=1e-6,
+    )
+    result = Gsplit(box, tool, tolerances)
     assert len(result.solids) == 2
     total = sum(s.Volume for s in result.solids)
     assert total == pytest.approx(box.Volume, abs=1e-3)

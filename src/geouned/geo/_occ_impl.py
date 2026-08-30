@@ -114,6 +114,7 @@ from .solid_defects import (
     MIN_SLIVER_EDGE_LENGTH,
     check_solid_defects,
     count_split_ring_pairs,
+    find_sliver_faces,
     find_short_edges,
     find_split_ring_faces,
     near_surface_pair,
@@ -1281,7 +1282,7 @@ clean short-edge re-check) confirmed live 2026-08-27 under ocp; this
 volume-conservation guard is the fix, ported here for parity."""
 
 
-def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
+def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "GSolid | None":
     """Attempt to remove `faces` (typically solid_defects.find_short_edges'
     own output) from `solid` via BRepAlgoAPI_Defeaturing, verifying the
     result is genuinely usable before trusting it -- see _ocp_impl.py's
@@ -1321,7 +1322,7 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     if not BRepCheck_Analyzer(healed_native).IsValid():
         return None
     healed = GSolid(healed_native)
-    if find_short_edges(healed):
+    if find_short_edges(healed, sliver_edge_rel_tol):
         return None
     if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
         return None
@@ -1578,15 +1579,40 @@ def _snapped_planar_cap(reduced_shape, keep_plane):
     return [face_maker.Face()]
 
 
-def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+OCCT_FIX_TOLERANCE = 1.0e-6
+"""Fixed (never model-scaled) tolerance for native repair/unify calls
+whose own algorithm is confirmed crash-prone when given a loose,
+geometry-derived tolerance instead. See _ocp_impl.py's own identical
+constant for the full story (2026-08-30, L4-WCS_3.stp solid 75:
+`ShapeUpgrade_UnifySameDomain.Build()` segfaulted on a model-scaled
+`dist_tol`; this fixed, tight value avoided it with zero measurable
+volume change). Only for calls whose own tolerance argument does not
+need to track a real physical gap -- `Gcollapse_split_rings`' `sew_tol`
+and `Gdefeature`/`near_surface_pair`'s own tolerance parameters must
+stay variable, they scale with a real gap and are not implicated in
+this crash class."""
+
+
+def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
     """`sliver_healing` (version 0). See _ocp_impl.py::Gsliver_heal for the
     full algorithm/spec and the verified `LR.stp` fixture. ocp/occ only;
-    the freecad backend's `Gsliver_heal` is a `None`-returning stub."""
-    slivers = list(find_split_ring_faces(solid, min_face_width))
+    the freecad backend's `Gsliver_heal` is a `None`-returning stub.
+
+    `tolerances` supplies `min_face_width` (which faces count as slivers)
+    and `sliver_edge_rel_tol` (the near-surface-pair distance tolerance,
+    scaled by the solid's own BoundBox diagonal) -- previously hardcoded
+    (0.1 / 1e-4), now sourced from Tolerances at this function's only
+    call site (_raw_bop_split), same default values. Every near-surface
+    pair found (not just a single one) is now attempted, keeping whichever
+    face of each pair is individually valid -- previously required
+    exactly one pair or gave up."""
+    min_face_width = tolerances.min_face_width
+    min_length_ratio = tolerances.sliver_edge_rel_tol
+    slivers = list(find_sliver_faces(solid, min_face_width))
     if not slivers:
         return None
     diag = solid.BoundBox.DiagonalLength
-    dist_tol = max(diag * 1e-4, MIN_SLIVER_EDGE_LENGTH)
+    dist_tol = max(diag * min_length_ratio, MIN_SLIVER_EDGE_LENGTH)
 
     sliver_native = [f.__native__ for f in slivers]
     others = [f for f in solid.Faces if not any(f.__native__.IsSame(s) for s in sliver_native)]
@@ -1595,25 +1621,27 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
         for j in range(i + 1, len(others)):
             if near_surface_pair(others[i].Surface, others[j].Surface, dist_tol) is not None:
                 near.append((others[i], others[j]))
-    if len(near) != 1:
-        return None
 
     try:
         reshaper = ShapeBuild_ReShape()
         for f in slivers:
             reshaper.Remove(f.__native__)
-        face_a, face_b = near[0]
-        keep, drop = (face_a, face_b) if face_a.Area >= face_b.Area else (face_b, face_a)
-        reshaper.Remove(drop.__native__)
-        reduced = reshaper.Apply(solid.__native__)
 
-        reduced = _retrim_freed_quadrics(reduced, drop.Surface, keep.Surface, dist_tol)
+        if near:
+            for face_a, face_b in near:
+                keep, drop = (face_a, face_b) if BRepCheck_Analyzer(face_a.__native__).IsValid() else (face_b, face_a)
+                reshaper.Remove(drop.__native__)
+            reduced = reshaper.Apply(solid.__native__)
+            reduced = _retrim_freed_quadrics(reduced, drop.Surface, keep.Surface, dist_tol)
 
-        caps = _snapped_planar_cap(reduced, keep.Surface)
-        if caps is None:
-            return None
+            caps = _snapped_planar_cap(reduced, keep.Surface)
+            if caps is None:
+                return None
+        else:
+            reduced = reshaper.Apply(solid.__native__)
+            caps = []
 
-        sewer = BRepBuilderAPI_Sewing(dist_tol, True, True, True, False)
+        sewer = BRepBuilderAPI_Sewing(OCCT_FIX_TOLERANCE, True, True, True, False)
         explorer = TopExp_Explorer(reduced, TopAbs_FACE)
         while explorer.More():
             sewer.Add(explorer.Current())
@@ -1638,10 +1666,10 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
         if not solid_maker.IsDone():
             return None
         fixer = ShapeFix_Shape(solid_maker.Solid())
-        fixer.SetPrecision(dist_tol)
+        fixer.SetPrecision(OCCT_FIX_TOLERANCE)
         fixer.Perform()
         unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), True, True, True)
-        unify.SetLinearTolerance(dist_tol)
+        unify.SetLinearTolerance(OCCT_FIX_TOLERANCE)
         unify.Build()
         result = GSolid(unify.Shape())
     except Exception:
@@ -1654,7 +1682,7 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None
     return result
 
 
-def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> "tuple[GSolid, bool]":
+def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
     fundamentally native-shape repair work -- BRepAlgoAPI_Defeaturing,
@@ -1693,21 +1721,21 @@ def Gcheck_and_repair(solid: "GSolid", sliver_edge_rel_tol: float = 1e-4, min_fa
     needs to re-wrap the result itself. Returns `(solid, False)` -- the
     ORIGINAL, unrepaired `GSolid`, never a partial or fabricated result
     -- if nothing clears every check."""
-    if not check_solid_defects(solid, sliver_edge_rel_tol, min_face_width):
+    if not check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
         return solid, True
 
-    collapsed = Gcollapse_split_rings(solid, min_face_width)
+    collapsed = Gcollapse_split_rings(solid, tolerances.min_face_width)
     if collapsed is not None:
         return collapsed, True
 
-    sliver_healed = Gsliver_heal(solid, min_face_width)
+    sliver_healed = Gsliver_heal(solid, tolerances)
     if sliver_healed is not None:
         return sliver_healed, True
 
-    degenerate_faces = find_short_edges(solid, sliver_edge_rel_tol)
+    degenerate_faces = find_short_edges(solid, tolerances.sliver_edge_rel_tol)
     if degenerate_faces:
-        healed = Gdefeature(solid, degenerate_faces)
-        if healed is not None and not check_solid_defects(healed, sliver_edge_rel_tol, min_face_width):
+        healed = Gdefeature(solid, degenerate_faces, tolerances.sliver_edge_rel_tol)
+        if healed is not None and not check_solid_defects(healed, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
             return healed, True
 
     return solid, False
@@ -1821,7 +1849,7 @@ def Gspline_surface(solid) -> bool:
     return False
 
 
-def Gload_and_process_step(filename: str, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> "tuple":
+def Gload_and_process_step(filename: str, tolerances) -> "tuple":
     """GEOUNED's own load-time pass: load every solid, natively fix it
     (`_native_fix`, the same healing `Gload_step` applies, required
     regardless of defect detection -- see `Gload_step`'s own docstring),
@@ -1882,7 +1910,7 @@ def Gload_and_process_step(filename: str, sliver_edge_rel_tol: float = 1e-4, min
     while explorer.More():
         native_solid = _native_fix(topods.Solid(explorer.Current()), 1e-6)
         gsolid = GSolid(native_solid)
-        gsolid, ok = Gcheck_and_repair(gsolid, sliver_edge_rel_tol, min_face_width)
+        gsolid, ok = Gcheck_and_repair(gsolid, tolerances)
         if not ok:
             corrupted_indices.append(index)
             gsolids.append(None)
@@ -2170,7 +2198,7 @@ def _edge_face_map(native_solid) -> TopTools_IndexedDataMapOfShapeListOfShape:
     return m
 
 
-def _repair_non_manifold_solid(native_solid) -> list:
+def _repair_non_manifold_solid(native_solid, fix_tolerance: float = 1e-6) -> list:
     """Attempt to split a non-manifold TopoDS_Solid (confirmed invalid
     via BRepCheck_Analyzer) into its real connected components: build a
     face-adjacency graph over the solid's own faces, excluding edges
@@ -2180,7 +2208,11 @@ def _repair_non_manifold_solid(native_solid) -> list:
     both sides get their own capping copy. Returns a list of native
     TopoDS_Solid -- may be a single-element list containing the
     original, unrepaired solid if reconstruction doesn't succeed.
-    """
+
+    `fix_tolerance` parameterizes the BRepBuilderAPI_Sewing tolerance
+    used when re-sewing each component's own faces (2026-08-30 --
+    previously a hardcoded 1e-6, now sourced from Tolerances.fix_tolerance
+    at this function's own only call site, same default value)."""
     faces = []
     explorer = TopExp_Explorer(native_solid, TopAbs_FACE)
     while explorer.More():
@@ -2249,7 +2281,7 @@ def _repair_non_manifold_solid(native_solid) -> list:
         for donor_face in comp_extra_faces.get(root, []):
             comp_faces.append(BRepBuilderAPI_Copy(donor_face).Shape())
 
-        sewer = BRepBuilderAPI_Sewing(1e-6)
+        sewer = BRepBuilderAPI_Sewing(fix_tolerance)
         for f in comp_faces:
             sewer.Add(f)
         sewer.Perform()
@@ -2395,7 +2427,7 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
         return None
     original_volume = abs(_volume_props(native_solid).Mass())
     summed_volume = sum(abs(_volume_props(p).Mass()) for p in pieces)
-    if abs(summed_volume - original_volume) > 1e-6 * max(original_volume, 1.0):
+    if abs(summed_volume - original_volume) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(original_volume, 1.0):
         return None
     return pieces
 
@@ -2477,25 +2509,26 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
         return None
 
 
-def _raw_bop_split(base_native, tool_native, tolerance: float) -> tuple[list, bool, bool]:
+def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tuple[list, bool]:
     """The actual BOPAlgo_Splitter call plus non-manifold repair, factored
     out of Gsplit so `_try_coaxial_cone_split`'s own internal retry (on a
     presplit copy of `base`) can reuse it directly without recursing back
     through Gsplit's own coaxial-cone fallback. Returns (native_solids,
-    repaired_any, tool_missed_entirely) -- the third value distinguishes
-    "BOP found literally nothing" (tool genuinely doesn't touch base) from
-    "BOP found exactly one, unchanged solid" (the silent no-op symptom the
-    coaxial-cone fallback targets); the two need different handling."""
+    repaired_any). If BOP finds nothing at all, or every repair attempt
+    fails to produce more than one real piece, returns ([base_native],
+    False) -- the tool did not usefully split the solid."""
     splitter = BOPAlgo_Splitter()
     splitter.AddArgument(base_native)
     splitter.AddTool(tool_native)
-    if tolerance:
-        splitter.SetFuzzyValue(tolerance)
+    if split_tolerance > 0:
+        splitter.SetFuzzyValue(split_tolerance)
     splitter.Perform()
     raw_solids = _exploded_solids(splitter.Shape())
 
     if not raw_solids:
-        return [base_native], False, True
+        return [base_native], False
+
+    raw_solids = remove_tools_from_raw_solids(raw_solids, base_native, tool_native)
 
     repaired_any = False
     final_native_solids = []
@@ -2511,34 +2544,83 @@ def _raw_bop_split(base_native, tool_native, tolerance: float) -> tuple[list, bo
             final_native_solids.extend(separated)
             continue
         if BRepCheck_Analyzer(s).IsValid():
-            final_native_solids.append(s)
-            continue
-        repaired = _repair_non_manifold_solid(s)
-        changed = len(repaired) > 1 or (len(repaired) == 1 and not repaired[0].IsEqual(s))
-        if changed:
-            # Never trust the face-adjacency-graph reconstruction blindly:
-            # every piece must be a genuinely valid solid AND their summed
-            # volume must match the invalid input's own volume (same
-            # discipline as _try_coaxial_cone_split's own safety net) --
-            # otherwise the reconstruction can silently invent or lose
-            # material. Confirmed on a real fixture (modelcell_cut1
-            # piece70): a single-plane cut's invalid fragment got
-            # "repaired" into 3 pieces summing to ~30% more volume than
-            # the original, 2 of them themselves still invalid.
-            all_valid = all(BRepCheck_Analyzer(r).IsValid() for r in repaired)
-            if all_valid:
-                original_volume = abs(_volume_props(s).Mass())
-                repaired_volume = sum(abs(_volume_props(r).Mass()) for r in repaired)
-                volume_ok = abs(repaired_volume - original_volume) <= 1e-6 * max(original_volume, 1.0)
-            else:
-                volume_ok = False
-            if not (all_valid and volume_ok):
+            faceSliver = find_sliver_faces(GSolid(s), tolerances.min_face_width)
+            if not faceSliver:
+                final_native_solids.append(s)
+                continue
+
+        repaired = _repair_non_manifold_solid(s, tolerances.fix_tolerance)
+        repaired, same_solid, change_ok = check_changed_ok(s, repaired, tolerances.volume_tolerance)
+
+        if same_solid or not change_ok:
+            Grepaired = Gsliver_heal(GSolid(s), tolerances)
+            if Grepaired is None:
                 repaired = [s]
-                changed = False
-        if changed:
+            else:
+                repaired = [Grepaired.__native__]
+            repaired, same_solid, change_ok = check_changed_ok(s, repaired, tolerances.volume_tolerance)
+
+        if change_ok:
             repaired_any = True
         final_native_solids.extend(repaired)
-    return final_native_solids, repaired_any, False
+    if len(final_native_solids) > 1:
+        return final_native_solids, repaired_any
+    else:
+        return [base_native], False
+
+
+def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
+    """Sometimes the tool solid is returned in the split results, must be
+    removed from split solid list."""
+
+    if len(raw_solids) < 2:
+        return raw_solids
+
+    tool_volume = _volume_props(tool_native).Mass()
+    base_volume = _volume_props(base_native).Mass()
+    in_volume = base_volume + tool_volume
+    out_volume = sum(_volume_props(x).Mass() for x in raw_solids)
+    if abs(out_volume - in_volume) < 1e-5 * in_volume and abs(tool_volume) > 1e-5:
+        base_components = []
+        tool_CM = _volume_props(tool_native).CentreOfMass()
+        for s in raw_solids:
+            s_volume = _volume_props(s).Mass()
+            if abs(s_volume - tool_volume) < 1e-5 * abs(s_volume):
+                sol_CM = _volume_props(s).CentreOfMass()
+                d2 = tool_CM.SquareDistance(sol_CM)
+                if math.sqrt(d2) < 1e-6:
+                    continue
+            else:
+                base_components.append(s)
+        return base_components
+    else:
+        return raw_solids
+
+
+def check_changed_ok(original, repaired, volume_tolerance):
+    # Never trust the face-adjacency-graph reconstruction blindly:
+    # every piece must be a genuinely valid solid AND their summed
+    # volume must match the invalid input's own volume (same
+    # discipline as _try_coaxial_cone_split's own safety net) --
+    # otherwise the reconstruction can silently invent or lose
+    # material. Confirmed on a real fixture (modelcell_cut1
+    # piece70): a single-plane cut's invalid fragment got
+    # "repaired" into 3 pieces summing to ~30% more volume than
+    # the original, 2 of them themselves still invalid.
+
+    not_sane_solid = len(repaired) > 1 or (len(repaired) == 1 and not repaired[0].IsEqual(original))
+    change_ok = None
+    if not_sane_solid:
+        all_valid = all(BRepCheck_Analyzer(r).IsValid() for r in repaired)
+        if all_valid:
+            original_volume = abs(_volume_props(original).Mass())
+            repaired_volume = sum(abs(_volume_props(r).Mass()) for r in repaired)
+            volume_ok = abs(repaired_volume - original_volume) <= volume_tolerance * max(original_volume, 1.0)
+        else:
+            volume_ok = False
+        change_ok = all_valid and volume_ok
+
+    return repaired, not not_sane_solid, change_ok
 
 
 def _find_cone_face(shape) -> "GFace | None":
@@ -2684,7 +2766,7 @@ def _split_face_at_v_line(native_face, native_cone_surf, point_a: GVector, point
     return pieces if pieces else [native_face]
 
 
-def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) -> "list[GSolid] | None":
+def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: float, tolerances) -> "list[GSolid] | None":
     """Checked *before* the generic split is even attempted, whenever
     `tool` is a cone -- avoids wastefully running BOPAlgo_Splitter once on
     geometry already known to defeat it, then again after the presplit
@@ -2802,10 +2884,10 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) ->
         # volume-conservation check is loosened accordingly for a fuzzy
         # (nonzero) retry -- still far tighter than the retry tolerance
         # itself.
-        for retry_tolerance in (tolerance, 1e-6, 1e-4, 1e-2, 0.1, 0.5, 1.0):
-            if retry_tolerance < tolerance:
+        for retry_tolerance in (tolerance_floor, 1e-6, 1e-4, 1e-2, 0.1, 0.5, 1.0):
+            if retry_tolerance < tolerance_floor:
                 continue
-            retry_native_solids, _, _ = _raw_bop_split(presplit.__native__, tool.__native__, retry_tolerance)
+            retry_native_solids, _ = _raw_bop_split(presplit.__native__, tool.__native__, retry_tolerance, tolerances)
             if len(retry_native_solids) < 2:
                 continue
             retry_solids = [GSolid(s) for s in retry_native_solids]
@@ -2815,16 +2897,18 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance: float) ->
                 continue
             if not all(s.is_valid() for s in retry_solids):
                 continue
-            return retry_solids
+            if len(retry_solids) > 1:
+                return retry_solids
+            else:
+                return [base]
 
     return None
 
 
-def Gsplit(
-    base: GSolid, tool: GShape, tolerance: float, scale: float = 0.1, scale_up_floor: float | None = None
-) -> SplitResult:
+def Gsplit(base: GSolid, tool: GShape, tolerances) -> SplitResult:
     if _find_cone_face(tool) is not None:
-        fixed = _try_coaxial_cone_split(base, tool, tolerance)
+        tolerance_floor = tolerances.scale_up_floor
+        fixed = _try_coaxial_cone_split(base, tool, tolerance_floor, tolerances)
         if fixed is not None:
             return SplitResult(
                 solids=fixed,
@@ -2832,14 +2916,14 @@ def Gsplit(
                 notes="coaxial cone degeneracy resolved analytically",
             )
 
-    final_native_solids, repaired_any, tool_missed_entirely = _raw_bop_split(base.__native__, tool.__native__, tolerance)
+    final_native_solids, repaired_any = _raw_bop_split(base.__native__, tool.__native__, tolerances.split_tolerance, tolerances)
 
-    if tool_missed_entirely:
-        return SplitResult(
-            solids=[base], degenerate_case_handled=True, notes="tool did not intersect solid; returning it unchanged"
-        )
+    solids = []
+    for s in final_native_solids:
+        gs = GSolid(s)
+        if abs(gs.Volume) > tolerances.min_solid_volume:
+            solids.append(gs)
 
-    solids = [GSolid(s) for s in final_native_solids]
     return SplitResult(
         solids=solids,
         degenerate_case_handled=repaired_any,

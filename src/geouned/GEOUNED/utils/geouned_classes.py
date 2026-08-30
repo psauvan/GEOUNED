@@ -330,7 +330,7 @@ class GeounedSurface:
         else:
             return self.Surf == s2.Surf
 
-    def build_surface(self, boundBox, forward=False):
+    def build_surface(self, boundBox, tolerances, forward=False):
 
         Box = to_gboundbox(boundBox)
         if self.Type == "Plane":
@@ -384,18 +384,18 @@ class GeounedSurface:
                 self.shape, self.shell = result
 
         elif self.Type == "Can":
-            self.shape, self.shell = makeCan(self, Box, forward=forward)
+            self.shape, self.shell = makeCan(self, Box, tolerances, forward=forward)
 
         elif self.Type == "TCone":
-            self.shape, self.shell = makeTCone(self, Box)
+            self.shape, self.shell = makeTCone(self, Box, tolerances)
 
         elif self.Type == "RoundCorner":
             Box = Box.enlarged(10)
-            self.shape, self.shell = makeRoundCorner(self, Box)
+            self.shape, self.shell = makeRoundCorner(self, Box, tolerances)
 
         elif self.Type == "MultiRoundCorner":
             Box = Box.enlarged(10)
-            self.shape, self.shell = makeMultiRoundCorner(self, Box, forward=forward)
+            self.shape, self.shell = makeMultiRoundCorner(self, Box, tolerances, forward=forward)
 
         elif self.Type == "ReversedConeCylinder":
             # No need to build shape since this shape not used in decomposition

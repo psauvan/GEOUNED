@@ -10362,6 +10362,326 @@ pieces). No general "malformed face wire" repair is planned — see the
 recipe catalog (`reference_cad_defect_recipes.md`) entry for the full
 list of what was tried.
 
+## `Gsplit`'s signature unified around a single `tolerances` object, wired
+through the whole `BuildDepth`/`generic_split` call chain, and ported to
+`occ`
+
+User-driven refactor (started by editing `Gsplit`/`_raw_bop_split`/
+`_try_coaxial_cone_split`/`_repair_non_manifold_solid` directly in
+`_ocp_impl.py`/`_freecad_impl.py` by hand): every one of these now takes
+a single `tolerances` object instead of separate float parameters
+(`tolerance`, `scale`, `scale_up_floor`), "para que todos los mismos
+parámetros usados a lo largo de la ejecución tengan el mismo valor
+acorde al valor asignado por el usuario." Explicit scope from the user
+before any wiring started: add the 6 missing `Tolerances` fields, add a
+`fix_tolerance` argument to `_repair_non_manifold_solid` for
+consistency, leave `GEOReverse` completely untouched ("cuando volvamos
+con el tendremos mucho trabajo no hace falta cambiar nada ahora").
+
+### `Tolerances` class: 6 new fields
+
+`GEOUNED/utils/data_classes.py::Tolerances` gained `split_tolerance`
+(engine-conditional default, mirroring `Options.splitTolerance`'s own
+existing pattern: `1e-4` under `occ`/`ocp`, `0.0` under `freecad`),
+`scale_up_floor` (default `1e-12`), `scale` (`0.1`), `min_solid_volume`
+(`1e-6`), `fix_tolerance` (`1e-6`), `volume_tolerance` (`1e-6`) — each
+with the class's own established property/setter/docstring style. A
+real bug found and fixed while adding these: `Tolerances.scaled()`'s own
+`return Tolerances(...)` construction explicitly re-lists every field by
+name -- without adding the 6 new ones there too, calling `.scaled()`
+(used by `cell_definition.py`'s per-solid volumetric tolerance scaling,
+see the earlier "`Tolerances.scaled(volume)`" section) would have
+silently reset them to class defaults on every call.
+
+### The `BuildDepth` chain: `tolerances` threaded end to end
+
+`Gsplit`'s own new signature meant every function on its call path also
+needed `tolerances`, none of which had it before. Traced and fixed the
+full chain: `GeounedSurface.build_surface(self, boundBox, tolerances,
+forward=False)` (`geouned_classes.py`, all 4 composite-surface dispatch
+branches -- Can/TCone/RoundCorner/MultiRoundCorner) ->
+`build_shape_functions.py`'s 4 public entry points
+(`makeCan`/`makeTCone`/`makeRoundCorner`/`makeMultiRoundCorner`) and
+`build_complex_shape` (its own `BuildDepth(rc, None, tolerances)` call)
+-> `build_region.py::BuildDepth(cell, base, tolerances)` (both recursive
+self-calls, both `filterparts` calls, its own `BuildSolidParts` call) ->
+`filterparts(parts, cell, tolerances)` (its own `BuildDepth(cell, None,
+tolerances)` call) -> `BuildSolidParts`/`SplitSolid`, both already
+correctly threading `tolerances` through from the user's own concurrent
+edit to `splitFunction.py`. Separately, `decom_one_generators.py::
+generic_split` (the *other* real `Gsplit` call site -- the main
+decomposition loop, not the composite-surface-CAD-construction path
+above) needed the identical two fixes: `surf.build_surface(bbox,
+tolerances, forward=True)` and `Gsplit(solid, GSolid(surf.shape),
+tolerances)` (replacing the old `Gsplit(solid, GSolid(surf.shape),
+options.splitTolerance, scale_up_floor=...)` form).
+
+A real, self-contained bug found and fixed directly on this path (not
+from the user's own edits, found while making `Gsplit` work at all):
+`_ocp_impl.py::Gsplit`'s own call to `_raw_bop_split` was still 3-arg
+(`base.__native__, tool.__native__, tolerances`) against the (user-
+updated) 4-param signature `_raw_bop_split(base_native, tool_native,
+split_tolerance, tolerances)` -- fixed to
+`_raw_bop_split(base.__native__, tool.__native__, tolerances.
+split_tolerance, tolerances)`.
+
+### FreeCAD: 2 real bugs in the user's own concurrent `Gsplit` rewrite
+
+`_freecad_impl.py`'s `Gsplit` became a thin wrapper unpacking
+`tolerances` and delegating to a renamed `recursive_freecad_Gsplit`
+(the actual tolerance-retry logic, unchanged) -- but
+`recursive_freecad_Gsplit`'s own 2 recursive retry branches (the
+`scale_up_floor` bootstrap and the `except Exception` fallback) still
+called `Gsplit(...)` with the *old* multi-arg/kwarg form, which no
+longer exists on the new single-`tolerances`-object `Gsplit`. Fixed by
+pointing both back at `recursive_freecad_Gsplit` (self-recursion,
+matching the function's own pre-rename behavior).
+
+Second, independent bug: `check_out_solids`'s own new
+`remove_solids(split_solids, ...)` call (a real filtering/repair pass
+the user added directly in `_freecad_impl.py`, consolidating what used
+to be `decom_utils_generator.py`'s own Python-level `valid_solid`/
+`remove_solids` -- that GEOUNED-side copy was deleted as part of the
+same edit) passed *native* `Part.Solid` objects (straight from
+`compound.Solids`) into `valid_solid`/`_refine_if_valid`, both of which
+call `GSolid`-only methods (`.is_valid()`/`.refine()`) --
+`AttributeError: 'Part.Solid' object has no attribute 'is_valid'` the
+first time a real split produced more than one fragment. Fixed at
+`remove_solids`'s own boundary: wrap each solid in `GSolid(...)` before
+calling `valid_solid`/`_refine_if_valid`, unwrap back to native
+(`.__native__`) on the way out, matching what `check_out_solids`
+(native in, native out via `GSolid(s) for s in cleaned`) already
+expects.
+
+`tests/geo/test_ocp_impl.py::test_gsplit_box_by_half_space` and the
+4 `test_freecad_impl.py::test_split_*` tests (all still calling `Gsplit`
+with a bare float) updated to the new `Gsplit(base, tool, tolerances)`
+convention, `tolerances` built as a `SimpleNamespace` (duck-typed --
+`geo`'s own test suite must never import `GEOUNED.utils.data_classes`).
+
+Verified: `ocp` 89/89, `freecad` 155/158 (3 already-known/pre-existing
+failures, unrelated -- `test_conversion[input_step_file13]`'s own
+`Gfirst_shell` `IndexError` on an empty-shell `FuseSolid` result, and
+the 2 long-documented `GEOReverse` `test_csgtocad.py` failures).
+
+### Full port to `occ`: the whole `_raw_bop_split`/`Gsliver_heal` cascade
+
+Per explicit user request ("porta los cambio de ocp a occ, tanto los de
+la tolerancias como los cambios que hice en varias funciones") --
+`_occ_impl.py` had none of the user's own hand-edits (all made directly
+in `_ocp_impl.py`), so it needed the equivalent of everything above
+ported function by function, verified against the real diff rather than
+guessed: `Gsliver_heal(solid, tolerances)` (reads `min_face_width`/
+`sliver_edge_rel_tol` off `tolerances`, uses `find_sliver_faces` instead
+of `find_split_ring_faces`, tries every `near_surface_pair` candidate
+instead of requiring exactly one); `_repair_non_manifold_solid(...,
+fix_tolerance=1e-6)`; `_separate_edge_joined_components`'s volume gate
+switched from a separate hardcoded `1e-6` to the already-existing shared
+`MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`; `_raw_bop_split(base_native,
+tool_native, split_tolerance, tolerances)` with its 2 new helpers,
+`remove_tools_from_raw_solids` (strips a leaked tool-copy out of the BOP
+result when volume-matching indicates it) and `check_changed_ok` (the
+shared validity+volume-conservation gate); `_try_coaxial_cone_split(...,
+tolerance_floor, tolerances)`'s retry loop; `Gsplit(base, tool,
+tolerances)` itself, final solids filtered by `tolerances.
+min_solid_volume`. `tests/geo/test_occ_impl.py::test_gsplit_box_by_half_space`
+updated the same way as its `ocp`/`freecad` siblings.
+
+Verified: `occ` 89/89, matching `ocp` exactly.
+
+### `load_step.py`: a real regression in the user's own edit, found and fixed
+
+`load_cad` was also switched to call `Gload_and_process_step(filename,
+tolerances)` (single object) instead of the old 2-float form -- but the
+edit accidentally dropped the `loop_spline` gate entirely, leaving `if i
+in spline_solids_id: s = None` unconditional, directly contradicting the
+unchanged comment 2 lines above it explaining that `"ignore"` mode must
+keep the real geometry and only `"stop"`/`"remove"` should null the
+solid out. A real, silent behavior regression (the comment describing
+the intent survived the edit; the code implementing it didn't). Fixed by
+restoring `loop_spline = spline_surf.lower() in ("remove", "stop")` and
+gating on it again: `if i in spline_solids_id and loop_spline: s = None`.
+
+This call-site change also meant `Gload_and_process_step` itself needed
+porting to the new single-`tolerances`-argument signature in the other
+2 backends (`ocp`'s own version was already updated by the user).
+`_occ_impl.py`'s version had a second, independent, pre-existing bug
+surfaced by this: its own body called `Gcheck_and_repair(gsolid,
+sliver_edge_rel_tol, min_face_width)` (2 positional args) against
+`Gcheck_and_repair`'s already-unified `(solid, tolerances)` signature --
+already broken on its own, unrelated to this session, simply never
+exercised until now. Fixed both: `Gload_and_process_step(filename,
+tolerances)` and `Gcheck_and_repair(gsolid, tolerances)`.
+`_freecad_impl.py`'s own `Gload_and_process_step` (which never calls
+`Gcheck_and_repair` at all -- a deliberate no-op under this engine, see
+its own docstring) updated to the same `(filename, tolerances)`
+signature purely for 3-engine parity, even though its body never reads
+either old parameter.
+
+Verified: `ocp` 89/89, `occ` 89/89, `freecad` 155/158 (same 3 known
+failures as above, unaffected).
+
+### `Gcheck_and_repair`'s own `Gsliver_heal`/`Gdefeature` calls: 2 more
+stale-signature bugs, found and fixed together
+
+Once `Gsliver_heal` took `tolerances` instead of a bare `min_face_width`
+float (part of the change above), `Gcheck_and_repair`'s own call site
+(`sliver_healed = Gsliver_heal(solid, tolerances.min_face_width)`) was
+left passing the old float -- indistinguishable at a glance from the
+neighboring, still-correct `Gcollapse_split_rings(solid, tolerances.
+min_face_width)` call one line above it (that one genuinely still wants
+a bare float). Would have raised `AttributeError: 'float' object has no
+attribute 'min_face_width'` the moment a solid reached this repair step.
+User fixed it directly in `_ocp_impl.py` (`Gsliver_heal(solid,
+tolerances)`) and separately gave `Gdefeature` a new 3rd parameter,
+`sliver_edge_rel_tol` (used in its own `find_short_edges(healed,
+sliver_edge_rel_tol)` call -- previously hardcoded to `find_short_edges`'s
+own default `1e-4`, ignoring whatever the user actually configured, the
+same class of "silently drops the user's real tolerance" bug already
+found and fixed several times elsewhere in this project), with
+`Gcheck_and_repair`'s own call updated to `Gdefeature(solid,
+degenerate_faces, tolerances.sliver_edge_rel_tol)`.
+
+Ported both to `_occ_impl.py`: `Gdefeature`'s signature and its internal
+`find_short_edges` call, and its own `Gcheck_and_repair`'s `Gdefeature(...)`
+call site (its own `Gsliver_heal(solid, tolerances)` call was already
+correct, ported in the earlier full-cascade pass above).
+
+Verified: `ocp` 89/89, `occ` 89/89.
+
+## `L4-WCS_3.stp` solid 75: a genuine native segfault masquerading as a
+silent hang, root-caused with `faulthandler`, fixed by the user, ported
+to `occ`, and generalized into a new `OCCT_FIX_TOLERANCE` constant
+
+User report: `Solidos/working_solids/L4-WCS_3.stp`, decomposition "just
+stops" around solid 75 with no error signal at all (via the workshop's
+own `myrun.py`). Confirmed this is a real, reproducible **native
+segfault** (process exit code 139/access violation), not a hang -- it
+only *looks* silent because a native crash produces no Python traceback.
+
+### Diagnosis methodology (new technique for this project: `faulthandler`)
+
+Isolated solid 75 alone (`skip_solids = [i for i in range(106) if i !=
+75]`, `corrupted_solids="remove"`, `spline_surfaces="remove"`) --
+33 faces, 23 cylinders, 1 cone, otherwise ordinary-looking geometry, no
+`find_short_edges`/`Compactness` red flags. Reproduced the crash on this
+single solid alone (`decompose_solids()`), confirming it wasn't a
+cross-solid interaction.
+
+Wrote a from-scratch, depth-tagged re-implementation of `decom_one_
+generators.generic_split` (own `[depth].[candidate].[piece]`-style tags,
+flushed prints around `surf.build_surface(...)` and `Gsplit(...)`) to
+bracket exactly which candidate, at which recursion depth, was in
+flight when the process died: candidate `#7` (a `Can`) at the top level
+produces a real 3-way split; recursing into piece 0's own first
+candidate (`Can` again, tag `"7.0.0"`) crashes *during* the `Gsplit`
+call, right after `build_surface` completes cleanly.
+
+**New technique, faster and more precise than the `py-spy`-based
+approach used earlier in this project's history for a similar-looking
+hang** (see "hylife-v06.stp solid 17" elsewhere in this file):
+Python's stdlib `faulthandler.enable(file=..., all_threads=True)`
+installs a signal handler for `SIGSEGV`/Windows access violation that
+prints the *Python*-level stack trace to a file right before the
+process dies -- no need to attach a separate process or guess the
+timing of a sample. Re-ran the same crashing reproduction with
+`faulthandler` enabled; the captured trace pinpointed the exact frame:
+
+```
+Gsplit (line 3111)
+  -> _raw_bop_split (line 2734)
+    -> Gsliver_heal (line 1827: unify.Build())   <- CRASH
+```
+
+-- `unify.Build()`, i.e. `ShapeUpgrade_UnifySameDomain(fixer.Shape(),
+UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True).Build()`, called
+from *inside* `Gsliver_heal`'s own healing cascade (reached via
+`_raw_bop_split`'s newly-added "valid-but-sliver" / "repair produced no
+real change" fallback branches -- a genuinely new code path this
+session's own `_raw_bop_split` rewrite put on the hot path of every
+`Gsplit` call, not something `Gsliver_heal` had ever been exposed to
+under normal decomposition before).
+
+Confirmed the crash's exact trigger with 2 independent experiments
+before touching any code: (1) exporting the crashing `base`+`tool` pair
+to standalone STEP files and reloading them fresh (`Gload_step`'s own
+unconditional `.fix(1e-6)` on every loaded solid) -- does **not**
+reproduce; (2) calling `.fix(1e-6)` directly on the live, un-round-tripped
+`base` right before the same `Gsplit` call -- also does **not**
+reproduce, volume unchanged to the 12th decimal. Both point at the same
+mechanism: a solid fresh out of a previous `BOPAlgo_Splitter` call
+(valid per `BRepCheck_Analyzer`, so never previously healed) carries
+some fragile native internal state that a subsequent
+`ShapeUpgrade_UnifySameDomain.Build()` call can crash on -- the same
+class of "FreeCAD implicitly heals on STEP round-trip, raw OCCT BOP
+output never gets an equivalent pass" issue this project has hit
+several times before (see "hylife-v06.stp solid 17", "SCDR_90_hollow.stp
+piece5" elsewhere in this file), just manifesting as a hard crash this
+time instead of a hang or a silent wrong split.
+
+### Root cause and fix
+
+`Gsliver_heal`'s own `unify.SetLinearTolerance(...)` (and, alongside it,
+`BRepBuilderAPI_Sewing(...)`/`fixer.SetPrecision(...)`) was being given
+`dist_tol` -- a tolerance derived from the solid's own BoundBox diagonal
+(`max(diag * min_length_ratio, MIN_SLIVER_EDGE_LENGTH)`), so it scales
+with the model and can be centimeters or more on a real part. Checked
+the other 2 `ShapeUpgrade_UnifySameDomain` call sites in the same file
+(`_native_fix`, backing `GSolid.fix()`/`Gload_step`; `GSolid.refine()`)
+-- both already proven stable across this whole project's history,
+including the earlier `ConeSphere.stp` crash saga -- and **neither ever
+calls `SetLinearTolerance` at all**, relying entirely on OCCT's own
+shape-intrinsic default tolerance instead. `Gsliver_heal` was the one
+and only place explicitly overriding it with a loose, model-scaled
+value, and the one and only place that crashed. User's own fix (applied
+directly in `_ocp_impl.py`): replace `dist_tol` with a small, fixed
+`1e-6` in exactly those 3 OCCT calls, leaving `dist_tol` itself
+untouched everywhere else in the function (`near_surface_pair`,
+`_retrim_freed_quadrics` -- both genuinely need to track the real
+physical gap being measured/re-trimmed, unrelated to this crash class).
+Ported identically to `_occ_impl.py`.
+
+**Generalized into a new constant**, per the user's own explicit
+request, so the same fixed value doesn't drift across the 2 backends or
+get reintroduced as a fresh literal somewhere else: `OCCT_FIX_TOLERANCE
+= 1.0e-6` (both `_ocp_impl.py` and `_occ_impl.py`, defined right before
+`Gsliver_heal`), with a docstring naming exactly which class of call it
+applies to (a native repair/unify call whose own algorithm is
+crash-prone on a loose tolerance -- `ShapeUpgrade_UnifySameDomain.
+SetLinearTolerance` specifically) and which tolerances must stay
+variable instead (`Gcollapse_split_rings`' own `sew_tol`, which has to
+scale with the real gap it welds -- confirmed it doesn't even call
+`ShapeUpgrade_UnifySameDomain` at all, so it was never implicated in
+this crash; `Gdefeature`/`near_surface_pair`'s own tolerance parameters,
+same reasoning). Explicitly **not** applied retroactively to `_native_fix`/
+`GSolid.refine()` -- those already work by omitting the call entirely,
+which this constant approximates but doesn't need to replace.
+
+Verified end to end: full solid-75 decomposition with `.fix(1e-6)`
+applied at `generic_split`'s own recursion boundary (the general form of
+the fix, tested before the user's own narrower in-function fix was
+confirmed sufficient) -- 3.94s, 8 pieces, volume conserved to
+`-7.47e-14` relative (pure floating-point noise). `tests/geo` +
+`tests/test_cadtocsg.py`: `ocp` 89/89, `occ` 89/89 after the constant was
+introduced and ported.
+
+**Not yet done**: the full `L4-WCS_3.stp` model (106 solids, only solid
+75 isolated and fixed here) hasn't been run end to end through
+conversion + d1suned to confirm the fix holds for the whole file, nor
+has a corpus-wide scan been run to check whether any other `Solidos/`
+fixture exercises this same `_raw_bop_split` "valid-but-sliver"/
+"repair-produced-no-change" fallback path into `Gsliver_heal`.
+Diagnostic scripts this session (scratchpad only, not committed):
+`diag_l4wcs3_load.py` (basic solid-75 geometry dump),
+`diag_l4wcs3_solid75.py`/`_v2.py` (candidate-surface-traced isolation,
+first reproduction), `diag_l4wcs3_export_repro.py` (the base+tool STEP
+export at the exact crash point), `diag_l4wcs3_minimal_repro.py` (the
+STEP-round-trip non-reproduction), `diag_l4wcs3_fix_hypothesis.py`/
+`_full_fix_test.py` (the `.fix()`-before-recursion hypothesis test, both
+single-candidate and full-solid), `diag_l4wcs3_faulthandler.py` (the
+`faulthandler`-instrumented reproduction that produced the exact stack
+trace above).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

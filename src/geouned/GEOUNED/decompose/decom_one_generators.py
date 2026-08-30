@@ -4,7 +4,6 @@
 
 import logging
 
-from .decom_utils_generator import remove_solids
 from .generators import get_surfaces
 from ...geo import GSolid, Gmake_compound, Gsplit
 
@@ -28,29 +27,20 @@ def generic_split(solid, options, tolerances, loop=0):
     cleaned = [solid]
     omitfaces = set()
 
-    for surf in get_surfaces(solid, omitfaces, tolerances):
-        surf.build_surface(bbox, forward=True)
+    for count, surf in enumerate(get_surfaces(solid, omitfaces, tolerances)):
+        surf.build_surface(bbox, tolerances, forward=True)
         try:
             result = Gsplit(
                 solid,
                 GSolid(surf.shape),
-                options.splitTolerance,
-                scale_up_floor=options.splitTolerance if options.scaleUp else None,
+                tolerances,
             )
             comsolid_solids = result.solids
         except Exception:
             comsolid_solids = [solid]
             logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
 
-        if not comsolid_solids:
-            cleaned = solid.Solids
-        elif sum(s.Volume for s in comsolid_solids) == 0:
-            cleaned = solid.Solids
-        elif len(comsolid_solids) == 1:
-            cleaned = solid.Solids
-        else:
-            cleaned = remove_solids(comsolid_solids, solid.Volume)
-        if len(cleaned) > 1:
+        if len(comsolid_solids) > 1:
             new_split = True
             break
     else:
@@ -59,11 +49,11 @@ def generic_split(solid, options, tolerances, loop=0):
 
     if new_split:
         components = []
-        for part in cleaned:
+        for part in comsolid_solids:
             subcomp = generic_split(part, options, tolerances, loop + 1)
             components.extend(subcomp)
     else:
-        components = cleaned
+        components = comsolid_solids
     return components
 
 

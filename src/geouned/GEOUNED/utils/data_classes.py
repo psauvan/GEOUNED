@@ -254,6 +254,38 @@ class Tolerances:
             that this value correctly leaves alone (see geo.find_short_edges' own docstring for the full
             story). geo.find_short_edges also enforces an absolute floor, MIN_SLIVER_EDGE_LENGTH=1e-3mm,
             so this relative value alone never needs to account for very small solids either.
+        split_tolerance (float, optional): geo.Gsplit's own BOPAlgo_Splitter fuzzy tolerance --
+            previously sourced ad hoc from Options.splitTolerance at each Gsplit call site (a plain
+            float, not carried on Tolerances at all). Defaults to None, resolved the same way
+            Options.splitTolerance's own default is: 1.0e-4 under the occ/ocp engines, 0.0 under freecad
+            (see CAD_ENGINE, already imported in this module for exactly this) -- PROVISIONAL: this field
+            is not yet wired to Options.splitTolerance itself at any call site (2026-08-30, added as part
+            of Gsplit's own tolerances-object refactor; deferred question, not yet resolved, whether/where
+            a Tolerances instance should pick up the user's own Options.splitTolerance value instead of
+            resolving its own default independently).
+        scale_up_floor (float | None, optional): geo.Gsplit's own scale-up-floor retry bound (see
+            Options.scaleUp's own docstring for the mechanism) -- same PROVISIONAL status as
+            split_tolerance above. Defaults to None (no floor), matching the prior default.
+        scale (float, optional): geo.Gsplit's own per-retry tolerance scale-up factor. Defaults to 0.1,
+            matching the prior hardcoded default on Gsplit's own (now-retired) `scale` parameter.
+        min_solid_volume (float, optional): geo.Gsplit's own minimum-volume filter -- a split-result
+            fragment whose |Volume| falls at or below this is discarded rather than returned as a real
+            solid. A NEW filter (no prior equivalent existed before this same 2026-08-30 refactor) --
+            PROVISIONAL default of 1.0e-6 (mm^3), picked only to filter genuinely near-zero-volume
+            numerical-noise fragments, not real slivers (see min_face_width/sliver_edge_rel_tol above for
+            those) -- not yet independently verified against a real corpus the way this file's other
+            defaults are.
+        fix_tolerance (float, optional): geo._repair_non_manifold_solid's own BRepBuilderAPI_Sewing
+            tolerance when reconstructing a non-manifold solid's real connected components. Defaults to
+            1.0e-6, matching that function's own prior hardcoded value exactly (this is a pure
+            parameterization, not a new default -- see that function's own docstring).
+        volume_tolerance (float, optional): relative volume-conservation tolerance used by geo.Gsplit's
+            own non-manifold-repair/sliver-heal acceptance checks (a repaired result is only trusted if
+            its own summed volume matches the pre-repair input to within this fraction). Defaults to
+            1.0e-6, matching the prior hardcoded value in geo._raw_bop_split (see that function's own
+            docstring, and _try_coaxial_cone_split's identical, separately-hardcoded 1e-6 -- both trace to
+            the same "never trust a topology repair blindly" discipline documented throughout this
+            project's history).
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -286,6 +318,12 @@ class Tolerances:
         add_pln_angle: float = 1.0e-2,
         min_face_width: float = 0.1,
         sliver_edge_rel_tol: float = 1.0e-4,
+        split_tolerance: typing.Optional[float] = 1.e-6,
+        scale_up_floor: typing.Optional[float] = 1e-12,
+        scale: float = 0.1,
+        min_solid_volume: float = 1.0e-6,
+        fix_tolerance: float = 1.0e-6,
+        volume_tolerance: float = 1.0e-6,
     ):
 
         self.relativeTol = relativeTol
@@ -307,6 +345,14 @@ class Tolerances:
         self.add_pln_angle = add_pln_angle
         self.min_face_width = min_face_width
         self.sliver_edge_rel_tol = sliver_edge_rel_tol
+        if split_tolerance is None:
+            split_tolerance = 1.0e-4 if CAD_ENGINE in ("occ", "ocp") else 0.0
+        self.split_tolerance = split_tolerance
+        self.scale_up_floor = scale_up_floor
+        self.scale = scale
+        self.min_solid_volume = min_solid_volume
+        self.fix_tolerance = fix_tolerance
+        self.volume_tolerance = volume_tolerance
 
     @property
     def relativeTol(self):
@@ -498,6 +544,66 @@ class Tolerances:
             raise TypeError(f"geouned.Tolerances.sliver_edge_rel_tol should be a float, not a {type(sliver_edge_rel_tol)}")
         self._sliver_edge_rel_tol = sliver_edge_rel_tol
 
+    @property
+    def split_tolerance(self):
+        return self._split_tolerance
+
+    @split_tolerance.setter
+    def split_tolerance(self, split_tolerance: float):
+        if not isinstance(split_tolerance, float):
+            raise TypeError(f"geouned.Tolerances.split_tolerance should be a float, not a {type(split_tolerance)}")
+        self._split_tolerance = split_tolerance
+
+    @property
+    def scale_up_floor(self):
+        return self._scale_up_floor
+
+    @scale_up_floor.setter
+    def scale_up_floor(self, scale_up_floor: typing.Optional[float]):
+        if scale_up_floor is not None and not isinstance(scale_up_floor, float):
+            raise TypeError(f"geouned.Tolerances.scale_up_floor should be a float or None, not a {type(scale_up_floor)}")
+        self._scale_up_floor = scale_up_floor
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, scale: float):
+        if not isinstance(scale, float):
+            raise TypeError(f"geouned.Tolerances.scale should be a float, not a {type(scale)}")
+        self._scale = scale
+
+    @property
+    def min_solid_volume(self):
+        return self._min_solid_volume
+
+    @min_solid_volume.setter
+    def min_solid_volume(self, min_solid_volume: float):
+        if not isinstance(min_solid_volume, float):
+            raise TypeError(f"geouned.Tolerances.min_solid_volume should be a float, not a {type(min_solid_volume)}")
+        self._min_solid_volume = min_solid_volume
+
+    @property
+    def fix_tolerance(self):
+        return self._fix_tolerance
+
+    @fix_tolerance.setter
+    def fix_tolerance(self, fix_tolerance: float):
+        if not isinstance(fix_tolerance, float):
+            raise TypeError(f"geouned.Tolerances.fix_tolerance should be a float, not a {type(fix_tolerance)}")
+        self._fix_tolerance = fix_tolerance
+
+    @property
+    def volume_tolerance(self):
+        return self._volume_tolerance
+
+    @volume_tolerance.setter
+    def volume_tolerance(self, volume_tolerance: float):
+        if not isinstance(volume_tolerance, float):
+            raise TypeError(f"geouned.Tolerances.volume_tolerance should be a float, not a {type(volume_tolerance)}")
+        self._volume_tolerance = volume_tolerance
+
     def scaled(self, volume: float) -> "Tolerances":
         """Returns a copy of this Tolerances with min_area/min_face_width
         scaled down for a solid whose own Volume is small relative to
@@ -562,6 +668,12 @@ class Tolerances:
             add_pln_angle=self.add_pln_angle,
             min_face_width=scaled_min_face_width,
             sliver_edge_rel_tol=self.sliver_edge_rel_tol,
+            split_tolerance=self.split_tolerance,
+            scale_up_floor=self.scale_up_floor,
+            scale=self.scale,
+            min_solid_volume=self.min_solid_volume,
+            fix_tolerance=self.fix_tolerance,
+            volume_tolerance=self.volume_tolerance,
         )
 
 

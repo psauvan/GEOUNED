@@ -93,23 +93,23 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
     return (solid, shell)
 
 
-def makeRoundCorner(roundCorner, Box):
-    return build_complex_shape(roundCorner, Box)
+def makeRoundCorner(roundCorner, Box, tolerances):
+    return build_complex_shape(roundCorner, Box, tolerances)
 
 
-def makeMultiRoundCorner(multiRoundCorner, Box, forward=False):
-    return build_complex_shape(multiRoundCorner, Box, forward=forward)
+def makeMultiRoundCorner(multiRoundCorner, Box, tolerances, forward=False):
+    return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
 
 
-def makeCan(can, Box, forward=False):
-    return build_complex_shape(can, Box, forward=forward)
+def makeCan(can, Box, tolerances, forward=False):
+    return build_complex_shape(can, Box, tolerances, forward=forward)
 
 
-def makeTCone(tcone, Box):
-    return build_complex_shape(tcone, Box)
+def makeTCone(tcone, Box, tolerances):
+    return build_complex_shape(tcone, Box, tolerances)
 
 
-def build_complex_shape(surface, Box, forward=False):
+def build_complex_shape(surface, Box, tolerances, forward=False):
     rc = get_cell_object(surface)
     rc.boundBox = myBox(Box, "Forward")
     if forward:
@@ -118,7 +118,7 @@ def build_complex_shape(surface, Box, forward=False):
             rc.definition = rc.definition.get_complementary()
     for s in rc.surfaces.values():
         s.buildShape(Box)
-    celparts = BuildDepth(rc, None)
+    celparts = BuildDepth(rc, None, tolerances)
     celparts = getPart(celparts)
     if len(celparts) == 0:
         return (None, None)

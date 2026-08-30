@@ -102,12 +102,29 @@ def is_parallel_plane_surface(plane_1, plane_2) -> bool:
 
 
 def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
-    """Direct port of the former `CylinderGu.isSameSurface`, same fixed tolerances."""
+    """True if two cylinders are the same infinite analytic cylinder (same
+    radius, same axis line -- direction either way).
+
+    A cylinder's `Center` is an *arbitrary point on its axis*: two
+    representations of the same infinite cylinder can carry `Center`
+    points anywhere along that shared axis. So the axis-line coincidence
+    must be tested by the distance between the two *axis lines* -- the
+    component of `(Center_1 - Center_2)` **perpendicular to the axis** --
+    not the raw `|Center_1 - Center_2|`, which grows without bound as one
+    `Center` slides along the axis. Confirmed as a real miss (2026-08-29,
+    an `L4_body.stp` decomposition fragment): two faces of the identical
+    R=7 cylinder whose `Center`s were 29.97 units apart *along the axis*
+    (perpendicular distance ~2e-12) were wrongly judged different
+    surfaces, so `Gsliver_heal` could not recognise the malformed
+    duplicate cylinder face it needed to drop. Was a direct port of the
+    former `CylinderGu.isSameSurface`; same fixed 1e-5 tolerances."""
     if abs(cylinder_1.Radius - cylinder_2.Radius) > 1e-5:
         return False
-    if (cylinder_1.Center - cylinder_2.Center).length > 1e-5:
+    if abs(cylinder_1.Axis.dot(cylinder_2.Axis)) < 0.99999:
         return False
-    return abs(cylinder_1.Axis.dot(cylinder_2.Axis)) >= 0.99999
+    offset = cylinder_1.Center - cylinder_2.Center
+    perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
+    return perpendicular.length <= 1e-5
 
 
 def is_same_cone_surface(cone_1, cone_2) -> bool:

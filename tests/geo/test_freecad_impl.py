@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,14 @@ def unit_box():
 
 def _bbox_tuple(bbox):
     return (bbox.XMin, bbox.YMin, bbox.ZMin, bbox.XMax, bbox.YMax, bbox.ZMax)
+
+
+def _tolerances(split_tolerance=1e-6, scale_up_floor=None, scale=0.1):
+    # Gsplit's own `tolerances` param is duck-typed (not literally
+    # GEOUNED.utils.data_classes.Tolerances -- geo must not depend on
+    # GEOUNED) -- a SimpleNamespace carrying exactly the fields Gsplit reads
+    # keeps this test file's own established independence from GEOUNED.
+    return SimpleNamespace(split_tolerance=split_tolerance, scale_up_floor=scale_up_floor, scale=scale)
 
 
 # -- Primitive construction -------------------------------------------------
@@ -196,7 +205,7 @@ def test_refine_keeps_volume_of_coplanar_fuse():
 
 def test_split_interior_plane_gives_two_solids(unit_box):
     interior_plane = Gmake_half_space(GPlane.from_values(GVector(0, 0, 0), GVector(0, 0, 1)))
-    result = Gsplit(unit_box, interior_plane, 1e-6)
+    result = Gsplit(unit_box, interior_plane, _tolerances())
     assert len(result.solids) == 2
 
 
@@ -205,7 +214,7 @@ def test_split_scale_up_floor_bootstraps_from_tiny_tolerance(unit_box):
     # starting tolerance of 0.0 with scale_up_floor set must not just
     # attempt the tiny tolerance as-is -- it climbs back up from the floor.
     interior_plane = Gmake_half_space(GPlane.from_values(GVector(0, 0, 0), GVector(0, 0, 1)))
-    result = Gsplit(unit_box, interior_plane, 0.0, scale_up_floor=0.0)
+    result = Gsplit(unit_box, interior_plane, _tolerances(split_tolerance=0.0, scale_up_floor=0.0))
     assert len(result.solids) == 2
 
 
@@ -218,7 +227,7 @@ def test_split_tool_not_intersecting_solid_returns_solid_unchanged(unit_box):
             GVector(1000, -500, 500),
         ]
     )
-    result = Gsplit(unit_box, far_face, 1e-6)
+    result = Gsplit(unit_box, far_face, _tolerances())
     assert len(result.solids) == 1
     assert result.degenerate_case_handled is True
     assert result.solids[0].Volume == pytest.approx(unit_box.Volume)
@@ -237,7 +246,7 @@ def test_split_plane_coincident_with_existing_face_is_a_known_limitation(unit_bo
     visible, not to assert it is correct.
     """
     coincident_tool = Gmake_half_space(GPlane.from_values(GVector(0, 0, 5), GVector(0, 0, 1)))
-    result = Gsplit(unit_box, coincident_tool, 1e-6)
+    result = Gsplit(unit_box, coincident_tool, _tolerances())
     assert len(result.solids) == 1
     assert result.degenerate_case_handled is False
 
