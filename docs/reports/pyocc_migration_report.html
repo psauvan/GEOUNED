@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Migración GEOUNED a pyOCC</title>
+<meta name="description" content="Informe técnico del refactor del backend CAD de GEOUNED: el paquete geo, tres motores intercambiables, verificación por volumen MCNP y reparación de defectos CAD.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  :root {
+    --ground:#f6f7f9; --surface:#ffffff; --surface-2:#eef1f4;
+    --ink:#1b232c; --ink-soft:#54606d; --ink-faint:#8a95a1;
+    --rule:#e3e7ec; --rule-strong:#ccd3db;
+    --accent:#1f6f8b; --accent-bg:#e7f0f4; --accent-line:#8fbccb;
+    --ok:#2f7d4f; --ok-bg:#e6f1ea;
+    --warn:#95610f; --warn-bg:#f4ecdc;
+    --crit:#a63a3a; --crit-bg:#f4e5e5;
+    --shadow:0 1px 2px rgba(20,30,40,.05), 0 6px 20px -12px rgba(20,30,40,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0e1317; --surface:#161c22; --surface-2:#1d252c;
+      --ink:#dbe2e9; --ink-soft:#95a0ad; --ink-faint:#63707e;
+      --rule:#262f38; --rule-strong:#3a4652;
+      --accent:#57aac7; --accent-bg:#152f39; --accent-line:#2f5c6b;
+      --ok:#63b489; --ok-bg:#15271e;
+      --warn:#cf9a4a; --warn-bg:#2a2216;
+      --crit:#dd7d7d; --crit-bg:#2b1b1b;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0e1317; --surface:#161c22; --surface-2:#1d252c;
+    --ink:#dbe2e9; --ink-soft:#95a0ad; --ink-faint:#63707e;
+    --rule:#262f38; --rule-strong:#3a4652;
+    --accent:#57aac7; --accent-bg:#152f39; --accent-line:#2f5c6b;
+    --ok:#63b489; --ok-bg:#15271e;
+    --warn:#cf9a4a; --warn-bg:#2a2216;
+    --crit:#dd7d7d; --crit-bg:#2b1b1b;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -14px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior:smooth; } }
+  body {
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Serif", Georgia, "Times New Roman", serif;
+    font-size:17px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1200px; margin:0 auto; padding:0 clamp(18px, 4vw, 56px); }
+
+  /* ---- masthead ---- */
+  .mast { padding:clamp(40px,7vw,84px) 0 34px; border-bottom:2px solid var(--ink); }
+  .eyebrow {
+    font-family:"IBM Plex Sans", system-ui, sans-serif;
+    text-transform:uppercase; letter-spacing:.14em; font-size:12px; font-weight:600;
+    color:var(--accent); margin:0 0 18px;
+  }
+  h1 {
+    font-family:"IBM Plex Sans", system-ui, sans-serif;
+    font-weight:600; font-size:clamp(30px, 5.4vw, 48px); line-height:1.08;
+    letter-spacing:-.02em; margin:0 0 6px; text-wrap:balance; max-width:20ch;
+  }
+  .subtitle {
+    font-size:clamp(16px,2.4vw,19px); color:var(--ink-soft); margin:0 0 30px; max-width:56ch;
+  }
+  .meta {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+    gap:1px; background:var(--rule); border:1px solid var(--rule);
+  }
+  .meta div { background:var(--surface); padding:12px 14px; }
+  .meta dt {
+    font-family:"IBM Plex Sans", sans-serif; font-size:10.5px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.1em; color:var(--ink-faint); margin:0 0 3px;
+  }
+  .meta dd {
+    margin:0; font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:13px; color:var(--ink); word-break:break-word;
+  }
+
+  /* ---- status tiles ---- */
+  .tiles {
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr));
+    gap:14px; margin:34px 0 8px;
+  }
+  .tile {
+    background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+    padding:18px 18px 16px; box-shadow:var(--shadow);
+  }
+  .tile .fig {
+    font-family:"IBM Plex Sans", sans-serif; font-weight:600;
+    font-size:30px; line-height:1; letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums; color:var(--ink);
+  }
+  .tile .cap {
+    margin-top:8px; font-family:"IBM Plex Sans", sans-serif; font-size:12.5px;
+    line-height:1.4; color:var(--ink-soft);
+  }
+  .tile.ok .fig { color:var(--ok); }
+
+  /* ---- layout ---- */
+  .layout { display:block; padding:36px 0 80px; }
+  @media (min-width:1000px) {
+    .layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:52px; align-items:start; }
+  }
+  nav.toc {
+    font-family:"IBM Plex Sans", sans-serif; font-size:13px; line-height:1.35;
+    border-top:1px solid var(--rule); padding-top:16px; margin-bottom:32px;
+  }
+  @media (min-width:1000px) {
+    nav.toc { position:sticky; top:24px; border-top:none; padding-top:4px; margin-bottom:0; }
+  }
+  nav.toc p {
+    font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.11em;
+    color:var(--ink-faint); margin:0 0 10px;
+  }
+  nav.toc ol { list-style:none; margin:0; padding:0; counter-reset:toc; }
+  nav.toc li { margin:0 0 3px; counter-increment:toc; }
+  nav.toc a {
+    display:flex; gap:9px; padding:4px 6px; border-radius:3px;
+    color:var(--ink-soft); text-decoration:none;
+  }
+  nav.toc a::before {
+    content:counter(toc); color:var(--accent); font-variant-numeric:tabular-nums;
+    font-weight:500; min-width:1.1em;
+  }
+  nav.toc a:hover { background:var(--accent-bg); color:var(--ink); }
+
+  main { min-width:0; }
+  .sec { margin:0 0 46px; scroll-margin-top:20px; }
+  .sec > h2 {
+    font-family:"IBM Plex Sans", sans-serif; font-weight:600;
+    font-size:clamp(20px,3vw,25px); letter-spacing:-.015em; line-height:1.2;
+    margin:0 0 14px; padding-bottom:10px; border-bottom:1px solid var(--rule-strong);
+    display:flex; gap:14px; align-items:baseline; text-wrap:balance;
+  }
+  .sec > h2 .num {
+    font-family:"IBM Plex Mono", monospace; font-size:15px; font-weight:500;
+    color:var(--accent); flex:none;
+  }
+  h3 {
+    font-family:"IBM Plex Sans", sans-serif; font-weight:600; font-size:16px;
+    letter-spacing:-.005em; margin:26px 0 8px; color:var(--ink);
+  }
+  main p { margin:0 0 14px; max-width:70ch; }
+  main p, main li { hyphens:auto; }
+  main ul { margin:0 0 16px; padding-left:22px; max-width:70ch; }
+  main ul li { margin:0 0 7px; }
+  main ol.steps { margin:0 0 16px; padding-left:22px; max-width:70ch; }
+  main ol.steps li { margin:0 0 9px; }
+  strong { font-weight:600; }
+  code {
+    font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:.86em;
+    background:var(--surface-2); padding:.08em .38em; border-radius:3px;
+    color:var(--ink); word-break:break-word;
+  }
+  a { color:var(--accent); text-underline-offset:2px; }
+  a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:2px; }
+
+  /* ---- callouts ---- */
+  .note {
+    border-left:3px solid var(--accent); background:var(--surface-2);
+    padding:14px 16px; margin:18px 0; border-radius:0 3px 3px 0; max-width:70ch;
+  }
+  .note p:last-child { margin-bottom:0; }
+  .note .k {
+    font-family:"IBM Plex Sans", sans-serif; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.09em; color:var(--accent); display:block; margin-bottom:5px;
+  }
+  .note.warn { border-left-color:var(--warn); }
+  .note.warn .k { color:var(--warn); }
+
+  /* ---- tables ---- */
+  .tw { overflow-x:auto; margin:16px 0 20px; border:1px solid var(--rule); border-radius:3px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td {
+    text-align:left; padding:9px 13px; border-bottom:1px solid var(--rule);
+    vertical-align:top;
+  }
+  thead th {
+    font-family:"IBM Plex Sans", sans-serif; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.07em; color:var(--ink-soft);
+    background:var(--surface-2); border-bottom:1px solid var(--rule-strong); white-space:nowrap;
+  }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  td.mono, th.mono { font-family:"IBM Plex Mono", monospace; font-size:12.5px; }
+  td.num { font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  .pill {
+    display:inline-block; font-family:"IBM Plex Sans", sans-serif; font-size:11px;
+    font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap;
+  }
+  .pill.ok { background:var(--ok-bg); color:var(--ok); }
+  .pill.warn { background:var(--warn-bg); color:var(--warn); }
+  .pill.crit { background:var(--crit-bg); color:var(--crit); }
+  .pill.neu { background:var(--surface-2); color:var(--ink-soft); }
+
+  footer {
+    border-top:2px solid var(--ink); padding:24px 0 60px;
+    font-family:"IBM Plex Sans", sans-serif; font-size:12.5px; color:var(--ink-faint);
+  }
+  footer p { margin:0 0 5px; max-width:70ch; }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Informe técnico · Refactor del kernel CAD</p>
+    <h1>Migración de GEOUNED a pyOCC</h1>
+    <p class="subtitle">Desacoplamiento de FreeCAD, paquete <code>geo</code> con tres motores geométricos intercambiables, campañas de verificación por volumen MCNP y una capa de detección y reparación de defectos CAD.</p>
+    <dl class="meta">
+      <div><dt>Proyecto</dt><dd>GEOUNED-org/GEOUNED</dd></div>
+      <div><dt>Rama</dt><dd>georeverse-migration</dd></div>
+      <div><dt>Motor por defecto</dt><dd>ocp (OCP / pybind11)</dd></div>
+      <div><dt>Motores soportados</dt><dd>freecad · occ · ocp</dd></div>
+      <div><dt>Alcance</dt><dd>CadToCsg + CsgToCad</dd></div>
+      <div><dt>Fecha del informe</dt><dd>2026-09-06</dd></div>
+    </dl>
+
+    <div class="tiles">
+      <div class="tile ok"><div class="fig">3 / 3</div><div class="cap">motores CAD con la suite de tests en verde</div></div>
+      <div class="tile ok"><div class="fig">0</div><div class="cap">partículas perdidas en el corpus <code>test_models</code> (143 ejecuciones d1suned)</div></div>
+      <div class="tile"><div class="fig">93,6 %</div><div class="cap">tallies dentro de 2σ del volumen CAD · 0 % por encima de 3σ</div></div>
+      <div class="tile ok"><div class="fig">0</div><div class="cap">imports directos de <code>Part</code> / <code>FreeCAD</code> en el subpaquete GEOUNED</div></div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Índice">
+      <p>Contenido</p>
+      <ol>
+        <li><a href="#s1">Resumen ejecutivo</a></li>
+        <li><a href="#s2">Contexto y motivación</a></li>
+        <li><a href="#s3">Arquitectura: el paquete <span style="font-family:inherit">geo</span></a></li>
+        <li><a href="#s4">Desacoplamiento de FreeCAD</a></li>
+        <li><a href="#s5">Reorganización de los writers</a></li>
+        <li><a href="#s6">Campañas de verificación</a></li>
+        <li><a href="#s7">Correcciones de geometría</a></li>
+        <li><a href="#s8">Migración pyOCC por fases</a></li>
+        <li><a href="#s9">Migración de GEOReverse</a></li>
+        <li><a href="#s10">Detección y reparación de defectos CAD</a></li>
+        <li><a href="#s11">Estado actual y trabajo pendiente</a></li>
+        <li><a href="#s12">Anexo: entorno y herramientas</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <section class="sec" id="s1">
+        <h2><span class="num">01</span> Resumen ejecutivo</h2>
+        <p>GEOUNED convierte geometría CAD en geometría CSG (y a la inversa) para los códigos de transporte Monte Carlo <strong>MCNP, OpenMC, PHITS y Serpent</strong>. Históricamente dependía por completo de la API <code>Part</code> de FreeCAD y, en particular, de <code>BOPTools.SplitAPI.slice</code> para descomponer sólidos. Ese acoplamiento se ha eliminado.</p>
+        <p>El trabajo realizado se agrupa en cinco bloques:</p>
+        <ul>
+          <li><strong>Aislamiento del kernel.</strong> Todo el código que toca FreeCAD/OCCT vive ahora en un único paquete, <code>geo</code>, tras una interfaz de nombres estable. El resto de GEOUNED no importa <code>Part</code> ni <code>FreeCAD</code> en ningún fichero.</li>
+          <li><strong>Tres motores geométricos.</strong> <code>geo</code> tiene tres implementaciones intercambiables mediante la variable de entorno <code>GEOUNED_CAD_ENGINE</code>: FreeCAD (<code>freecad</code>), pythonocc-core / SWIG (<code>occ</code>) y OCP / pybind11 (<code>ocp</code>, actualmente el valor por defecto).</li>
+          <li><strong>Verificación cuantitativa.</strong> Cada corrección se ha validado con dos métodos independientes: comprobación punto a punto de <code>check_sign</code> contra geometría CAD construida de forma independiente, y un chequeo estocástico de volumen ejecutando el modelo MCNP resultante en d1suned (tally ≈ 1,0).</li>
+          <li><strong>Depuración geométrica dirigida por datos.</strong> Decenas de bugs reales —muchos preexistentes a la migración— encontrados y corregidos siguiendo trazas concretas: signos AND/OR en superficies compuestas, degeneraciones de tangencia en <code>Gsplit</code>, clasificación de superficies, escalado de tolerancias y <em>slivers</em> residuales.</li>
+          <li><strong>Reparación de defectos CAD.</strong> Una capa nueva en tiempo de carga que detecta sólidos corruptos (aristas patológicamente cortas, anillos de contorno duplicados, cortes fantasma) y los repara automáticamente cuando es rápido y fiable, o los marca sin traducir cuando no lo es.</li>
+        </ul>
+        <p>El pipeline inverso, <strong>GEOReverse</strong> (CsgToCad), que inicialmente quedó fuera de alcance por su dependencia dura del formato <code>.FCStd</code>, ha recibido su propia migración en la rama actual: es engine-switchable, exporta STEP real vía XCAF bajo los motores pyOCC y colorea cada sólido por material.</p>
+        <p>Estado a fecha del informe: los tres motores pasan sus suites; el corpus de referencia <code>Solidos/test_models</code> se traduce sin partículas perdidas y sin fallos por encima de 3σ; <code>occ</code> y <code>ocp</code> producen resultados idénticos sobre todo el corpus. Quedan abiertos varios puntos de GEOReverse y algunas superficies exóticas sin portar (§11).</p>
+      </section>
+
+      <section class="sec" id="s2">
+        <h2><span class="num">02</span> Contexto y motivación</h2>
+        <h3>El problema que originó la migración</h3>
+        <p>El <code>Cut</code> booleano de FreeCAD puede fallar de forma <strong>silenciosa</strong> al partir un sólido en dos cuando la intersección del plano de corte coincide exactamente con una línea de tangencia preexistente (por ejemplo, un plano que corta la esquina donde un cilindro ya es tangente a dos caras de un cubo). El síntoma: <code>Cut</code> devuelve el sólido original sin cortar, en lugar de lanzar un error. La causa: los fragmentos resultantes solo se tocan a lo largo de una línea (contacto de área cero), lo que produce una forma no-manifold que el algoritmo BOP de OCC no resuelve limpiamente. Pasar por una exportación/importación STEP «arregla» el problema porque el sanador de STEP vuelve a partir el compound.</p>
+        <p>La solución de fondo —construir un grafo de adyacencia de caras que excluya las aristas compartidas por más de dos caras y reconstruir un sólido por componente conexa— requiere control topológico fino que la API <code>Part</code> de FreeCAD, al ser ella misma un envoltorio sobre OCCT, no expone cómodamente.</p>
+        <h3>Decisión: pythonocc-core, no CadQuery</h3>
+        <ul>
+          <li>Se necesita control topológico de grano fino (grafos de adyacencia cara/arista, <code>BRepCheck_Analyzer</code>, <code>ShapeFix_Shape</code>, control de tolerancia sobre <code>BRepAlgoAPI_*</code> / <code>BOPAlgo_Splitter</code>) para exactamente los casos degenerados anteriores.</li>
+          <li>Migrar a pyOCC <em>elimina</em> una capa (el envoltorio <code>Part</code>) en lugar de sustituirla por otra distinta (CadQuery).</li>
+          <li>CadQuery encaja mejor en construcción paramétrica de alto nivel, no en la cirugía topológica de bajo nivel que exige la descomposición de GEOUNED.</li>
+        </ul>
+      </section>
+
+      <section class="sec" id="s3">
+        <h2><span class="num">03</span> Arquitectura: el paquete <code>geo</code></h2>
+        <h3>Intento 1 (retirado): la ABC <code>GeometryBackend</code></h3>
+        <p>El primer diseño fue un patrón Adapter / Ports &amp; Adapters clásico: una clase base abstracta <code>GeometryBackend</code> con dataclasses neutras (<code>GSolid</code> / <code>GFace</code> / <code>GEdge</code> / <code>GVector</code> / …) que llevaban un objeto <code>native</code> más una referencia al backend que las produjo, y una implementación concreta <code>FreeCADBackend</code>. Todo GEOUNED llamaba a través de una única instancia inyectada (<code>_backend.split(gsolid, tool, tol)</code>, …). Se implementó por completo y se validó contra toda la suite, pero se juzgó <strong>demasiado pesado e indirecto</strong> —las dataclasses cargando su propio backend y la convención <code>_backend.method(x, …)</code>— para lo que aportaba. Se eliminó por completo junto con sus tests.</p>
+        <h3>Intento 2 (actual): el paquete <code>geo</code></h3>
+        <p><code>src/geouned/geo/</code> es el <strong>único lugar de GEOUNED autorizado a importar</strong> <code>Part</code> / <code>FreeCAD</code> / <code>BOPTools</code>. Estructura:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Fichero</th><th>Responsabilidad</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">vector_geometry.py</td><td>Matemática pura sin dependencia de FreeCAD: <code>GVector</code>, <code>GMatrix</code>, <code>GBoundBox</code> y conversores.</td></tr>
+              <tr><td class="mono">surface_geometry.py</td><td>Predicados analíticos sobre descriptores de superficie (<code>is_same_*_surface</code>, <code>is_inside_*</code>, <code>find_can_plane</code>, intersecciones plano-plano y línea-línea).</td></tr>
+              <tr><td class="mono">solid_defects.py</td><td>Detección de defectos CAD a nivel de sólido completo (<code>find_short_edges</code>, <code>find_split_ring_faces</code>, <code>near_surface_pair</code>).</td></tr>
+              <tr><td class="mono">io_utils.py</td><td>Utilidades de proceso/carga: <code>GLabelNode</code> (árbol de etiquetas STEP), <code>suppress_native_stdout</code>.</td></tr>
+              <tr><td class="mono">_freecad_impl.py</td><td>Implementación FreeCAD: clasificación de superficies/curvas, clases de topología (<code>GEdge</code>/<code>GWire</code>/<code>GFace</code>/<code>GShell</code>/<code>GSolid</code>) construidas ansiosamente con comportamiento real como métodos, constructores <code>Gmake_*</code> y operaciones <code>Gcut</code>/<code>Gcommon</code>/<code>Gfuse</code>/<code>Gsplit</code>.</td></tr>
+              <tr><td class="mono">_occ_impl.py</td><td>La misma superficie de nombres contra pythonocc-core (SWIG).</td></tr>
+              <tr><td class="mono">_ocp_impl.py</td><td>La misma superficie de nombres contra OCP (pybind11).</td></tr>
+              <tr><td class="mono">__init__.py</td><td>Punto único de import. Lee <code>GEOUNED_CAD_ENGINE</code> una sola vez y reexporta los nombres desde la implementación resuelta.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <span class="k">Principio de intercambiabilidad</span>
+          <p>La selección de motor ocurre en tiempo de import, no por inyección de dependencias. Un motor nuevo solo tiene que definir los mismos nombres de clase y función; <code>geo/__init__.py</code> elige cuál reexportar y el resto de GEOUNED no cambia. GEOReverse replica exactamente el mismo patrón con su propio <code>GEOReverse/Modules/__init__.py</code>.</p>
+        </div>
+        <h3>Diseño de las clases <code>geo</code></h3>
+        <ul>
+          <li>Las caras se clasifican ansiosamente en una de 5 superficies analíticas (plano / cilindro / cono / esfera / toro) vía <code>Gclassify_surface</code>. Las superficies compuestas (RoundCorner, Can, TCone, MultiPlane, MultiRoundCorner, ReversedConeCylinder) las ensambla el propio GEOUNED con <code>Gcut</code>/<code>Gcommon</code>/<code>Gfuse</code>; <code>geo</code> nunca las modela.</li>
+          <li>La clasificación de curvas es tolerante: devuelve <code>None</code> para una arista degenerada o un tipo real no soportado (p. ej. hipérbola) en lugar de lanzar, porque los sólidos se construyen ansiosamente y una arista incidental no debe abortar el sólido entero.</li>
+          <li><code>Gsplit()</code> devuelve un <code>SplitResult</code> que nunca puede volver vacío silenciosamente: los casos de tangencia/degeneración se resuelven internamente (reintento de tolerancia, reconstrucción no-manifold, separación por componentes) y se reportan con <code>degenerate_case_handled=True</code>.</li>
+          <li><code>utils/geometry_gu.py::FaceGu</code> / <code>SolidGu</code> —un segundo envoltorio nativo previo a <code>geo</code>, usado por el código de descomposición— ahora <strong>heredan</strong> de <code>GFace</code> / <code>GSolid</code> y solo añaden encima los extras del lado de descomposición, en lugar de duplicar la construcción.</li>
+        </ul>
+      </section>
+
+      <section class="sec" id="s4">
+        <h2><span class="num">04</span> Desacoplamiento de FreeCAD en GEOUNED</h2>
+        <p>El cierre de los <code>import Part</code> / <code>import FreeCAD</code> se hizo fichero por fichero, trazando cada consumidor real antes de tocar la fuente. <code>core.py</code> (concretamente <code>_set_geometry_bounding_box</code>) fue el último reducto, precisamente porque su <code>BoundBox</code> se consume fuera del alcance original de la migración (<code>void.py</code>, <code>write_files.py</code>). Tras su cierre, <strong>cero ficheros</strong> del subpaquete GEOUNED importan <code>Part</code>/<code>FreeCAD</code>/<code>BOPTools</code> directamente.</p>
+        <h3>Unificación de representaciones duplicadas</h3>
+        <p>Para «un plano» existían tres representaciones paralelas: el descriptor <code>geo.GPlane</code>, la clase <code>PlaneParams</code> de <code>basic_functions_part1.py</code> y la clase <code>Plane</code> de <code>build_region/Objects.py</code>. Se consolidaron:</p>
+        <ul>
+          <li>«superficie analítica + bounding box → sólido finito recortado» para plano/cilindro/cono se unificó en tres funciones puras en <code>build_region/Objects.py</code> (<code>plane_polygon_from_box</code>, <code>cylinder_from_box</code>, <code>cone_from_box</code>), en espacio <code>GVector</code>/<code>GBoundBox</code>, sin duplicación.</li>
+          <li>Las clases <code>Plane</code>/<code>Cylinder</code>/<code>Cone</code>/<code>Sphere</code> de <code>Objects.py</code> colapsaron en una única <code>CellSurface</code> que envuelve un descriptor <code>geo</code>; <code>get_surface()</code> construye ahora <code>GPlane</code>/<code>GCylinder</code>/… directamente vía <code>.from_values(...)</code>, sin paso de traducción ni desvío nativo.</li>
+          <li>Los <code>*OnlyParams</code> de Tier-1 pasaron a almacenar <code>GVector</code> directamente en lugar de <code>FreeCAD.Vector</code>; <code>check_sign_primitive</code> se colapsó a un despacho por diccionario contra las funciones <code>is_inside_*</code> compartidas.</li>
+        </ul>
+        <div class="note warn">
+          <span class="k">Lección metodológica registrada</span>
+          <p>Un estudio estático de «quién lee este campo» es necesario pero no suficiente cuando el valor pasa por un objeto intermedio antes de llegar a la operación que le importa el tipo. Varias veces, una encuesta por <code>grep</code> concluyó que todos los consumidores toleraban <code>GVector</code>, y la suite real reveló sitios nativos que el <code>grep</code> no vio. Norma: seguir cada <code>AttributeError</code>/<code>TypeError</code> real de la suite completa, no solo el trazado estático.</p>
+        </div>
+        <h3>Dos ámbitos de numeración de superficies</h3>
+        <p>Cada <code>GeounedSurface</code> tiene <code>.bVar</code> (el id firmado con que se referencia) y, para tipos compuestos, <code>.region</code> (la definición booleana AND/OR) y <code>.components</code> (la relación numeración↔superficie). Se asignan en dos fases con numeraciones genuinamente distintas: en <strong>descomposición</strong> el <code>.bVar</code> es un id local desechable cuyo único fin es mantener la expresión AND/OR consistente para una construcción CAD; en <strong>conversión</strong> se sobreescribe con el id global canónico y deduplicado. Ambas fases <em>no</em> pueden leer la <code>.region</code> de la otra, pero sí comparten la <strong>regla</strong> AND/OR, extraída a funciones puras (<code>can_region</code>, <code>tcone_region</code>, <code>round_corner_region</code>, …).</p>
+      </section>
+
+      <section class="sec" id="s5">
+        <h2><span class="num">05</span> Reorganización de los writers</h2>
+        <p>Los cuatro escritores de formato de salida tenían implementaciones casi idénticas de varios métodos. Se reorganizaron por la frontera real de convenciones de tarjeta:</p>
+        <ul>
+          <li><code>write/mcnp_like/</code> — MCNP, Serpent y PHITS (los tres formatos de texto de linaje MCNP, con convenciones comunes de comentario de línea/inline y banners).</li>
+          <li><code>write/openmc/</code> — estructuralmente distinto (salida XML/Python, sin concepto de tarjeta de comentario).</li>
+          <li><code>write/functions.py</code> — hogar compartido de <code>get_cell_surf_summary</code>, <code>simplify_planes</code>, <code>sorted_surfaces</code>, usadas por los cuatro formatos.</li>
+        </ul>
+        <p>El mixin <code>CommonInputWriter</code> (heredado por <code>McnpInput</code>/<code>SerpentInput</code>/<code>PhitsInput</code>) recoge lo duplicado solo entre los tres formatos de linaje MCNP, parametrizado por atributos de clase (<code>_surface_formatter</code>, <code>inline_comment_char</code>, …).</p>
+        <div class="note">
+          <span class="k">Corrección real, confirmada con el usuario</span>
+          <p>La unificación de <code>sorted_surfaces</code> corrige una inconsistencia: solo MCNP aplicaba <code>Surfaces.IndexOffset</code> al reetiquetar cada <code>bVar</code>; Serpent/OpenMC/PHITS se lo saltaban. Ahora los cuatro formatos usan la versión de MCNP. El efecto es actualmente latente (<code>IndexOffset</code> es 0 salvo que <code>settings.startSurf</code> se cablee, cosa que también se hizo en esta migración) pero deja de ser una divergencia entre formatos.</p>
+        </div>
+      </section>
+
+      <section class="sec" id="s6">
+        <h2><span class="num">06</span> Campañas de verificación</h2>
+        <h3>Verificación de <code>check_sign</code> punto a punto</h3>
+        <p>Para cada superficie compuesta encontrada en un modelo, se construye un sólido CAD de referencia <em>independiente</em> por la misma vía que usa <code>Gsplit</code> para construir esa composición, se muestrean puntos aleatorios estrictamente dentro de la caja de construcción y se compara <code>check_sign(punto, superficie)</code> contra <code>gsolid.is_inside(punto)</code>.</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Tipo compuesto</th><th>Resultado</th><th>Notas</th></tr></thead>
+            <tbody>
+              <tr><td>RoundCorner</td><td><span class="pill ok">300/300</span></td><td>Múltiples instancias en decenas de ficheros.</td></tr>
+              <tr><td>Can (Fwd / Rev)</td><td><span class="pill ok">300/300</span></td><td>Un artefacto de muestreo (padding de bounding box) se identificó y corrigió: muestrear dentro de la caja de construcción, no de la del sólido resultante.</td></tr>
+              <tr><td>TCone (Fwd / Rev)</td><td><span class="pill ok">300/300</span></td><td>Reveló un bug real en <code>TCone_region</code> (ignoraba <code>p1_configuration</code>/<code>p2_configuration</code>), corregido.</td></tr>
+              <tr><td>MultiRoundCorner</td><td><span class="pill ok">300/300</span></td><td>17 instancias en 13 ficheros. Primera validación end-to-end de este tipo.</td></tr>
+              <tr><td>MultiPlane</td><td><span class="pill ok">300/300</span></td><td>Reveló que <code>multiplane()</code> nunca podía detectar un MultiPlane (comparación instancia-vs-clase), corregido.</td></tr>
+              <tr><td>ReversedConeCylinder</td><td><span class="pill warn">parcial</span></td><td>Estructuralmente inalcanzable desde el escaneo de descomposición; verificado desde el lado de conversión con una discrepancia real en <code>hylife-v06</code> solid113 (271/300), ligada a un desajuste conocido de GEOReverse.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Chequeo estocástico de volumen MCNP</h3>
+        <p>Pregunta distinta y más end-to-end: ¿un modelo MCNP <em>completamente traducido</em>, ejecutado de verdad, reproduce los <strong>mismos volúmenes</strong> que los sólidos CAD originales? Se exporta con <code>volSDEF=True</code> (fuente fotónica isótropa desde una esfera envolvente + tally F4 de longitud de traza en cada celda, normalizado por el volumen CAD), se corre en <code>MODE P</code> + <code>VOID</code> en d1suned y el resultado esperado del tally es exactamente <strong>1,0</strong>. Una desviación significativa (&gt; 3σ) señala que los signos de superficie escritos no reconstruyen el mismo sólido.</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Corpus <code>Solidos/test_models</code> (sin <code>Big_*</code>)</th><th class="num">Valor</th></tr></thead>
+            <tbody>
+              <tr><td>Ficheros que traducen</td><td class="num">133 / 138</td></tr>
+              <tr><td>Tallies dentro de 2σ de 1,0</td><td class="num">93,6 %</td></tr>
+              <tr><td>Tallies marginales (2–3σ, ruido estadístico esperado)</td><td class="num">6,4 %</td></tr>
+              <tr><td>Fallos reales (&gt; 3σ)</td><td class="num">0 %</td></tr>
+              <tr><td>Ficheros con partículas perdidas</td><td class="num">0 / 143 ejec.</td></tr>
+              <tr><td>Divergencia <code>occ</code> vs <code>ocp</code> sobre el corpus</td><td class="num">byte a byte idéntica</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Los 5 ficheros que no traducen son defectos CAD genuinos que la capa de detección (§10) marca correctamente, más un caso de crash nativo aceptado como limitación (<code>ConeSphere.stp</code> bajo <code>occ</code>/<code>ocp</code>).</p>
+      </section>
+
+      <section class="sec" id="s7">
+        <h2><span class="num">07</span> Correcciones de geometría</h2>
+        <p>Decenas de bugs reales, la mayoría preexistentes a la migración (confirmado contra el último commit pre-migración), encontrados siguiendo trazas concretas —nunca por conjetura— y verificados antes y después. Agrupados por naturaleza:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Categoría</th><th>Ejemplos representativos</th><th>Impacto</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Signos AND/OR en superficies compuestas</strong></td>
+                <td><code>can_region</code> rama cono + plano-ápice Reversed usaba AND donde el signo físico exige OR (dos instancias); <code>TCone_region</code> sustituía la configuración real por un valor único según orientación; <code>round_corner_region</code> aplicaba <code>fwd_cyl</code> dos veces en la rama <code>p1 == p2</code>; <code>cone_apex_plane</code> doble-compensaba el caso Reversed; <code>add_reversedCC</code> rediseñado (<code>plane_region AND (s₁ AND … AND sₙ)</code>) y su <code>AddPlanes</code> pasó de OR incondicional a AND; <code>AdjacentMultiplanePlanes</code> pasó a lista-de-listas (AND dentro de grupo, OR entre grupos).</td>
+                <td>Volumen CSG erróneo con expresión booleana válida; en varios casos «fugas» que engullían medio modelo. Verificado con d1suned tras cada corrección.</td>
+              </tr>
+              <tr>
+                <td><strong>Degeneración / tangencia en <code>Gsplit</code></strong></td>
+                <td>Fallback de corte coaxial cono-cono (<code>_try_coaxial_cone_split</code>): reconstrucción analítica del círculo exacto de intersección, pre-split de esa arista y reintento con escalado de tolerancia difusa; el <code>splitTolerance</code> por defecto implícito pasó de 0,0 a 1e-4 bajo <code>occ</code>/<code>ocp</code> (OCCT 7.9.3 es más sensible a la near-tangencia); <code>_repair_non_manifold_solid</code> ahora valida su propia reconstrucción (validez + conservación de volumen) antes de fiarse de ella.</td>
+                <td>Descomposición que devolvía silenciosamente 1 pieza en vez de 2 o 3; fragmentos con volumen inflado.</td>
+              </tr>
+              <tr>
+                <td><strong>Clasificación de superficies</strong></td>
+                <td><code>is_same_plane_surface</code> comparaba el offset de dos planos con ejes antiparalelos como <code>d1 == d2</code> en vez de <code>d1 == -d2</code>; <code>convex_planes</code> tenía un test de signo muerto (<code>cross.dot(ref)</code> siempre 0) y no normalizaba <code>atan2</code> a [0, 2π); <code>multiplane()</code> comparaba instancia contra clase (<code>Gclassify_curve(e) is GLine</code>), haciendo MultiPlane indetectable; <code>is_closed_cylinder_cone</code> aceptaba una cara que no era un cilindro cerrado de 360° → invariante topológica real por winding (<code>_is_closed_by_winding</code>); <code>cyl_plane_region_conf</code> usaba la cara semilla para ambos extremos de un cilindro partido.</td>
+                <td>Clasificación de caras a tipo compuesto equivocado; tallies de 0,0 y desviaciones de cientos de σ, todas cerradas.</td>
+              </tr>
+              <tr>
+                <td><strong>Tolerancias</strong></td>
+                <td><code>min_area</code> nunca estaba cableado a <code>order_plane_face</code> ni a los generadores de candidatos; nuevo <code>min_face_width</code> + <code>CharacteristicWidth</code> (ancho característico de una cara vía radios de giro) para detectar <em>slivers</em> «estrechos pero de área suficiente», portado a los tres motores; <code>Tolerances.scaled(volume)</code> escala <code>min_area</code>/<code>min_face_width</code> hacia abajo para fragmentos descompuestos diminutos; <code>eligible_plane</code> ignoraba las tolerancias configuradas por el usuario.</td>
+                <td>Planos sliver espurios entrando en la definición de celda → partículas perdidas.</td>
+              </tr>
+              <tr>
+                <td><strong>Slivers residuales de corte booleano</strong></td>
+                <td><code>other_face_edge</code> con modo <code>skip_slivers</code> para atravesar caras sliver y encontrar la cara real; filtro de slivers en <code>merge_same_surface_faces</code> antes del walk O(n²) de adyacencia; <code>sort_range</code> con fallback «sin progreso» ante fragmentos unidos solo módulo 2π (era recursión infinita).</td>
+                <td>Detección de Can/RoundCorner fallando o colgándose sobre geometría con artefactos de corte.</td>
+              </tr>
+              <tr>
+                <td><strong>Cross-engine</strong></td>
+                <td>El flag de <code>ShapeUpgrade_UnifySameDomain</code> que provoca un crash nativo es <em>opuesto</em> entre OCP y pythonocc-core sobre la misma geometría OCCT 7.9.3; <code>get_join_cone_cyl</code> usaba <code>.Index</code> donde un shell fusionado tiene <code>.Indexes</code> (solo <code>freecad</code>); el LAPACK de MKL entraba en conflicto con <code>occt</code>/<code>tbb</code> en el mismo proceso → cambio a OpenBLAS en <code>pyoccenv</code> y <code>ocpenv</code>.</td>
+                <td>47 tests crasheando en <code>freecad</code>/<code>occ</code> por un <code>AttributeError</code>; access violations nativos.</td>
+              </tr>
+              <tr>
+                <td><strong>No geométricos, encontrados de camino</strong></td>
+                <td><code>generic_split</code> hacía doble-wrap de un <code>GSolid</code> ya envuelto → la descomposición era silenciosamente un no-op; <code>check_intersection</code> con early-exit por <code>Gdistance</code> clasificaba sólidos totalmente anidados como disjuntos → la celda de vacío del enclosure no excluía las esferas dentro (<code>w_encl.stp</code>, tally 0,0); <code>expand_regions_to_integer</code> sin guard de <code>bool</code>, guard que los cinco escritores de celda necesitaban y solo MCNP tenía.</td>
+                <td>Bugs de correctitud que degradaban la descomposición o la salida de forma invisible.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sec" id="s8">
+        <h2><span class="num">08</span> Migración pyOCC por fases</h2>
+        <p>La migración a pyOCC se abordó en fases, cada una con un criterio de continuación explícito antes de escribir código a gran escala.</p>
+        <ol class="steps">
+          <li><strong>Fase 1 — Scaffolding y prueba go/no-go.</strong> Selección de motor vía <code>GEOUNED_CAD_ENGINE</code>; <code>geo/__init__.py</code> importa de <code>_freecad_impl</code> o del nuevo <code>_occ_impl</code>. Solo se implementó lo mínimo para probar <code>Gsplit</code> contra el caso <code>rev_pipe.stp</code>, ya caracterizado como roto en FreeCAD. Resultado: <code>BOPAlgo_Splitter</code> (OCCT 7.9.3) devuelve <strong>3 sólidos válidos</strong> en el primer intento sin reparación, donde FreeCAD devolvía 1 sólido inválido. Señal fuerte para continuar.</li>
+          <li><strong>Fase 2 — Port completo.</strong> Los 5 descriptores de superficie y 4 de curva, <code>Gclassify_surface</code>/<code>Gclassify_curve</code>, <code>GEdge</code>/<code>GWire</code>/<code>GFace</code>/<code>GShell</code>/<code>GSolid</code> completos (incluyendo <code>find_interior_point</code>, <code>faces_sharing_edge</code>, <code>fix</code>/<code>refine</code>), todos los <code>Gmake_*</code> y las operaciones booleanas. Test nuevo <code>tests/geo/test_occ_impl.py</code>: 39/39 contra geometría real con valores esperados conocidos.</li>
+          <li><strong>Fase 3 — Pipeline de integración.</strong> <code>tests/test_cadtocsg.py</code> pasa 50/50 bajo <code>GEOUNED_CAD_ENGINE=occ</code>, idéntico al baseline FreeCAD, tras cerrar 6 huecos reales (entre ellos <code>Gload_step_labels</code> vía XCAF, un bug de periodicidad en <code>get_join_cone_cyl</code> alcanzable también bajo FreeCAD, y el fallback de <code>GeomAPI_ProjectPointOnSurf</code>).</li>
+          <li><strong>Fase 4 — Corpus <code>Solidos/</code>.</strong> Escaneo diferencial de 98/99 ficheros contra un baseline FreeCAD fresco; 7 huecos más cerrados. <code>rev_pipe.stp</code> confirmado: FreeCAD falla la ruta completa decompose+convert (<code>FuseEdges</code>), <code>occ</code> tiene éxito con <code>RoundC=2, MultiRoundC=1</code>.</li>
+        </ol>
+        <h3>Tercer motor: OCP (pybind11)</h3>
+        <p>Añadido junto a FreeCAD y pythonocc-core, no como reemplazo. OCP es un binding pybind11 de OCCT más directo y activamente mantenido que el SWIG de pythonocc-core. Validación go/no-go contra <code>rev_pipe.stp</code> (2 piezas, volumen conservado), port completo estructuralmente copiado de <code>_occ_impl.py</code> y retargeteado (con diferencias de API confirmadas en vivo: sufijo <code>_s</code> en métodos estáticos, sin <code>.DownCast()</code>, orden de argumentos invertido en <code>ShapeUpgrade_UnifySameDomain</code>, …). <code>tests/geo/test_ocp_impl.py</code> 39/39 al primer intento; <code>tests/test_cadtocsg.py</code> 50/50; <code>tests/test_csgtocad.py</code> 2/2. Ambos motores pyOCC se desarrollan en paralelo: una corrección en uno se porta al otro.</p>
+        <div class="note">
+          <span class="k">El «gap» de rendimiento, contado con honestidad</span>
+          <p>En el caso motivador (<code>hylife-v06.stp</code> solid 17), FreeCAD tardaba 2,3 s y pythonocc-core 19,2 s. Se atribuyó primero al coste por-llamada del binding SWIG (real: pythonocc-core expone la API cruda de OCCT sin la capa de conveniencia en C++ que FreeCAD sí tiene). OCP en ese mismo caso: 18,4 s —solo ~4 % más rápido, no el 2–6× de los micro-benchmarks de conversión de puntos—. La causa real resultó ser <strong>otra</strong>: <code>splitTolerance</code> con valor implícito 0,0 hacía que OCCT 7.9.3 computara y luego descartara un split degenerado de 15 fragmentos. Con el default corregido a 1e-4 bajo <code>occ</code>/<code>ocp</code>, el mismo caso baja a <strong>1,2 s</strong> —más rápido que FreeCAD—.</p>
+        </div>
+      </section>
+
+      <section class="sec" id="s9">
+        <h2><span class="num">09</span> Migración de GEOReverse</h2>
+        <p>GEOReverse (CsgToCad) reconstruye CAD a partir de CSG y depende históricamente del formato de documento <code>.FCStd</code> de FreeCAD, no solo de su kernel geométrico. Inicialmente quedó permanentemente fuera de alcance; en la rama actual (<code>georeverse-migration</code>) ha recibido el mismo tratamiento que el pipeline directo.</p>
+        <ul>
+          <li><strong>Desacoplamiento.</strong> El núcleo de GEOReverse (<code>Objects.py</code>, <code>buildSolidCell.py</code>, <code>splitFunction.py</code>, <code>buildCAD.py</code>, <code>MCNPinput.py</code>) importa <code>geo</code> directamente, igual que el pipeline directo. Un módulo <code>matrix_utils.py</code> recoge el puente numpy↔matriz nativa. <code>BOPTools.SplitAPI.slice</code> → <code>Gsplit</code>; <code>FuseSolid</code> (triplicado byte a byte) → un único <code>fuse_solids</code> con la comprobación de invariancia de volumen de <code>GSolid.refine()</code>.</li>
+          <li><strong><code>export_cad</code> independiente del motor.</strong> <code>export_cad(output_filename="", format="stp")</code> acepta un <code>str</code> o una lista de formatos, valida contra los formatos soportados por el motor y despacha por <code>CAD_ENGINE</code>. Cambio de comportamiento real: el <code>.FCStd</code> ya no se escribe incondicionalmente, solo cuando se pide <code>"fcstd"</code> explícitamente.</li>
+          <li><strong>Simetría FreeCAD/pyOCC completa.</strong> <code>GEOReverse/Modules/__init__.py</code> despacha entre <code>_freecad_impl.py</code> (export vía documento FreeCAD, <code>makeTree</code>) y <code>_ocp_impl.py</code>/<code>_occ_impl.py</code> (export real vía XCAF: <code>STEPCAFControl_Writer</code>, jerarquía Universe→Material→Cell con nombres y anidamiento). Las 6 superficies cuádricas exóticas se reorganizaron en un paquete <code>geo_quadrics</code> con el mismo patrón de despacho.</li>
+          <li><strong>Color por material (motor <code>occ</code>/<code>ocp</code>).</strong> Cada sólido del STEP exportado se colorea por su valor <code>MAT</code> vía XCAF: mismo color para el mismo material, paleta <code>tab10</code> hasta 10 materiales y rotación por ángulo áureo para más, sin colisiones. El color en el motor FreeCAD queda fuera de alcance (su API de color vive en <code>Gui.ViewProvider</code>, sin ruta headless).</li>
+          <li><strong>IGES descartado.</strong> Se verificó en vivo que <code>IGESControl_Writer</code> no preserva sólidos a través de IGES en esta build de OCCT (un sólido vuelve como caras planas recortadas sin topología de shell). Se abandonó importación y exportación IGES.</li>
+        </ul>
+        <p>Verificación: <code>tests/test_csgtocad.py</code> es engine-aware y pasa 2/2 bajo los tres motores contra aserciones de volumen reales por sólido (±1e-6). Bajo <code>occ</code>/<code>ocp</code> quedan 2 fallos preexistentes (GEOReverse produce 2/1 sólidos donde se esperan 4/5 en el STEP de <code>cylinder_box</code>), confirmados no introducidos por esta migración y no ligados al trabajo de <code>Gsplit</code>.</p>
+      </section>
+
+      <section class="sec" id="s10">
+        <h2><span class="num">10</span> Detección y reparación de defectos CAD</h2>
+        <p>Una capa nueva en tiempo de carga (<code>Gload_and_process_step</code> → <code>Gcheck_and_repair</code>) que, para cada sólido: aplica un <code>fix(1e-6)</code>, comprueba defectos conocidos y, si los hay, intenta repararlos con el método más apropiado; solo si la reparación falla se consulta el modo elegido por el usuario. El parámetro <code>corrupted_solids</code> tiene dos modos, <code>"stop"</code> (por defecto) y <code>"remove"</code>; el antiguo parámetro <code>invalid_solids</code> se fusionó aquí.</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Defecto</th><th>Detección</th><th>Reparación</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Anillo de contorno partido</strong> (micro-recorte duplicado / escalón colapsado, variante esférica)</td>
+                <td><code>find_split_ring_faces</code>: cara analítica curva a escala sliver que además toca una arista patológicamente corta. <code>count_split_ring_pairs</code> cuenta pares de aristas circulares casi coincidentes y concéntricas.</td>
+                <td><code>Gcollapse_split_rings</code> (ocp/occ): quita las caras «riser», re-cose el shell, rehace el sólido. Aceptación por 3 comprobaciones: validez + <code>|dV|/V &lt; 3e-4</code> + los pares de anillos deben decrecer.</td>
+                <td><span class="pill ok">reparado</span> <code>barrel bottom.stp</code> → tally 0,9997</td>
+              </tr>
+              <tr>
+                <td><strong>Escalón cilíndrico colapsado</strong> (familia beltline)</td>
+                <td>Mismo detector de anillo partido dispara; <code>near_surface_pair</code> identifica dos cilindros de radio casi igual bridged por una banda sliver.</td>
+                <td><code>Gsliver_heal</code> (ocp/occ), versión 0: quita las caras sliver y la menor del par cercano, re-recorta la cuádrica liberada a su radio real, re-cose <em>al final</em>. Gate: validez + <code>|dV| &lt; 5e-4</code>.</td>
+                <td><span class="pill ok">reparado</span> <code>LR.stp</code> → tally 0,9989 (era 0,0 / 24 partículas perdidas)</td>
+              </tr>
+              <tr>
+                <td><strong>Corte fantasma</strong> (dos regiones volumétricas que solo se tocan por aristas — la motivación fundacional de la migración)</td>
+                <td><code>_separate_edge_joined_components</code>: aristas no-manifold (compartidas por ≠ 2 caras) → grafo de adyacencia de caras solo por aristas manifold → si hay ≥ 2 componentes conexas y las aristas no-manifold eran la conexión portante.</td>
+                <td>Cose cada componente por separado (sin caras donantes: un corte fantasma real ya lleva el contorno cerrado de cada región). Gate: ≥ 2 piezas, todas válidas, suma de volúmenes conservada a 1e-6.</td>
+                <td><span class="pill ok">resuelto</span> ocp/occ · <code>Piece_1</code>+<code>Tool_1</code> → 2 sólidos válidos (era 1 sólido inválido fusionado). FreeCAD no puede hacerlo.</td>
+              </tr>
+              <tr>
+                <td><strong>Wire de cara malformado</strong> (<code>UnorientableShape</code>)</td>
+                <td><code>check_solid_defects</code> reporta topología inválida real; <code>BRepCheck_Analyzer</code> marca la cara, ninguna arista sliver.</td>
+                <td>Ninguna. Se probaron <code>ShapeFix_Shape</code>, <code>ShapeFix_Face</code>, partición del wire y reconstrucción — todas fallan o desvían el volumen &gt; 1,7 %.</td>
+                <td><span class="pill neu">sin reparación</span> <code>L4_support.stp</code> movido a <code>Solidos/Detected_corrupted/</code>, excluido de conversión</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Un cambio relacionado: <code>check_solid_defects</code> ya no rechaza un sólido por una arista sliver sobre una cara <em>bien formada</em> (<code>CharacteristicWidth</code> normal) — el pipeline de descomposición ya tolera aristas sliver en caras sanas, y ningún reparador quita tal arista sin una cara sliver donde anclarse. Las recetas de defectos se mantienen en un catálogo vivo (<code>reference_cad_defect_recipes.md</code>): síntoma observable, firma de detección general, causa raíz, reparación si es rápida y fiable, y un fixture STEP mínimo con verificación d1suned.</p>
+      </section>
+
+      <section class="sec" id="s11">
+        <h2><span class="num">11</span> Estado actual y trabajo pendiente</h2>
+        <h3>Estado consolidado</h3>
+        <ul>
+          <li>Los tres motores pasan sus suites: <code>freecad</code> 158/158, <code>occ</code> 128/128, <code>ocp</code> 128/128 (+2 fallos preexistentes de GEOReverse bajo los motores pyOCC).</li>
+          <li>Corpus <code>Solidos/test_models</code>: 93,6 % &lt; 2σ, 0 % &gt; 3σ, 0 partículas perdidas en 143 ejecuciones d1suned. <code>occ</code> y <code>ocp</code> byte a byte equivalentes sobre todo el corpus.</li>
+          <li><code>ocp</code> es el motor por defecto cuando <code>GEOUNED_CAD_ENGINE</code> no está definida.</li>
+        </ul>
+        <h3>Abierto</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Ítem</th><th>Naturaleza</th></tr></thead>
+            <tbody>
+              <tr><td>Discrepancia de volumen en el round-trip de GEOReverse sobre <code>hylife-v06.stp</code> celda 1 (CAD reconstruido 1,401× vs tally d1suned 1,119×).</td><td>GEOReverse, no trazado hasta el fondo.</td></tr>
+              <tr><td><code>test_csgtocad.py</code> 2 fallos bajo <code>occ</code>/<code>ocp</code> (2/1 sólidos donde se esperan 4/5).</td><td>GEOReverse, preexistente, acotado a <code>Objects.py::CellObj.buildShape</code>.</td></tr>
+              <tr><td><code>AdjacentMultiplanePlanes</code> necesita extenderse de RevCC a MultiRoundCorner.</td><td>Mejora de cobertura, pendiente desde 2026-08-21.</td></tr>
+              <tr><td>Las 6 cuádricas exóticas (<code>Gmake_elliptic_cone</code>, <code>Gmake_hyperboloid</code>, …) son stubs en los backends pyOCC de GEOReverse.</td><td>Port pendiente; sin fixture que las ejercite todavía.</td></tr>
+              <tr><td><code>Big_complex_cell/modelcell_cut1.stp</code> y <code>modelCell_670000.stp</code> pierden partículas.</td><td>No trazado; excluidos de los escaneos de corpus por convención.</td></tr>
+              <tr><td><code>hylife-v06.stp</code> round-trip completo de 372 sólidos: descomposición lenta en <code>meta_list[45]</code> (fragmentos de cara duplicados, coste O(n²) en <code>same_faces</code>).</td><td>Causa raíz identificada, no optimizado, despriorizado por el usuario.</td></tr>
+              <tr><td><code>ConeSphere.stp</code>: crash nativo (access violation) bajo <code>occ</code>/<code>ocp</code> en <code>ShapeUpgrade_UnifySameDomain</code>; traduce limpio bajo <code>freecad</code>.</td><td><span class="pill warn">limitación aceptada</span> Sin knob de OCCT que lo evite; documentado en los docstrings.</td></tr>
+              <tr><td>Reorganización y dedup del árbol de fixtures <code>Solidos/</code>.</td><td>Parcial (<code>test_models/</code> + algunos <code>duplicates_removed/</code>).</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Prioridad explícita del usuario: terminar de limpiar los bugs conocidos del pipeline directo (GEOUNED) antes de retomar los ítems de GEOReverse.</p>
+      </section>
+
+      <section class="sec" id="s12">
+        <h2><span class="num">12</span> Anexo: entorno y herramientas</h2>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Entorno conda</th><th>Binding</th><th>OCCT · Python</th><th>Uso</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">(python por defecto)</td><td>FreeCAD 1.1.1</td><td>7.8.1 · 3.11</td><td><code>GEOUNED_CAD_ENGINE=freecad</code></td></tr>
+              <tr><td class="mono">pyoccenv</td><td>pythonocc-core (SWIG)</td><td>7.9.3 · 3.12</td><td><code>GEOUNED_CAD_ENGINE=occ</code></td></tr>
+              <tr><td class="mono">ocpenv</td><td>OCP (pybind11)</td><td>7.9.3 · 3.12</td><td><code>GEOUNED_CAD_ENGINE=ocp</code> (por defecto)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li><strong>FreeCAD y pyOCC no coexisten en un mismo proceso</strong> (<code>Module use of python311.dll conflicts</code>): FreeCAD trae Python 3.11, los entornos pyOCC usan 3.12. Cualquier prueba del lado pyOCC usa el <code>python.exe</code> del entorno correspondiente y nunca mezcla en la misma invocación.</li>
+          <li>Los entornos pyOCC necesitaron cambiar el proveedor de BLAS/LAPACK de MKL a OpenBLAS (<code>conda install -c conda-forge --override-channels "libblas=*=*openblas" …</code>): el LAPACK de MKL entra en conflicto con <code>occt</code>/<code>tbb</code> en el mismo proceso y provoca un access violation en <code>numpy.linalg</code>.</li>
+          <li>El chequeo de volumen MCNP se ejecuta con <strong>d1suned</strong> (variante MCNP interna) a través de WSL. El pipeline completo, scripts y resultados están archivados en <code>\\wsl.localhost\Ubuntu-22.04\home\patrick\work\taller\SolidTestMCNP\scripts\</code> (conversión y d1suned en paralelo por motor: <code>run_all_conversions_*_parallel.py</code>, <code>run_test_models_*_d1suned.sh</code>, <code>analyze_test_models_*.py</code>).</li>
+          <li>Convención del árbol de trabajo: <code>Solidos/</code> solo STP; <code>Solidos/test_models/</code> el set curado de regresión; <code>../calculos_CLAUDE/</code> toda ejecución de cálculo; <code>Solidos/BadCAD_decomposition/</code>, <code>Solidos/Detected_corrupted/</code>, <code>Solidos/no_convierte/</code>, <code>Solidos/convierte_bad_volume/</code> carpetas de triaje.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <p>Informe sintetizado a partir del registro de trabajo <code>CLAUDE.md</code> del proyecto GEOUNED. Rama <code>georeverse-migration</code>. Fecha: 2026-09-06.</p>
+    <p>Preferencia de código del proyecto: la comunicación es en español; todo el código, comentarios, docstrings y nombres de identificadores en inglés.</p>
+  </footer>
+</div>
+</body>
+</html>
