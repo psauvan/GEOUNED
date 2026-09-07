@@ -1,0 +1,789 @@
+% =============================================================================
+%  Migración de GEOUNED a pyOCC — Informe técnico
+%
+%  Documento autocontenido. Compilar con:
+%      pdflatex pyocc_migration_report.tex
+%      pdflatex pyocc_migration_report.tex   (segunda pasada: índice + refs)
+%
+%  Sintetizado a partir del registro de trabajo CLAUDE.md del proyecto.
+%  Rama: georeverse-migration. Fecha: 2026-09-06.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\setlength{\emergencystretch}{3em}
+
+% --- estilo --------------------------------------------------------------------
+\definecolor{accent}{HTML}{1F6F8B}
+\hypersetup{
+  pdftitle={Migracion de GEOUNED a pyOCC - Informe tecnico},
+  pdfsubject={Refactor del backend CAD de GEOUNED},
+  colorlinks=true, linkcolor=accent, urlcolor=accent, citecolor=accent
+}
+
+% Identificadores/rutas literales: \detokenize imprime _, #, &, %, ~ tal cual.
+\providecommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\statusok}{\textbf{\textcolor{accent}{reparado}}}
+\newcommand{\statusdone}{\textbf{\textcolor{accent}{resuelto}}}
+\newcommand{\statusnone}{\textit{sin reparación}}
+\newcommand{\statuslimit}{\textit{limitación aceptada}}
+
+\newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+
+\setlist[itemize]{leftmargin=1.4em, itemsep=2pt, topsep=3pt}
+\setlist[enumerate]{leftmargin=1.6em, itemsep=4pt, topsep=3pt}
+
+\title{Migración de GEOUNED a pyOCC\\[6pt]
+       \large\normalfont Informe técnico del refactor del backend CAD}
+\author{Proyecto GEOUNED \textemdash{} rama \texttt{georeverse-migration}}
+\date{6 de septiembre de 2026}
+
+% =============================================================================
+\begin{document}
+\maketitle
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Proyecto            & GEOUNED-org/GEOUNED \\
+Rama                & \code{georeverse-migration} \\
+Motor por defecto   & \code{ocp} (OCP / pybind11) \\
+Motores soportados  & \code{freecad} $\cdot$ \code{occ} $\cdot$ \code{ocp} \\
+Alcance             & CadToCsg (GEOUNED) + CsgToCad (GEOReverse) \\
+Fuente              & registro de trabajo \code{CLAUDE.md} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{4pt}
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\small\centering
+\textbf{3\,/\,3} motores CAD con la suite en verde \quad$\vert$\quad
+\textbf{0} partículas perdidas (corpus \code{test_models}, 143 ejec.\ d1suned) \quad$\vert$\quad
+\textbf{93,6\,\%} tallies dentro de 2$\sigma$ / \textbf{0\,\%} por encima de 3$\sigma$ \quad$\vert$\quad
+\textbf{0} imports directos de \code{Part}/\code{FreeCAD} en GEOUNED%
+}}
+
+\vspace{6pt}
+\tableofcontents
+\vspace{6pt}
+\hrule
+
+% =============================================================================
+\section{Resumen ejecutivo}
+
+GEOUNED convierte geometría CAD en geometría CSG (y a la inversa) para los
+códigos de transporte Monte Carlo \textbf{MCNP, OpenMC, PHITS y Serpent}.
+Históricamente dependía por completo de la API \code{Part} de FreeCAD y, en
+particular, de \code{BOPTools.SplitAPI.slice} para descomponer sólidos. Ese
+acoplamiento se ha eliminado.
+
+El trabajo realizado se agrupa en cinco bloques:
+
+\begin{itemize}
+  \item \textbf{Aislamiento del kernel.} Todo el código que toca FreeCAD/OCCT
+        vive ahora en un único paquete, \code{geo}, tras una interfaz de
+        nombres estable. Ningún otro fichero de GEOUNED importa \code{Part} ni
+        \code{FreeCAD}.
+  \item \textbf{Tres motores geométricos.} \code{geo} tiene tres
+        implementaciones intercambiables mediante la variable de entorno
+        \code{GEOUNED_CAD_ENGINE}: FreeCAD (\code{freecad}), pythonocc-core /
+        SWIG (\code{occ}) y OCP / pybind11 (\code{ocp}, actualmente el valor por
+        defecto).
+  \item \textbf{Verificación cuantitativa.} Cada corrección se ha validado con
+        dos métodos independientes: comprobación punto a punto de
+        \code{check_sign} contra geometría CAD construida de forma
+        independiente, y un chequeo estocástico de volumen ejecutando el modelo
+        MCNP resultante en d1suned (tally $\approx$ 1,0).
+  \item \textbf{Depuración geométrica dirigida por datos.} Decenas de bugs
+        reales \textemdash{} muchos preexistentes a la migración \textemdash{}
+        encontrados y corregidos siguiendo trazas concretas: signos AND/OR en
+        superficies compuestas, degeneraciones de tangencia en \code{Gsplit},
+        clasificación de superficies, escalado de tolerancias y \emph{slivers}
+        residuales.
+  \item \textbf{Reparación de defectos CAD.} Una capa nueva en tiempo de carga
+        que detecta sólidos corruptos (aristas patológicamente cortas, anillos
+        de contorno duplicados, cortes fantasma) y los repara automáticamente
+        cuando es rápido y fiable, o los marca sin traducir cuando no lo es.
+\end{itemize}
+
+El pipeline inverso, \textbf{GEOReverse} (CsgToCad), que inicialmente quedó
+fuera de alcance por su dependencia dura del formato \code{.FCStd}, ha recibido
+su propia migración en la rama actual: es engine-switchable, exporta STEP real
+vía XCAF bajo los motores pyOCC y colorea cada sólido por material.
+
+Estado a fecha del informe: los tres motores pasan sus suites; el corpus de
+referencia \code{Solidos/test_models} se traduce sin partículas perdidas y sin
+fallos por encima de 3$\sigma$; \code{occ} y \code{ocp} producen resultados
+idénticos sobre todo el corpus. Quedan abiertos varios puntos de GEOReverse y
+algunas superficies exóticas sin portar (sección~\ref{sec:pending}).
+
+% =============================================================================
+\section{Contexto y motivación}
+
+\subsection{El problema que originó la migración}
+
+El \code{Cut} booleano de FreeCAD puede fallar de forma \textbf{silenciosa} al
+partir un sólido en dos cuando la intersección del plano de corte coincide
+exactamente con una línea de tangencia preexistente (por ejemplo, un plano que
+corta la esquina donde un cilindro ya es tangente a dos caras de un cubo). El
+síntoma: \code{Cut} devuelve el sólido original sin cortar, en lugar de lanzar
+un error. La causa: los fragmentos resultantes solo se tocan a lo largo de una
+línea (contacto de área cero), lo que produce una forma no-manifold que el
+algoritmo BOP de OCC no resuelve limpiamente. Pasar por una
+exportación/importación STEP «arregla» el problema porque el sanador de STEP
+vuelve a partir el compound.
+
+La solución de fondo \textemdash{} construir un grafo de adyacencia de caras
+que excluya las aristas compartidas por más de dos caras y reconstruir un
+sólido por componente conexa \textemdash{} requiere control topológico fino que
+la API \code{Part} de FreeCAD, al ser ella misma un envoltorio sobre OCCT, no
+expone cómodamente.
+
+\subsection{Decisión: pythonocc-core, no CadQuery}
+
+\begin{itemize}
+  \item Se necesita control topológico de grano fino (grafos de adyacencia
+        cara/arista, \code{BRepCheck_Analyzer}, \code{ShapeFix_Shape}, control
+        de tolerancia sobre \code{BRepAlgoAPI_*} / \code{BOPAlgo_Splitter}) para
+        exactamente los casos degenerados anteriores.
+  \item Migrar a pyOCC \emph{elimina} una capa (el envoltorio \code{Part}) en
+        lugar de sustituirla por otra distinta (CadQuery).
+  \item CadQuery encaja mejor en construcción paramétrica de alto nivel, no en
+        la cirugía topológica de bajo nivel que exige la descomposición de
+        GEOUNED.
+\end{itemize}
+
+% =============================================================================
+\section{Arquitectura: el paquete \texorpdfstring{\code{geo}}{geo}}
+
+\subsection{Intento 1 (retirado): la ABC \texorpdfstring{\code{GeometryBackend}}{GeometryBackend}}
+
+El primer diseño fue un patrón Adapter / Ports \& Adapters clásico: una clase
+base abstracta \code{GeometryBackend} con dataclasses neutras (\code{GSolid} /
+\code{GFace} / \code{GEdge} / \code{GVector} / \dots) que llevaban un objeto
+\code{native} más una referencia al backend que las produjo, y una
+implementación concreta \code{FreeCADBackend}. Todo GEOUNED llamaba a través de
+una única instancia inyectada (\code{_backend.split(gsolid, tool, tol)}, \dots).
+Se implementó por completo y se validó contra toda la suite, pero se juzgó
+\textbf{demasiado pesado e indirecto} \textemdash{} las dataclasses cargando su
+propio backend y la convención \code{_backend.method(x, ...)} \textemdash{} para
+lo que aportaba. Se eliminó por completo junto con sus tests.
+
+\subsection{Intento 2 (actual): el paquete \texorpdfstring{\code{geo}}{geo}}
+
+\code{src/geouned/geo/} es el \textbf{único lugar de GEOUNED autorizado a
+importar} \code{Part} / \code{FreeCAD} / \code{BOPTools}.
+
+\begin{longtable}{@{}L{0.30\textwidth} L{0.64\textwidth}@{}}
+\toprule
+\textbf{Fichero} & \textbf{Responsabilidad} \\
+\midrule
+\endhead
+\code{vector_geometry.py} & Matemática pura sin dependencia de FreeCAD:
+  \code{GVector}, \code{GMatrix}, \code{GBoundBox} y conversores. \\
+\code{surface_geometry.py} & Predicados analíticos sobre descriptores de
+  superficie (\code{is_same_*_surface}, \code{is_inside_*},
+  \code{find_can_plane}, intersecciones plano-plano y línea-línea). \\
+\code{solid_defects.py} & Detección de defectos CAD a nivel de sólido completo
+  (\code{find_short_edges}, \code{find_split_ring_faces},
+  \code{near_surface_pair}). \\
+\code{io_utils.py} & Utilidades de proceso/carga: \code{GLabelNode} (árbol de
+  etiquetas STEP), \code{suppress_native_stdout}. \\
+\code{_freecad_impl.py} & Implementación FreeCAD: clasificación de
+  superficies/curvas, clases de topología
+  (\code{GEdge}/\code{GWire}/\code{GFace}/\code{GShell}/\code{GSolid})
+  construidas ansiosamente con comportamiento real como métodos, constructores
+  \code{Gmake_*} y operaciones
+  \code{Gcut}/\code{Gcommon}/\code{Gfuse}/\code{Gsplit}. \\
+\code{_occ_impl.py} & La misma superficie de nombres contra pythonocc-core
+  (SWIG). \\
+\code{_ocp_impl.py} & La misma superficie de nombres contra OCP (pybind11). \\
+\code{__init__.py} & Punto único de import. Lee \code{GEOUNED_CAD_ENGINE} una
+  sola vez y reexporta los nombres desde la implementación resuelta. \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Principio de intercambiabilidad.}
+La selección de motor ocurre en tiempo de import, no por inyección de
+dependencias. Un motor nuevo solo tiene que definir los mismos nombres de clase
+y función; \code{geo/__init__.py} elige cuál reexportar y el resto de GEOUNED no
+cambia. GEOReverse replica exactamente el mismo patrón con su propio
+\code{GEOReverse/Modules/__init__.py}.
+
+\subsection{Diseño de las clases \texorpdfstring{\code{geo}}{geo}}
+
+\begin{itemize}
+  \item Las caras se clasifican ansiosamente en una de 5 superficies analíticas
+        (plano / cilindro / cono / esfera / toro) vía \code{Gclassify_surface}.
+        Las superficies compuestas (RoundCorner, Can, TCone, MultiPlane,
+        MultiRoundCorner, ReversedConeCylinder) las ensambla el propio GEOUNED
+        con \code{Gcut}/\code{Gcommon}/\code{Gfuse}; \code{geo} nunca las modela.
+  \item La clasificación de curvas es tolerante: devuelve \code{None} para una
+        arista degenerada o un tipo real no soportado (p.\,ej.\ hipérbola) en
+        lugar de lanzar, porque los sólidos se construyen ansiosamente y una
+        arista incidental no debe abortar el sólido entero.
+  \item \code{Gsplit()} devuelve un \code{SplitResult} que nunca puede volver
+        vacío silenciosamente: los casos de tangencia/degeneración se resuelven
+        internamente (reintento de tolerancia, reconstrucción no-manifold,
+        separación por componentes) y se reportan con
+        \code{degenerate_case_handled=True}.
+  \item \code{utils/geometry_gu.py::FaceGu} / \code{SolidGu} \textemdash{} un
+        segundo envoltorio nativo previo a \code{geo}, usado por el código de
+        descomposición \textemdash{} ahora \textbf{heredan} de \code{GFace} /
+        \code{GSolid} y solo añaden encima los extras del lado de
+        descomposición, en lugar de duplicar la construcción.
+\end{itemize}
+
+% =============================================================================
+\section{Desacoplamiento de FreeCAD en GEOUNED}
+
+El cierre de los \code{import Part} / \code{import FreeCAD} se hizo fichero por
+fichero, trazando cada consumidor real antes de tocar la fuente. \code{core.py}
+(concretamente \code{_set_geometry_bounding_box}) fue el último reducto,
+precisamente porque su \code{BoundBox} se consume fuera del alcance original de
+la migración (\code{void.py}, \code{write_files.py}). Tras su cierre,
+\textbf{cero ficheros} del subpaquete GEOUNED importan
+\code{Part}/\code{FreeCAD}/\code{BOPTools} directamente.
+
+\subsection{Unificación de representaciones duplicadas}
+
+Para «un plano» existían tres representaciones paralelas: el descriptor
+\code{geo.GPlane}, la clase \code{PlaneParams} de \code{basic_functions_part1.py}
+y la clase \code{Plane} de \code{build_region/Objects.py}. Se consolidaron:
+
+\begin{itemize}
+  \item «superficie analítica + bounding box $\rightarrow$ sólido finito
+        recortado» para plano/cilindro/cono se unificó en tres funciones puras
+        en \code{build_region/Objects.py} (\code{plane_polygon_from_box},
+        \code{cylinder_from_box}, \code{cone_from_box}), en espacio
+        \code{GVector}/\code{GBoundBox}, sin duplicación.
+  \item Las clases \code{Plane}/\code{Cylinder}/\code{Cone}/\code{Sphere} de
+        \code{Objects.py} colapsaron en una única \code{CellSurface} que
+        envuelve un descriptor \code{geo}; \code{get_surface()} construye ahora
+        \code{GPlane}/\code{GCylinder}/\dots directamente vía
+        \code{.from_values(...)}, sin paso de traducción ni desvío nativo.
+  \item Los \code{*OnlyParams} de Tier-1 pasaron a almacenar \code{GVector}
+        directamente en lugar de \code{FreeCAD.Vector};
+        \code{check_sign_primitive} se colapsó a un despacho por diccionario
+        contra las funciones \code{is_inside_*} compartidas.
+\end{itemize}
+
+\paragraph{Lección metodológica registrada.}
+Un estudio estático de «quién lee este campo» es necesario pero no suficiente
+cuando el valor pasa por un objeto intermedio antes de llegar a la operación
+que le importa el tipo. Varias veces, una encuesta por \code{grep} concluyó que
+todos los consumidores toleraban \code{GVector}, y la suite real reveló sitios
+nativos que el \code{grep} no vio. Norma: seguir cada
+\code{AttributeError}/\code{TypeError} real de la suite completa, no solo el
+trazado estático.
+
+\subsection{Dos ámbitos de numeración de superficies}
+
+Cada \code{GeounedSurface} tiene \code{.bVar} (el id firmado con que se
+referencia) y, para tipos compuestos, \code{.region} (la definición booleana
+AND/OR) y \code{.components} (la relación numeración\,$\leftrightarrow$\,superficie).
+Se asignan en dos fases con numeraciones genuinamente distintas: en
+\textbf{descomposición} el \code{.bVar} es un id local desechable cuyo único fin
+es mantener la expresión AND/OR consistente para una construcción CAD; en
+\textbf{conversión} se sobreescribe con el id global canónico y deduplicado.
+Ambas fases \emph{no} pueden leer la \code{.region} de la otra, pero sí
+comparten la \textbf{regla} AND/OR, extraída a funciones puras
+(\code{can_region}, \code{tcone_region}, \code{round_corner_region}, \dots).
+
+% =============================================================================
+\section{Reorganización de los writers}
+
+Los cuatro escritores de formato de salida tenían implementaciones casi
+idénticas de varios métodos. Se reorganizaron por la frontera real de
+convenciones de tarjeta:
+
+\begin{itemize}
+  \item \code{write/mcnp_like/} \textemdash{} MCNP, Serpent y PHITS (los tres
+        formatos de texto de linaje MCNP, con convenciones comunes de comentario
+        de línea/inline y banners).
+  \item \code{write/openmc/} \textemdash{} estructuralmente distinto (salida
+        XML/Python, sin concepto de tarjeta de comentario).
+  \item \code{write/functions.py} \textemdash{} hogar compartido de
+        \code{get_cell_surf_summary}, \code{simplify_planes},
+        \code{sorted_surfaces}, usadas por los cuatro formatos.
+\end{itemize}
+
+El mixin \code{CommonInputWriter} (heredado por
+\code{McnpInput}/\code{SerpentInput}/\code{PhitsInput}) recoge lo duplicado solo
+entre los tres formatos de linaje MCNP, parametrizado por atributos de clase
+(\code{_surface_formatter}, \code{inline_comment_char}, \dots).
+
+\paragraph{Corrección real, confirmada con el usuario.}
+La unificación de \code{sorted_surfaces} corrige una inconsistencia: solo MCNP
+aplicaba \code{Surfaces.IndexOffset} al reetiquetar cada \code{bVar};
+Serpent/OpenMC/PHITS se lo saltaban. Ahora los cuatro formatos usan la versión
+de MCNP. El efecto es actualmente latente (\code{IndexOffset} es 0 salvo que
+\code{settings.startSurf} se cablee, cosa que también se hizo en esta migración)
+pero deja de ser una divergencia entre formatos.
+
+% =============================================================================
+\section{Campañas de verificación}
+\label{sec:verif}
+
+\subsection{Verificación de \texorpdfstring{\texttt{check\_sign}}{check\_sign} punto a punto}
+
+Para cada superficie compuesta encontrada en un modelo, se construye un sólido
+CAD de referencia \emph{independiente} por la misma vía que usa \code{Gsplit}
+para construir esa composición, se muestrean puntos aleatorios estrictamente
+dentro de la caja de construcción y se compara \code{check_sign(punto,
+superficie)} contra \code{gsolid.is_inside(punto)}.
+
+\begin{longtable}{@{}L{0.22\textwidth} L{0.15\textwidth} L{0.57\textwidth}@{}}
+\toprule
+\textbf{Tipo compuesto} & \textbf{Resultado} & \textbf{Notas} \\
+\midrule
+\endhead
+RoundCorner & 300/300 & Múltiples instancias en decenas de ficheros. \\
+Can (Fwd / Rev) & 300/300 & Un artefacto de muestreo (padding de bounding box)
+  se identificó y corrigió: muestrear dentro de la caja de construcción, no de
+  la del sólido resultante. \\
+TCone (Fwd / Rev) & 300/300 & Reveló un bug real en \code{TCone_region}
+  (ignoraba \code{p1_configuration}/\code{p2_configuration}), corregido. \\
+MultiRoundCorner & 300/300 & 17 instancias en 13 ficheros. Primera validación
+  end-to-end de este tipo. \\
+MultiPlane & 300/300 & Reveló que \code{multiplane()} nunca podía detectar un
+  MultiPlane (comparación instancia-vs-clase), corregido. \\
+ReversedConeCylinder & parcial & Estructuralmente inalcanzable desde el escaneo
+  de descomposición; verificado desde el lado de conversión con una discrepancia
+  real en \code{hylife-v06} solid113 (271/300), ligada a un desajuste conocido
+  de GEOReverse. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Chequeo estocástico de volumen MCNP}
+
+Pregunta distinta y más end-to-end: ¿un modelo MCNP \emph{completamente
+traducido}, ejecutado de verdad, reproduce los \textbf{mismos volúmenes} que los
+sólidos CAD originales? Se exporta con \code{volSDEF=True} (fuente fotónica
+isótropa desde una esfera envolvente + tally F4 de longitud de traza en cada
+celda, normalizado por el volumen CAD), se corre en \code{MODE P} + \code{VOID}
+en d1suned y el resultado esperado del tally es exactamente \textbf{1,0}. Una
+desviación significativa ($>$~3$\sigma$) señala que los signos de superficie
+escritos no reconstruyen el mismo sólido.
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{0.68\textwidth} r@{}}
+\toprule
+\textbf{Corpus \code{Solidos/test_models} (sin \code{Big_*})} & \textbf{Valor} \\
+\midrule
+Ficheros que traducen                                  & 133 / 138 \\
+Tallies dentro de 2$\sigma$ de 1,0                     & 93,6\,\% \\
+Tallies marginales (2\textendash 3$\sigma$, ruido esperado) & 6,4\,\% \\
+Fallos reales ($>$ 3$\sigma$)                          & 0\,\% \\
+Ficheros con partículas perdidas                       & 0 / 143 ejec. \\
+Divergencia \code{occ} vs \code{ocp} sobre el corpus   & byte a byte idéntica \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los 5 ficheros que no traducen son defectos CAD genuinos que la capa de
+detección (sección~\ref{sec:defects}) marca correctamente, más un caso de crash
+nativo aceptado como limitación (\code{ConeSphere.stp} bajo
+\code{occ}/\code{ocp}).
+
+% =============================================================================
+\section{Correcciones de geometría}
+
+Decenas de bugs reales, la mayoría preexistentes a la migración (confirmado
+contra el último commit pre-migración), encontrados siguiendo trazas concretas
+\textemdash{} nunca por conjetura \textemdash{} y verificados antes y después.
+Agrupados por naturaleza:
+
+\begin{longtable}{@{}L{0.16\textwidth} L{0.56\textwidth} L{0.22\textwidth}@{}}
+\toprule
+\textbf{Categoría} & \textbf{Ejemplos representativos} & \textbf{Impacto} \\
+\midrule
+\endhead
+
+\textbf{Signos AND/OR en superficies compuestas} &
+\code{can_region} rama cono + plano-ápice Reversed usaba AND donde el signo
+físico exige OR (dos instancias); \code{TCone_region} sustituía la configuración
+real por un valor único según orientación; \code{round_corner_region} aplicaba
+\code{fwd_cyl} dos veces en la rama \code{p1 == p2}; \code{cone_apex_plane}
+doble-compensaba el caso Reversed; \code{add_reversedCC} rediseñado
+(\code{plane_region AND (s1 AND ... AND sn)}) y su \code{AddPlanes} pasó de OR
+incondicional a AND; \code{AdjacentMultiplanePlanes} pasó a lista-de-listas (AND
+dentro de grupo, OR entre grupos). &
+Volumen CSG erróneo con expresión booleana válida; en varios casos «fugas» que
+engullían medio modelo. Verificado con d1suned tras cada corrección. \\
+\addlinespace
+
+\textbf{Degeneración / tangencia en \code{Gsplit}} &
+Fallback de corte coaxial cono-cono (\code{_try_coaxial_cone_split}):
+reconstrucción analítica del círculo exacto de intersección, pre-split de esa
+arista y reintento con escalado de tolerancia difusa; el \code{splitTolerance}
+por defecto implícito pasó de 0,0 a $10^{-4}$ bajo \code{occ}/\code{ocp} (OCCT
+7.9.3 es más sensible a la near-tangencia); \code{_repair_non_manifold_solid}
+ahora valida su propia reconstrucción (validez + conservación de volumen) antes
+de fiarse de ella. &
+Descomposición que devolvía silenciosamente 1 pieza en vez de 2 o 3; fragmentos
+con volumen inflado. \\
+\addlinespace
+
+\textbf{Clasificación de superficies} &
+\code{is_same_plane_surface} comparaba el offset de dos planos con ejes
+antiparalelos como \code{d1 == d2} en vez de \code{d1 == -d2};
+\code{convex_planes} tenía un test de signo muerto (\code{cross.dot(ref)}
+siempre 0) y no normalizaba \code{atan2} a $[0, 2\pi)$; \code{multiplane()}
+comparaba instancia contra clase (\code{Gclassify_curve(e) is GLine}), haciendo
+MultiPlane indetectable; \code{is_closed_cylinder_cone} aceptaba una cara que no
+era un cilindro cerrado de 360$^\circ$ $\rightarrow$ invariante topológica real
+por winding (\code{_is_closed_by_winding}); \code{cyl_plane_region_conf} usaba la
+cara semilla para ambos extremos de un cilindro partido. &
+Clasificación de caras a tipo compuesto equivocado; tallies de 0,0 y
+desviaciones de cientos de $\sigma$, todas cerradas. \\
+\addlinespace
+
+\textbf{Tolerancias} &
+\code{min_area} nunca estaba cableado a \code{order_plane_face} ni a los
+generadores de candidatos; nuevo \code{min_face_width} + \code{CharacteristicWidth}
+(ancho característico de una cara vía radios de giro) para detectar
+\emph{slivers} «estrechos pero de área suficiente», portado a los tres motores;
+\code{Tolerances.scaled(volume)} escala \code{min_area}/\code{min_face_width}
+hacia abajo para fragmentos descompuestos diminutos; \code{eligible_plane}
+ignoraba las tolerancias configuradas por el usuario. &
+Planos sliver espurios entrando en la definición de celda $\rightarrow$
+partículas perdidas. \\
+\addlinespace
+
+\textbf{Slivers residuales de corte booleano} &
+\code{other_face_edge} con modo \code{skip_slivers} para atravesar caras sliver
+y encontrar la cara real; filtro de slivers en \code{merge_same_surface_faces}
+antes del walk $O(n^2)$ de adyacencia; \code{sort_range} con fallback «sin
+progreso» ante fragmentos unidos solo módulo $2\pi$ (era recursión infinita). &
+Detección de Can/RoundCorner fallando o colgándose sobre geometría con
+artefactos de corte. \\
+\addlinespace
+
+\textbf{Cross-engine} &
+El flag de \code{ShapeUpgrade_UnifySameDomain} que provoca un crash nativo es
+\emph{opuesto} entre OCP y pythonocc-core sobre la misma geometría OCCT 7.9.3;
+\code{get_join_cone_cyl} usaba \code{.Index} donde un shell fusionado tiene
+\code{.Indexes} (solo \code{freecad}); el LAPACK de MKL entraba en conflicto con
+\code{occt}/\code{tbb} en el mismo proceso $\rightarrow$ cambio a OpenBLAS en
+\code{pyoccenv} y \code{ocpenv}. &
+47 tests crasheando en \code{freecad}/\code{occ} por un \code{AttributeError};
+access violations nativos. \\
+\addlinespace
+
+\textbf{No geométricos, encontrados de camino} &
+\code{generic_split} hacía doble-wrap de un \code{GSolid} ya envuelto
+$\rightarrow$ la descomposición era silenciosamente un no-op;
+\code{check_intersection} con early-exit por \code{Gdistance} clasificaba
+sólidos totalmente anidados como disjuntos $\rightarrow$ la celda de vacío del
+enclosure no excluía las esferas dentro (\code{w_encl.stp}, tally 0,0);
+\code{expand_regions_to_integer} sin guard de \code{bool}, guard que los cinco
+escritores de celda necesitaban y solo MCNP tenía. &
+Bugs de correctitud que degradaban la descomposición o la salida de forma
+invisible. \\
+\bottomrule
+\end{longtable}
+
+% =============================================================================
+\section{Migración pyOCC por fases}
+
+La migración a pyOCC se abordó en fases, cada una con un criterio de
+continuación explícito antes de escribir código a gran escala.
+
+\begin{enumerate}
+  \item \textbf{Fase 1 \textemdash{} Scaffolding y prueba go/no-go.} Selección
+        de motor vía \code{GEOUNED_CAD_ENGINE}; \code{geo/__init__.py} importa de
+        \code{_freecad_impl} o del nuevo \code{_occ_impl}. Solo se implementó lo
+        mínimo para probar \code{Gsplit} contra el caso \code{rev_pipe.stp}, ya
+        caracterizado como roto en FreeCAD. Resultado: \code{BOPAlgo_Splitter}
+        (OCCT 7.9.3) devuelve \textbf{3 sólidos válidos} en el primer intento
+        sin reparación, donde FreeCAD devolvía 1 sólido inválido. Señal fuerte
+        para continuar.
+  \item \textbf{Fase 2 \textemdash{} Port completo.} Los 5 descriptores de
+        superficie y 4 de curva, \code{Gclassify_surface}/\code{Gclassify_curve},
+        \code{GEdge}/\code{GWire}/\code{GFace}/\code{GShell}/\code{GSolid}
+        completos (incluyendo \code{find_interior_point},
+        \code{faces_sharing_edge}, \code{fix}/\code{refine}), todos los
+        \code{Gmake_*} y las operaciones booleanas. Test nuevo
+        \code{tests/geo/test_occ_impl.py}: 39/39 contra geometría real con
+        valores esperados conocidos.
+  \item \textbf{Fase 3 \textemdash{} Pipeline de integración.}
+        \code{tests/test_cadtocsg.py} pasa 50/50 bajo
+        \code{GEOUNED_CAD_ENGINE=occ}, idéntico al baseline FreeCAD, tras cerrar
+        6 huecos reales (entre ellos \code{Gload_step_labels} vía XCAF, un bug de
+        periodicidad en \code{get_join_cone_cyl} alcanzable también bajo FreeCAD,
+        y el fallback de \code{GeomAPI_ProjectPointOnSurf}).
+  \item \textbf{Fase 4 \textemdash{} Corpus \code{Solidos/}.} Escaneo diferencial
+        de 98/99 ficheros contra un baseline FreeCAD fresco; 7 huecos más
+        cerrados. \code{rev_pipe.stp} confirmado: FreeCAD falla la ruta completa
+        decompose+convert (\code{FuseEdges}), \code{occ} tiene éxito con
+        \code{RoundC=2, MultiRoundC=1}.
+\end{enumerate}
+
+\subsection{Tercer motor: OCP (pybind11)}
+
+Añadido junto a FreeCAD y pythonocc-core, no como reemplazo. OCP es un binding
+pybind11 de OCCT más directo y activamente mantenido que el SWIG de
+pythonocc-core. Validación go/no-go contra \code{rev_pipe.stp} (2 piezas,
+volumen conservado), port completo estructuralmente copiado de
+\code{_occ_impl.py} y retargeteado (con diferencias de API confirmadas en vivo:
+sufijo \code{_s} en métodos estáticos, sin \code{.DownCast()}, orden de
+argumentos invertido en \code{ShapeUpgrade_UnifySameDomain}, \dots).
+\code{tests/geo/test_ocp_impl.py} 39/39 al primer intento;
+\code{tests/test_cadtocsg.py} 50/50; \code{tests/test_csgtocad.py} 2/2. Ambos
+motores pyOCC se desarrollan en paralelo: una corrección en uno se porta al
+otro.
+
+\paragraph{El «gap» de rendimiento, contado con honestidad.}
+En el caso motivador (\code{hylife-v06.stp} solid 17), FreeCAD tardaba 2,3\,s y
+pythonocc-core 19,2\,s. Se atribuyó primero al coste por-llamada del binding
+SWIG (real: pythonocc-core expone la API cruda de OCCT sin la capa de
+conveniencia en C++ que FreeCAD sí tiene). OCP en ese mismo caso: 18,4\,s
+\textemdash{} solo $\sim$4\,\% más rápido, no el 2\textendash 6$\times$ de los
+micro-benchmarks de conversión de puntos. La causa real resultó ser
+\textbf{otra}: \code{splitTolerance} con valor implícito 0,0 hacía que OCCT
+7.9.3 computara y luego descartara un split degenerado de 15 fragmentos. Con el
+default corregido a $10^{-4}$ bajo \code{occ}/\code{ocp}, el mismo caso baja a
+\textbf{1,2\,s} \textemdash{} más rápido que FreeCAD.
+
+% =============================================================================
+\section{Migración de GEOReverse}
+
+GEOReverse (CsgToCad) reconstruye CAD a partir de CSG y depende históricamente
+del formato de documento \code{.FCStd} de FreeCAD, no solo de su kernel
+geométrico. Inicialmente quedó permanentemente fuera de alcance; en la rama
+actual (\code{georeverse-migration}) ha recibido el mismo tratamiento que el
+pipeline directo.
+
+\begin{itemize}
+  \item \textbf{Desacoplamiento.} El núcleo de GEOReverse (\code{Objects.py},
+        \code{buildSolidCell.py}, \code{splitFunction.py}, \code{buildCAD.py},
+        \code{MCNPinput.py}) importa \code{geo} directamente, igual que el
+        pipeline directo. Un módulo \code{matrix_utils.py} recoge el puente
+        numpy\,$\leftrightarrow$\,matriz nativa.
+        \code{BOPTools.SplitAPI.slice} $\rightarrow$ \code{Gsplit};
+        \code{FuseSolid} (triplicado byte a byte) $\rightarrow$ un único
+        \code{fuse_solids} con la comprobación de invariancia de volumen de
+        \code{GSolid.refine()}.
+  \item \textbf{\code{export_cad} independiente del motor.}
+        \code{export_cad(output_filename="", format="stp")} acepta un \code{str}
+        o una lista de formatos, valida contra los formatos soportados por el
+        motor y despacha por \code{CAD_ENGINE}. Cambio de comportamiento real:
+        el \code{.FCStd} ya no se escribe incondicionalmente, solo cuando se
+        pide \code{"fcstd"} explícitamente.
+  \item \textbf{Simetría FreeCAD/pyOCC completa.}
+        \code{GEOReverse/Modules/__init__.py} despacha entre
+        \code{_freecad_impl.py} (export vía documento FreeCAD, \code{makeTree}) y
+        \code{_ocp_impl.py}/\code{_occ_impl.py} (export real vía XCAF:
+        \code{STEPCAFControl_Writer}, jerarquía Universe$\rightarrow$Material$\rightarrow$Cell
+        con nombres y anidamiento). Las 6 superficies cuádricas exóticas se
+        reorganizaron en un paquete \code{geo_quadrics} con el mismo patrón de
+        despacho.
+  \item \textbf{Color por material (motor \code{occ}/\code{ocp}).} Cada sólido
+        del STEP exportado se colorea por su valor \code{MAT} vía XCAF: mismo
+        color para el mismo material, paleta \code{tab10} hasta 10 materiales y
+        rotación por ángulo áureo para más, sin colisiones. El color en el motor
+        FreeCAD queda fuera de alcance (su API de color vive en
+        \code{Gui.ViewProvider}, sin ruta headless).
+  \item \textbf{IGES descartado.} Se verificó en vivo que
+        \code{IGESControl_Writer} no preserva sólidos a través de IGES en esta
+        build de OCCT (un sólido vuelve como caras planas recortadas sin
+        topología de shell). Se abandonó importación y exportación IGES.
+\end{itemize}
+
+Verificación: \code{tests/test_csgtocad.py} es engine-aware y pasa 2/2 bajo los
+tres motores contra aserciones de volumen reales por sólido ($\pm 10^{-6}$).
+Bajo \code{occ}/\code{ocp} quedan 2 fallos preexistentes (GEOReverse produce
+2/1 sólidos donde se esperan 4/5 en el STEP de \code{cylinder_box}), confirmados
+no introducidos por esta migración y no ligados al trabajo de \code{Gsplit}.
+
+% =============================================================================
+\section{Detección y reparación de defectos CAD}
+\label{sec:defects}
+
+Una capa nueva en tiempo de carga (\code{Gload_and_process_step} $\rightarrow$
+\code{Gcheck_and_repair}) que, para cada sólido: aplica un \code{fix(1e-6)},
+comprueba defectos conocidos y, si los hay, intenta repararlos con el método más
+apropiado; solo si la reparación falla se consulta el modo elegido por el
+usuario. El parámetro \code{corrupted_solids} tiene dos modos, \code{"stop"}
+(por defecto) y \code{"remove"}; el antiguo parámetro \code{invalid_solids} se
+fusionó aquí.
+
+\begin{longtable}{@{}L{0.19\textwidth} L{0.29\textwidth} L{0.28\textwidth} L{0.15\textwidth}@{}}
+\toprule
+\textbf{Defecto} & \textbf{Detección} & \textbf{Reparación} & \textbf{Estado} \\
+\midrule
+\endhead
+
+\textbf{Anillo de contorno partido} (micro-recorte duplicado / escalón
+colapsado, variante esférica) &
+\code{find_split_ring_faces}: cara analítica curva a escala sliver que además
+toca una arista patológicamente corta. \code{count_split_ring_pairs} cuenta
+pares de aristas circulares casi coincidentes y concéntricas. &
+\code{Gcollapse_split_rings} (ocp/occ): quita las caras «riser», re-cose el
+shell, rehace el sólido. Aceptación por 3 comprobaciones: validez +
+$|\Delta V|/V < 3\times10^{-4}$ + los pares de anillos deben decrecer. &
+\statusok\newline \code{barrel bottom.stp} $\rightarrow$ tally 0,9997 \\
+\addlinespace
+
+\textbf{Escalón cilíndrico colapsado} (familia beltline) &
+Mismo detector de anillo partido dispara; \code{near_surface_pair} identifica
+dos cilindros de radio casi igual bridged por una banda sliver. &
+\code{Gsliver_heal} (ocp/occ), versión 0: quita las caras sliver y la menor del
+par cercano, re-recorta la cuádrica liberada a su radio real, re-cose
+\emph{al final}. Gate: validez + $|\Delta V| < 5\times10^{-4}$. &
+\statusok\newline \code{LR.stp} $\rightarrow$ tally 0,9989 (era 0,0 / 24
+partículas perdidas) \\
+\addlinespace
+
+\textbf{Corte fantasma} (dos regiones volumétricas que solo se tocan por
+aristas \textemdash{} la motivación fundacional de la migración) &
+\code{_separate_edge_joined_components}: aristas no-manifold (compartidas por
+$\neq$ 2 caras) $\rightarrow$ grafo de adyacencia de caras solo por aristas
+manifold $\rightarrow$ si hay $\geq$ 2 componentes conexas y las aristas
+no-manifold eran la conexión portante. &
+Cose cada componente por separado (sin caras donantes: un corte fantasma real
+ya lleva el contorno cerrado de cada región). Gate: $\geq$ 2 piezas, todas
+válidas, suma de volúmenes conservada a $10^{-6}$. &
+\statusdone\newline ocp/occ $\cdot$ \code{Piece_1}+\code{Tool_1} $\rightarrow$ 2
+sólidos válidos (era 1 sólido inválido fusionado). FreeCAD no puede hacerlo. \\
+\addlinespace
+
+\textbf{Wire de cara malformado} (\code{UnorientableShape}) &
+\code{check_solid_defects} reporta topología inválida real;
+\code{BRepCheck_Analyzer} marca la cara, ninguna arista sliver. &
+Ninguna. Se probaron \code{ShapeFix_Shape}, \code{ShapeFix_Face}, partición del
+wire y reconstrucción \textemdash{} todas fallan o desvían el volumen $>$ 1,7\,\%. &
+\statusnone\newline \code{L4_support.stp} movido a
+\code{Solidos/Detected_corrupted/}, excluido de conversión \\
+\bottomrule
+\end{longtable}
+
+Un cambio relacionado: \code{check_solid_defects} ya no rechaza un sólido por
+una arista sliver sobre una cara \emph{bien formada} (\code{CharacteristicWidth}
+normal) \textemdash{} el pipeline de descomposición ya tolera aristas sliver en
+caras sanas, y ningún reparador quita tal arista sin una cara sliver donde
+anclarse. Las recetas de defectos se mantienen en un catálogo vivo
+(\code{reference_cad_defect_recipes.md}): síntoma observable, firma de detección
+general, causa raíz, reparación si es rápida y fiable, y un fixture STEP mínimo
+con verificación d1suned.
+
+% =============================================================================
+\section{Estado actual y trabajo pendiente}
+\label{sec:pending}
+
+\subsection{Estado consolidado}
+
+\begin{itemize}
+  \item Los tres motores pasan sus suites: \code{freecad} 158/158, \code{occ}
+        128/128, \code{ocp} 128/128 (+2 fallos preexistentes de GEOReverse bajo
+        los motores pyOCC).
+  \item Corpus \code{Solidos/test_models}: 93,6\,\% $<$ 2$\sigma$, 0\,\% $>$
+        3$\sigma$, 0 partículas perdidas en 143 ejecuciones d1suned. \code{occ}
+        y \code{ocp} byte a byte equivalentes sobre todo el corpus.
+  \item \code{ocp} es el motor por defecto cuando \code{GEOUNED_CAD_ENGINE} no
+        está definida.
+\end{itemize}
+
+\subsection{Abierto}
+
+\begin{longtable}{@{}L{0.62\textwidth} L{0.32\textwidth}@{}}
+\toprule
+\textbf{Ítem} & \textbf{Naturaleza} \\
+\midrule
+\endhead
+Discrepancia de volumen en el round-trip de GEOReverse sobre
+\code{hylife-v06.stp} celda 1 (CAD reconstruido 1,401$\times$ vs tally d1suned
+1,119$\times$). & GEOReverse, no trazado hasta el fondo. \\
+\code{test_csgtocad.py} 2 fallos bajo \code{occ}/\code{ocp} (2/1 sólidos donde
+se esperan 4/5). & GEOReverse, preexistente, acotado a
+\code{Objects.py::CellObj.buildShape}. \\
+\code{AdjacentMultiplanePlanes} necesita extenderse de RevCC a
+MultiRoundCorner. & Mejora de cobertura, pendiente desde 2026-08-21. \\
+Las 6 cuádricas exóticas (\code{Gmake_elliptic_cone}, \code{Gmake_hyperboloid},
+\dots) son stubs en los backends pyOCC de GEOReverse. & Port pendiente; sin
+fixture que las ejercite todavía. \\
+\code{Big_complex_cell/modelcell_cut1.stp} y \code{modelCell_670000.stp} pierden
+partículas. & No trazado; excluidos de los escaneos de corpus por convención. \\
+\code{hylife-v06.stp} round-trip completo de 372 sólidos: descomposición lenta
+en \code{meta_list[45]} (fragmentos de cara duplicados, coste $O(n^2)$ en
+\code{same_faces}). & Causa raíz identificada, no optimizado, despriorizado por
+el usuario. \\
+\code{ConeSphere.stp}: crash nativo (access violation) bajo \code{occ}/\code{ocp}
+en \code{ShapeUpgrade_UnifySameDomain}; traduce limpio bajo \code{freecad}. &
+\statuslimit{} Sin knob de OCCT que lo evite; documentado en los docstrings. \\
+Reorganización y dedup del árbol de fixtures \code{Solidos/}. & Parcial
+(\code{test_models/} + algunos \code{duplicates_removed/}). \\
+\bottomrule
+\end{longtable}
+
+Prioridad explícita del usuario: terminar de limpiar los bugs conocidos del
+pipeline directo (GEOUNED) antes de retomar los ítems de GEOReverse.
+
+% =============================================================================
+\section{Anexo: entorno y herramientas}
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{0.20\textwidth} L{0.24\textwidth} L{0.18\textwidth} L{0.30\textwidth}@{}}
+\toprule
+\textbf{Entorno conda} & \textbf{Binding} & \textbf{OCCT $\cdot$ Python} & \textbf{Uso} \\
+\midrule
+(python por defecto) & FreeCAD 1.1.1 & 7.8.1 $\cdot$ 3.11 & \code{GEOUNED_CAD_ENGINE=freecad} \\
+\code{pyoccenv} & pythonocc-core (SWIG) & 7.9.3 $\cdot$ 3.12 & \code{GEOUNED_CAD_ENGINE=occ} \\
+\code{ocpenv} & OCP (pybind11) & 7.9.3 $\cdot$ 3.12 & \code{GEOUNED_CAD_ENGINE=ocp} (por defecto) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item \textbf{FreeCAD y pyOCC no coexisten en un mismo proceso}
+        (\code{Module use of python311.dll conflicts}): FreeCAD trae Python
+        3.11, los entornos pyOCC usan 3.12. Cualquier prueba del lado pyOCC usa
+        el \code{python.exe} del entorno correspondiente y nunca mezcla en la
+        misma invocación.
+  \item Los entornos pyOCC necesitaron cambiar el proveedor de BLAS/LAPACK de
+        MKL a OpenBLAS
+        (\code{conda install -c conda-forge --override-channels "libblas=*=*openblas" ...}):
+        el LAPACK de MKL entra en conflicto con \code{occt}/\code{tbb} en el
+        mismo proceso y provoca un access violation en \code{numpy.linalg}.
+  \item El chequeo de volumen MCNP se ejecuta con \textbf{d1suned} (variante
+        MCNP interna) a través de WSL. El pipeline completo, scripts y
+        resultados están archivados bajo el WSL (Ubuntu-22.04) en
+        \code{~/work/taller/SolidTestMCNP/scripts/} (conversión y d1suned en
+        paralelo por motor: \code{run_all_conversions_*_parallel.py},
+        \code{run_test_models_*_d1suned.sh}, \code{analyze_test_models_*.py}).
+  \item Convención del árbol de trabajo: \code{Solidos/} solo STP;
+        \code{Solidos/test_models/} el set curado de regresión;
+        \code{../calculos_CLAUDE/} toda ejecución de cálculo;
+        \code{Solidos/BadCAD_decomposition/}, \code{Solidos/Detected_corrupted/},
+        \code{Solidos/no_convierte/}, \code{Solidos/convierte_bad_volume/}
+        carpetas de triaje.
+\end{itemize}
+
+\vfill
+\begin{center}\footnotesize\itshape
+Informe sintetizado a partir del registro de trabajo \code{CLAUDE.md} del
+proyecto GEOUNED. Rama \code{georeverse-migration}. Fecha: 2026-09-06.\\
+Preferencia de código del proyecto: la comunicación es en español; todo el
+código, comentarios, docstrings y nombres de identificadores en inglés.
+\end{center}
+
+\end{document}
