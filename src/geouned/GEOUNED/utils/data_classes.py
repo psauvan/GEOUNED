@@ -321,7 +321,7 @@ class Tolerances:
         split_tolerance: typing.Optional[float] = 1.e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = 0.1,
-        min_solid_volume: float = 1.0e-6,
+        min_solid_volume: float = 1.0e-3,
         fix_tolerance: float = 1.0e-6,
         volume_tolerance: float = 1.0e-6,
     ):
@@ -644,8 +644,13 @@ class Tolerances:
         against the original value, so a solid whose own L >=
         SCALE_REFERENCE_LENGTH gets back the unmodified original
         tolerances -- zero behavior change for every solid at or above
-        "normal" scale."""
-        length_scale = min(1.0, volume ** (1.0 / 3.0) / self.SCALE_REFERENCE_LENGTH)
+        "normal" scale.
+
+        `volume` is the caller's raw `GSolid.Volume`, which is *signed*
+        (negative for a reversed-orientation solid) -- take its magnitude
+        before the cube root, or `(-x) ** (1/3)` returns a Python
+        `complex` and the `min()` below raises `TypeError`."""
+        length_scale = min(1.0, abs(volume) ** (1.0 / 3.0) / self.SCALE_REFERENCE_LENGTH)
         scaled_min_area = min(self.min_area, self.min_area * length_scale**2)
         scaled_min_face_width = min(self.min_face_width, self.min_face_width * length_scale)
         return Tolerances(

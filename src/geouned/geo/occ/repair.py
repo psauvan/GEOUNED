@@ -391,10 +391,37 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
     and `sliver_edge_rel_tol` (the near-surface-pair distance tolerance,
     scaled by the solid's own BoundBox diagonal) -- previously hardcoded
     (0.1 / 1e-4), now sourced from Tolerances at this function's only
-    call site (_raw_bop_split), same default values. Every near-surface
-    pair found (not just a single one) is now attempted, keeping whichever
-    face of each pair is individually valid -- previously required
-    exactly one pair or gave up."""
+    call site (_raw_bop_split), same default values.
+
+    2026-08-30: a same-session attempt to generalize this to "every
+    near-surface pair found, not just a single one" (keeping whichever
+    face of each pair BRepCheck_Analyzer reports individually valid) was
+    reverted, then re-corrected -- confirmed via a full Solidos/
+    test_models d1suned batch that the original attempt's own keep/drop
+    criterion silently corrupted several already-fixed fixtures (barrel
+    bottom, rev_pipe x2, SCDR_90_hollow, SCDR_90). Root cause: a single
+    face plucked from an already-valid solid is essentially always
+    individually "valid" on its own, so that criterion never actually
+    discriminated which face to keep; and the loop's `_retrim_freed_
+    quadrics`/`_snapped_planar_cap` calls only ever used the *last*
+    pair's own drop/keep faces, silently ignoring every earlier pair's
+    removal.
+
+    A first fix over-corrected to requiring exactly one near-pair, else
+    None -- per direct user pushback, this wrongly rejects a real,
+    simpler case: a genuinely defective sliver face that is itself a
+    near-duplicate of a real face never shows up as a near-pair at all
+    (both `find_sliver_faces` and the near-pair search only look at
+    `others`, which already excludes every classified sliver -- so a
+    sliver-classified duplicate is removed by the unconditional
+    `reshaper.Remove(f.__native__)` loop below and needs no further
+    retrim/cap at all). So `near` being empty is a legitimate, common
+    outcome, not a reason to bail. What's fixed here instead: keep the
+    face of GREATER AREA in each pair (the real, documented v0
+    criterion), and process every pair independently -- each pair gets
+    its own `_retrim_freed_quadrics`/`_snapped_planar_cap` call against
+    the shape as reduced so far, and every pair's own cap is collected,
+    not just the last one's."""
     min_face_width = tolerances.min_face_width
     min_length_ratio = tolerances.sliver_edge_rel_tol
     slivers = list(find_sliver_faces(solid, min_face_width))
@@ -416,19 +443,21 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
         for f in slivers:
             reshaper.Remove(f.__native__)
 
-        if near:
-            for face_a, face_b in near:
-                keep, drop = (face_a, face_b) if BRepCheck_Analyzer(face_a.__native__).IsValid() else (face_b, face_a)
-                reshaper.Remove(drop.__native__)
-            reduced = reshaper.Apply(solid.__native__)
-            reduced = _retrim_freed_quadrics(reduced, drop.Surface, keep.Surface, dist_tol)
+        pairs = []
+        for face_a, face_b in near:
+            keep, drop = (face_a, face_b) if face_a.Area >= face_b.Area else (face_b, face_a)
+            reshaper.Remove(drop.__native__)
+            pairs.append((keep, drop))
 
-            caps = _snapped_planar_cap(reduced, keep.Surface)
-            if caps is None:
+        reduced = reshaper.Apply(solid.__native__)
+
+        caps = []
+        for keep, drop in pairs:
+            reduced = _retrim_freed_quadrics(reduced, drop.Surface, keep.Surface, dist_tol)
+            pair_caps = _snapped_planar_cap(reduced, keep.Surface)
+            if pair_caps is None:
                 return None
-        else:
-            reduced = reshaper.Apply(solid.__native__)
-            caps = []
+            caps.extend(pair_caps)
 
         sewer = BRepBuilderAPI_Sewing(OCCT_FIX_TOLERANCE, True, True, True, False)
         explorer = TopExp_Explorer(reduced, TopAbs_FACE)
@@ -460,7 +489,17 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
         unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), True, True, True)
         unify.SetLinearTolerance(OCCT_FIX_TOLERANCE)
         unify.Build()
-        result = GSolid(unify.Shape())
+        healed = unify.Shape()
+        # The face-by-face sew above can leave a bare TopoDS_Shell, or a
+        # solid with a thin uncapped slot where a removed sliver face
+        # wasn't re-capped. Hand it to the open-solid repair -- it
+        # recognises that (missing_sliver_strip) and re-sews it into a
+        # real, watertight TopoDS_Solid; a no-op (returns None) when the
+        # shape is already a valid closed solid.
+        closed = _repair_open(healed, tolerances)
+        if closed is not None:
+            healed = closed
+        result = GSolid(healed)
     except Exception:
         return None
 
@@ -559,6 +598,27 @@ def Gspline_surface(solid) -> bool:
     return False
 
 
+def Gface_valid(face) -> bool:
+    """True if `face` -- a native TopoDS_Face, or a GFace (unwrapped
+    here) -- passes BRepCheck_Analyzer: its boundary wire(s) bound a
+    coherent, orientable 2D region on its surface, its pcurves are sane,
+    edges lie on the surface within tolerance, etc.
+
+    The per-face counterpart of `GSolid.is_valid()`. A whole solid can
+    be BRepCheck-invalid solely because one of its faces is (a single
+    boundary wire that is really two loops crammed together ->
+    BRepCheck_UnorientableShape -- see the `L4_support.stp` case in
+    reference_cad_defect_recipes.md); this isolates the check to one
+    face. Returns False rather than raising if the analyzer itself
+    cannot run on the shape.
+    """
+    native = getattr(face, "__native__", face)
+    try:
+        return bool(BRepCheck_Analyzer(native).IsValid())
+    except Exception:
+        return False
+
+
 def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     """Repair a topologically-invalid solid (`BRepCheck_Analyzer` fails)
     via a STEP serialize -> deserialize rebuild, done **entirely in memory**
@@ -623,3 +683,22 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     except Exception:
         return None
 
+
+
+from .open_solid_repair import _diagnose_open_solid as _diagnose_open, _repair_open_solid as _repair_open
+
+
+def Gdiagnose_open_solid(solid: "GSolid", tolerances) -> "str | None":
+    """After a split: classify why `solid` is not watertight.
+    Returns None (watertight -- nothing to do), a known-cause tag
+    (currently only "split_duplicate_seam" -- a doubled BOPAlgo tangent
+    seam), or "unknown" (open, cause not recognised)."""
+    return _diagnose_open(solid.__native__, tolerances)
+
+
+def Gclose_open_solid(solid: "GSolid", tolerances) -> "GSolid | None":
+    """If `solid` is open from a known, repairable cause, return a
+    watertight, BRepCheck-valid, volume-conserving GSolid; else None
+    (already watertight / unknown cause / repair didn't hold)."""
+    native = _repair_open(solid.__native__, tolerances)
+    return GSolid(native) if native is not None else None

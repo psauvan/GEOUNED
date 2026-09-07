@@ -248,22 +248,17 @@ class ShellFaceGu:
         self.U_parameter_range = self._U_parameter_faces()
 
     def _U_parameter_faces(self):
-        AngleRange = 0.0
-        Uval, UValmin, UValmax = [], [], []
+        Uval = []
         for f in self.Faces:
             Range = f.ParameterRange
-            AngleRange = AngleRange + abs(Range[1] - Range[0])
             Uval.append(Range[0:2])
-            UValmin.append(Range[0])
-            UValmax.append(Range[1])
 
-        if twoPimod(AngleRange) == 0:
+        Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
+
+        if abs(Umin - Umax) < 1e-5:
             return 0, twoPi, 0, 0
-
-        Umin, Umax = sort_range(Uval)
-        ifacemin = UValmin.index(Umin)
-        ifacemax = UValmax.index(Umax)
-        return Umin, Umax, ifacemin, ifacemax
+        else:
+            return Umin, Umax, ifacemin, ifacemax
 
     def _check_same_surface_type(self):
         if len(self.Faces) == 0:

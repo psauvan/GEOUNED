@@ -293,7 +293,11 @@ def cutting_face_number(f, Faces, omitfaces):
         if isinstance(adjacent_face.Surface, GPlane):
             ncut += 1
         elif adjacent_face.Surface is None:
-            adjacent_face.__native__.exportStep("Spline_surface.stp")
+            # unsupported (spline / hyperbola / ...) neighbouring surface:
+            # decomposition cannot classify it. (Was preceded by a stray
+            # `adjacent_face.__native__.exportStep("Spline_surface.stp")`
+            # debug dump -- FreeCAD-only API, so under pyOCC it raised
+            # AttributeError and masked this RuntimeError; removed.)
             raise RuntimeError("Spline surface detected")
         elif region_sign(f, adjacent_face) == "OR":
             ncut += 1

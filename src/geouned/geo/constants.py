@@ -115,3 +115,41 @@ it is welding, or `Gdefeature`/`near_surface_pair`'s own tolerance
 parameters -- none of those are implicated in this crash class and must
 stay variable). `occ`/`ocp` only -- `freecad` has no equivalent native
 call."""
+
+OPEN_SEAM_REL_TOL = 1.0e-5
+"""Relative (x the solid's own BoundBox diagonal) tolerance below which
+two free edges of an open post-split solid are treated as a *doubled
+seam* (one trimming-surface boundary curve emitted twice by BOPAlgo,
+once per adjacent face -- typical of a plane tangent / near-tangent to a
+cylinder), rather than a genuinely missing face. Floored at
+`MIN_SLIVER_EDGE_LENGTH` so a tiny decomposed fragment's own small
+diagonal can't push it below the model's working geometric tolerance.
+Confirmed live (2026-09-04, `Test RoundCorners/rc1.stp`'s RoundCorner
+`surf.shape` wedge, ~72mm diagonal): the two duplicate 50mm free edges
+sat 4.2e-4mm apart, with 4.2e-4mm micro connector edges bridging the
+doubled vertices on the caps -- `rel * 72 = 7.2e-4` (or the 1e-3 floor)
+comfortably brackets that while staying orders below any real feature.
+Used by `_diagnose_open_solid`/`_close_open_solid` (`occ`/`ocp` only)."""
+
+OPEN_STRIP_GAP_ABS = 0.5
+OPEN_STRIP_GAP_REL = 5.0e-3
+"""Absolute (mm) and relative (x BoundBox diagonal) ceiling on the width
+of a *narrow uncapped slot* -- a thin missing strip face left when a
+sliver face is removed from a shell without re-capping. This is the
+wider sibling of `OPEN_SEAM_REL_TOL`: same "two near-parallel free edges
+a small distance apart, bridged by short connectors" shape, but the gap
+is genuinely visible geometry (tenths of a mm), not a sub-micron doubled
+seam, so it must additionally be *thin relative to its own length*
+(< `OPEN_STRIP_THIN_RATIO` x the strip length) to be trusted as a slot
+rather than a real missing face. Confirmed live (2026-09-05,
+`rev_pipe.stp` decomposition piece, ~147mm diagonal): a 0.071mm x 10mm
+slot beside an R=6 pipe -- 2 near-parallel 10mm free edges 0.071mm apart
+(one on the cylinder face, one on a plane), plus a 0.071mm connector
+arc. Repair: re-sew every face at a few x the slot width so the two
+sides weld into one shared edge. `occ`/`ocp` only."""
+
+OPEN_STRIP_THIN_RATIO = 0.1
+"""A candidate uncapped slot's width must be below this fraction of its
+paired long free edges' own length to be trusted as a slot (a thin
+strip) rather than a genuinely missing full face. See
+`OPEN_STRIP_GAP_ABS`."""

@@ -1016,10 +1016,10 @@ class GSolid:
     def reverse(self) -> "GSolid":
         return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape().Reversed())
 
-    def refine(self) -> "GSolid":
-        """See _freecad_impl.py's GSolid.refine docstring -- same
-        volume-invariance guard, using ShapeUpgrade_UnifySameDomain as
-        the removeSplitter() equivalent.
+    def refine(self, rel_tol: float = 1e-6) -> "GSolid":
+        """See the freecad engine's GSolid.refine docstring -- same
+        volume-invariance guard (`rel_tol`, default 1e-6), using
+        ShapeUpgrade_UnifySameDomain as the removeSplitter() equivalent.
 
         UnifyFaces=True is a confirmed native-crash source (access
         violation, not a catchable Python exception -- no try/except
@@ -1089,7 +1089,7 @@ class GSolid:
             refined_volume = _volume_props(refined).Mass()
         except Exception:
             return GSolid(native)
-        if abs(refined_volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
+        if abs(refined_volume - original_volume) > rel_tol * max(abs(original_volume), 1.0):
             return GSolid(native)
         return GSolid(refined)
 

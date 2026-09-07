@@ -1,4 +1,4 @@
-from .splitFunction import SplitBase, SplitSolid, joinBase, FuseSolid
+from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, CellSurface, myBox
 from ..boolean_function import BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
@@ -207,7 +207,7 @@ def BuildDepth(cell, base, tolerances):
                     cellParts.extend(part)
 
                 # newBase.extend(cellParts)
-                JB = joinBase(cellParts)
+                JB = joinBase(cellParts, tolerances)
                 if JB.base is not None:
                     newBase.append(JB)
 

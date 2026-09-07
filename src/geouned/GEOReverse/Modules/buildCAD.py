@@ -1,8 +1,8 @@
 import numpy as np
 from tqdm import tqdm
 
-from ...geo import Gcommon, Gsplit
-from .matrix_utils import fuse_solids, to_gmatrix_from_np
+from ...geo import Gcommon, Gfuse_solids, Gsplit
+from .matrix_utils import to_gmatrix_from_np
 from .Utils.booleanFunction import BoolSequence
 from .Utils.boundBox import myBox
 
@@ -10,7 +10,7 @@ from .Utils.boundBox import myBox
 def interferencia(container, cell, mode="slice"):
 
     if mode == "common":
-        return fuse_solids(Gcommon(cell.shape, [container.shape]))
+        return Gfuse_solids(Gcommon(cell.shape, [container.shape]))
 
     solids = Gsplit(cell.shape, container.shape, tolerance=0).solids
 
@@ -19,7 +19,7 @@ def interferencia(container, cell, mode="slice"):
     if not cellParts:
         return cell.shape
     else:
-        return fuse_solids(cellParts)
+        return Gfuse_solids(cellParts)
 
 
 def AssignSurfaceToCell(UniverseCells, modelSurfaces):

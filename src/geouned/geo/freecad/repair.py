@@ -138,3 +138,37 @@ def Gspline_surface(solid) -> bool:
         if Gclassify_surface(native_face) is None:
             return True
     return False
+
+
+def Gface_valid(face) -> bool:
+    """True if `face` -- a native Part.Face, or a GFace (unwrapped here)
+    -- passes Part.Face.isValid(): its boundary wire(s) bound a
+    coherent, orientable 2D region on its surface, its pcurves are sane,
+    edges lie on the surface within tolerance, etc.
+
+    The per-face counterpart of `GSolid.is_valid()`. A whole solid can
+    be invalid solely because one of its faces is (a single boundary
+    wire that is really two loops crammed together -- see the
+    `L4_support.stp` case in reference_cad_defect_recipes.md); this
+    isolates the check to one face. Returns False rather than raising
+    if the check itself cannot run on the shape.
+    """
+    native = getattr(face, "__native__", face)
+    try:
+        return bool(native.isValid())
+    except Exception:
+        return False
+
+
+def Gdiagnose_open_solid(solid, tolerances):
+    """No open-solid diagnosis on the FreeCAD engine -- its Gsplit path
+    (recursive_freecad_Gsplit) does not go through _raw_bop_split and
+    this native BOPAlgo-seam repair has no FreeCAD equivalent. Always
+    None (see the occ/ocp engines for the real implementation)."""
+    return None
+
+
+def Gclose_open_solid(solid, tolerances):
+    """No open-solid repair on the FreeCAD engine -- see
+    Gdiagnose_open_solid. Always None."""
+    return None

@@ -990,7 +990,7 @@ class GSolid:
         reversed_shape.reverse()
         return GSolid(reversed_shape)
 
-    def refine(self) -> "GSolid":
+    def refine(self, rel_tol: float = 1e-6) -> "GSolid":
         """
         Remove redundant edges/faces left by a boolean operation between
         coplanar/tangent surfaces (equivalent to `Part.Shape.removeSplitter()`).
@@ -1000,13 +1000,21 @@ class GSolid:
         a solid-with-cavity boolean-cut result, where it inflated the volume
         by ~3.4% and flipped face orientations on the cavity's boundary).
         Falls back to the un-refined solid whenever the volume moved by more
-        than floating-point noise, since a real simplification is supposed
+        than `rel_tol` (relative), since a real simplification is supposed
         to be volume-invariant by definition. `removeSplitter()` mutates the
         shape it's called on as a side effect (confirmed empirically: even
         though it returns a distinct object, the *receiver*'s own `.Volume`
         changes too, to a third, still-wrong value) -- so it's called on a
         copy, never on `self.__native__` directly, keeping the fallback
         genuinely pristine.
+
+        `rel_tol` defaults to `1e-6` (near floating-point noise). A caller
+        that legitimately expects a small volume wobble from merging
+        near-tangent faces -- e.g. `Gfuse_solids` cleaning a RoundCorner
+        composite shape, where a merged tangent-seam face can sit a hair
+        outside where the two split faces met -- passes a looser value
+        (`1e-4`, still far below the ~3.4% corruption signal this guard
+        exists to catch).
         """
         native = self.__native__
         original_volume = native.Volume
@@ -1015,7 +1023,7 @@ class GSolid:
         except Exception:
             refined = native
 
-        if abs(refined.Volume - original_volume) > 1e-6 * max(abs(original_volume), 1.0):
+        if abs(refined.Volume - original_volume) > rel_tol * max(abs(original_volume), 1.0):
             return GSolid(native)
         return GSolid(refined)
 

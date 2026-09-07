@@ -7,7 +7,7 @@ import math
 logger = logging.getLogger("general_logger")
 
 from .boolean_function import BoolVariable
-from .geometry_gu import ShellFaceGu, is_same_surface
+from .geometry_gu import ShellFaceGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
@@ -162,9 +162,9 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
             continue
         if isinstance(f.Surface, (GCylinder, GCone)):
             if f.Orientation == "Reversed":
-                rcc = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index, tolerances)
+                rcc, closed_set = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index, tolerances)
                 if rcc:
-                    gc = GeounedSurface(("ReversedConeCylinder", build_RCC_params(rcc)))
+                    gc = GeounedSurface(("ReversedConeCylinder", build_RCC_params(rcc), closed_set))
                     conecyl_list.append(gc)
 
     if one_value_return:
@@ -177,31 +177,28 @@ def build_roundC_params(rc_list):
 
     roundcorner_list = []
     plane_list = []
+    rc_planes = []
     extra_planes = []
     var_id = 0
 
-    for cyl, p1, p2, config_orientation, ep1, ep2 in rc_list:
+    for cyl, p1, p2, gpa, config_orientation in rc_list:
         config, fwd_corner = config_orientation
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
         cylOnly.bVar = BoolVariable(var_id)
-        if is_same_surface(p1.Surface, p2.Surface):
-            gpa = None
-        else:
-            # ep1/ep2 (not cyl): if the round corner's own cylinder was
-            # split into several contiguous pieces, p1/p2 may each only be
-            # reachable from a different piece, possibly through a residual
-            # sliver bridging them -- get_additional_corner_plane needs the
-            # exact touching edge/face get_adjacent_cylplane already found,
-            # not cyl's own (possibly non-touching) edge.
-            gpa = get_additional_corner_plane(ep1, ep2)
+
+        if gpa is not None:
             if gpa in plane_list:
                 index = plane_list.index(gpa)
                 gpa.bVar = plane_list[index].bVar
             else:
                 var_id += 1
                 gpa.bVar = BoolVariable(var_id)
-            extra_planes.append(gpa)
+            if cyl.Orientation == "Forward":
+                gpextra = GeounedSurface(("Plane", (gpa.Surf.Position, -gpa.Surf.Axis, 1.0, 1.0, False)))
+            else:
+                gpextra = gpa
+            extra_planes.append(gpextra)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
         p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
@@ -216,6 +213,7 @@ def build_roundC_params(rc_list):
         else:
             var_id += 1
             gp1.bVar = BoolVariable(var_id)
+            rc_planes.append(p1)
 
         if gp1 != gp2:
             if gp2 in plane_list:
@@ -224,9 +222,11 @@ def build_roundC_params(rc_list):
             else:
                 var_id += 1
                 gp2.bVar = BoolVariable(var_id)
+                rc_planes.append(p2)
             plane_list.extend((gp1, gp2))
         else:
             plane_list.append(gp1)
+            rc_planes.append(p2)
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"
@@ -236,6 +236,19 @@ def build_roundC_params(rc_list):
     multi_round = False
     orientation = None
     if len(plane_list) > 2:
+        # check if closed set of RC
+        closed_set = True
+        for p in rc_planes:
+            count = 0
+            for cyl, p1, p2, _, _ in rc_list:
+                if is_same_plane(p1.Surface,p.Surface) or is_same_plane(p2.Surface,p.Surface):
+                    count += 1
+                    if count ==2:
+                        break
+            if count == 1:
+                closed_set = False
+                break        
+
         i = 0
         multi_round = True
         while i < len(plane_list) - 1:
@@ -263,7 +276,7 @@ def build_roundC_params(rc_list):
             for p in extra_planes:
                 if not any(p == q for q in convexity_planes):
                     convexity_planes.append(p)
-            multi_round, orientation = convex_planes(convexity_planes, cyl.Surface.Axis)
+            multi_round, orientation = surface_geometry.convex_planes(convexity_planes, cyl.Surface.Axis, closed_set)
 
         if multi_round:
             if len(plane_list) > 1:
@@ -571,138 +584,3 @@ def build_multip_params(plane_list):
 
     return (planeparams, edges, vertexes)
 
-
-def convex_planes(plane_list, zaxis):
-    center = plane_list[0].Surf.Position
-    for p in plane_list[1:]:
-        center = center + p.Surf.Position
-    center = center / len(plane_list)
-
-    ref = (plane_list[0].Surf.Position - center).normalized()
-    orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) > 0 else "Reversed"
-
-    if len(plane_list) < 3:
-        return True, orientation
-
-    angles = []
-    for i, p in enumerate(plane_list[1:]):
-        rp = (p.Surf.Position - center).normalized()
-        cosa = ref.dot(rp)
-        cross = ref.cross(rp)
-        sina = cross.length
-        if cross.dot(zaxis) < 0:
-            sina = -sina
-        angle = math.atan2(sina, cosa)
-        while angle < 0:
-            angle += 2 * math.pi
-        angles.append((angle, i))
-
-    angles.sort()
-
-    p1 = ref
-    p0 = plane_list[angles[-1][1] + 1].Surf.Axis
-    signref = zaxis.dot(p0.cross(p1))
-
-    p0 = p1
-    convex = True
-    for a, i in angles:
-        p1 = plane_list[i + 1].Surf.Axis
-        sign = zaxis.dot(p0.cross(p1))
-        if signref * sign < 0:
-            convex = False
-            break
-        p0 = p1
-
-    return convex, orientation
-
-
-def get_additional_corner_plane(ep1, ep2):
-    # ep1/ep2 come from get_adjacent_cylplane's cornerPlanes=True search:
-    # (anchor, cyl_edge, touching_edge, near_face, plane). near_face/plane
-    # are where `plane` actually touches -- anchor itself (near_face is
-    # anchor) when found directly, or a residual sliver bridging them (see
-    # get_roundcorner_surfaces' merge_same_surface_faces + skip_slivers)
-    # otherwise, in which case `plane` is the real, non-degenerate face the
-    # sliver walk found beyond it. material_direction needs real, trustworthy
-    # geometry -- evaluate on `plane` (already found, previously discarded
-    # here) instead of on the sliver's own near-zero-area geometry, which
-    # can have an arbitrary/wrong normal from its own degenerate
-    # triangulation.
-    #
-    # NOTE 2026-08-19: two rewrites were tried here and both reverted, kept
-    # as a record so they aren't retried blindly:
-    #  1) an axis-based construction (supporting-plane normal taken from the
-    #     anchor's own contour, via 2 parallel straight edges or the
-    #     contour's inertia-tensor principal axis) -- caused a confirmed
-    #     infinite-recursion regression on cylBox.stp.
-    #  2) a "coplanar with e1/e2" construction (e1/e2 being the touching
-    #     edges where p1/p2 meet the cylinder -- real generatrix lines, so
-    #     parallel to each other; normal = cross(shared_direction,
-    #     connecting_vector), closed-form, no sampling) -- this one *did*
-    #     fix cylBox.stp and origSolid_0.stp, but caused a different,
-    #     confirmed infinite-recursion regression elsewhere in
-    #     Solidos/Big_one_cell/modelcell_cut1.stp's own decomposition tree
-    #     (a "CylinderOnly" candidate stuck at a constant volume across
-    #     960+ recursion levels) -- i.e. it changes which candidate
-    #     surfaces succeed/fail deep in the decomposition tree for OTHER,
-    #     unrelated corners in the same solid, not just the corner it's
-    #     computed for.
-    # Both attempts were motivated by a real, confirmed-wrong plane on
-    # modelcell_cut1.stp piece 66 (v1/v2 averaging pulled in an unrelated
-    # third face's own material direction, per direct user diagnosis) --
-    # that problem is still open. Direct numeric testing (sampling the wire
-    # and checking axis.dot(point - sample) for both candidates) confirmed
-    # BOTH the axis-based and the v1+v2 direction are valid supporting
-    # planes of the wire (no sample crosses to the negative side for
-    # either) -- i.e. "rests on the contour, nothing crosses it" does not
-    # uniquely determine the correct plane. Fixing piece 66 needs either a
-    # sharper criterion that provably can't perturb an unrelated corner's
-    # own candidate search elsewhere in the same solid, or a targeted fix
-    # to piece 66's own ep1/ep2 selection (which edge/face
-    # get_adjacent_cylplane picks) rather than a blanket formula change --
-    # not resumed yet.
-    anchor1, cyl_edge1, e1, near1, plane1 = ep1
-    anchor2, cyl_edge2, e2, near2, plane2 = ep2
-
-    pos1 = e1.Vertexes[0]
-    pos2 = e2.Vertexes[0]
-    face1 = anchor1 if near1.Index == anchor1.Index else plane1
-    face2 = anchor2 if near2.Index == anchor2.Index else plane2
-    v1, n1 = material_direction(pos1, face1, e1)
-    v2, n2 = material_direction(pos2, face2, e2)
-    point = 0.5 * (pos1 + pos2)
-    combined = v1 + v2
-    if combined.length < 1e-2:
-        # v1/v2 (near-)exactly opposed: a real, valid configuration for a
-        # Reversed MultiRoundCorner (every wing's material-pointing normal
-        # faces "outward", and two wings meeting at a cusp can legitimately
-        # point in exactly opposite outward directions there) -- the
-        # corner's bounding planes are OR-combined, so either direction
-        # alone is a correct choice; there's no well-defined bisector to
-        # average toward instead.
-        #
-        # The threshold was originally 1e-6 (only the *exactly* zero-length
-        # case), but a genuinely near-cusp corner rarely lands on exact
-        # floating-point cancellation -- confirmed live, 2026-08-23,
-        # Solidos/test_models/Mixed/SCDR_90_hollow.stp's own piece4 (a real
-        # R=37mm round corner): v1=(0.323,0,-0.947), v2=(-0.324,0,0.946)
-        # are antiparallel to within ~0.086 degrees, giving
-        # combined.length=0.00154 -- comfortably above the old 1e-6 guard,
-        # so it fell through to `combined.normalized()`, whose *direction*
-        # is dominated by that tiny near-cancellation residual (essentially
-        # numerical noise, not a meaningful bisector) rather than any real
-        # geometric signal. Raised to 1e-2 (~0.57 degrees from exactly
-        # opposed) for comfortable margin over the observed case while
-        # staying well below any genuine, well-conditioned corner angle.
-        #
-        # v1 vs v2, direct user correction: for piece4's real chain (this
-        # R37 corner sits adjacent to a real R40 corner in the same
-        # MultiRoundCorner), the additional plane's normal must be
-        # consistent with the neighboring corner's own additional plane,
-        # not an arbitrary pick -- confirmed v2 is the one that matches
-        # (v2=(-0.324,0,0.946) vs the R40 corner's own additional-plane
-        # axis=(-0.322,0,0.947), while v1 is its near-exact negation).
-        paxis = v2
-    else:
-        paxis = combined.normalized()
-    return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))

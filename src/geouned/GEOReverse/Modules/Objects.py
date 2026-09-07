@@ -17,6 +17,7 @@ from . import (
 )
 from ...geo import (
     GBoundBox,
+    Gfuse_solids,
     Gmake_box,
     Gmake_cone,
     Gmake_cone_double_sheet,
@@ -25,7 +26,7 @@ from ...geo import (
     Gmake_sphere,
     Gmake_torus,
 )
-from .matrix_utils import fuse_solids, matrix_multVec, matrix_rotate_vec, transform_solid
+from .matrix_utils import matrix_multVec, matrix_rotate_vec, transform_solid
 
 
 class CadCell:
@@ -165,7 +166,7 @@ class CadCell:
             self.transformSurfaces(surfTR)
 
         cutShape = BuildSolid(self)
-        self.shape = fuse_solids(cutShape)
+        self.shape = Gfuse_solids(cutShape)
 
     def buildSurfaceShape(self, boundBox):
         for s in self.surfaces.values():

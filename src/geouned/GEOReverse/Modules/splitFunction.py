@@ -1,7 +1,6 @@
 import math
 
-from ...geo import GSolid, Gsplit
-from .matrix_utils import fuse_solids
+from ...geo import GSolid, Gfuse_solids, Gsplit
 
 
 class SplitBase:
@@ -33,7 +32,7 @@ def joinBase(baseList):
                     surf[k] = None
                     removedKeys.append(k)
 
-    newbase = fuse_solids(shape)
+    newbase = Gfuse_solids(shape)
     orientation = "Forward" if fwd else "Reversed"
     return SplitBase(newbase, surf, orientation)
 

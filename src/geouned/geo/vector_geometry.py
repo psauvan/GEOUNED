@@ -312,3 +312,88 @@ def _affine_transform_point(matrix, point: GVector) -> GVector:
 def to_gboundbox(box) -> GBoundBox:
     """Convert any box-like object exposing `.XMin`/.../`.ZMax` (e.g. a native `FreeCAD.BoundBox`) into a neutral GBoundBox."""
     return GBoundBox(box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax)
+
+
+# ---------------------------------------------------------------------------
+# Angular arc utilities
+# ---------------------------------------------------------------------------
+
+
+def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[float, int, float, int]:
+    """
+    Given a list of (a0, a1) angle pairs (a0 < a1, radians) that together
+    trace exactly one open circular arc (total angular extent < 2*pi),
+    find the arc's two free ends.
+
+    Each pair may sit anywhere on the real line -- angles are not
+    required to already lie in [0, 2*pi). Between any two pairs
+    (a0,a1)/(b0,b1) the only allowed relations are a chained overlap
+    (a0<=b0<=a1<=b1), a nesting (a0<=b0<b1<=a1), or a real gap (a1<b0)
+    that some other pair in the list bridges -- possibly by wrapping
+    through 0/2*pi.
+
+    Returns (angle_min, index_min, angle_max, index_max): the original,
+    unmodified endpoint values (and their pair's index in `pairs`) that
+    bound the arc. Walking from angle_min with increasing angle (wrapping
+    through 0/2*pi if needed) reaches angle_max after covering exactly
+    the arc -- angle_min is not necessarily numerically smaller than
+    angle_max (e.g. angle_min=5.6, angle_max=2: the arc passes through
+    0, equivalent to angle_min == 5.6 - 2*pi once unwrapped).
+    """
+    n = len(pairs)
+    if n == 0:
+        raise ValueError("arc_extent: empty pair list")
+
+    two_pi = 2.0 * math.pi
+
+    # Canonicalize each pair into a common frame: shift the whole pair
+    # (rigidly, same shift on both ends) so its own start lands in
+    # [0, 2*pi) -- this only changes which representative of the pair's
+    # position on the circle we compare with, never its real extent.
+    c0 = [0.0] * n
+    c1 = [0.0] * n
+    for i, (a0, a1) in enumerate(pairs):
+        start = a0 - two_pi * math.floor(a0 / two_pi)
+        c0[i] = start
+        c1[i] = start + (a1 - a0)
+
+    order = sorted(range(n), key=lambda i: c0[i])
+
+    # Standard sweep-merge in the canonical frame. Because the whole set
+    # forms one arc on the circle, and cutting a circle at one point
+    # (here, the 0/2*pi boundary) can split a single arc into at most 2
+    # pieces, this can only ever produce 1 or 2 groups.
+    groups = []
+    for i in order:
+        if groups and c0[i] <= groups[-1]["end_val"] + tol:
+            if c1[i] > groups[-1]["end_val"]:
+                groups[-1]["end_val"] = c1[i]
+                groups[-1]["end_idx"] = i
+        else:
+            groups.append(
+                {
+                    "start_val": c0[i],
+                    "start_idx": i,
+                    "end_val": c1[i],
+                    "end_idx": i,
+                }
+            )
+
+    if len(groups) == 1:
+        g = groups[0]
+        return pairs[g["start_idx"]][0], g["start_idx"], pairs[g["end_idx"]][1], g["end_idx"]
+
+    if len(groups) == 2:
+        # groups is sorted by start_val ascending: groups[0] is the piece
+        # nearest 0 (the arc's tail after wrapping), groups[-1] is the
+        # piece nearest 2*pi (the arc's true start, continuing through
+        # the wrap into groups[0]).
+        first, last = groups[0], groups[-1]
+        if last["end_val"] < first["start_val"] + two_pi - tol:
+            raise ValueError(
+                "arc_extent: pairs do not stitch into a single arc across "
+                "the 0/2*pi boundary (gap between the two groups)"
+            )
+        return pairs[last["start_idx"]][0], last["start_idx"], pairs[first["end_idx"]][1], first["end_idx"]
+
+    raise ValueError(f"arc_extent: pairs split into {len(groups)} disconnected groups, not a single arc")

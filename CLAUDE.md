@@ -10881,6 +10881,522 @@ the 2 long-documented `GEOReverse` `test_csgtocad.py` failures), `occ`
 89/89, `ocp` 89/89 -- all 3 confirmed together, multiple times, at the
 end.
 
+## Open-solid detection + targeted repair after a split (`open_solid_repair.py`)
+
+New pair of functions (`geo/ocp/open_solid_repair.py` +
+`geo/occ/open_solid_repair.py`, byte-parallel; `freecad` = `None`-stubs,
+its `Gsplit` path does not go through `_raw_bop_split`), motivated by
+`Test RoundCorners/rc1.stp` / `cs_1.stp`: a RoundCorner `surf.shape`
+coming back as a 2-shell `TopAbs_COMPOUND` instead of one fused solid.
+
+**Root cause diagnosed** (`rc1.stp`, 2026-09-04): the small component
+(the corner wedge, vol 21826.54) is an **open shell** -- 4 free edges
+along the full-height (50mm) line where the outer slanted wall (a plane
+`d=5273.9757`) meets the R=6 fillet cylinder, where the plane is
+(near-)tangent to the cylinder. BOPAlgo emitted that boundary curve
+**twice** -- once on the plane face (`edge#6`), once on the cylinder
+face (`edge#15`) -- `0.000423mm` apart, `sharedV=0`, plus two
+sub-micron connector edges (`L=0.00042`) bridging the doubled vertices
+on the Z caps, plus 2 pairs of duplicate vertices. Because the two
+copies were never merged into one shared manifold edge, both are "free"
+-> shell not watertight -> `MakeSolid` gives an invalid solid ->
+`BRepAlgoAPI_Fuse` with that invalid operand returns **empty**, so
+`FuseSolid` falls back to `Gmake_compound`. `ShapeUpgrade_UnifySameDomain`
+/ `ShapeFix_Shape` / `BRepBuilderAPI_Sewing` at `1e-6` all fail to
+reconcile a `4e-4` crack; re-sewing the wedge's own 6 faces at
+tolerance `>= 5e-4` closes it cleanly, volume unchanged to ~1e-13.
+
+**`_diagnose_open_solid(native_solid, tolerances) -> str | None`**
+  * `None` -- watertight, nothing to do
+  * `"<known tag>"` -- open, a recognised repairable cause
+  * `"unknown"` -- open, cause not recognised (leave to the generic
+    heal/reject path)
+  Extensible: a new cause = one `(tag, matcher)` entry in
+  `_KNOWN_OPEN_PROBLEMS` + one `tag -> repair` entry in
+  `_OPEN_PROBLEM_REPAIRS`.
+
+**Known cause #1 -- `"split_duplicate_seam"`**: matches iff **every**
+free edge is either a sub-`seam_tol` micro connector *or* has a
+near-coincident (`< seam_tol`) duplicate-partner free edge sharing no
+vertex with it -- i.e. no free edge corresponds to a genuinely missing
+face (a real missing face gives free edges forming a closed loop with
+shared vertices and no near-coincident partner -> `"unknown"`).
+`seam_tol = max(diag * OPEN_SEAM_REL_TOL, MIN_SLIVER_EDGE_LENGTH)`, new
+constant `OPEN_SEAM_REL_TOL = 1e-5`.
+
+**Known cause #2 -- `"missing_sliver_strip"`** (added 2026-09-05, for
+`rev_pipe.stp`): a sliver face removed from a shell (by `Gsliver_heal`)
+without re-capping the thin slot it left. Same "two near-parallel long
+free edges a small distance apart, bridged by short connectors" shape as
+#1, but the gap is *genuinely visible* (tenths of a mm, e.g. `rev_pipe`'s
+0.071mm x 10mm slot beside an R=6 pipe), not a sub-micron doubled seam --
+so it's `"unknown"` to #1 (0.071 >> `seam_tol` ~0.0015). Distinguished
+from a genuinely missing *full* face by two extra requirements: the gap
+must be below `min(OPEN_STRIP_GAP_ABS=0.5mm, OPEN_STRIP_GAP_REL=5e-3 *
+diag)` **and** thin relative to its own length (`< OPEN_STRIP_THIN_RATIO
+= 0.1 *` the paired edges' length). Crucially the two long free edges
+here **do share their endpoints** (a doubled edge that bows apart in the
+middle, not two disjoint rails) -- so the gap is measured by
+`_max_curve_deviation` (sample one edge's interior, distance to the
+other), never `BRepExtrema_DistShapeShape` (which returns 0 at the shared
+vertex). Repair: the **same** re-sew as #1 (`_resew_faces_to_solid`,
+extracted and shared), sew tolerance a few x the slot width so the two
+sides weld into one edge and the sliver triangle collapses. Confirmed on
+`rev_pipe.stp` (2026-09-05): the `Gsliver_heal` output for the ~24167mm^3
+"pipe-wing" decomposition region -- a 9-face open shell (3 free edges) --
+-> valid closed `TopoDS_Solid`, volume unchanged to `dV_rel ~7e-15`.
+
+**Shell input**: `_diagnose_open_solid`/`_repair_open_solid`/
+`_close_open_solid` (and `Gclose_open_solid`) now accept a `TopoDS_Shell`
+as well as a `TopoDS_Solid` -- `Gsliver_heal` can hand back a bare shell,
+and the re-sew repair produces a real `TopoDS_Solid` from either.
+`_close_open_solid`'s volume gate (`_volume_props`) works on an open
+shell too (OCCT computes the as-if-closed enclosed volume).
+
+**Wired into `Gsliver_heal`** (`geo/{ocp,occ}/repair.py`): after its
+final `ShapeUpgrade_UnifySameDomain`, the healed shape is passed through
+`_repair_open_solid` -- a no-op (`None`) when it's already a valid closed
+solid, else it re-sews a leftover shell / uncapped slot into a real
+solid. This is what makes `rev_pipe.stp` decompose into **3 valid
+irreducible solids** (`Gmake_compound` #SOLID 2 -> 3) instead of 2
+solids + 1 shell: `Gmake_compound` was never fusing anything (it is a
+pure `BRep_Builder` container) -- one of its 3 inputs was a bare
+`TopoDS_Shell` that `TopExp_Explorer(compound, SOLID)` silently didn't
+count. Making the middle piece a real solid *before* `Gmake_compound`
+(the user's own framing) is exactly this fix; promoting it earlier
+(inside `Gsliver_heal` via a raw `MakeSolid`, or accepting
+`_repair_non_manifold_solid`'s alternative F=12 reconstruction) instead
+let `generic_split`'s recursion re-cut the region at its own `d=5285.9757`
+notch-wall face into 4 pieces -- the re-sewn 9-face `Gsliver_heal` output
+does not have that splittable structure, so it stays one piece.
+
+`rev_pipe.stp`'s big ~486801mm^3 `PIECE 0` is a separate, non-blocking
+observation: a `BRepCheck`-valid closed solid but with 7 coincident
+coplanar-face pairs (the same infinite plane as 2-3 disjoint patches --
+`d=5273.9757` appears 3x). It has **no** slivers / short edges
+(`find_sliver_faces`/`find_split_ring_faces`/`find_short_edges` all 0);
+`Gheal_topology` (STEP round-trip) before `refine()` doesn't merge them;
+`refine()`/`UnifyFaces` *does* merge 18->14 faces but returns an
+**invalid** solid (so `Gfuse_solids`' own `refined.is_valid()` gate
+correctly rejects it). Left as-is -- the repeated planes are most likely
+legitimate disjoint boundary patches of a non-convex solid and don't
+affect the CSG conversion.
+
+**`_close_open_solid(native_solid, problem, tolerances) -> native | None`**:
+dispatches on the tag; `"split_duplicate_seam"` re-sews every face at
+`min(max(3*width, seam_tol), diag*1e-3)` so the doubled seam collapses
+to one edge (ShapeFix fallback if still open). Gated: result must be
+watertight (0 free edges) + `BRepCheck`-valid + volume-conserved to
+`MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE` (1e-3). `_repair_open_solid` =
+the two combined in one call.
+
+**`geo` API** (`G`-prefixed, `GSolid` in / `GSolid | None` out,
+exported from all 3 engine blocks of `geo/__init__.py`;
+`freecad` = `None`-stubs): `Gdiagnose_open_solid(gsolid, tolerances)`,
+`Gclose_open_solid(gsolid, tolerances)`.
+
+**Wired at two points**:
+1. `_raw_bop_split` (`geo/{ocp,occ}/split.py`): an invalid post-split
+   solid -> `_repair_open_solid`; on success keep the closed solid,
+   mark `repaired_any`, else fall through to the existing
+   `_repair_non_manifold_solid` / `Gsliver_heal` path unchanged.
+2. `FuseSolid` (`build_region/splitFunction.py`, new optional
+   `tolerances` arg): each `part` passed through `Gclose_open_solid`
+   before `Gfuse` -- an open part poisons the boolean fuse, so closing
+   the doubled seam first lets the real fuse (across the genuine
+   coplanar shared wall) succeed. This is what actually fixes the
+   `cs_1`/`rc1` RC `surf.shape` (the open wedge is born in
+   `BuildDepth`/`joinBase`, not in `_raw_bop_split`). `tolerances`
+   threaded through `joinBase` and both `FuseSolid` call sites
+   (`build_region.py::BuildDepth`, `build_shape_functions.py::
+   build_complex_shape`). `Gclose_open_solid` is a strict no-op
+   (`None`) for any already-watertight or unrecognised-open part, so a
+   case that was already fusing is never changed.
+
+**`FuseSolid`'s own `refine()` made conditional** (per direct user
+instruction, recalling that an earlier unconditional `refine()` here
+errored): `refine()` (removeSplitter / `ShapeUpgrade_UnifySameDomain`)
+is not a repair tool -- run against a not-properly-closed fuse result
+(an open shell, or an unfused >1-solid compound) it historically
+mangled the geometry. It is now applied **only** as a final tidy step,
+and only when `len(gsolid.Solids) == 1 and gsolid.is_valid()` (a
+single, watertight, valid solid); it was removed from the
+result-selection cascade (which now goes `fused` -> `fused.fix(1e-6)`
+-> `Gmake_compound`). `refine()` keeps its own volume-invariance guard;
+any residual invalid refine output is discarded.
+
+**Verified**: `rc1.stp` shell[1] -> diagnosed `"split_duplicate_seam"`
+-> valid watertight solid, volume `21826.538976` intact (ocp + occ,
+native + `geo` wrapper). `cs_1.stp` RC #1 `surf.shape`: 2-shell
+compound -> one valid 485444mm^3 watertight solid. Full 3-engine
+suites: `freecad` 156/156, `occ` + `ocp` 125 passed / 3 failed -- the 3
+are the pre-existing `ValueError: arc_extent...` in the working tree's
+own uncommitted `vector_geometry.py` WIP, confirmed by isolation (same
+3 fail with this change fully removed), not a regression from this
+work. The `cs_1.stp` 85%-volume-loss problem is separate (the
+RoundCorner region formula, per the user) and deliberately deferred.
+
+## `FuseSolid` -> `geo.Gfuse_solids`; `build_region` portability analysis
+
+`build_region/` (GEOUNED's `BuildDepth`/`SplitSolid`/`joinBase` machinery
+that reconstructs a CAD solid from a boolean expression) and its
+near-twin `GEOReverse/Modules/buildSolidCell.py`+`splitFunction.py` exist
+as two separate copies only because GEOUNED (CadToCsg) and GEOReverse
+(CsgToCad) are not 100% compatible. The user asked for a written analysis
+of moving it into `geo` for future sharing, plus the one immediately-safe
+piece of it done now (the solid-fusion helper).
+
+### Done this pass: `FuseSolid`/`fuse_solids` -> `geo/solid_ops.py::Gfuse_solids`
+
+`FuseSolid` (GEOUNED `build_region/splitFunction.py`) and `fuse_solids`
+(GEOReverse `Modules/matrix_utils.py`) were a real near-duplicate -- both
+"boolean-union a list of `GSolid`, fall back safely on failure", both
+already 100% `geo`-pure (only `Gfuse`/`Gmake_compound`/`Gclose_open_solid`/
+`GSolid`). Consolidated into one **engine-agnostic policy helper**,
+`geo/solid_ops.py::Gfuse_solids(parts, tolerances=None)`, sitting at the
+`geo/` top level next to `vector_geometry.py`/`solid_defects.py` (its
+kernel-function imports are function-local to avoid an import cycle with
+`geo/__init__.py`). Deliberately **not** next to `Gfuse` in each engine's
+`boolean.py`: `Gfuse` is the raw kernel primitive, `Gfuse_solids` is
+policy (repair cascade + compound fallback) one layer above it -- the
+`matrix_utils.py` docstring already made exactly this argument for
+keeping `fuse_solids` out of `geo` proper; the resolution is a shared
+policy module, not the kernel layer.
+
+The merged body **is GEOUNED's `FuseSolid` verbatim** (the richer of the
+two): `Gclose_open_solid` per-part when `tolerances` is given, then
+`Gfuse` -> `fix(1e-6)` -> `Gmake_compound` fallback cascade, then a gated
+`refine()` (only on a single valid watertight solid), then negative-volume
+`reverse()`. GEOReverse's version was the older, thinner one (unconditional
+`refine()`, no `Gclose_open_solid`/`fix()`, a `len==1` shortcut) -- it
+just adopts the better logic now. Per explicit user instruction, **no
+GEOReverse verification was done** ("sabemos que hay muchos errores y que
+resolveremos todos cuando pasamos a limpiar GEOReverse").
+
+Call sites updated: GEOUNED `build_region/splitFunction.py::joinBase`,
+`build_shape_functions.py::build_complex_shape` (and the `FuseSolid`
+re-export chain through `build_region.py` removed). GEOReverse
+`splitFunction.py::joinBase`, `Objects.py::CadCell`, `buildCAD.py`
+(`interferencia`/`BuildUniverseCells`) -- all now `from ...geo import
+Gfuse_solids`; `fuse_solids` deleted from `matrix_utils.py` (its
+`Gfuse`/`Gmake_compound` imports dropped with it). `Gfuse_solids` added
+to the shared block of `geo/__init__.py`.
+
+**Verified (GEOUNED only)**: `tests/geo` + `tests/test_cadtocsg.py` --
+`freecad` 156 passed / 2 skipped (baseline unchanged), `ocp` 125 passed,
+`occ` 111 passed; the 3 `test_cadtocsg.py` failures on `ocp`/`occ`
+(`ValueError: arc_extent ... 0/2*pi boundary`) are pre-existing in the
+working tree's uncommitted `vector_geometry.py` WIP -- identical set
+before this change, not a regression.
+
+### Follow-up: `GSolid.refine()` gained a `rel_tol` param; `Gfuse_solids` uses `1e-4`
+
+User report: after `Gfuse_solids` the RoundCorner `surf.shape` still had
+its redundant boolean-seam edges, but exporting it and running FreeCAD's
+GUI "Refine shape" cleaned it. Root-caused (instrumented `Gfuse_solids`
+on `Test RoundCorners/cs_1.stp`): the fused solid is a single valid
+solid, the gate passes, and `ShapeUpgrade_UnifySameDomain` **does** clean
+it (13 faces / 54 edges -> 7 / 30, matching FreeCAD) -- but the merge
+moves the volume by `dV_rel = 1.7e-6` (a slanted plane tangent to the
+fillet cylinder: the merged tangent-seam face sits a hair outside where
+the two split faces met), and `GSolid.refine()`'s volume-invariance
+guard was a fixed `1e-6` relative, so it discarded the clean result and
+returned the redundant-edge solid. FreeCAD's GUI refine is raw
+`removeSplitter()` with no guard, hence the difference.
+
+The guard exists to catch a real ~3.4% (`3.4e-2`) volume-corruption case
+(removeSplitter on a solid-with-cavity, documented in `refine()`'s own
+docstring) -- `1e-6` was an over-tight guess with a 4-order-of-magnitude
+margin to spare. Fix: `GSolid.refine(rel_tol=1e-6)` now takes the
+threshold as a parameter (default unchanged -> every existing caller is
+byte-identical), ported to all 3 engines. `geo/solid_ops.py::Gfuse_solids`
+calls `refine(rel_tol=1e-4)` -- still 340x below the corruption signal,
+and `surf.shape` is a `Gsplit` cutting tool / point-classification shape,
+not used for volume accounting, so a sub-micron-relative wobble from
+merging a tangent face pair is fine. Verified: `cs_1.stp` RC `surf.shape`
+now comes back 7 faces / 30 edges; all 3 engine suites unchanged
+(`freecad` 156/2skip, `ocp` 125, `occ` 111, same 3 pre-existing
+`arc_extent` failures).
+
+### Portability of the rest of `build_region` (analysis only -- not done)
+
+Everything below is a written assessment for a future migration; no code
+was moved.
+
+**Already `geo`-pure, portable with light work:**
+- **Box algebra** in `build_region/Objects.py` (`myBox`, `box_intersect`,
+  `plane_region`, `operate_box`, `plane_polygon_from_box`,
+  `cylinder_from_box`, `cone_from_box`) -- the file imports only `geo` +
+  `math` + `numpy`. A **divergent** `myBox` exists in GEOReverse
+  (`Modules/Utils/boundBox.py`); both already work on `GBoundBox`, so
+  unifying is reconciling semantics, not the kernel.
+- **`splitFunction` core** (`SplitBase`, `joinBase`, `SplitSolid`,
+  `space_decomposition`) -- GEOUNED imports only `GSolid`/`Gsplit`/
+  `Gfuse_solids`. Differences vs GEOReverse are all above the kernel: a
+  `tolerances` object vs the `Options` module; GEOUNED keeps `GSolid`
+  end-to-end while GEOReverse still does the `s.__native__`/`GSolid(s)`
+  dance around `Gsplit`; `surface_side` is `surf.is_inside(p)` (4 types)
+  in GEOUNED vs a giant native formula (~14 types incl. exotic quadrics,
+  `truncated`/`dblsht`, `btwPPlanes`) in GEOReverse.
+- **`BuildDepth`/`BuildSolidParts`/`filterparts`** -- already
+  near-byte-identical between `build_region.py` and `buildSolidCell.py`.
+  Deltas are all parameterizable: `tolerances` object vs `Options`
+  module; GEOReverse builds `build_BoundBox`/`buildSurfaceShape` inline
+  vs GEOUNED pre-built (in `build_complex_shape`); a `not surfaces`
+  early-return only in GEOReverse; `cell.externalBox`/
+  `cell.boundBox.Orientation` box selection.
+
+**Blockers -- each resolved by a protocol in `geo`, not by unifying the
+two implementations:**
+1. **Two divergent `BoolSequence`** (`utils/boolean_function.py` --
+   `BoolVariable`/`BoolSurface`/`literal_sign`/region algebra -- vs
+   `Modules/Utils/booleanFunction.py`, parser-oriented, simpler).
+   `BuildDepth` uses only a small common subset: `.group_single()`,
+   `.level`, `.operator`, `.elements`, `.copy()`,
+   `.get_surfaces_numbers()`, `.to_integer()`, `.level_update()`, plus
+   `BoolSequence(operator=...)`/`.append()`. -> shared code depends on a
+   **boolean-definition protocol**, not either class.
+2. **Two surface/cell models.** GEOUNED: `CellObj` + `CellSurface`
+   wrapping ONE `geo` descriptor (`GPlane`/`GCylinder`/`GCone`/`GSphere`),
+   delegating `is_inside`/`transform`; no exotic quadrics, no
+   `truncated`/`dblsht`. GEOReverse: `CadCell` + 12 `params`-tuple
+   classes (`Plane`/`Sphere`/`Cylinder`/`Cone`/`EllipticCone`/
+   `Hyperboloid`/`Ellipsoid`/`EllipticCylinder`/`HyperbolicCylinder`/
+   `Paraboloid`/`Torus`/`Box`), numpy matrix transforms, `Gmake_*`
+   builders (incl. 6 exotic-quadric makers from
+   `GEOReverse/Modules/__init__.py`), `BoxSettings`/`solid_plane_box`.
+   -> shared code needs a **surface protocol** (`.id`, `.shape`,
+   `.is_inside(point)`, `.buildShape(box)`, `.transform(matrix)`); each
+   side implements it with its own model. Consolidating the 12 classes
+   with `CellSurface` is a separate, probably-unnecessary project.
+3. **`surface_side` + exotic quadrics** (subcase of #2). GEOUNED's is
+   already `surf.is_inside(p)`. For GEOReverse to share the core, either
+   `geo_quadrics` grows `is_inside` predicates for the exotic descriptors
+   (it already has the makers), **or** `surface_side` becomes a
+   pluggable point-classifier injected by each front-end. The latter is
+   cheaper and unblocks sooner.
+4. **`tolerances` object vs `Options` module** -- low severity; pass a
+   small duck-typed config object to the shared code, filled by each
+   front-end.
+
+**Stays where it is:** `get_cell_object`/`get_surface` +
+`round_corner_region`/`multi_round_corner_region`/`can_region`/
+`tcone_region` (GEOUNED meta-surface -> `CellObj` translation; GEOReverse
+has no meta-surfaces -- `CadCell.__init__` parses MCNP/XML directly).
+`Gfuse`/`Gcut`/`Gcommon`/`Gsplit` stay in each engine's `boolean.py`/
+`split.py` (kernel primitives, not policy).
+
+**Recommended incremental path:** (1) `Gfuse_solids` -- done. (2) define
+`CellLike` (`.surfaces`, `.definition`, `.boundBox`, `.getSubCell`,
+`.makeBox`) and `SurfaceLike` protocols in `geo`. (3) move the neutral
+core (`BuildDepth` family, `SplitSolid`/`joinBase`/`space_decomposition`,
+box algebra) to `geo`, typed against the protocols, with `surface_side`
+as an injected callback. (4) reconcile the two `myBox`. (5) migrate each
+front-end to call the shared core, keeping its own cell/surface
+construction. (6) optional: `is_inside` for exotic quadrics in
+`geo_quadrics` so both sides converge on `surf.is_inside(p)`. Every
+boundary is against a data model, never the CAD kernel -- which is
+exactly why two functions are needed today.
+
+## `Gface_valid`; and healing a BOPAlgo 2*pi-U-range wedge in `generic_split`
+
+Two related additions, 2026-09-07.
+
+### `geo.Gface_valid(face) -> bool`
+
+Per-face counterpart of `GSolid.is_valid()`: `BRepCheck_Analyzer(native).
+IsValid()` (occ/ocp) / `Part.Face.isValid()` (freecad). Accepts a native
+face **or** a `GFace` (unwrapped via `getattr(face, "__native__", face)`,
+same tolerance as `Gclassify_surface`); returns `False` rather than
+raising if the analyzer can't run. Lives next to `Gspline_surface` in
+each engine's `repair.py`, exported from `geo/__init__.py` +
+`geo/<engine>/__init__.py`. Verified on `Solidos/Detected_corrupted/
+L4_support.stp` -> `invalid faces: [0]`, matching that file's own recipe
+entry.
+
+### `generic_split` heals a BRepCheck-invalid decomposition fragment before use
+
+Reported symptom: on `Solidos/test_models/RevCC_regression/Big_one_cell__
+modelCell_670000__solid0_piece59__revcc1.stp` (a RevCC/RoundCorner piece)
+the **first decomposed sub-solid**'s R=6 round-corner cylinder face had a
+`ParameterRange` U span of **2*pi**, while its own edges were ~75deg
+circular arcs.
+
+**Root cause (verified, not the `ShellFaceGu`/`arc_extent` merge path --
+it's a single un-merged raw face):** `BOPAlgo_Splitter` (OCP/OCCT 7.9.3)
+cut the cylinder into a ~75deg wedge but gave **one of the two straight
+V-boundary edges a pcurve a full 2*pi period off** -- its pcurve U sits
+at `u0 + 2*pi` (`7.17270`) while the two arc edges and the other straight
+edge sit correctly in `[0.88952, 2.19109]`. `BRepTools::UVBounds` unions
+all four edges' pcurve-U extents -> `[u0, u0 + 2*pi]` = a full period, so
+`IsUClosed()` flips to `True` and `GFace.ParameterRange` reports 360deg;
+`BRepCheck_Analyzer` marks the face (and the solid) invalid; and ~one
+period of **phantom material** is glued on (piece volume 6849; the 3
+sub-pieces summed to 10896, overshooting the input's own 10142 by exactly
+that 754mm^3).
+
+**What does / doesn't fix it:** `.refine()` (removeSplitter /
+`UnifySameDomain`, already applied by `GeounedSolid.__init__`) does NOT.
+`ShapeFix_Shape` -- i.e. `GSolid.fix()` run on an invalid solid, the
+canonical repair `Gload_step` already applies to every loaded solid --
+DOES: U collapses to 74.57deg, `IsUClosed()=False`, face/solid valid,
+volume 6095 (3 pieces then sum to 10142, matching the input exactly).
+`_raw_bop_split`'s own repair cascade never reaches `.fix()` (the solid
+has no non-manifold edges, no sliver faces, isn't an open-seam case), and
+even a repaired single solid there is discarded by the tail
+`if len(final_native_solids) > 1 ... else return [base_native], False` --
+and `generic_split` overwrites `comsolid_solids` on each candidate
+iteration, so a fix landed in `_raw_bop_split` wouldn't survive anyway.
+
+**Fix:** at the top of `decom_one_generators.py::generic_split`, before
+`bbox`/the candidate loop: `if not solid.is_valid(): fixed = solid.fix(
+tolerances.fix_tolerance); if fixed.is_valid(): solid = fixed`. Engine-
+agnostic (`GSolid.is_valid()`/`.fix()` on all 3), fires **only on a
+genuinely invalid fragment** so the normal path is untouched, and it's
+the one place the healed solid flows both into further splitting and into
+the returned `components`. Deliberately no volume guard -- `.fix()`
+legitimately trims the phantom region back to what the face's own arc
+edges bound, and a valid solid is strictly better than a known-invalid
+one for downstream CSG.
+
+**Verified:** first sub-solid's cylinder U range 360deg -> 74.57deg;
+`tests/geo` + `tests/test_cadtocsg.py` unchanged on all 3 engines
+(freecad 117 pass; ocp 124 pass; occ 85 pass -- the 4 `test_cadtocsg`
+failures, `arc_extent`/`file43`, are pre-existing in the working-tree WIP,
+identical with the change `git stash`ed out); d1suned on the file
+(`volSDEF=True`): tally `0.98880 +/- 0.65%` (~1.7 sigma), **0 lost
+particles**, SD4 = 10142.13 = the true CAD volume exactly (was
+overshooting by 754mm^3). Full `Solidos/test_models` composite-count
+corpus diff not re-run -- the guard is narrow enough that it shouldn't be
+needed, but it's the outstanding thorough check.
+
+## `generic_split`: a gated STEP round-trip heal for a BOPAlgo tolerance-weld
+(piece52), and two latent bugs it surfaced
+
+Follow-up to the piece59 heal above, on its sibling
+`Big_one_cell__modelCell_670000__solid0_piece52__revcc1.stp`: a
+RoundCorner cutting tool (fillet cylinder, centre `GVector(9517.8, 405.5,
+389.00001)`) failed to separate a sub-solid that a previous split had
+produced -- the final decomposition fused it as `[5406.76, 2330.10]`
+instead of `[816.5, 4590.0, 2330.1]`, giving a ~0.895 d1suned tally.
+
+### What the failing 5406 mm^3 base actually is
+
+Captured `(base, tool)` at the failing `Gsplit` call and characterised
+`base` vs `base.fix(1e-6)` vs `Gheal_topology(base)`:
+
+| | non-manifold edges | max edge/vert tol | plain BOPAlgo split |
+|---|---|---|---|
+| BASE (as BOPAlgo left it) | **4** (each on 1 face only, ~0.024mm) | **7.46e-2** | **1 solid** [5407] |
+| `base.fix(1e-6)` | 4 (unchanged) | 7.46e-2 (unchanged) | **1 solid** [5407] |
+| `Gheal_topology(base)` | **0** | **1.22e-2** (edge 4.2e-4) | **2 solids** [816.5, 4590.0] |
+
+BOPAlgo left a `BRepCheck`-valid solid that hides the un-separated
+junction behind (a) edge/vertex tolerances inflated to **0.0746 mm** --
+~750x the `split_tolerance` the RC tool is cut with -- and (b) 4 tiny
+dangling free edges (tolerance artifacts). 92 "vertices" pile onto 14
+real points. That fat tolerance is exactly what makes OCCT treat the two
+would-be pieces as one connected body. `Gheal_topology`'s in-memory STEP
+serialize->deserialize rewrites every face from its clean analytic
+description -- STEP can't carry the 0.0746 mm fudge, so on re-read the
+edges come back at ~4e-4 tolerance, the dangling edges vanish, pcurves
+refit tight, and an ordinary `BOPAlgo_Splitter` then separates it.
+`.fix()` / `.refine()` do **not** touch the inflated tolerance or the
+free edges (confirmed live), so neither is a substitute.
+
+**Hand-cleaning was tried and is not equivalent**: `ShapeFix_ShapeTolerance`
++ `SameParameter` alone -> tolerance only drops to 0.0257 (SameParameter
+re-inflates, the pcurves genuinely don't fit tight), free edges remain ->
+still 1 solid. Adding `ShapeBuild_ReShape.Remove` of the 4 dangling edges
++ `ShapeFix_Shape` *does* make it split into [816.4, 4589.5], but the
+result is `BRepCheck`-invalid and the volumes are ~0.5 off. The STEP
+round-trip's face rebuild is what yields a valid, volume-conserving
+result.
+
+### The fix: gated heal-and-retry-once in `generic_split`
+
+Two new pure `geo` primitives (`geo/{ocp,occ,freecad}/queries.py`,
+exported through the usual chain), duck-typed on the native solid:
+- `Gsolid_max_tolerance(solid) -> float` -- largest BRep tolerance over
+  every edge and vertex.
+- `Gsolid_nonmanifold_edge_count(solid) -> int` -- edges shared by != 2
+  faces (a watertight closed solid has 0).
+
+`generic_split` (`decompose/decom_one_generators.py`), after the
+candidate loop finds nothing that splits the fragment, and only then:
+if `Gsolid_max_tolerance(solid) > max(50*split_tolerance, 1e-3)` **AND**
+`Gsolid_nonmanifold_edge_count(solid) >= 1`, call `Gheal_topology(solid)`
+once and re-run the candidate loop on the rebuilt solid (a `healed=True`
+param guards against recursion; the retry recursion is wrapped in
+`try/except` -> keep the un-healed fragment if the rebuilt one trips
+anything downstream, so the heal can only ever help or be a no-op).
+
+**Both conditions matter.** A first version gated on inflated tolerance
+alone; run against the corpus it fired on `Torus/2_degen_torii.stp`
+(degenerate torus, `maxTol=5792` -- a real torus-geometry artifact, not a
+weld, **0 free edges**) and `esfera/Barrel_bottom.stp`, where
+`Gheal_topology` succeeded but the rebuilt solid then reached two
+pre-existing latent bugs downstream (see below). Requiring a non-manifold
+edge as well excludes exactly those (0 free edges) while keeping piece52
+(4). This is *not* the per-candidate `_raw_bop_split` gate that once blew
+up `test_cadtocsg` -- it runs O(stuck irreducible leaves) with the weld
+signature, cheap.
+
+**Verified**: piece52 -> `[816.5, 4590.1, 2330.1]` (sum = input volume),
+d1suned `0.998921 +/- 0.50%` (0.2 sigma), 0 lost particles, SD4 = true
+CAD volume exactly. `tests/geo` + `tests/test_cadtocsg.py` on all 3
+engines: `ocp` 110 pass, `occ` 110 pass, `freecad` 142 pass -- the 4
+pyOCC `test_cadtocsg` failures are the pre-existing working-tree
+`arc_extent`/`file43` WIP, unchanged. Full 141-file `Solidos/test_models`
+composite-surface-count corpus differential (heal on vs off, via a
+temporary `_NO_TOL_HEAL` env gate): 0 real diffs. And a full
+`Solidos/test_models` convert + d1suned batch run twice, heal-on and
+heal-off, came back **byte-for-byte identical** (same 9 >3-sigma files,
+same 7 lost-particle files, every value) -- confirming this work
+contributes nothing to that corpus, so the regression there (RoundCorners
++ Torus + `SCDR_90_hollow`, vs the 2026-08-27 baseline of 0/0) is
+entirely from other in-progress uncommitted working-tree changes
+(`arc_extent`, the torus-branch reorg, the RoundCorner-formula WIP, and
+a `min_solid_volume` default bumped `1e-6 -> 1e-3` in `data_classes.py`),
+to be worked through separately.
+
+**Runner quirk, worth knowing**: `run_all_conversions_ocp_parallel.py`'s
+`Big_*` exclusion checks *every* path part including the filename, so
+`Solidos/test_models/RevCC_regression/Big_one_cell__*` and
+`Big_model_reserved__*` (piece52/59/70 + 3) are silently skipped by the
+batch. Run `RevCC_regression/` explicitly instead -- 7/8 clean (piece52
+0.998921/0.2 sigma, piece59 0.98880/1.7 sigma, piece70 0.99750, cyl_cone
+0.996542, `modelcell_cut1_piece51` 0.998688, `TVA_allencl_solid8_piece0`
+0.995822, `hylife-v06_solid358_piece2` 1.00051, all 0 lost); the 8th,
+`hylife-v06_solid113_piece0`, fails to convert with the pre-existing
+`RuntimeError: only convex joined reversed cilinder/cone`.
+
+### Two latent bugs the un-gated heal surfaced -- fixed
+
+- **`decom_utils_generator.py::cutting_face_number`**: when a neighbouring
+  face's surface is unsupported (`adjacent_face.Surface is None` -- spline
+  / hyperbola / ...), the code did
+  `adjacent_face.__native__.exportStep("Spline_surface.stp")` before
+  `raise RuntimeError("Spline surface detected")`. `.exportStep()` is a
+  FreeCAD `Part.Shape` method that a raw `OCP.TopoDS.TopoDS_Face` doesn't
+  have, so under pyOCC it raised `AttributeError` and *masked* the
+  intended `RuntimeError`; it also dumped an unwanted `Spline_surface.stp`
+  into the CWD on every conversion that hit this branch. Removed the line;
+  the `raise RuntimeError` (the deliberate signal) stays.
+- **`data_classes.py::Tolerances.scaled`**: `length_scale = min(1.0,
+  volume ** (1.0/3.0) / SCALE_REFERENCE_LENGTH)`. `volume` is the
+  caller's raw `GSolid.Volume`, which is *signed* -- for a
+  reversed-orientation piece `(-x) ** (1/3)` returns a Python `complex`
+  and the `min(1.0, complex)` raises `TypeError: '<' not supported
+  between instances of 'complex' and 'float'`. Fixed to
+  `abs(volume) ** (1.0/3.0)`.
+
+Also fixed a stale line in the workshop's own `verify_one_solid.py`
+(`SolidTestMCNP/scripts/`, not this repo): line 31
+`Gload_step(step_path)[0].__native__.Volume` -> `[0].Volume`
+(`__native__` is a bare `TopoDS_Shape` under the pyOCC engines, no
+`.Volume`).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

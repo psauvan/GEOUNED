@@ -22,7 +22,7 @@ not a pre-built `TCollection_ExtendedString` (passing the latter raises
 resolution doesn't like an already-typed argument here, only a raw
 `str` it can convert itself). `shape_tool.AddShape(shape, False)` on a
 `TopoDS_Compound` (the common case -- most real `GSolid`s built by
-GEOReverse's own `fuse_solids` fallback path are compounds, not single
+`geo.Gfuse_solids`'s compound fallback path are compounds, not single
 `TopoDS_Solid`s) does NOT keep it as one label with N solids inside --
 `Gload_step_labels` reads it back as N separate same-named labels, one
 per solid. A real, harmless difference from the FreeCAD path (which

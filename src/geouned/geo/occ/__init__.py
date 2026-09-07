@@ -56,8 +56,11 @@ from .topology import (
 )
 from .repair import (
     Gcheck_and_repair,
+    Gclose_open_solid,
     Gcollapse_split_rings,
     Gdefeature,
+    Gdiagnose_open_solid,
+    Gface_valid,
     Gheal_topology,
     Gsliver_heal,
     Gspline_surface,
@@ -80,4 +83,4 @@ from .primitives import (
 )
 from .boolean import Gcommon, Gcut, Gfuse
 from .split import SplitResult, Gsplit
-from .queries import Gdistance, Gin_contact
+from .queries import Gdistance, Gin_contact, Gsolid_max_tolerance, Gsolid_nonmanifold_edge_count

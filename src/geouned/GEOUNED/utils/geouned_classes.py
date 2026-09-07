@@ -4,6 +4,8 @@
 import logging
 import math
 
+from geouned.geo import surface_geometry
+
 logger = logging.getLogger("general_logger")
 
 from .basic_functions_part1 import (
@@ -318,6 +320,7 @@ class GeounedSurface:
             self.Type = params[0]
             self.Surf = ReversedConeCylParams(params[1])
             self.Orientation = "Reversed"
+            self.closed_set = params[2]
         else:
             print(f"type {params[0]} not found")
 
@@ -1196,7 +1199,7 @@ class MetaSurfacesDict(dict):
 
         pid, exist = self.primitive_surfaces.add_plane(cc.Surf.Plane, True)
         if exist:
-            p = self.get_primitive_surface(pid)
+            p = self.get_primitive_surface(pid) 
             if is_opposite(cc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
                 pid = -pid
         p_region = BoolSurface(0, pid)
@@ -1213,20 +1216,48 @@ class MetaSurfacesDict(dict):
             reversedCC_region = s_region * p_region
         else:
             plane_region = None
+            cylkne_region = None
+            if cylcones[0].Type == "Cylinder":
+                axis = cylcones[0].Surf.Cylinder.Surf.Axis
+            else:
+                axis = cylcones[0].Surf.Cone.Surf.Axis
+                
+            additional_planes = [cc.Surf.Plane for cc in cylcones]      
+            convex, orientation = surface_geometry.convex_planes(additional_planes, axis, reversedCC.closed_set)
 
-            surf_components = []
-            for cc in cylcones:
-                s_region, p_region, comp = self._reversedCC_component(cc)
-                components.update(comp)
-                plane_region = BoolSurface.add(plane_region, p_region)
-                surf_components.append(s_region)
+            if not convex:
+                print("So far geouned handle only convex joined reversed cilinder/cone.")
+                raise RuntimeError("So far geouned handle only convex joined reversed cilinder/cone.")               
+            if orientation == "Forward":
+                surf_components = []
+#                for cc in cylcones:
+#                    s_region, p_region, comp = self._reversedCC_component(cc)
+#                    components.update(comp)
+#                    plane_region = BoolSurface.add(plane_region, p_region)
+#                    surf_components.append(s_region)
 
-            surf_region = None
-            for s_region in surf_components:
-                surf_region = BoolSurface.mult(surf_region, s_region + (-plane_region))
+#                surf_region = None
+#                for s_region in surf_components:
+#                    surf_region = BoolSurface.mult(surf_region, s_region + (-plane_region))
 
-            surf_region.region.simplify(None)
-            reversedCC_region = plane_region * surf_region
+#                surf_region.region.simplify(None)
+#                reversedCC_region = plane_region * surf_region
+ 
+
+                for cc in cylcones:
+                    s_region, p_region, comp = self._reversedCC_component(cc)
+                    components.update(comp)
+                    plane_region = BoolSurface.mult(plane_region, p_region)
+                    cylkne_region = BoolSurface.mult(cylkne_region, s_region)
+                reversedCC_region = plane_region * cylkne_region
+            else:
+                for cc in cylcones:
+                    s_region, p_region, comp = self._reversedCC_component(cc)
+                    components.update(comp)
+                    plane_region = BoolSurface.add(plane_region, p_region)
+                    cylkne_region = BoolSurface.mult(cylkne_region, s_region)
+                reversedCC_region = plane_region * cylkne_region
+
 
         # A MultiPlane can make the irreducible solid non-convex -- exactly
         # the configuration where the RevCC's own additional plane, correct

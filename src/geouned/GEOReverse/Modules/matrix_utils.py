@@ -17,15 +17,15 @@ arrays never convert directly to/from a native type -- `to_np_matrix`/
 `to_gmatrix`/`to_native_matrix`, both already engine-dispatched by
 `geo/__init__.py`), never around it.
 
-`fuse_solids` is likewise a GEOReverse policy (how to combine solids
-robustly, with a safe fallback), not a `geo` primitive -- consolidates
-what used to be 3 byte-for-byte-identical copies (`Objects.py`,
-`buildSolidCell.py`, `splitFunction.py`).
+Robust solid fusion (`Gfuse_solids`, formerly a local `fuse_solids`
+here) now lives in `geo.solid_ops`, shared with GEOUNED's own
+`build_region/` -- import it straight from `geo`, like every other
+`geo` name.
 """
 
 import numpy as np
 
-from ...geo import GMatrix, GSolid, GVector, Gfuse, Gmake_compound, to_native_matrix
+from ...geo import GMatrix, GSolid, GVector, to_native_matrix
 
 IDENTITY_MATRIX = np.eye(4)
 
@@ -71,39 +71,3 @@ def matrix_rotate_vec(matrix: np.ndarray, v: GVector) -> GVector:
     equivalent of native `FreeCAD.Matrix.submatrix(3).multVec`."""
     r = matrix[:3, :3] @ np.array([v.x, v.y, v.z])
     return GVector(float(r[0]), float(r[1]), float(r[2]))
-
-
-def fuse_solids(parts: list) -> GSolid | None:
-    """Boolean-union `parts` (a list of `GSolid`) into one solid,
-    tolerating a failed/invalid fuse by falling back to an unfused
-    compound. Uses `GSolid.refine()` (not a raw, unguarded
-    `removeSplitter()`) so the fused result gets that method's existing
-    volume-invariance safety check for free."""
-    if len(parts) == 0:
-        return None
-    if len(parts) == 1:
-        solid = parts[0]
-    else:
-        try:
-            fused = Gfuse(parts)
-        except Exception:
-            fused = None
-
-        if fused is not None:
-            try:
-                refined = fused.refine()
-            except Exception:
-                refined = fused
-
-            if refined.is_valid():
-                solid = refined
-            elif fused.is_valid():
-                solid = fused
-            else:
-                solid = Gmake_compound(parts)
-        else:
-            solid = Gmake_compound(parts)
-
-    if solid.Volume < 0:
-        solid = solid.reverse()
-    return solid
