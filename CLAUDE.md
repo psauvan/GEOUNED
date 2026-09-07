@@ -11397,6 +11397,106 @@ Also fixed a stale line in the workshop's own `verify_one_solid.py`
 (`__native__` is a bare `TopoDS_Shape` under the pyOCC engines, no
 `.Volume`).
 
+## `Solidos/test_models` regressions from the current uncommitted WIP
+(worked at the 2026-08-27 baseline, fail now)
+
+Full `Solidos/test_models` convert + d1suned batch (`ocp`, excluding
+`Big_*` folders/filenames and `duplicates_removed`), run at working-tree
+commit `61c15c1`. The 2026-08-27 documented baseline was **93.6% within
+2 sigma, 0% beyond 3 sigma, 0 lost particles across 138 files** (and
+2026-08-24: "0/100 files with any lost particles at all"). Current:
+**88.0% <2 sigma, 5.4% (9) beyond 3 sigma, 7 files with lost particles,
+10 conversion failures** (excluding the accepted `Mixed/ConeSphere.stp`
+native crash).
+
+**None of this is from the `61c15c1` piece52/latent-bug work** -- the
+identical batch run with that heal disabled (`_NO_TOL_HEAL=1`) came back
+byte-for-byte the same (same 9 >3-sigma files, same 7 lost-particle
+files, every value). The regressions are from other in-progress
+uncommitted changes carried in the same commit as a mixed checkpoint:
+the `arc_extent` rewrite in `geo/vector_geometry.py`, the torus-branch
+reorganization (`torus_face_configuration` etc. in
+`conversion/cell_definition*.py` / `meta_surfaces_utils.py`), the
+RoundCorner-formula WIP, and `data_classes.py`'s `min_solid_volume`
+default bumped `1e-6 -> 1e-3`. `RevCC_regression/` (piece52/59/70 + the
+`Big_*`-named pieces) is **not** affected -- run it explicitly, 7/8
+clean (see the section above).
+
+### Bucket A -- `arc_extent` `ValueError` aborts conversion (8 files)
+
+`geo/vector_geometry.py::arc_extent` (the uncommitted WIP -- the same
+one that fails `tests/test_cadtocsg.py` `input_step_file1` /
+`input_step_file19` / `test_with_relative_tol_true`) raises before the
+solid can be built. Two messages, both from this function:
+`"pairs do not stitch into a single arc across the 0/2*pi boundary"`
+(line ~393) and `"pairs split into N disconnected groups, not a single
+arc"` (line ~399).
+
+| file | message |
+|---|---|
+| `Complex_cell/SCDR_90.stp` | 0/2*pi boundary gap |
+| `Decomposed/SCDR_90_piece0.stp` | 0/2*pi boundary gap |
+| `Decomposed/SCDR_90_piece1.stp` | 0/2*pi boundary gap |
+| `Mixed/double_RC.stp` | 0/2*pi boundary gap |
+| `RoundCorners/rc24.stp` | 0/2*pi boundary gap |
+| `RoundCorners/rrc2.stp` | 0/2*pi boundary gap |
+| `RoundCorners/rrc5.stp` | 0/2*pi boundary gap |
+| `RoundCorners/rrc23.stp` | 3 disconnected groups |
+
+(The `SCDR_90`/`piece0`/`piece1` family were previously moved to
+`Solidos/BadCADModel/` as a genuine CAD tangency case -- `arc_extent`
+now aborts them before that even matters.)
+
+### Bucket B -- every solid dropped by `corrupted_solids="remove"` (2 files)
+
+`find_short_edges` flags these as corrupted at load; the batch's
+`convert_one_ocp.py` passes `corrupted_solids="remove"`, so the solid is
+dropped and `core.py::_set_geometry_bounding_box` then raises
+`ValueError: No solids in CadToCsg.meta_list ...`. Both were **fixed and
+d1suned-clean at the 2026-08-24 baseline**, so either the fixes
+regressed or `find_short_edges` now over-flags a legitimately-marginal
+fixture -- needs re-triage.
+
+| file | last known good |
+|---|---|
+| `Decomposed/SCDR_90_piece2.stp` | 0.999918 (2026-08-24, `CharacteristicWidth`/`min_face_width` fix) |
+| `Decomposed/modelcell_cut1_v2_piece66.stp` | 0.997236, 0 lost (2026-08-24, `Tolerances.scaled(volume)`) |
+
+### Bucket C -- converts, but d1suned tally wrong / lost particles
+
+Attributable to the torus-branch reorg + RoundCorner-formula +
+`min_solid_volume` WIP (`min_solid_volume 1e-6 -> 1e-3` drops small
+legitimate split pieces -> gaps -> lost particles, a likely contributor
+to the RoundCorners lost-particle cluster).
+
+| file | now | last known good |
+|---|---|---|
+| `Mixed/SCDR_90_hollow.stp` | tally **0.0** | 0.998967 (`sort_range` / coaxial-cone / `other_face_edge` sliver fixes) |
+| `RoundCorners/comp_RC.stp` | cell1 **0.0**, cell2 5.89, **10 lost** | working MultiPlane+RoundCorner combo (post-`multiplane()` fix) |
+| `Torus/TuboTorus.stp` | **2.81** (322 sigma) | (was <2 sigma at the 2026-08-27 batch) |
+| `Torus/V_open_Fwd_4.stp` | **1.81** (89 sigma) | torus-reorg fixture, "volumen correcto" post-reorg |
+| `Torus/V_open_Fwd_3.stp` | **1.40** (57 sigma) | same |
+| `Torus/V_open_Fwd_2.stp` | **1.17** (29 sigma) | same |
+| `Torus/example.stp` | **10 lost** | (clean at the 2026-08-27 batch) |
+| `RoundCorners/rc6.stp` | **1.46** (72 sigma) | MultiRoundCorner, 300/300 CAD-ground-truth validated |
+| `RoundCorners/rc23.stp` | **3.04** (3.25 sigma), **10 lost** | (clean at baseline) |
+| `RoundCorners/rc19.stp` | **2.11** (rel_err 21%, so "marginal" by sigma only), **10 lost** | (clean at baseline) |
+| `RoundCorners/rc20.stp` | **2.14** (rel_err 21%), **10 lost** | (clean at baseline) |
+| `RoundCorners/rc5.stp` | **10 lost** | (clean at baseline) |
+| `Cans/RevTcan.stp` | **1.05** (13.5 sigma) | converted clean when added as a fixture |
+| `esfera/Barrel_bottom.stp` | **10 lost** | 0.999738, 0 lost (auto-repaired by `Gcollapse_split_rings`) |
+
+### Not a regression (documented, expected)
+
+- `Mixed/ConeSphere.stp` -- accepted permanent native crash under
+  `occ`/`ocp` (`ShapeUpgrade_UnifySameDomain`), `freecad`-only.
+- `Torus/face2.stp` cell 2 (0.641, rel_err 27%) -- a genuinely tiny
+  sphere with almost no track-length statistics; a huge-error-bar
+  "can't tell", not a real >3-sigma failure.
+- `RevCC_regression/Big_model_reserved__hylife-v06__solid113_piece0__revcc1.stp`
+  -- pre-existing `RuntimeError: only convex joined reversed
+  cilinder/cone` (a known RevCC limitation), unrelated to the WIP.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
