@@ -153,3 +153,22 @@ OPEN_STRIP_THIN_RATIO = 0.1
 paired long free edges' own length to be trusted as a slot (a thin
 strip) rather than a genuinely missing full face. See
 `OPEN_STRIP_GAP_ABS`."""
+
+DEGENERATE_SOLID_VOLUME_FLOOR = 1.0e-2
+"""Absolute (mm^3) floor below which a BOPAlgo split fragment is treated
+as a degenerate artifact of the cut rather than a real, independent
+solid worth decomposing further. Used by `solid_defects.valid_solid`,
+the canonical copy of the check `decom_utils_generator.py` carried
+(`Vol_tol = 1e-2`) until it was deleted in ef0077c; the `freecad`
+backend's own local `valid_solid` copy is replaced by an import of that
+one. Restores the pre-ef0077c behaviour whose loss let a near-tangent
+cut on `esfera/Barrel_bottom.stp` split off a 16 mm^3 / Volume/Area
+~1e-5 sliver, propagate a non-volume-conserving decomposition, and lose
+10 MCNP particles."""
+
+DEGENERATE_SOLID_VOL_AREA_RATIO = 1.0e-3
+"""Volume/Area ratio (mm) below which a BOPAlgo split fragment is a thin
+sliver, not a real piece -- a 16 mm^3 solid spread over 1.4e6 mm^2 of
+surface is not a fragment the decomposition should keep. Companion of
+`DEGENERATE_SOLID_VOLUME_FLOOR`; both from the historical
+`decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""

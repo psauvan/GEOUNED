@@ -21,7 +21,41 @@ across all 3 engines, exactly like `vector_geometry.py`/
 
 from __future__ import annotations
 
-from .constants import DEGENERATE_EDGE_LENGTH_FLOOR, MIN_SLIVER_EDGE_LENGTH
+from .constants import (
+    DEGENERATE_EDGE_LENGTH_FLOOR,
+    DEGENERATE_SOLID_VOL_AREA_RATIO,
+    DEGENERATE_SOLID_VOLUME_FLOOR,
+    MIN_SLIVER_EDGE_LENGTH,
+)
+
+
+def valid_solid(solid) -> bool:
+    """True if `solid` is a BOPAlgo split fragment worth keeping as a
+    real, independent solid: positive volume, not a thin sliver
+    (``Volume / Area >= DEGENERATE_SOLID_VOL_AREA_RATIO``), above the
+    absolute degeneracy floor (``|Volume| >= DEGENERATE_SOLID_VOLUME_FLOOR``).
+
+    Duck-typed on ``.Volume`` / ``.Area`` -- works on a `GSolid` or any
+    thin wrapper exposing those. This is the canonical copy of the check
+    `decom_utils_generator.py::valid_solid` carried until ef0077c
+    deleted it (leaving only a bare ``Volume > min_solid_volume`` filter
+    in the occ/ocp `Gsplit`, which does not reject slivers by
+    Volume/Area and let `esfera/Barrel_bottom.stp` regress to 10 lost
+    MCNP particles). The `freecad` backend's own local copy is replaced
+    by an import of this one. The historical signature's second `Volume`
+    argument was dead (never read) and is dropped."""
+    try:
+        vol = solid.Volume
+        area = solid.Area
+    except Exception:
+        return False
+    if vol < 0:
+        return False
+    if area == 0 or abs(vol / area) < DEGENERATE_SOLID_VOL_AREA_RATIO:
+        return False
+    if abs(vol) < DEGENERATE_SOLID_VOLUME_FLOOR:
+        return False
+    return True
 
 
 def find_short_edges(solid, rel_tol: float = 1e-4) -> list:

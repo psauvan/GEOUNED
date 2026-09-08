@@ -11497,6 +11497,103 @@ to the RoundCorners lost-particle cluster).
   -- pre-existing `RuntimeError: only convex joined reversed
   cilinder/cone` (a known RevCC limitation), unrelated to the WIP.
 
+## `Gsplit` must return only sane solids -- restored `remove_solids` /
+`valid_solid` filtering that `ef0077c` dropped (Step 1)
+
+`esfera/Barrel_bottom.stp` (Bucket C above) regressed to **10 lost MCNP
+particles**. Root cause: commit **`ef0077c`** ("Unify Gsplit around a
+single tolerances object") deleted `decom_utils_generator.py::valid_solid`
+/ `remove_solids` / `_refine_if_valid` and the post-split filter block in
+`decom_one_generators.py::generic_split`. That GEOUNED-side filtering was
+moved into the **freecad** backend only
+(`geo/freecad/split.py::check_out_solids`); the **occ/ocp** `Gsplit` got
+just `abs(gs.Volume) > tolerances.min_solid_volume` (default 1e-3) -- no
+`Volume/Area` sliver check, no absolute floor, and no "if the cut
+collapses to <2 real pieces, reject the whole cut and keep the solid
+whole".
+
+**Mechanism** (verified live under `ocp`, worktree at `05e6566`): the
+`Gcollapse_split_rings`-healed barrel (vol 786484370.884, valid, 5 faces
+-- byte-identical at HEAD and `05e6566`; the load-time repair and the
+`.fix()` count/order change are *not* the regression) has a candidate
+cut whose `Gsplit` returns `[786483888.05, 16.457]`. The 16.457 mm^3
+piece is a degenerate sliver: **Volume/Area = 1.2e-5**.
+- `05e6566`: `remove_solids`->`valid_solid` rejects it (`Volume/Area <
+  1e-3`) -> only 1 real piece -> `generic_split` treats it as "no split"
+  -> no other candidate splits either -> barrel returned **whole, exact
+  volume** -> clean MCNP (tally 0.999738, 0 lost).
+- HEAD: `16.457 > 1e-3` -> both pieces kept -> `len>1` -> accepted ->
+  recursion. The cut is non-volume-conserving (466 mm^3 short here,
+  ~6335 mm^3 / 8e-6 total once the bulk is recursively re-cut) -> the
+  decomposed pieces no longer tile the solid -> "no cell found in
+  subroutine newcel" -> 10 lost particles.
+
+Independent of the piece52 STEP-heal (`_NO_TOL_HEAL` batch failed barrel
+identically). The FreeCAD engine kept the real filter (`check_out_solids`
+-> `remove_solids`), so it was **asymmetric**, not duplicated.
+
+**Fix (Step 1)** -- `Gsplit` now returns only sane solids, uniformly
+across all 3 engines and all callers (confirmed with the user: "todos
+los callers"):
+- `geo/solid_defects.py::valid_solid(solid)` -- the canonical copy, pure
+  math duck-typed on `.Volume`/`.Area`, thresholds verbatim from the
+  deleted `decom_utils_generator.valid_solid`
+  (`DEGENERATE_SOLID_VOLUME_FLOOR = 1e-2`,
+  `DEGENERATE_SOLID_VOL_AREA_RATIO = 1e-3` in `geo/constants.py`). The
+  historical dead 2nd `Volume` arg is dropped. `geo/freecad/split.py`'s
+  own local copy is replaced by an import of this one.
+- `geo/{ocp,occ}/split.py::_finalize_split(candidates, base, tolerances,
+  repaired_any, notes)` -- new shared helper on **every** `Gsplit`
+  return path (the `_raw_bop_split` result *and* the coaxial-cone
+  early-return): keep a fragment only if `valid_solid(g) and
+  abs(g.Volume) > tolerances.min_solid_volume`; if `< 2` survive, return
+  `SplitResult(solids=[base], ...)` -- the input unchanged, so
+  `generic_split` (its `if len > 1` / `for part in comsolid_solids`
+  untouched) treats it as "no split". Mirrors `_raw_bop_split`'s own
+  `len<=1 -> [base_native]` fallback and freecad `check_out_solids`.
+- `geo/freecad/split.py::check_out_solids` -- its `else` branch now
+  returns `[original]` (not the lone surviving `[bulk]`, a silent volume
+  loss) when `remove_solids` leaves `< 2` sane pieces.
+- **Deliberately NOT ported**: `_refine_if_valid` per kept piece (the
+  historical `remove_solids` did `refine()` each). `refine()`/`UnifyEdges`
+  on fragments that then flow into further `Gsplit` calls is a documented
+  native-crash risk (`geo/freecad/split.py::_refine_if_valid` docstring;
+  the `modelcell_cut1.stp` STACK_OVERFLOW). Refinement stays at the
+  existing `GeounedSolid.__init__` / `generic_split`-top `.fix()`
+  boundaries. This matches the user's ask -- integrate the *checks*.
+- `decom_one_generators.py::generic_split` -- **no change**. The
+  `61c15c1` top-of-function `if not solid.is_valid(): solid.fix(...)` and
+  the gated `Gheal_topology` tolerance-weld retry stay. Side note: Step 1
+  makes the piece52 `Gheal_topology` retry *fire* on the barrel for the
+  first time (`max_tol 0.038 > 1e-3`, 2 non-manifold edges from the
+  `Gcollapse_split_rings` sew) -- the STEP round-trip shrinks it 7021
+  mm^3 (8.9e-6 rel, inside `Gheal_topology`'s own loose 1e-3 gate), but
+  the rebuilt solid is clean and MCNP is happy (tally 0.99974, 0 lost),
+  so it is left as-is.
+
+**Verification**: `Barrel_bottom.stp` -> 1 irreducible piece; d1suned
+0.99974 +/- 0.27% (0.1 sigma), **0 lost** (was 10). `tests/geo` +
+`tests/test_cadtocsg.py` under `ocp` and `occ`: 124 pass / 4 pre-existing
+`arc_extent`/`file43` WIP failures each -- **no regression**. Full
+`Solidos/test_models` batch (no `Big_*`, `ocp`): 130/141 convert (same
+11 pre-existing failures), 167 tallies -- 88.0% <2 sigma, same 9 >3-sigma
+files with byte-identical values, marginal set byte-identical, **6
+lost-particle files (was 7): `esfera_Barrel_bottom` gone**, the other 6
+(`comp_RC`, `rc5`, `rc19`, `rc20`, `rc23`, `Torus_example`) unchanged --
+those are the separate Bucket-A/C WIP regressions (`arc_extent` / torus
+reorg / RoundCorner formula), a different root cause, not addressed by
+this change.
+
+**Step 2 (next)**: wire `Gheal_topology` (in-memory STEP round-trip,
+already self-gated on validity + `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`)
+into `_raw_bop_split`'s per-fragment repair loop as a final fallback,
+only on fragments still `not IsValid()` after `_repair_non_manifold_solid`
++ `Gsliver_heal`. Bounded, self-gated. Verify against the
+`modelcell_cut1.stp` STACK_OVERFLOW canary + full corpus before
+committing. The `61c15c1` `generic_split` gated tolerance-weld retry
+stays -- it targets a *valid-but-welded* stuck fragment a "heal only
+invalid" gate in `Gsplit` will not catch.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

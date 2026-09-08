@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from OCC.Core.BOPAlgo import BOPAlgo_Splitter
 from OCC.Core.BRepCheck import BRepCheck_Analyzer
-from ..solid_defects import find_sliver_faces
+from ..solid_defects import find_sliver_faces, valid_solid
 from .topology import GShape, GSolid
 from ._native_utils import _volume_props
 from .boolean import _exploded_solids
@@ -144,27 +144,50 @@ def check_changed_ok(original, repaired, volume_tolerance):
     return repaired, not not_sane_solid, change_ok
 
 
+def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, notes: str = "") -> SplitResult:
+    """Apply the "Gsplit returns only sane solids" contract to a raw list
+    of candidate fragments (`list[GSolid]`), shared by every Gsplit return
+    path.
+
+    A fragment is kept only if `solid_defects.valid_solid` accepts it
+    (positive volume, not a thin sliver by Volume/Area, above the
+    absolute degeneracy floor) AND its volume clears `min_solid_volume`.
+    If fewer than 2 fragments survive, the tool grazed `base` rather than
+    genuinely dividing it (a sliver + the bulk, a near-tangent BOP weld,
+    a tool that missed) -- return `base` unchanged so `generic_split`
+    treats it as "no split" and keeps the solid whole. This restores the
+    pre-ef0077c behaviour that `decom_utils_generator.remove_solids`
+    provided (deleted when Gsplit's signature was unified); `_raw_bop_split`'s
+    own `len <= 1 -> [base_native]` fallback and the freecad
+    `check_out_solids` convention already work this way."""
+    sane = [g for g in candidates if valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
+    if len(sane) < 2:
+        return SplitResult(
+            solids=[base],
+            degenerate_case_handled=repaired_any,
+            notes="cut did not yield >= 2 sane solids; base unchanged",
+        )
+    dropped = len(candidates) - len(sane)
+    return SplitResult(
+        solids=sane,
+        degenerate_case_handled=repaired_any or dropped > 0,
+        notes=notes or (f"dropped {dropped} degenerate fragment(s)" if dropped else ""),
+    )
+
+
 def Gsplit(base: GSolid, tool: GShape, tolerances) -> SplitResult:
     if _find_cone_face(tool) is not None:
         tolerance_floor = tolerances.scale_up_floor
         fixed = _try_coaxial_cone_split(base, tool, tolerance_floor, tolerances)
         if fixed is not None:
-            return SplitResult(
-                solids=fixed,
-                degenerate_case_handled=True,
-                notes="coaxial cone degeneracy resolved analytically",
+            return _finalize_split(
+                fixed, base, tolerances, True, notes="coaxial cone degeneracy resolved analytically"
             )
 
     final_native_solids, repaired_any = _raw_bop_split(base.__native__, tool.__native__, tolerances.split_tolerance, tolerances)
 
-    solids = []
-    for s in final_native_solids:
-        gs = GSolid(s)
-        if abs(gs.Volume) > tolerances.min_solid_volume:
-            solids.append(gs)
-
-    return SplitResult(
-        solids=solids,
-        degenerate_case_handled=repaired_any,
+    candidates = [GSolid(s) for s in final_native_solids]
+    return _finalize_split(
+        candidates, base, tolerances, repaired_any,
         notes="non-manifold repair applied" if repaired_any else "",
     )

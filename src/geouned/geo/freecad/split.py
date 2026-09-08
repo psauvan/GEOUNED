@@ -15,6 +15,7 @@ import Part
 import BOPTools.SplitAPI
 
 from .topology import GShape, GSolid
+from ..solid_defects import valid_solid
 
 
 # ---------------------------------------------------------------------------
@@ -120,41 +121,43 @@ def check_out_solids(original, split_solids):
         return SplitResult(solids=[original])
     else:
         cleaned = remove_solids(split_solids, original.Volume)
-        if len(cleaned) < len(split_solids):
+        if len(cleaned) < 2:
+            # Fewer than 2 sane fragments after filtering degenerate
+            # slivers: the tool grazed `original` rather than genuinely
+            # dividing it. Return it unchanged so generic_split treats it
+            # as "no split" and keeps the solid whole -- NOT the lone
+            # surviving fragment (a silent volume loss). Matches the
+            # occ/ocp Gsplit._finalize_split contract.
+            return SplitResult(
+                solids=[original],
+                degenerate_case_handled=True,
+                notes="cut did not yield >= 2 sane solids; base unchanged",
+            )
+        elif len(cleaned) < len(split_solids):
             return SplitResult(
                 solids=[GSolid(s) for s in cleaned],
                 degenerate_case_handled=True,
-                notes="tool did not intersect solid; returning it unchanged",
+                notes="dropped degenerate fragment(s)",
             )
-        else:    
+        else:
             return SplitResult(solids=[GSolid(s) for s in cleaned])
 
 
 def remove_solids(Solids: list, Volume) -> list:
     # `Solids` here are native Part.Solid (straight from BOPTools.SplitAPI.
-    # slice()'s own compound, via check_out_solids) -- valid_solid/
-    # _refine_if_valid are GSolid-typed (per their own signatures), so wrap
-    # on the way in and unwrap on the way out, matching check_out_solids'
-    # own expectation that `cleaned` stays native.
+    # slice()'s own compound, via check_out_solids) -- solid_defects.valid_solid
+    # is duck-typed on .Volume/.Area and _refine_if_valid is GSolid-typed, so
+    # wrap on the way in and unwrap on the way out, matching check_out_solids'
+    # own expectation that `cleaned` stays native. `Volume` is unused (the
+    # historical valid_solid's dead 2nd arg), kept in the signature only so
+    # check_out_solids' call site is untouched.
     Solids_Clean = []
     for solid in Solids:
-        if not valid_solid(GSolid(solid), Volume):
+        if not valid_solid(GSolid(solid)):
             continue
         Solids_Clean.append(solid)
 
     return [_refine_if_valid(GSolid(sol)).__native__ for sol in Solids_Clean]
-
-
-def valid_solid(solid: GSolid, Volume) -> bool:
-    if solid.Volume < 0:
-        return False
-    Vol_tol = 1e-2
-    Vol_area_ratio = 1e-3
-    if solid.Area == 0 or abs(solid.Volume / solid.Area) < Vol_area_ratio:
-        return False
-    if abs(solid.Volume) < Vol_tol:
-        return False
-    return True
 
 
 def _refine_if_valid(solid: GSolid) -> GSolid:
