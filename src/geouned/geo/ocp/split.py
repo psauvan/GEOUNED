@@ -21,7 +21,7 @@ from ._native_utils import _volume_props
 from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
-from .repair import Gsliver_heal
+from .repair import Gsliver_heal, Gheal_topology
 
 
 @dataclass(frozen=True)
@@ -80,9 +80,38 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
             if Grepaired is None:
                 repaired = [s]
             else:
-                repaired = [Grepaired.__native__]    
+                repaired = [Grepaired.__native__]
             repaired, same_solid, change_ok = check_changed_ok(s, repaired, tolerances.volume_tolerance)
-    
+
+        # Last resort: a fragment still BRepCheck-invalid after non-manifold
+        # + sliver repair. An in-memory STEP serialize->deserialize
+        # (Gheal_topology) rebuilds every face from its clean analytic
+        # description -- the only thing found to fix the
+        # BRepCheck_InvalidImbricationOfWires class of defect a *failed*
+        # BOPAlgo split leaves behind (ShapeFix_Shape / UnifySameDomain do
+        # not). Self-gated: Gheal_topology accepts its own result only if
+        # it is BRepCheck-valid and volume-conserving to
+        # MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE (deliberately looser than the
+        # other heal gates -- a failed split inflates the fragment's volume
+        # and the rebuild corrects it), else returns None -> keep the
+        # fragment as-is. Gated on `not IsValid()` AND a volume that could
+        # plausibly be a real piece (Step 1's valid_solid drops a
+        # near-zero fragment anyway -- no point paying a STEP round-trip
+        # on it) so the common path pays nothing; the healed fragment then
+        # flows into generic_split's recursion like any other, so a
+        # full-corpus + modelcell_cut1.stp (STACK_OVERFLOW canary) check
+        # is required before trusting this.
+        if (
+            (same_solid or not change_ok)
+            and len(repaired) == 1
+            and abs(_volume_props(repaired[0]).Mass()) > tolerances.min_solid_volume
+            and not BRepCheck_Analyzer(repaired[0]).IsValid()
+        ):
+            Ghealed = Gheal_topology(GSolid(repaired[0]))
+            if Ghealed is not None:
+                repaired = [Ghealed.__native__]
+                change_ok = True
+
         if change_ok:
             repaired_any = True
 
@@ -152,18 +181,28 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     of candidate fragments (`list[GSolid]`), shared by every Gsplit return
     path.
 
-    A fragment is kept only if `solid_defects.valid_solid` accepts it
-    (positive volume, not a thin sliver by Volume/Area, above the
-    absolute degeneracy floor) AND its volume clears `min_solid_volume`.
-    If fewer than 2 fragments survive, the tool grazed `base` rather than
-    genuinely dividing it (a sliver + the bulk, a near-tangent BOP weld,
-    a tool that missed) -- return `base` unchanged so `generic_split`
-    treats it as "no split" and keeps the solid whole. This restores the
-    pre-ef0077c behaviour that `decom_utils_generator.remove_solids`
-    provided (deleted when Gsplit's signature was unified); `_raw_bop_split`'s
-    own `len <= 1 -> [base_native]` fallback and the freecad
-    `check_out_solids` convention already work this way."""
-    sane = [g for g in candidates if valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
+    A fragment is kept only if it is BRepCheck-valid AND
+    `solid_defects.valid_solid` accepts it (positive volume, not a thin
+    sliver by Volume/Area, above the absolute degeneracy floor) AND its
+    volume clears `min_solid_volume`. `_raw_bop_split` already tries hard
+    to emit only valid pieces (non-manifold / sliver / STEP-round-trip
+    repair, Step 2); the `is_valid()` check here is the backstop -- an
+    invalid fragment no repair could rescue is not something to hand
+    back. If fewer than 2 fragments survive, the tool grazed `base`
+    rather than genuinely dividing it (a sliver + the bulk, a
+    near-tangent BOP weld, a tool that missed, an unhealable invalid
+    fragment) -- return `base` unchanged (it came in valid) so
+    `generic_split` treats it as "no split" and keeps the solid whole.
+    This restores the pre-ef0077c behaviour that
+    `decom_utils_generator.remove_solids` provided (deleted when Gsplit's
+    signature was unified); `_raw_bop_split`'s own `len <= 1 ->
+    [base_native]` fallback and the freecad `check_out_solids` convention
+    already work this way."""
+    sane = [
+        g
+        for g in candidates
+        if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume
+    ]
     if len(sane) < 2:
         return SplitResult(
             solids=[base],

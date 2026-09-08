@@ -11584,15 +11584,39 @@ those are the separate Bucket-A/C WIP regressions (`arc_extent` / torus
 reorg / RoundCorner formula), a different root cause, not addressed by
 this change.
 
-**Step 2 (next)**: wire `Gheal_topology` (in-memory STEP round-trip,
-already self-gated on validity + `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`)
-into `_raw_bop_split`'s per-fragment repair loop as a final fallback,
-only on fragments still `not IsValid()` after `_repair_non_manifold_solid`
-+ `Gsliver_heal`. Bounded, self-gated. Verify against the
-`modelcell_cut1.stp` STACK_OVERFLOW canary + full corpus before
-committing. The `61c15c1` `generic_split` gated tolerance-weld retry
-stays -- it targets a *valid-but-welded* stuck fragment a "heal only
-invalid" gate in `Gsplit` will not catch.
+**Step 2 (done, same session)**: `Gsplit` now returns only *valid*
+solids, "within our healing capability" (user's phrasing), on both
+pyOCC engines:
+- `_raw_bop_split`'s per-fragment repair loop (`geo/{ocp,occ}/split.py`)
+  gained `Gheal_topology` as a **final fallback**, after
+  `_repair_non_manifold_solid` and `Gsliver_heal` both fail to make a
+  fragment `BRepCheck`-valid. Gated on `not IsValid()` **and**
+  `abs(_volume_props(...).Mass()) > tolerances.min_solid_volume` (Step 1
+  drops a near-zero fragment anyway -- no point paying a STEP round-trip
+  on junk). `Gheal_topology` is self-gated (validity +
+  `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`); returns `None` -> keep the
+  fragment as-is.
+- `_finalize_split` (Step 1's helper) now also requires `g.is_valid()`
+  per kept fragment -- the backstop: an invalid fragment no repair could
+  rescue is not handed back; if that drops the survivors below 2, the
+  whole cut collapses to `[base]` (which came in valid), same as every
+  other degenerate-cut path.
+- `freecad` unaffected (`Gheal_topology` is a `None` stub there; its
+  `Gsplit` uses `check_out_solids`, not `_raw_bop_split`).
+- The `61c15c1` `generic_split` gated tolerance-weld retry stays -- it
+  targets a *valid-but-welded* stuck fragment a "heal only invalid" gate
+  in `Gsplit` will not catch (and it fires on `Barrel_bottom` post-Step-1,
+  harmlessly -- see above).
+
+Verified: `modelcell_cut1.stp` (STACK_OVERFLOW canary, `faulthandler`) and
+`L4_body.stp` decompose clean, no crash, `Gheal_topology` fires 0 times
+(nothing in the corpus reaches an unhealable-invalid fragment after the
+existing repairs -- the path is a bounded safety net for the
+`L4_body`-class `InvalidImbricationOfWires` defect the face-dedup path
+already covers today). `tests/geo` + `tests/test_cadtocsg.py` ocp: 124
+pass / 4 pre-existing. Full `Solidos/test_models` batch (no `Big_*`):
+byte-identical to Step 1 -- same 6 lost-particle files, same 9 >3-sigma,
+same marginal set.
 
 ## Code style preference
 
