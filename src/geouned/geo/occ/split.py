@@ -20,7 +20,7 @@ from ._native_utils import _volume_props
 from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
-from .repair import Gsliver_heal, Gheal_topology
+from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes
 
 
 @dataclass(frozen=True)
@@ -195,11 +195,9 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     signature was unified); `_raw_bop_split`'s own `len <= 1 ->
     [base_native]` fallback and the freecad `check_out_solids` convention
     already work this way."""
-    sane = [
-        g
-        for g in candidates
-        if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume
-    ]
+
+    candidates = [Gmerge_coplanar_planes(s) for s in candidates]
+    sane = [g for g in candidates if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
     if len(sane) < 2:
         return SplitResult(
             solids=[base],
@@ -219,14 +217,15 @@ def Gsplit(base: GSolid, tool: GShape, tolerances) -> SplitResult:
         tolerance_floor = tolerances.scale_up_floor
         fixed = _try_coaxial_cone_split(base, tool, tolerance_floor, tolerances)
         if fixed is not None:
-            return _finalize_split(
-                fixed, base, tolerances, True, notes="coaxial cone degeneracy resolved analytically"
-            )
+            return _finalize_split(fixed, base, tolerances, True, notes="coaxial cone degeneracy resolved analytically")
 
     final_native_solids, repaired_any = _raw_bop_split(base.__native__, tool.__native__, tolerances.split_tolerance, tolerances)
 
     candidates = [GSolid(s) for s in final_native_solids]
     return _finalize_split(
-        candidates, base, tolerances, repaired_any,
+        candidates,
+        base,
+        tolerances,
+        repaired_any,
         notes="non-manifold repair applied" if repaired_any else "",
     )

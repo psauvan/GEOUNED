@@ -516,6 +516,7 @@ def find_can_plane(
     position = point_near + normal * offset_amount
     return position, normal
 
+
 def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
     center = plane_list[0].Surf.Position
     for p in plane_list[1:]:
@@ -523,7 +524,7 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
     center = center / len(plane_list)
 
     ref = plane_list[0].Surf.Position - center
-    ref = (ref - zaxis * ref.dot(zaxis)).normalized() 
+    ref = (ref - zaxis * ref.dot(zaxis)).normalized()
     orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) < 0 else "Reversed"
 
     if len(plane_list) < 3:
@@ -531,7 +532,7 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
 
     angles = []
     for i, p in enumerate(plane_list):
-        rp = (p.Surf.Position - center)
+        rp = p.Surf.Position - center
         rp = (rp - zaxis * rp.dot(zaxis)).normalized()
         cosa = ref.dot(rp)
         cross = ref.cross(rp)
@@ -546,12 +547,12 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
     angles.sort()
 
     if closed:
-        p0 = plane_list[angles[-1][1] ].Surf.Axis
-        p1 = plane_list[angles[0][1] ].Surf.Axis
+        p0 = plane_list[angles[-1][1]].Surf.Axis
+        p1 = plane_list[angles[0][1]].Surf.Axis
         start = 1
     else:
-        p0 = plane_list[angles[0][1] ].Surf.Axis
-        p1 = plane_list[angles[1][1] ].Surf.Axis
+        p0 = plane_list[angles[0][1]].Surf.Axis
+        p1 = plane_list[angles[1][1]].Surf.Axis
         start = 2
 
     signref = zaxis.dot(p0.cross(p1))
@@ -566,5 +567,24 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
             break
         p0 = p1
 
-    return convex, orientation
+    # if set is open the ref point may be the final
+    # point of the plane sequence, so move to the nextpoint
+    # to check whether convex is false because end point was selected
+    if not convex and not closed:
+        angles.append(angles[0])
+        del angles[0]
+        p0 = plane_list[angles[0][1]].Surf.Axis
+        p1 = plane_list[angles[1][1]].Surf.Axis
+        signref = zaxis.dot(p0.cross(p1))
 
+        p0 = p1
+        convex = True
+        for a, i in angles[2:]:
+            p1 = plane_list[i].Surf.Axis
+            sign = zaxis.dot(p0.cross(p1))
+            if signref * sign < 0:
+                convex = False
+                break
+            p0 = p1
+
+    return convex, orientation

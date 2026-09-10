@@ -11769,6 +11769,94 @@ The 2 residual `>3 sigma` failures (`Mixed/SCDR_90_hollow` cell 1 = 0.0,
 `Complex_cell/SCDR_90` 0.615) are the pre-existing SCDR_90 family, not
 touched by this change.
 
+## `Gmerge_coplanar_planes`: a hand-rolled planes-only `refine()`, wired
+into `Gsplit`'s `_finalize_split`; plus a `convex_planes` open-set retry
+
+### `geo.Gmerge_coplanar_planes(solid) -> GSolid`
+
+New `geo` function: merge every group of adjacent, co-planar *planar*
+faces of a solid into a single face, dropping the edges those faces
+shared with each other -- a targeted, planes-only alternative to
+`GSolid.refine()` (`ShapeUpgrade_UnifySameDomain`, whose native-crash
+history is documented at length above). Non-planar faces pass through
+untouched.
+
+Algorithm: explode faces, classify each via `Gclassify_surface` (keep
+only `GPlane`); build an edge->faces adjacency map
+(`TopExp.MapShapesAndAncestors`); union-find two planar faces whenever
+they share a manifold edge and `surface_geometry.is_same_plane_surface`
+accepts their `GPlane` descriptors (so a chain of 3+ collapses to one);
+per group of >=2, rebuild one face from the group's *non-shared*
+boundary edges (edge count == 1 across the group) assembled into wires
+on the common `gp_Pln`, orientation matched to the first face; re-sew
+the kept faces (untouched + one merged per group) into a solid via
+`BRepBuilderAPI_Sewing` + `BRepBuilderAPI_MakeSolid` + `ShapeFix_Shape`.
+Acceptance gate: `BRepCheck_Analyzer`-valid AND volume-conserving to
+`1e-6` relative (same guard shape as `refine()`); on any failure or a
+raised exception, returns `solid` unchanged. Never raises.
+
+Real implementation in `geo/ocp/repair.py` and `geo/occ/repair.py`
+(byte-parallel, only the `TopoDS.`/`topexp`/`brepbndlib` naming differs
+-- occ uses `edge_map.Size()` not `.Extent()`, and `list(face_list)`
+indexing not `iter()`/`next()`, matching the established occ idioms in
+`queries.py`/`split_repair.py`); `geo/freecad/repair.py` is an identity
+stub returning `solid` (no `Part` pipeline wired, same precedent as
+`Gcollapse_split_rings`/`Gsliver_heal`). Exported from `geo/__init__.py`'s
+three engine blocks and each engine `__init__.py`.
+
+### Wired into `_finalize_split` (`geo/{ocp,occ}/split.py`)
+
+Every `Gsplit` candidate fragment is passed through
+`Gmerge_coplanar_planes` before the "sane solids only" filter
+(`candidates = [Gmerge_coplanar_planes(s) for s in candidates]` at the
+top of `_finalize_split`) -- so a decomposition fragment that BOPAlgo
+left carrying a real analytic plane split across 2+ coplanar face
+pieces gets collapsed back to one face before it flows into downstream
+composite-surface classification and CSG. A merge that doesn't improve
+the solid (or can't be built cleanly) is a no-op by the function's own
+acceptance gate, so this can only help or be inert. `freecad`'s `Gsplit`
+path (`check_out_solids`, not `_finalize_split`) is untouched -- and its
+stub is a no-op anyway.
+
+### `convex_planes` open-set retry (`geo/surface_geometry.py`)
+
+When `convex_planes` returns `not convex` for an **open** plane set
+(`not closed`), the turning-sign reference point may have been the
+*last* point of the plane sequence -- a false "not convex". Added one
+retry that rotates the angle list by one position so the reference is a
+genuine interior point of the sequence, and re-checks the turning-sign
+consistency from there.
+
+This closes `tests/test_cadtocsg.py::test_conversion[input_step_file43]`
+(`DoubleCylinder/placa2.step`), which was raising `RuntimeError: So far
+geouned handle only convex joined reversed cilinder/cone`
+(`geouned_classes.py:1230`) on a `ReversedConeCylinder` whose open
+junction-plane set was being wrongly classified non-convex.
+
+### Verification
+
+`tests/geo` + `tests/test_cadtocsg.py`: `freecad` 156 passed / 2 skipped;
+`occ` 78 geo + 49/50 `test_cadtocsg` (only `input_step_file43`, an
+independent pre-existing RevCC limitation, still failing under `occ`
+where `convex_planes`' retry does not reach the same path -- unchanged
+by this work); **`ocp` 78 geo + 50/50 `test_cadtocsg`** (was 49/1 --
+`input_step_file43` now passes thanks to the `convex_planes` retry;
+`input_step_file1`/`19`/`test_with_relative_tol_true` were already
+recovered by `a4eb30d`'s `arc_extent`/`ShellFaceGu` work).
+
+Full `Solidos/test_models` convert + d1suned batch re-run (`ocp`,
+`Big_*`/`duplicates_removed` excluded): 138/141 convert (the 3
+non-conversions are the accepted `ConeSphere` native crash +
+`SCDR_90_piece2`/`modelcell_cut1_v2_piece66` dropped by
+`corrupted_solids="remove"`); 141 run dirs, 175 solid-cell tallies,
+**92.6% within 2 sigma, 2 beyond 3 sigma, 0 lost particles**. The 2
+`>3 sigma` failures (`Mixed/SCDR_90_hollow` cell 1 = 0.0,
+`Complex_cell/SCDR_90` 0.615) are the pre-existing SCDR_90 family,
+unchanged. These numbers match commit `1988daf`'s own reported batch
+result exactly -- the `Gmerge_coplanar_planes` wiring and the
+`convex_planes` retry change no tally in this corpus (their visible
+effect is the `input_step_file43` pytest recovery), i.e. no regression.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

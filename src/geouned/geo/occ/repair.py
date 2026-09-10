@@ -20,6 +20,8 @@ from OCC.Core.BRepAdaptor import (
     BRepAdaptor_Surface,
 )
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
@@ -57,6 +59,7 @@ from OCC.Core.STEPControl import (
 from OCC.Core.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
+    TopAbs_REVERSED,
     TopAbs_VERTEX,
 )
 from OCC.Core.TopExp import (
@@ -89,7 +92,8 @@ from ..constants import (
     OCCT_FIX_TOLERANCE,
 )
 from ..io_utils import suppress_native_stdout
-from .topology import GFace, GSolid, Gclassify_surface
+from ..surface_geometry import is_same_plane_surface
+from .topology import GFace, GPlane, GSolid, Gclassify_surface
 from .boolean import _exploded_solids
 from ._native_utils import _volume_props
 
@@ -510,6 +514,234 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
     return result
 
 
+def _edge_vertices(native_edge) -> list:
+    vs = []
+    ve = TopExp_Explorer(native_edge, TopAbs_VERTEX)
+    while ve.More():
+        vs.append(topods.Vertex(ve.Current()))
+        ve.Next()
+    return vs
+
+
+def _assemble_wires(edges: list):
+    """Chain a flat list of native ``TopoDS_Edge`` into one or more
+    closed wires by shared vertices (topological ``IsSame``). Returns
+    ``list[TopoDS_Wire]`` or ``None`` if any wire fails to build."""
+    remaining = list(edges)
+    wires = []
+    while remaining:
+        chain = [remaining.pop(0)]
+        progressed = True
+        while progressed:
+            progressed = False
+            ends = _edge_vertices(chain[0]) + _edge_vertices(chain[-1])
+            for k, e in enumerate(remaining):
+                evs = _edge_vertices(e)
+                if any(a.IsSame(b) for a in ends for b in evs):
+                    chain.append(remaining.pop(k))
+                    progressed = True
+                    break
+        wl = TopTools_ListOfShape()
+        for e in chain:
+            wl.Append(e)
+        wm = BRepBuilderAPI_MakeWire()
+        wm.Add(wl)
+        if not wm.IsDone():
+            return None
+        wires.append(wm.Wire())
+    return wires
+
+
+def _wire_bbox_diag(native_wire) -> float:
+    box = Bnd_Box()
+    brepbndlib.Add(native_wire, box)
+    if box.IsVoid():
+        return 0.0
+    xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
+    return (xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2
+
+
+def _merge_coplanar_group(group_faces: list, plane_desc):
+    """`group_faces`: native ``TopoDS_Face`` all on the same infinite
+    plane, connected through shared edges. Return one native
+    ``TopoDS_Face`` that is their union with the seams they shared with
+    each other removed, or ``None`` if it can't be built cleanly.
+
+    An edge that belongs to exactly one face of the group is on the
+    merged boundary; an edge shared by two group faces is an internal
+    seam and is dropped; an edge shared by three or more is non-manifold
+    and aborts the merge."""
+    uniq = []
+    counts = []
+    for f in group_faces:
+        ee = TopExp_Explorer(f, TopAbs_EDGE)
+        while ee.More():
+            e = topods.Edge(ee.Current())
+            ee.Next()
+            hit = None
+            for j, u in enumerate(uniq):
+                if u.IsSame(e):
+                    hit = j
+                    break
+            if hit is None:
+                uniq.append(e)
+                counts.append(1)
+            else:
+                counts[hit] += 1
+
+    if any(c > 2 for c in counts):
+        return None
+    boundary = [uniq[j] for j in range(len(uniq)) if counts[j] == 1]
+    if not boundary:
+        return None
+
+    wires = _assemble_wires(boundary)
+    if not wires:
+        return None
+    wires.sort(key=_wire_bbox_diag, reverse=True)
+
+    pos, ax = plane_desc.Position, plane_desc.Axis
+    gpln = gp_Pln(gp_Pnt(pos.x, pos.y, pos.z), gp_Dir(ax.x, ax.y, ax.z))
+
+    fm = BRepBuilderAPI_MakeFace(gpln, wires[0], True)
+    for w in wires[1:]:
+        fm.Add(w)
+    if not fm.IsDone():
+        return None
+    new_face = fm.Face()
+
+    # every face of a valid solid's group bounds the solid on the same
+    # side, so match the first face's orientation.
+    if group_faces[0].Orientation() == TopAbs_REVERSED:
+        new_face = topods.Face(new_face.Reversed())
+    return new_face
+
+
+def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
+    """Merge every group of adjacent, co-planar planar faces of `solid`
+    into a single planar face, removing the edges those faces shared
+    with each other -- a hand-rolled, planes-only alternative to
+    ``GSolid.refine()`` (``ShapeUpgrade_UnifySameDomain``; see that
+    method's crash history).
+
+    Non-planar faces pass through untouched. Two planar faces merge when
+    they share an edge and ``surface_geometry.is_same_plane_surface``
+    accepts their ``GPlane`` descriptors (parallel/antiparallel normal +
+    same offset); a chain of three or more such faces collapses to one.
+    The merged face is rebuilt from the group's non-shared boundary
+    edges on the common plane, and the solid is re-sewn from the kept
+    faces (untouched + one merged per group).
+
+    Returns the merged ``GSolid`` only if it is BRepCheck-valid and
+    volume-conserving to 1e-6 relative (same guard as ``refine()``);
+    otherwise returns `solid` unchanged. Never raises."""
+    try:
+        native = solid.__native__
+
+        faces = []
+        exp = TopExp_Explorer(native, TopAbs_FACE)
+        while exp.More():
+            faces.append(topods.Face(exp.Current()))
+            exp.Next()
+        n = len(faces)
+        if n < 2:
+            return solid
+
+        planes = [None] * n
+        for i, f in enumerate(faces):
+            s = Gclassify_surface(f)
+            if isinstance(s, GPlane):
+                planes[i] = s
+
+        def face_index(face):
+            for i, f in enumerate(faces):
+                if f.IsSame(face):
+                    return i
+            return None
+
+        parent = list(range(n))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        edge_map = TopTools_IndexedDataMapOfShapeListOfShape()
+        topexp.MapShapesAndAncestors(native, TopAbs_EDGE, TopAbs_FACE, edge_map)
+        for k in range(1, edge_map.Size() + 1):
+            face_list = edge_map.FindFromIndex(k)
+            if face_list.Size() != 2:
+                continue
+            pair = list(face_list)
+            a = face_index(pair[0])
+            b = face_index(pair[1])
+            if a is None or b is None or planes[a] is None or planes[b] is None:
+                continue
+            if is_same_plane_surface(planes[a], planes[b]):
+                union(a, b)
+
+        groups: dict[int, list] = {}
+        for i in range(n):
+            groups.setdefault(find(i), []).append(i)
+        if all(len(idxs) == 1 for idxs in groups.values()):
+            return solid
+
+        kept_faces = []
+        merged_any = False
+        for idxs in groups.values():
+            if len(idxs) == 1:
+                kept_faces.append(faces[idxs[0]])
+                continue
+            merged = _merge_coplanar_group([faces[i] for i in idxs], planes[idxs[0]])
+            if merged is None:
+                kept_faces.extend(faces[i] for i in idxs)
+                continue
+            kept_faces.append(merged)
+            merged_any = True
+
+        if not merged_any:
+            return solid
+
+        sewer = BRepBuilderAPI_Sewing(OCCT_FIX_TOLERANCE)
+        for f in kept_faces:
+            sewer.Add(f)
+        sewer.Perform()
+        sewed = sewer.SewedShape()
+
+        builder = BRep_Builder()
+        shell = TopoDS_Shell()
+        builder.MakeShell(shell)
+        se = TopExp_Explorer(sewed, TopAbs_FACE)
+        any_face = False
+        while se.More():
+            builder.Add(shell, topods.Face(se.Current()))
+            any_face = True
+            se.Next()
+        if not any_face:
+            return solid
+
+        solid_maker = BRepBuilderAPI_MakeSolid(shell)
+        if not solid_maker.IsDone():
+            return solid
+        fixer = ShapeFix_Shape(solid_maker.Solid())
+        fixer.Perform()
+        result = GSolid(fixer.Shape())
+    except Exception:
+        return solid
+
+    if not BRepCheck_Analyzer(result.__native__).IsValid():
+        return solid
+    if abs(result.Volume - solid.Volume) > 1e-6 * max(abs(solid.Volume), 1.0):
+        return solid
+    return result
+
+
 def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
@@ -682,7 +914,6 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
         return GSolid(healed)
     except Exception:
         return None
-
 
 
 from .open_solid_repair import _diagnose_open_solid as _diagnose_open, _repair_open_solid as _repair_open

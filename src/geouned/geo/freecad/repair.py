@@ -99,8 +99,22 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     return None
 
 
-def Gcheck_and_repair(
-    solid: FreeCAD.Solid, tolerances) -> "tuple[FreeCAD.Solid, bool]":
+def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
+    """Merge every group of adjacent, co-planar planar faces of `solid`
+    into a single planar face -- a hand-rolled, planes-only alternative to
+    ``GSolid.refine()``.
+
+    Implemented for the ocp/occ backends only (a ``TopExp`` edge->faces
+    adjacency map + union-find over the planar faces + a
+    ``BRepBuilderAPI_Sewing``/``ShapeFix_Shape`` re-sew -- see
+    ``geo.ocp.repair.Gmerge_coplanar_planes`` for the full account). No
+    FreeCAD ``Part`` equivalent is wired: this is an identity stub
+    returning `solid` unchanged, matching the real implementations' own
+    "returns the input unchanged when it cannot improve on it" contract."""
+    return solid
+
+
+def Gcheck_and_repair(solid: FreeCAD.Solid, tolerances) -> "tuple[FreeCAD.Solid, bool]":
     """FreeCAD has none of the native CAD-defect-repair tools this
     cascade needs (``Gdefeature`` exists here via ``Part.Shape.
     defeaturing()``, but ``Gcollapse_split_rings``/``Gsliver_heal`` are

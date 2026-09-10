@@ -21,7 +21,7 @@ from ._native_utils import _volume_props
 from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
-from .repair import Gsliver_heal, Gheal_topology
+from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
             if not faceSliver:
                 final_native_solids.append(s)
                 continue
-            
+
         repaired = _repair_non_manifold_solid(s, tolerances.fix_tolerance)
         repaired, same_solid, change_ok = check_changed_ok(s, repaired, tolerances.volume_tolerance)
 
@@ -116,14 +116,14 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
             repaired_any = True
 
         final_native_solids.extend(repaired)
-    if len(final_native_solids) > 1 :   
+    if len(final_native_solids) > 1:
         return final_native_solids, repaired_any
     else:
         return [base_native], False
 
 
 def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
-    """ Sometimes the tool solid is returned in the split results, must be removed 
+    """Sometimes the tool solid is returned in the split results, must be removed
     from split solid list"""
 
     if len(raw_solids) < 2:
@@ -133,11 +133,11 @@ def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
     base_volume = _volume_props(base_native).Mass()
     in_volume = base_volume + tool_volume
     out_volume = sum(_volume_props(x).Mass() for x in raw_solids)
-    if abs(out_volume - in_volume) < 1e-5 * in_volume  and abs(tool_volume) > 1e-5 :
+    if abs(out_volume - in_volume) < 1e-5 * in_volume and abs(tool_volume) > 1e-5:
         base_components = []
         tool_CM = _volume_props(tool_native).CentreOfMass()
         for s in raw_solids:
-            s_volume = _volume_props(s).Mass() 
+            s_volume = _volume_props(s).Mass()
             if abs(s_volume - tool_volume) < 1e-5 * abs(s_volume):
                 sol_CM = _volume_props(s).CentreOfMass()
                 d2 = tool_CM.SquareDistance(sol_CM)
@@ -145,7 +145,7 @@ def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
                     continue
             else:
                 base_components.append(s)
-        return base_components            
+        return base_components
     else:
         return raw_solids
 
@@ -171,7 +171,7 @@ def check_changed_ok(original, repaired, volume_tolerance):
             volume_ok = abs(repaired_volume - original_volume) <= volume_tolerance * max(original_volume, 1.0)
         else:
             volume_ok = False
-        change_ok = (all_valid and volume_ok)  
+        change_ok = all_valid and volume_ok
 
     return repaired, not not_sane_solid, change_ok
 
@@ -198,11 +198,9 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     signature was unified); `_raw_bop_split`'s own `len <= 1 ->
     [base_native]` fallback and the freecad `check_out_solids` convention
     already work this way."""
-    sane = [
-        g
-        for g in candidates
-        if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume
-    ]
+
+    candidates = [Gmerge_coplanar_planes(s) for s in candidates]
+    sane = [g for g in candidates if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
     if len(sane) < 2:
         return SplitResult(
             solids=[base],
@@ -217,22 +215,21 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     )
 
 
-def Gsplit(
-    base: GSolid, tool: GShape, tolerances) -> SplitResult:
-
+def Gsplit(base: GSolid, tool: GShape, tolerances) -> SplitResult:
 
     if _find_cone_face(tool) is not None:
         tolerance_floor = tolerances.scale_up_floor
         fixed = _try_coaxial_cone_split(base, tool, tolerance_floor, tolerances)
         if fixed is not None:
-            return _finalize_split(
-                fixed, base, tolerances, True, notes="coaxial cone degeneracy resolved analytically"
-            )
+            return _finalize_split(fixed, base, tolerances, True, notes="coaxial cone degeneracy resolved analytically")
 
     final_native_solids, repaired_any = _raw_bop_split(base.__native__, tool.__native__, tolerances.split_tolerance, tolerances)
 
     candidates = [GSolid(s) for s in final_native_solids]
     return _finalize_split(
-        candidates, base, tolerances, repaired_any,
+        candidates,
+        base,
+        tolerances,
+        repaired_any,
         notes="non-manifold repair applied" if repaired_any else "",
     )

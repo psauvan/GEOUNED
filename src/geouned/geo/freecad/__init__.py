@@ -58,6 +58,7 @@ from .repair import (
     Gdiagnose_open_solid,
     Gface_valid,
     Gheal_topology,
+    Gmerge_coplanar_planes,
     Gsliver_heal,
     Gspline_surface,
 )
