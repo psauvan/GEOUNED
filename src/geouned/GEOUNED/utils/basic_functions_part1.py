@@ -2,6 +2,7 @@
 # Set of useful functions used in different parts of the code
 #
 import math
+from turtle import distance
 
 from .data_constants import mask, twoPi
 from .boolean_function import BoolSurface
@@ -103,12 +104,19 @@ def points_to_coeffs(points):
 
 
 def round_corner_region(p1id, p2id, cid, pid, configuration):
+    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
+    if fwd_cyl:
+        return forward_round_corner_region(p1id, p2id, cid, pid, configuration)
+    else:
+        return reversed_round_corner_region(p1id, p2id, cid, pid, configuration)
+
+
+def reversed_round_corner_region(p1id, p2id, cid, pid, configuration):
     # p1,p2,c,pc are boolVariable objects
     # p1,p2,c,pc are planes and cylinder indexes
     # p1,p2,pc index correspond to normal vector pointing toward material
     # pc index pointing toward cylinder arc
 
-    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
     AND_p1_cyl = configuration & mask.p1_cyl == mask.p1_cyl
     AND_p2_cyl = configuration & mask.p2_cyl == mask.p2_cyl
     AND_p1_pd = configuration & mask.p1_pd == mask.p1_pd
@@ -116,12 +124,6 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
     OR_bracket = configuration & mask.p1_p2 == mask.p1_p2
     same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
     same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
-
-    p1id_raw = p1id
-
-    if fwd_cyl:
-        p1id = -p1id
-        p2id = -p2id
 
     if p1id == p2id:
         if AND_p1_cyl:
@@ -134,12 +136,14 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
             # branch just below does NOT have this problem (verified 100%
             # correct on Solidos/trier/series_solid2_complement.stp) so it
             # deliberately keeps using the pre-negated p1id.
-            rc_region = BoolSurface(0, p1id_raw) * BoolSurface(0, cid)
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
         else:
             rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
+
     elif AND_p1_cyl and AND_p2_cyl:
         if same_p1_pd and same_p2_pd:
-            rc_region = BoolSurface(0, p1id) * BoolSurface(0, cid)
+            errorlog = """This configuration should be set by p1==p2 if selection."""
+            raise RuntimeError(errorlog)
         elif same_p1_pd or same_p2_pd:
             if OR_bracket:
                 rc_region = (BoolSurface(0, p1id) + BoolSurface(0, p2id)) * BoolSurface(0, cid)
@@ -161,16 +165,14 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
                 rc_region = (BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, p1id))) * BoolSurface(0, cid)
 
     elif not AND_p1_cyl and not AND_p2_cyl:
-        if same_p1_pd and same_p2_pd:
-            rc_region = BoolSurface(0, p1id) + BoolSurface(0, cid)
-        elif not AND_p1_pd and not AND_p2_pd:
+        if not AND_p1_pd and not AND_p2_pd:
             rc_region = BoolSurface(0, p1id) + BoolSurface(0, p2id) + (BoolSurface(0, pid) * BoolSurface(0, cid))
         else:
             errorlog = f"""error this configuration should not exist for roundCorner.
  AND_p1_cyl : {AND_p1_cyl}
  AND_p2_cyl : {AND_p2_cyl}
  AND_p1_pd : {AND_p1_pd}
- AND_p1_pd : {AND_p2_pd}"""
+ AND_p2_pd : {AND_p2_pd}"""
             raise RuntimeError(errorlog)
 
     elif AND_p1_cyl and not AND_p2_cyl:
@@ -186,7 +188,7 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
  AND_p1_cyl : {AND_p1_cyl}
  AND_p2_cyl : {AND_p2_cyl}
  AND_p1_pd : {AND_p1_pd}
- AND_p1_pd : {AND_p2_pd}"""
+ AND_p2_pd : {AND_p2_pd}"""
             raise RuntimeError(errorlog)
     else:
         if not AND_p1_pd and not AND_p2_pd:
@@ -201,10 +203,101 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
  AND_p1_cyl : {AND_p1_cyl}
  AND_p2_cyl : {AND_p2_cyl}
  AND_p1_pd : {AND_p1_pd}
- AND_p1_pd : {AND_p2_pd}"""
+ AND_p2_pd : {AND_p2_pd}"""
             raise RuntimeError(errorlog)
 
-    return -rc_region if fwd_cyl else rc_region
+    return rc_region
+
+
+def forward_round_corner_region(p1id, p2id, cid, pid, configuration):
+    # p1,p2,c,pc are boolVariable objects
+    # p1,p2,c,pc are planes and cylinder indexes
+    # p1,p2,pc index correspond to normal vector pointing toward material
+    # pc index pointing toward cylinder arc
+
+    AND_p1_cyl = configuration & mask.p1_cyl == mask.p1_cyl
+    AND_p2_cyl = configuration & mask.p2_cyl == mask.p2_cyl
+    AND_p1_pd = configuration & mask.p1_pd == mask.p1_pd
+    AND_p2_pd = configuration & mask.p2_pd == mask.p2_pd
+    OR_bracket = configuration & mask.p1_p2 == mask.p1_p2
+    same_p1_pd = configuration & mask.same_p1_pd == mask.same_p1_pd
+    same_p2_pd = configuration & mask.same_p2_pd == mask.same_p2_pd
+
+    if p1id == p2id:
+        if not AND_p1_cyl:
+            # forward = De Morgan complement of the reversed single-plane
+            # case (reversed: p1 * c), keeping p1id positive (already
+            # oriented by cyl_plane_region_conf for the real orientation).
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, -cid)
+        else:
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, -cid)
+    elif not AND_p1_cyl and not AND_p2_cyl:
+        if same_p1_pd and same_p2_pd:
+            errorlog = """This configuration should be set by p1==p2 if selection."""
+            raise RuntimeError(errorlog)
+        elif same_p1_pd or same_p2_pd:
+            if not OR_bracket:
+                rc_region = (BoolSurface(0, p1id) * BoolSurface(0, p2id)) + BoolSurface(0, -cid)
+            else:
+                rc_region = BoolSurface(0, p1id) + BoolSurface(0, -cid) + BoolSurface(0, p2id)
+        elif not AND_p1_pd and not AND_p2_pd:
+            rc_region = BoolSurface(0, p1id) + BoolSurface(0, p2id) + BoolSurface(0, -pid) + BoolSurface(0, -cid)
+        elif AND_p1_pd and AND_p2_pd:
+            rc_region = BoolSurface(0, -cid) + (BoolSurface(0, p1id) * BoolSurface(0, p2id) * BoolSurface(0, -pid))
+        elif AND_p1_pd and not AND_p2_pd:
+            if not OR_bracket:
+                rc_region = (BoolSurface(0, p1id) * (BoolSurface(0, -pid) + BoolSurface(0, p2id))) + BoolSurface(0, -cid)
+            else:
+                rc_region = (BoolSurface(0, p1id) * BoolSurface(0, -pid)) + BoolSurface(0, p2id) + BoolSurface(0, -cid)
+        else:
+            if not OR_bracket:
+                rc_region = (BoolSurface(0, p2id) * (BoolSurface(0, -pid) + BoolSurface(0, p1id))) + BoolSurface(0, -cid)
+            else:
+                rc_region = (BoolSurface(0, p2id) * (BoolSurface(0, -pid))) + BoolSurface(0, p1id) + BoolSurface(0, -cid)
+
+    elif AND_p1_cyl and AND_p2_cyl:
+        if AND_p1_pd and AND_p2_pd:
+            rc_region = BoolSurface(0, p1id) * BoolSurface(0, p2id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid))
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p2_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+
+    elif not AND_p1_cyl and AND_p2_cyl:
+        if AND_p1_pd and AND_p2_pd:
+            rc_region = ((BoolSurface(0, p1id) * BoolSurface(0, -pid)) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
+        elif not AND_p1_pd and AND_p2_pd:
+            if not OR_bracket:
+                rc_region = BoolSurface(0, p1id) + (BoolSurface(0, p2id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid)))
+            else:
+                rc_region = (BoolSurface(0, p1id) + BoolSurface(0, -pid) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p2_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+    else:
+        if AND_p1_pd and AND_p2_pd:
+            rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -cid) + (BoolSurface(0, -pid) * BoolSurface(0, p2id)))
+        elif AND_p1_pd and not AND_p2_pd:
+            if not OR_bracket:
+                rc_region = (BoolSurface(0, p1id) * (BoolSurface(0, -cid) + BoolSurface(0, -pid))) + BoolSurface(0, p2id)
+            else:
+                rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid) + BoolSurface(0, p2id))
+        else:
+            errorlog = f"""error this configuration should not exist for roundCorner.
+ AND_p1_cyl : {AND_p1_cyl}
+ AND_p2_cyl : {AND_p2_cyl}
+ AND_p1_pd : {AND_p1_pd}
+ AND_p2_pd : {AND_p2_pd}"""
+            raise RuntimeError(errorlog)
+
+    return rc_region
 
 
 def multi_round_corner_region(mRoundC):

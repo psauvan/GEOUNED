@@ -728,11 +728,11 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     face_index = list(face_or_shell.Indexes) if type(face_or_shell) is ShellFaceGu else [face_or_shell.Index]
     omitFaces.update(face_index)
     joined_faces = []
-    arc_angle = 0.
+    arc_angle = 0.0
     if type(face_or_shell) is ShellFaceGu:
         Umin, Umax, ifacemin, ifacemax = face_or_shell.U_parameter_range
         if twoPimod(Umax - Umin) == 0:
-            return ([],False) if root else ([],0.)
+            return ([], False) if root else ([], 0.0)
         emin = extreme_edge(Umin, face_or_shell.Faces[ifacemin])
         emax = extreme_edge(Umax, face_or_shell.Faces[ifacemax])
         facemin = face_or_shell.Faces[ifacemin]
@@ -740,14 +740,14 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     else:
         Umin, Umax, _, _ = face_or_shell.ParameterRange
         if twoPimod(Umax - Umin) == 0:
-            return ([],False) if root else ([],0.)
+            return ([], False) if root else ([], 0.0)
         facemin = face_or_shell
         facemax = face_or_shell
         emin = extreme_edge(Umin, face_or_shell)
         emax = extreme_edge(Umax, face_or_shell)
-    arc_angle = Umax-Umin if Umax>Umin else Umax-Umin+twoPi
+    arc_angle = Umax - Umin if Umax > Umin else Umax - Umin + twoPi
     if arc_angle > math.pi:
-        arc_angle = twoPi - arc_angle  
+        arc_angle = twoPi - arc_angle
 
     # skip_slivers=True: a residual near-zero-area sliver face bridging the
     # cylinder/cone's own Umin/Umax boundary to its real neighboring plane
@@ -802,7 +802,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
             mp_list.append(mp_planes)
 
     if type(face_or_shell.Surface) is GCylinder:
-        cylOnly = gen_cylinder(face_or_shell)   
+        cylOnly = gen_cylinder(face_or_shell)
         cylcone_plane = gen_plane_cylinder(face_or_shell)
 
         facein = reversedCCP("Cylinder", (cylOnly, cylcone_plane, mp_list))
@@ -825,7 +825,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     if not root:
         return joined_faces, arc_angle
     else:
-        closed_set = twoPimod(arc_angle) == 0.
+        closed_set = twoPimod(arc_angle) == 0.0
         return joined_faces, closed_set
 
 
@@ -1318,27 +1318,27 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     # at -- is just the seam between the two pieces, unrelated to p2).
     cyl1, _, _, p1 = ep1
     cyl2, _, _, p2 = ep2
-  
+
     if type(cylinder) is ShellFaceGu:
         umin, umax = cylinder.U_parameter_range[:2]
         vmin, vmax = cylinder.Faces[0].ParameterRange[2:]
         cyl_face = cylinder.Faces[0]
-    else:    
+    else:
         umin, umax, vmin, vmax = cylinder.ParameterRange
         cyl_face = cylinder
 
     v_value = 0.5 * (vmin + vmax)
-    cyl_tg1,z1 = cyl_face.tangent_at(umin, v_value)
-    cyl_tg2,z2 = cyl_face.tangent_at(umax, v_value)
+    cyl_tg1, z1 = cyl_face.tangent_at(umin, v_value)
+    cyl_tg2, z2 = cyl_face.tangent_at(umax, v_value)
     cyl_r1 = cyl_face.value_at(umin, v_value)
     cyl_r2 = cyl_face.value_at(umax, v_value)
 
-    ed11  =abs(p1.Surface.Axis.dot(p1.Surface.Position - cyl_r1))
-    ed12  =abs(p1.Surface.Axis.dot(p1.Surface.Position - cyl_r2))
-    if ed12 < ed11: #plane 1/2 are not asociated to edge 1/2. -> switch planess
-        p1,p2 = p2,p1
+    ed11 = abs(p1.Surface.Axis.dot(p1.Surface.Position - cyl_r1))
+    ed12 = abs(p1.Surface.Axis.dot(p1.Surface.Position - cyl_r2))
+    if ed12 < ed11:  # plane 1/2 are not asociated to edge 1/2. -> switch planess
+        p1, p2 = p2, p1
         switched = True
-    else:   
+    else:
         switched = False
 
     p1_axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
@@ -1351,35 +1351,37 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     cross2 = cyl_normal2.cross(p2_axis)
 
     fwd_cyl = cylinder.Orientation == "Forward"
-    if cross1.length < 1e-3 :
-        upmin,upmax,vpmin,vpmax = p1.ParameterRange
-        up = 0.5*(upmin+upmax)
-        vp = 0.5*(vpmin+vpmax)        
-        inp1 = p1.value_at(up,vp)
+    if cross1.length < 1e-3:
+        upmin, upmax, vpmin, vpmax = p1.ParameterRange
+        up = 0.5 * (upmin + upmax)
+        vp = 0.5 * (vpmin + vpmax)
+        inp1 = p1.value_at(up, vp)
         ref1 = (inp1 - cyl_r1).normalized()
         along1 = p1_axis.cross(z1)
         if ref1.dot(along1) < 0:
             along1 = -along1
         base = cyl_tg1.dot(along1) < 0
+        base = base if fwd_cyl else not base
     else:
-        base = z1.dot(cross1) < 0
-    AND_p1_cyl = base if fwd_cyl else not base
+        base = z1.dot(cross1) > 0
+    AND_p1_cyl = base
 
     if cross2.length < 1e-3:
-        upmin,upmax,vpmin,vpmax = p2.ParameterRange
-        up = 0.5*(upmin+upmax)
-        vp = 0.5*(vpmin+vpmax)        
-        inp2 = p2.value_at(up,vp)
+        upmin, upmax, vpmin, vpmax = p2.ParameterRange
+        up = 0.5 * (upmin + upmax)
+        vp = 0.5 * (vpmin + vpmax)
+        inp2 = p2.value_at(up, vp)
         ref2 = (inp2 - cyl_r2).normalized()
         along2 = p2_axis.cross(z2)
         if ref2.dot(along2) < 0:
             along2 = -along2
         base = cyl_tg2.dot(along2) > 0
+        base = base if fwd_cyl else not base
     else:
-        base = z1.dot(cross2) > 0
-    AND_p2_cyl = base if fwd_cyl else not base
+        base = z1.dot(cross2) < 0
+    AND_p2_cyl = base
 
-    v1 = z1.cross(cyl_r1-cyl_r2).normalized()   # v1 fixed vector oriented toward cylinder arc, z1 ref rotacion axis
+    v1 = z1.cross(cyl_r1 - cyl_r2).normalized()  # v1 fixed vector oriented toward cylinder arc, z1 ref rotacion axis
 
     normal_cyl_plane = -v1 if fwd_cyl else v1
 
@@ -1390,19 +1392,26 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
         c = npd.dot(n_plane)
         return math.atan2(s, c)
 
+    a1_max = signed_angle(z1, -v1, cyl_normal1)
+    a2_max = signed_angle(-z1, -v1, cyl_normal2)
     a1 = signed_angle(z1, normal_cyl_plane, p1_axis)
     a2 = signed_angle(-z1, normal_cyl_plane, p2_axis)
 
-    if a1+a2 < -math.pi:
-        # planes cannot cross
+    if a1 > a1_max or a2 > a2_max:
+        # planes cannot go beyong pd plane
         return None, switched
-    
-    base = a1 < 0 
+
+    # allow crossing planes
+    # if a1+a2 < -math.pi:
+    #    # planes cannot cross
+    #    return None, switched
+
+    base = a1 < 0
     AND_p1_pd = base if fwd_cyl else not base
     base = a2 < 0
     AND_p2_pd = base if fwd_cyl else not base
 
-    OR_p12_bracket = z1.dot(p1_axis.cross(p2_axis)) > 0  # si no funciona asi es que es el valor negativo
+    OR_p12_bracket = z1.dot(p1_axis.cross(p2_axis)) < 0  # si no funciona asi es que es el valor negativo
     same_p1_pd = (p1_axis.dot(normal_cyl_plane)) > 0.999999
     same_p2_pd = (p2_axis.dot(normal_cyl_plane)) > 0.999999
 
@@ -1841,15 +1850,15 @@ def get_additional_corner_plane(cylinder):
         face = cylinder.Faces[0]
     else:
         umin, umax, vmin, vmax = cylinder.ParameterRange
-        face = cylinder    
+        face = cylinder
     v_value = 0.5 * (vmin + vmax)
 
     pos1 = face.value_at(umin, v_value)
     pos2 = face.value_at(umax, v_value)
-    t,z = face.tangent_at(umin, v_value)
-    
+    t, z = face.tangent_at(umin, v_value)
+
     point = 0.5 * (pos1 + pos2)
     r12 = pos1 - pos2
-    paxis = z.cross(r12).normalized()   # v1 fixed vector oriented toward cylinder arc, z ref rotation axis
+    paxis = z.cross(r12).normalized()  # v1 fixed vector oriented toward cylinder arc, z ref rotation axis
 
     return GeounedSurface(("Plane", (point, paxis, 1.0, 1.0, False)))

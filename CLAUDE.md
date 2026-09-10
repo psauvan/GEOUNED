@@ -11618,6 +11618,125 @@ pass / 4 pre-existing. Full `Solidos/test_models` batch (no `Big_*`):
 byte-identical to Step 1 -- same 6 lost-particle files, same 9 >3-sigma,
 same marginal set.
 
+## `round_corner_region` split into `reversed_`/`forward_`; `cyl_plane_region_conf` reworked; `ShellFaceGu` common angular frame -- RoundCorners corpus clean
+
+The single `round_corner_region` (which read `cyl_plane_region_conf`'s
+flags, built the reversed boolean definition, and for a forward cylinder
+pre-negated `p1id`/`p2id` then returned `-rc_region`) was split, per the
+mensaje-8 finding that `cyl_plane_region_conf` no longer assumes a
+Reversed cylinder -- it produces flags already adapted to the real
+orientation, so the old blanket `-rc_region` complement double-treats
+Forward RCs.
+
+### `basic_functions_part1.py`
+
+`round_corner_region(p1id, p2id, cid, pid, configuration)` is now a
+thin dispatcher: `fwd_cyl` -> `forward_round_corner_region`, else
+`reversed_round_corner_region`.
+
+- **`reversed_round_corner_region`** -- the old branch structure, with
+  the reversed-orientation boolean expression per configuration. Several
+  expressions were re-derived this session (user's own work) in the
+  `AND_p1_cyl and AND_p2_cyl` group: `same_p1_pd and same_p2_pd` now
+  raises ("should be set by p1==p2"), the `not AND_p1_pd and AND_p2_pd`
+  and `else` (`AND_p1_pd and not AND_p2_pd`) sub-branch expressions
+  changed shape (e.g. `(p1+pid)*p2*cid` -> `p1 + (pid*cid*p2)`), and the
+  `p1==p2`/`not AND_p1_cyl and not AND_p2_cyl` degenerate cases raise
+  instead of returning `p1 + cid`.
+- **`forward_round_corner_region`** -- the **exact same branch structure
+  and flag conditions** as `reversed_round_corner_region` (same
+  `if AND_p1_cyl:` / `elif AND_p1_cyl and AND_p2_cyl:` / `if OR_bracket:`
+  keys, **not** `not`-inverted), and each `rc_region` expression is the
+  De Morgan complement `C()` of its reversed twin at the same position:
+  swap `*`<->`+`, `cid`->`-cid`, `pid`->`-pid`, **keep `p1id`/`p2id`
+  positive** (they are already oriented for the real orientation by
+  `cyl_plane_region_conf`). This reproduces the old
+  pre-negate-then-`-rc_region` behaviour exactly, minus the p1/p2
+  negation -- i.e. "el complementario excepto p1 y p2". Verified
+  term-by-term against `reversed_round_corner_region` across all 16
+  valid `(AND_p1_cyl, AND_p2_cyl, AND_p1_pd, AND_p2_pd)` combinations
+  and both `OR_bracket` variants.
+
+Three bugs were found and fixed while getting the split to run: an
+unclosed paren in one forward expression; every forward `if not
+OR_bracket:` was inverted (`OR_bracket` is orientation-independent --
+`z1.dot(p1_axis.cross(p2_axis))` -- so forward must use the same
+polarity as reversed, `if OR_bracket:`); and the forward branch
+*conditions* were `not`-inverted (`if not AND_p1_cyl:` etc.), which
+double-counted `cyl_plane_region_conf`'s own flag flip and routed
+`(AND_p1_cyl=T, AND_p2_cyl=T, ...)` configs into the poor mirror of
+reversed's group C -> `RuntimeError` on `rc1`/`rc4`/`rc16`/`rc22`/
+`rrc3`/`rrc21` (which converted fine before the split). Aligning the
+forward conditions to reversed's recovered all of them.
+
+### `meta_surfaces_utils.py::cyl_plane_region_conf`
+
+- `AND_p1_cyl`/`AND_p2_cyl`: the `base if fwd_cyl else not base`
+  orientation flip now lives only inside the near-tangent
+  (`cross.length < 1e-3`) fallback branch; the main branch flips the raw
+  `base` sign directly instead (`z1.dot(cross1) < 0` -> `> 0` for p1,
+  and the mirror for p2) and assigns `AND_p1_cyl = base` with no outer
+  flip.
+- New rejection rule: `a1_max = signed_angle(z1, -v1, cyl_normal1)`,
+  `a2_max` likewise; return `None` when `a1 > a1_max or a2 > a2_max`
+  ("planes cannot go beyond the pd plane"). Replaces the old
+  `a1 + a2 < -pi` "planes cannot cross" rejection (commented out --
+  crossing planes are now allowed).
+- `OR_p12_bracket` sign flipped (`z1.dot(p1_axis.cross(p2_axis)) > 0`
+  -> `< 0`).
+
+### `meta_surfaces.py::get_roundcorner_surfaces`
+
+The `AND_cyl_p1`/`AND_cyl_p2` + `AND_p*_pd` "degenerate round corner,
+discard it" early-return block is commented out (wrapped in a string
+literal) -- with the reworked `cyl_plane_region_conf` these
+configurations are no longer produced as false positives, and the
+rejection was itself dropping real RCs.
+
+### `geometry_gu.py::ShellFaceGu._U_parameter_faces` -- common angular frame
+
+OCCT can give two faces of the *same* analytic cylinder/cone/torus
+different U origins (different `XDirection` on the `ax3`). Collecting
+each face's raw `ParameterRange[0:2]` then mixes frames, so physically
+contiguous angular ranges look disjoint and `arc_extent` raises
+("pairs split into N disconnected groups" / "do not stitch into a
+single arc"). Fix: re-express every face's U interval in ONE common
+frame -- `self.Surface`, classified from `Faces[0]` -- by projecting a
+real boundary point back through `self.Surface.parameter(f.value_at(u0,
+vm))[0]`, and keeping the face's own (frame-independent) angular width
+`u1 - u0` for the far end (a single face never wraps internally).
+`arc_extent` then sees consistent-frame pairs and merges them. The
+common frame is exactly `Faces[0]`'s native frame (that is what
+`Gclassify_surface(faces[0].__native__)` uses), so callers that
+evaluate `cylinder.Faces[0].tangent_at(umin, ...)` against
+`U_parameter_range` stay correct without change. **Phase 2 -- storing
+the reference on `ShellFaceGu` and adding `value_at`/`tangent_at`/
+`normal_at` that delegate to it so `Faces[0]` stops being implicitly
+special -- is deferred** (not needed for correctness today; revisit if
+a real case demands it).
+
+### Verification
+
+`tests/geo/test_ocp_impl.py` + `tests/test_cadtocsg.py` under `ocp`:
+**88 pass, 1 fail** -- the `arc_extent` fix additionally recovered
+`input_step_file1` / `input_step_file19` / `test_with_relative_tol_true`
+(all `arc_extent` crashes); the remaining `input_step_file43` failure is
+an unrelated RevCC limitation (`geouned_classes.py:1230`, "only convex
+joined reversed cilinder/cone"). Full RoundCorners corpus
+(`Solidos/test_models/RoundCorners/*.stp`, 45 files) convert + d1suned
+`volSDEF=True`: **45/45 convert, 0 failures beyond 3 sigma, 0 lost
+particles** (baseline HEAD `ca44aef`: 41/45 convert, 3 >3-sigma, 5
+lost-particle files). Every previously-broken file recovered -- `rc6`
+1.46 -> 0.995, `rc23` 3.04+lost -> 0.994, `comp_RC` 0.0+lost -> 0.994,
+`rc2`/`rc3`/`rc17`/`rc18` (reversed-expression regression during
+iteration) -> 0.996-0.997, `rrc23` (arc_extent) -> 0.998. 5 files sit
+marginal 2-3 sigma (`rc24`, `rrc1`, `rrc4`, `rrc5`, `rrc12`, all
+~0.990-0.991) -- a small systematic downward bias across the `rrc*`
+family, no geometry failure, consistent with statistical noise at this
+NPS. **Not yet run**: the full `Solidos/test_models` differential
+corpus scan (Can/TCone/RoundCorner/MultiRoundCorner/MultiPlane/RevCC
+counts + d1suned) to confirm no fallout outside the RoundCorners folder.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

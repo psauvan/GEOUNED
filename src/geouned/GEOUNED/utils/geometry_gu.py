@@ -245,13 +245,29 @@ class ShellFaceGu:
         self.Indexes = {f.Index for f in faces}
         self.Orientation = faces[0].Orientation
         self.CenterOfMass = self._get_center_of_mass()
-        self.U_parameter_range = self._U_parameter_faces()
+        if isinstance(self.Surface, GPlane):
+            self.U_parameter_range = (0, 0, 0, 0)
+        else:
+            self.U_parameter_range = self._U_parameter_faces()
 
     def _U_parameter_faces(self):
+        # Each face carries its own native surface parametrisation, and
+        # OCCT can give two faces of the SAME analytic cylinder/cone/torus
+        # different U origins (different XDirection on the ax3). Collecting
+        # each face's raw ParameterRange[0:2] then mixes frames, so ranges
+        # that are physically contiguous look disjoint and arc_extent
+        # fails (RoundCorners/rrc23.stp). Re-express every face's U
+        # interval in ONE common frame -- self.Surface, classified from
+        # Faces[0] -- by projecting a real boundary point back through
+        # self.Surface.parameter(); keep the face's own (frame-independent)
+        # angular width for the far end, since a single face never wraps
+        # internally.
         Uval = []
         for f in self.Faces:
-            Range = f.ParameterRange
-            Uval.append(Range[0:2])
+            u0, u1, v0, v1 = f.ParameterRange
+            vm = 0.5 * (v0 + v1)
+            cu0 = self.Surface.parameter(f.value_at(u0, vm))[0]
+            Uval.append((cu0, cu0 + (u1 - u0)))
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
 

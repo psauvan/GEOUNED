@@ -17,7 +17,7 @@ from .meta_surfaces_utils import (
     planar_edges,
     same_curve,
     eligible_plane,
-    get_additional_corner_plane
+    get_additional_corner_plane,
 )
 
 
@@ -305,12 +305,12 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     # treatment of Can/TCone) so the corner-plane search sees the whole
     # feature's boundary, not just whichever piece `cylinder` happens to be.
     cyl_shell = merge_same_surface_faces(cylinder, Faces)
-    if type(cyl_shell) is ShellFaceGu :
+    if type(cyl_shell) is ShellFaceGu:
         umin, umax, _, _ = cyl_shell.U_parameter_range
-    else:    
+    else:
         umin, umax, _, _ = cyl_shell.ParameterRange
-    closed = twoPimod(abs(umax-umin)) == 0.0 
-    if closed :
+    closed = twoPimod(abs(umax - umin)) == 0.0
+    if closed:
         return None, None
 
     adjacent_planes = get_adjacent_cylplane(cyl_shell, Faces, cornerPlanes=True)
@@ -331,8 +331,9 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     # if degenerated discard it
 
     if switched:
-        p1,p2 = p2,p1
-        
+        p1, p2 = p2, p1
+
+    """    
     AND_cyl_p1 = configuration & mask.p1_cyl == mask.p1_cyl
     AND_cyl_p2 = configuration & mask.p2_cyl == mask.p2_cyl
     if not AND_cyl_p1:
@@ -343,7 +344,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
         AND_p2_pd = configuration & mask.p2_pd == mask.p2_pd
         if AND_p2_pd:
             return None, None
-
+    """
     fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
 
     if type(cyl_shell) is ShellFaceGu:
