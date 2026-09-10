@@ -400,6 +400,5 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     return rc_list, face_index
 
 
-def get_revConeCyl_surfaces(face, Faces, multifaces, omitFaces, tolerances):
-    revcc_shell = merge_same_surface_faces(face, Faces)
+def get_revConeCyl_surfaces(revcc_shell, Faces, multifaces, omitFaces, tolerances):
     return get_join_cone_cyl(revcc_shell, Faces, multifaces, omitFaces, tolerances)

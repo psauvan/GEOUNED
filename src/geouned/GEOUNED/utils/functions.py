@@ -11,7 +11,16 @@ from .geometry_gu import ShellFaceGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
-from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane, material_direction
+from .meta_surfaces_utils import (
+    commonEdge,
+    commonVertex,
+    no_convex,
+    planar_edges,
+    eligible_plane,
+    material_direction,
+    merge_same_surface_faces,
+    is_closed_cylinder_cone,
+)
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
@@ -162,7 +171,10 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
             continue
         if isinstance(f.Surface, (GCylinder, GCone)):
             if f.Orientation == "Reversed":
-                rcc, closed_set = get_revConeCyl_surfaces(f, solidFaces, multiplanes, conecylface_index, tolerances)
+                revcc_shell = merge_same_surface_faces(f, solidFaces)
+                if is_closed_cylinder_cone(revcc_shell):
+                    continue
+                rcc, closed_set = get_revConeCyl_surfaces(revcc_shell, solidFaces, multiplanes, conecylface_index, tolerances)
                 if rcc:
                     gc = GeounedSurface(("ReversedConeCylinder", build_RCC_params(rcc), closed_set))
                     conecyl_list.append(gc)
@@ -241,13 +253,13 @@ def build_roundC_params(rc_list):
         for p in rc_planes:
             count = 0
             for cyl, p1, p2, _, _ in rc_list:
-                if is_same_plane(p1.Surface,p.Surface) or is_same_plane(p2.Surface,p.Surface):
+                if is_same_plane(p1.Surface, p.Surface) or is_same_plane(p2.Surface, p.Surface):
                     count += 1
-                    if count ==2:
+                    if count == 2:
                         break
             if count == 1:
                 closed_set = False
-                break        
+                break
 
         i = 0
         multi_round = True
@@ -583,4 +595,3 @@ def build_multip_params(plane_list):
             vertexes.append((v, n + 1))
 
     return (planeparams, edges, vertexes)
-

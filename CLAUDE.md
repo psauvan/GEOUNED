@@ -11737,6 +11737,38 @@ NPS. **Not yet run**: the full `Solidos/test_models` differential
 corpus scan (Can/TCone/RoundCorner/MultiRoundCorner/MultiPlane/RevCC
 counts + d1suned) to confirm no fallout outside the RoundCorners folder.
 
+## RevCC: reject the merged shell early when it is a closed cylinder/cone
+(it is a Can, not a RevCC)
+
+User-authored correction to `get_reversed_cone_cylinder`
+(`utils/functions.py`) and `get_revConeCyl_surfaces` (`utils/meta_surfaces.py`):
+
+- `get_revConeCyl_surfaces` no longer builds its own
+  `merge_same_surface_faces(face, Faces)` shell internally -- the caller
+  now builds `revcc_shell` once and passes it in (so the same merged
+  shell can be inspected before deciding whether a RevCC is even
+  plausible).
+- `get_reversed_cone_cylinder`, for each Reversed cylinder/cone seed
+  face, builds `revcc_shell = merge_same_surface_faces(f, solidFaces)`
+  and, if `is_closed_cylinder_cone(revcc_shell)` is true, `continue`s --
+  a merged cylinder/cone shell that closes a full 360deg is a Can (or a
+  Can component), never the *exterior* of a set of overlapping
+  near-parallel cylinders that RevCC describes. Feeding such a shell
+  into `get_join_cone_cyl` was producing spurious `ReversedConeCylinder`
+  classifications.
+
+**Verified via the full `Solidos/test_models` convert + d1suned batch**
+(`ocp`, `Big_*`/`duplicates_removed` excluded, 138/141 convert -- the 3
+non-convertions are the accepted `ConeSphere` native crash plus
+`SCDR_90_piece2`/`modelcell_cut1_v2_piece66` dropped by
+`corrupted_solids="remove"`): `>3 sigma` failures 7 -> 2, lost-particle
+files 1 -> 0, `<2 sigma` 90.3% -> 92.6%. Recovered outright:
+`Torus/TuboTorus` (2.81), `Torus/V_open_Fwd_2/3/4` (1.17/1.29/1.81),
+`Cans/RevTcan` (1.045/13.5 sigma), `Torus/example` (10 lost particles).
+The 2 residual `>3 sigma` failures (`Mixed/SCDR_90_hollow` cell 1 = 0.0,
+`Complex_cell/SCDR_90` 0.615) are the pre-existing SCDR_90 family, not
+touched by this change.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including
