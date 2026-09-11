@@ -11968,6 +11968,86 @@ regressions from this work specifically (the one failing test,
 `eligible_plane` section immediately below, which re-verified this same
 suite state after its own separate change).
 
+## `eligible_plane`: sliver-arc boundary edges and collinear-edge runs no
+longer cause a false "not convex" -- `null.stp`'s multiplane finally forms
+
+User report: `Solidos/working_solids/null.stp`'s optimal multiplane
+selection fails because the boundary edges of otherwise-eligible master
+planes include sliver arcs, and `eligible_plane` (`utils/
+meta_surfaces_utils.py`) wrongly returns `False` for them.
+
+**Root cause, confirmed live**: `eligible_plane`'s edge loop had a hard,
+unconditional rejection -- `if type(Gclassify_curve(e)) is not GLine:
+return False` -- so a single non-`GLine` boundary edge (a tiny circular
+arc left by a boolean cut grazing the plane's real straight boundary)
+disqualified the whole plane regardless of length or position. Dumped
+every planar face of the real, current `null.stp` (17 faces, 1 solid,
+loaded cleanly this time -- the open-shell version from earlier in this
+project's history was a different, since-superseded fixture at the same
+path): 2 of the 15 planar faces (`face[6]`, `face[11]`) carry a ~0.07mm
+`GCircle` sliver arc on their boundary and were unconditionally rejected
+under the old rule.
+
+**Fix 1 -- filter sliver edges by length, not curve type**: the boundary
+walk now treats every edge as a straight chord between its own two
+endpoints regardless of curve classification (no more `GLine`-only
+gate); before that walk, edges below a `sliver_length` threshold are
+dropped from consideration entirely (only if >= 3 real edges remain --
+a genuinely tiny plane, e.g. a real triangle, keeps the unfiltered list
+and the original tight vertex tolerance rather than risk making things
+worse). `sliver_length = max(diag * tolerances.sliver_edge_rel_tol,
+sliver_floor)`, `sliver_floor = max(tolerances.min_face_width,
+MIN_SLIVER_EDGE_LENGTH)` -- `MIN_SLIVER_EDGE_LENGTH` imported directly
+from `...geo.constants` (per explicit user correction: check `Tolerances`
+first for an existing field: none exists for this exact floor; fall
+back to `geo.constants`' own canonical value instead of duplicating it
+as a second, locally-hardcoded constant that could drift out of sync).
+`tolerances.min_face_width` (0.1mm default) ends up the dominant term
+in practice and is the codebase's own already-established "is this a
+sliver" width convention (used two lines above in the same function).
+Confirmed the margin is real, not coincidental: `null.stp`'s own sliver
+arcs (0.071mm) sit comfortably below the 0.1mm floor while the smallest
+genuine (non-sliver) boundary edge anywhere on this file is 2.8mm, ~28x
+above it -- `diag * sliver_edge_rel_tol` alone (~0.012-0.018mm for this
+file's ~120-160mm-diagonal faces) is 4-6x too tight to catch the sliver
+on its own, which is exactly why the wider `min_face_width` floor
+matters here. Once a sliver is dropped, the two flanking real edges no
+longer share an exact vertex -- the ordered-walk's own vertex-matching
+tolerance widens to `max(1e-6, sliver_length)` to bridge that gap
+(bounded by the removed sliver's own chord, so it can never wrongly
+merge two genuinely distinct corners).
+
+**Fix 2, user-directed -- merge consecutive collinear edges in the
+ordered walk**: even after Fix 1, 2 more faces (`face[3]`, `face[7]`)
+stayed wrongly `eligible=False`. Root cause: a straight boundary split
+by the CAD kernel into several genuinely collinear segments has a
+cross-product of exactly zero between consecutive turns -- but floating-
+point noise on that near-zero value can wobble it slightly negative,
+tripping the convexity test's `axis.dot(v0.cross(v1)) < 0` check. Per
+direct user instruction: after building `Ordered` (the vertex-chained
+walk), a merge pass collapses any run of 2+ consecutive edges whose
+normalized directions agree (`dot ≈ 1`, tolerance `1e-6`) into a single
+edge spanning from the run's first start vertex to its last end vertex
+-- generalized to runs of 3+ collinear edges in one left-to-right pass,
+not just pairs. This is a distinct defect class from Fix 1 (a genuinely
+straight boundary artificially subdivided, not a sliver arc) and needed
+both fixes together to fully resolve `null.stp`.
+
+**Verification**: with both fixes, 4 of null.stp's 15 planar faces flip
+from `eligible=False` to `True` (`face[3]`, `face[6]`, `face[7]`,
+`face[11]`) -- confirmed via `git stash`/`pop` isolation that every flip
+reproduces cleanly on the real, current fixture. End-to-end conversion
+of `null.stp`: composite-surface counts go from `MultiP:0, RevCan:2` (no
+fix) to **`MultiP:1, RevCan:3`** (both fixes) -- confirms the actual,
+originally-reported symptom (multiplane optimal selection failing) is
+resolved, not just the isolated `eligible_plane` unit behavior.
+`tests/geo` + `tests/test_cadtocsg.py` under `ocp`: 127 passed, 1
+skipped, 1 failed -- the failure (`input_step_file2`/`cylBox.stp`,
+`AttributeError: 'NoneType' object has no attribute 'Faces'` in
+`decom_one_generators.py`'s own exception-logging line) confirmed via
+`git stash` to be pre-existing, reproducing byte-identically with this
+whole change removed -- not a regression.
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

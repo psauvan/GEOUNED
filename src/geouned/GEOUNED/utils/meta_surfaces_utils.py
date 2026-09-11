@@ -27,6 +27,7 @@ from ...geo import (
     surface_geometry,
     vector_geometry,
 )
+from ...geo.constants import MIN_SLIVER_EDGE_LENGTH
 
 
 class reversedCCP:
@@ -1105,11 +1106,53 @@ def eligible_plane(plane, tolerances=None):
 
     Edges = plane.OuterWire.Edges
 
+    # A residual sliver edge on the boundary -- confirmed live
+    # (Solidos/working_solids/null.stp): a tiny circular-arc fragment
+    # left by a boolean cut that grazed the plane's real straight
+    # boundary. The walk below treats every edge as a straight segment
+    # between its own two endpoints regardless of curve type (there is
+    # no GLine-only requirement, deliberately -- see the walk itself);
+    # a genuine sliver arc's own endpoints sit close to, but not exactly
+    # on, the real corner the two flanking real edges actually meet at,
+    # introducing a spurious extra "kink" that the convexity test below
+    # then reads as a real non-convex turn -- wrongly rejecting an
+    # otherwise-convex, otherwise-eligible plane.
+    #
+    # Filtered by length alone (not curve type -- a genuinely short
+    # straight edge is the same class of artifact). The floor is
+    # `tolerances.min_face_width` (already established, a few lines up,
+    # as this codebase's own "is this a sliver" width convention) --
+    # confirmed live on Solidos/working_solids/null.stp that a real
+    # sliver-arc pair (0.071mm) sits well below min_face_width's 0.1mm
+    # default but roughly 4-6x ABOVE `diag * sliver_edge_rel_tol`
+    # (~0.012-0.018mm for this file's ~120-160mm-diagonal faces), so the
+    # relative term alone never catches it; the smallest genuine
+    # (non-sliver) boundary edge found on this same file is 2.8mm, ~28x
+    # above min_face_width, so the wider floor still leaves a comfortable
+    # margin against filtering real geometry. MIN_SLIVER_EDGE_LENGTH
+    # (geo.constants -- geo.solid_defects.find_short_edges' own absolute
+    # floor) is the last-resort fallback, only relevant if min_face_width
+    # were ever configured below it. Once a sliver is dropped, the two
+    # flanking real edges no longer share an exact vertex -- widen the
+    # vertex-matching tolerance in the ordered walk to bridge that gap
+    # (bounded by the removed sliver's own chord, itself <= its own
+    # length, so this can never wrongly merge two genuinely distinct
+    # corners). If filtering would leave too few edges to form a polygon
+    # at all (a genuinely tiny plane, e.g. a real triangle), fall back
+    # to the unfiltered edge list and the original tight tolerance
+    # rather than risk making things worse.
+    diag = plane.BoundBox.DiagonalLength
+    sliver_floor = max(tolerances.min_face_width, MIN_SLIVER_EDGE_LENGTH)
+    sliver_length = max(diag * tolerances.sliver_edge_rel_tol, sliver_floor)
+    real_edges = [e for e in Edges if e.Length >= sliver_length]
+    if len(real_edges) >= 3:
+        Edges = real_edges
+        vertex_tol = max(1e-6, sliver_length)
+    else:
+        vertex_tol = 1e-6
+
     Vertexes = []
     for e in Edges:
-        if type(Gclassify_curve(e)) is not GLine:
-            # continue
-            return False  # for now only plane with line for all outer edges are eligible
         if len(e.Vertexes) < 2:
             # a degenerate (zero-length) edge -- not a real, usable boundary segment
             return False
@@ -1126,13 +1169,13 @@ def eligible_plane(plane, tolerances=None):
         for i, e12 in enumerate(Vertexes):
             e1, e2 = e12
             found = False
-            if (e1 - ei).length < 1e-6:
+            if (e1 - ei).length < vertex_tol:
                 ei = e2
                 Ordered.append((e1, e2))
                 del Vertexes[i]
                 found = True
                 break
-            elif (e2 - ei).length < 1e-6:
+            elif (e2 - ei).length < vertex_tol:
                 ei = e1
                 Ordered.append((e2, e1))
                 del Vertexes[i]
@@ -1140,6 +1183,26 @@ def eligible_plane(plane, tolerances=None):
                 break
         if not found:
             break
+
+    # Merge consecutive edges of Ordered that share the exact same
+    # direction -- a straight boundary the CAD kernel split into several
+    # collinear segments (not a sliver, but the same class of spurious-
+    # kink risk: two genuinely collinear segments have a cross product
+    # of exactly zero, and floating-point noise on that near-zero value
+    # can wobble it slightly negative, wrongly flipping the convexity
+    # test below). A run of 3+ collinear edges collapses the same way,
+    # one pass merging left to right.
+    if len(Ordered) >= 2:
+        merged = [Ordered[0]]
+        for e1, e2 in Ordered[1:]:
+            prev_start, prev_end = merged[-1]
+            prev_dir = (prev_end - prev_start).normalized()
+            cur_dir = (e2 - e1).normalized()
+            if abs(prev_dir.dot(cur_dir) - 1.0) < 1e-6:
+                merged[-1] = (prev_start, e2)
+            else:
+                merged.append((e1, e2))
+        Ordered = merged
 
     v0 = -(Ordered[-1][1] - Ordered[-1][0])
     v1 = Ordered[0][1] - Ordered[0][0]
