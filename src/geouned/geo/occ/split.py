@@ -13,14 +13,18 @@ import math
 from dataclasses import dataclass
 
 from OCC.Core.BOPAlgo import BOPAlgo_Splitter
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
 from OCC.Core.BRepCheck import BRepCheck_Analyzer
+from OCC.Core.TopAbs import TopAbs_SHELL
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopoDS import topods
 from ..solid_defects import find_sliver_faces, valid_solid
 from .topology import GShape, GSolid
 from ._native_utils import _volume_props
 from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
-from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes
+from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes, Gclose_open_solid
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,16 @@ class SplitResult:
     solids: list[GSolid]
     degenerate_case_handled: bool = False
     notes: str = ""
+    # A candidate that was BRepCheck-valid and volume-plausible but never
+    # actually resolved to a real TopoDS_Solid even after
+    # `_resolve_solid_candidate`'s own repair attempt -- each entry is
+    # that dropped candidate's own |Volume|. Empty in the common case.
+    # Kept as a separate, typed field (not folded into `notes`) so a
+    # caller can react to *this specific* event without string-matching
+    # `notes`, which also carries routine, expected chatter ("cut did
+    # not yield >= 2 sane solids") that is NOT worth surfacing as a
+    # warning on its own.
+    dropped_no_solid: tuple = ()
 
 
 def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tuple[list, bool]:
@@ -68,6 +82,20 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
             faceSliver = find_sliver_faces(GSolid(s), tolerances.min_face_width)
             if not faceSliver:
                 final_native_solids.append(s)
+                continue
+        else:
+            # Open-solid repair (a doubled BOPAlgo seam, or a thin missing
+            # strip left directly by the split -- see open_solid_repair.py's
+            # own docstring for both known causes): cheap and narrowly
+            # scoped, so try it before the heavier non-manifold-graph
+            # reconstruction. Self-gated (watertight + BRepCheck-valid +
+            # volume-conserving), so on any unmatched/unhealed case it
+            # returns None and falls through to the existing cascade
+            # unchanged.
+            Gopened = Gclose_open_solid(GSolid(s), tolerances)
+            if Gopened is not None:
+                repaired_any = True
+                final_native_solids.append(Gopened.__native__)
                 continue
 
         repaired = _repair_non_manifold_solid(s, tolerances.fix_tolerance)
@@ -173,6 +201,66 @@ def check_changed_ok(original, repaired, volume_tolerance):
     return repaired, not not_sane_solid, change_ok
 
 
+def _shells(native) -> list:
+    shells = []
+    explorer = TopExp_Explorer(native, TopAbs_SHELL)
+    while explorer.More():
+        shells.append(topods.Shell(explorer.Current()))
+        explorer.Next()
+    return shells
+
+
+def _resolve_solid_candidate(g: GSolid, tolerances) -> "GSolid | None":
+    """Backstop against a candidate that is BRepCheck-valid (and reports
+    a plausible .Volume) but never actually resolves to any real
+    TopoDS_Solid -- confirmed live (2026-09-11, rev_pipe.stp): a repair
+    step earlier in the cascade (Gsliver_heal's own ShapeUpgrade_
+    UnifySameDomain step) can leave a candidate as a bare TopoDS_Shell/
+    Compound that stays valid and volume-correct but was never wrapped
+    as a solid. `GSolid.Solids`'s own recursive TopAbs_SOLID discovery
+    then silently drops it several layers up (generic_split's own
+    compounding), with no crash anywhere -- see CLAUDE.md.
+
+    Gsliver_heal's own internal fix (2026-09-11) already prevents this
+    for that one specific origin; this is the general backstop, so any
+    OTHER repair step producing the same symptom is still caught here
+    rather than silently accepted.
+
+    Tried in order: (1) already resolves to >= 1 real solid -- returned
+    unchanged; (2) Gclose_open_solid, for a genuinely-open (free-edge)
+    case that reaches this point through some other path; (3) if the
+    shape holds exactly one TopoDS_Shell, wrap it via
+    BRepBuilderAPI_MakeSolid, accepted only if valid and volume-
+    conserving against `g`'s own already-computed Volume. Returns None
+    (the caller then drops the candidate and reports it via
+    SplitResult.notes) for anything else -- deliberately narrow, same
+    "detect first, repair only when fast and reliable" convention as
+    every other repair in this cascade."""
+    if _exploded_solids(g.__native__):
+        return g
+
+    opened = Gclose_open_solid(g, tolerances)
+    if opened is not None and _exploded_solids(opened.__native__):
+        return opened
+
+    shells = _shells(g.__native__)
+    if len(shells) != 1:
+        return None
+    try:
+        maker = BRepBuilderAPI_MakeSolid(shells[0])
+        if not maker.IsDone():
+            return None
+        solid = maker.Solid()
+    except Exception:
+        return None
+    if not BRepCheck_Analyzer(solid).IsValid():
+        return None
+    result = GSolid(solid)
+    if abs(result.Volume - g.Volume) > tolerances.volume_tolerance * max(abs(g.Volume), 1.0):
+        return None
+    return result
+
+
 def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, notes: str = "") -> SplitResult:
     """Apply the "Gsplit returns only sane solids" contract to a raw list
     of candidate fragments (`list[GSolid]`), shared by every Gsplit return
@@ -181,34 +269,60 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     A fragment is kept only if it is BRepCheck-valid AND
     `solid_defects.valid_solid` accepts it (positive volume, not a thin
     sliver by Volume/Area, above the absolute degeneracy floor) AND its
-    volume clears `min_solid_volume`. `_raw_bop_split` already tries hard
-    to emit only valid pieces (non-manifold / sliver / STEP-round-trip
-    repair, Step 2); the `is_valid()` check here is the backstop -- an
-    invalid fragment no repair could rescue is not something to hand
-    back. If fewer than 2 fragments survive, the tool grazed `base`
-    rather than genuinely dividing it (a sliver + the bulk, a
-    near-tangent BOP weld, a tool that missed, an unhealable invalid
-    fragment) -- return `base` unchanged (it came in valid) so
-    `generic_split` treats it as "no split" and keeps the solid whole.
-    This restores the pre-ef0077c behaviour that
-    `decom_utils_generator.remove_solids` provided (deleted when Gsplit's
-    signature was unified); `_raw_bop_split`'s own `len <= 1 ->
-    [base_native]` fallback and the freecad `check_out_solids` convention
-    already work this way."""
+    volume clears `min_solid_volume` AND `_resolve_solid_candidate`
+    confirms (repairing if needed) that it genuinely resolves to a real
+    TopoDS_Solid. `_raw_bop_split` already tries hard to emit only valid
+    pieces (non-manifold / sliver / STEP-round-trip repair, Step 2); the
+    `is_valid()` check here is the backstop -- an invalid fragment no
+    repair could rescue is not something to hand back. If fewer than 2
+    fragments survive, the tool grazed `base` rather than genuinely
+    dividing it (a sliver + the bulk, a near-tangent BOP weld, a tool
+    that missed, an unhealable invalid fragment) -- return `base`
+    unchanged (it came in valid) so `generic_split` treats it as "no
+    split" and keeps the solid whole. This restores the pre-ef0077c
+    behaviour that `decom_utils_generator.remove_solids` provided
+    (deleted when Gsplit's signature was unified); `_raw_bop_split`'s
+    own `len <= 1 -> [base_native]` fallback and the freecad
+    `check_out_solids` convention already work this way."""
 
     candidates = [Gmerge_coplanar_planes(s) for s in candidates]
-    sane = [g for g in candidates if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
+
+    resolved = []
+    unresolved_volumes = []
+    for g in candidates:
+        r = _resolve_solid_candidate(g, tolerances)
+        if r is None:
+            unresolved_volumes.append(abs(g.Volume))
+        else:
+            resolved.append(r)
+
+    sane = [g for g in resolved if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
+
+    extra_notes = []
+    if unresolved_volumes:
+        vols = ", ".join(f"{v:.2f}" for v in unresolved_volumes)
+        extra_notes.append(
+            f"{len(unresolved_volumes)} candidate(s) (volumes: {vols}) never resolved to a real "
+            "TopoDS_Solid even after repair and were dropped"
+        )
+
     if len(sane) < 2:
         return SplitResult(
             solids=[base],
-            degenerate_case_handled=repaired_any,
-            notes="cut did not yield >= 2 sane solids; base unchanged",
+            degenerate_case_handled=repaired_any or bool(unresolved_volumes),
+            notes="; ".join(["cut did not yield >= 2 sane solids; base unchanged"] + extra_notes),
+            dropped_no_solid=tuple(unresolved_volumes),
         )
-    dropped = len(candidates) - len(sane)
+    dropped = len(resolved) - len(sane)
+    all_notes = [n for n in (notes,) if n]
+    if dropped:
+        all_notes.append(f"dropped {dropped} degenerate fragment(s)")
+    all_notes.extend(extra_notes)
     return SplitResult(
         solids=sane,
-        degenerate_case_handled=repaired_any or dropped > 0,
-        notes=notes or (f"dropped {dropped} degenerate fragment(s)" if dropped else ""),
+        degenerate_case_handled=repaired_any or dropped > 0 or bool(unresolved_volumes),
+        notes="; ".join(all_notes),
+        dropped_no_solid=tuple(unresolved_volumes),
     )
 
 

@@ -11857,6 +11857,117 @@ result exactly -- the `Gmerge_coplanar_planes` wiring and the
 `convex_planes` retry change no tally in this corpus (their visible
 effect is the `input_step_file43` pytest recovery), i.e. no regression.
 
+## `Gclose_open_solid` wired into `_raw_bop_split`'s per-fragment repair
+cascade -- a regression fix, plus a general "resolve to a real
+`TopoDS_Solid`" backstop in `_finalize_split`
+
+A `Gsplit` fragment the user exported while debugging `RoundCorners/
+rev_pipe.stp`'s decomposition (`null.stp`, a different, older fixture at
+this same path than the multiplane one documented below -- this project
+has reused the filename `null.stp` for whatever the most recent debug
+export happened to be) failed to convert: `Gload_step` found 0 real
+`TopAbs_SOLID` shapes, because OCCT's STEP writer downgrades an invalid,
+open (non-watertight) `TopoDS_Solid` to a bare `OPEN_SHELL` on write.
+
+**Root cause, confirmed live**: 0 non-manifold edges, 8 genuinely free
+(1-face) edges with lengths `{0.0710mm x4, 10.0000mm x4}` -- exactly the
+already-catalogued `"missing_sliver_strip"` signature
+(`geo/{occ,ocp}/open_solid_repair.py`, same numbers as that module's own
+documented 2026-09-05 `rev_pipe.stp` case: "a 0.071mm x 10mm slot beside
+an R=6 pipe"). `Gclose_open_solid` (the existing public repair) already
+closes it cleanly: valid solid, volume 509606.088mm^3, unchanged. **The
+repair already existed and already worked -- it just wasn't reachable
+from where this fragment actually needed it.** Grepped the whole tree:
+`Gdiagnose_open_solid`/`Gclose_open_solid` were used in exactly one
+place, `geo/solid_ops.py::Gfuse_solids` (the `FuseSolid`/`joinBase`
+composite-surface-construction path) -- neither `geo/occ/split.py` nor
+`geo/ocp/split.py`'s own `_raw_bop_split` (the actual decomposition path
+`generic_split` calls) referenced it at all, even though
+`open_solid_repair.py`'s own module docstring and this file's earlier
+history both describe it as having been "wired at two points" -- point 1
+(`_raw_bop_split`) was most likely lost in a later refactor (`ef0077c`'s
+"unify Gsplit around tolerances" rewrite, or the per-engine-folder
+split, both of which touched `_raw_bop_split` extensively). A regression
+fix, not new functionality.
+
+Why the existing cascade didn't already catch this fragment:
+`_repair_non_manifold_solid` is a no-op (0 non-manifold edges to
+exclude); `Gsliver_heal` is also a no-op -- it only fires when it can
+find a real sliver *face* to remove or a near-coincident surface *pair*
+to collapse, and this fragment has neither (the missing strip was never
+a face here to begin with -- a genuine gap left directly by the BOP
+split, not by a later face-removal step). `Gsliver_heal` *does* call
+`_repair_open_solid` internally, but only as cleanup on its *own*
+sliver-removal output, which never runs here since it has nothing to
+remove. The fragment stayed invalid and was silently dropped by
+`_finalize_split`'s `g.is_valid()` backstop -- a real geometric hole
+wherever this exact split-junction geometry (a plane near-tangent to a
+cylinder, leaving a thin uncovered strip) occurs.
+
+**Fix, `geo/{occ,ocp}/split.py::_raw_bop_split`**: when a raw BOPAlgo
+fragment is invalid, try `Gclose_open_solid(GSolid(s), tolerances)`
+*before* the heavier `_repair_non_manifold_solid` cascade -- self-gated
+end to end (`_close_open_solid`: watertight + `BRepCheck`-valid +
+volume-conserving to `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`, else
+`None`), so trying it first can only help or be a no-op; every existing
+fallback path is untouched when it returns `None`. Drive-by fixes on the
+same function: `ocp/split.py`'s own docstring/type-hint claimed a stale
+3rd return value (`tool_missed_entirely`) no actual `return` produces --
+`occ/split.py`'s was already correct, brought `ocp` in line;
+`Gdiagnose_open_solid`'s docstring updated to name both known open-
+solid causes ("split_duplicate_seam" and "missing_sliver_strip"),
+not just the first. `geo/freecad/split.py`: no change -- FreeCAD's
+`Gsplit` path doesn't go through `_raw_bop_split` at all, and
+`Gdiagnose_open_solid`/`Gclose_open_solid` are already `None`-returning
+stubs there, matching every other occ/ocp-only repair in this cascade.
+
+**A second, broader gap found while verifying against the real
+`rev_pipe.stp` decomposition (not the exported fragment, the whole
+solid)**: `Gsliver_heal`'s own `ShapeUpgrade_UnifySameDomain` step can
+degrade a genuine `TopoDS_Solid` to a bare `TopoDS_Shell`/`Compound`
+that stays `BRepCheck`-valid (closed) and volume-correct but is never
+re-wrapped as a solid -- confirmed live: `_exploded_solids(healed)` came
+back empty even though `.Volume` and `BRepCheck` both looked fine,
+silently dropping ~509606mm^3 with no crash anywhere (only
+`GSolid.Solids`' own recursive `TopAbs_SOLID` discovery, several layers
+up in `generic_split`'s own compounding, ever notices). Fixed at the
+source, `Gsliver_heal` (`geo/{occ,ocp}/repair.py`): after
+`unify.Build()`, fall back to `fixer.Shape()` then the raw
+`solid_maker.Solid()` if `_exploded_solids(healed)` is empty at each
+step -- "`BRepCheck`-valid" alone isn't trustworthy here either (the
+same lesson this cascade already applies to `Gdefeature`/
+`Gcollapse_split_rings`'s own false-pass histories), so fall back to the
+closest earlier stage that still resolves to a genuine solid rather than
+trusting the most "cleaned up" result blindly.
+
+**General backstop, `_finalize_split`**: since some OTHER, not-yet-seen
+repair step could produce the same "valid-but-not-really-a-solid"
+symptom, added `_resolve_solid_candidate(g, tolerances)` -- tried in
+order per surviving candidate: (1) already resolves to >=1 real solid,
+returned unchanged; (2) `Gclose_open_solid`, for a genuinely-open case
+reaching this point through some other path; (3) if the shape holds
+exactly one `TopoDS_Shell`, wrap it via `BRepBuilderAPI_MakeSolid`,
+accepted only if valid and volume-conserving against the candidate's own
+already-computed `Volume`. Returns `None` (dropped, reported) for
+anything else. `SplitResult` gained `dropped_no_solid: tuple = ()` --
+deliberately a separate, typed field rather than folded into `notes`
+(which also carries routine, expected chatter like "cut did not yield
+>= 2 sane solids" that isn't worth surfacing as its own warning);
+`generic_split`/`split_surfaces` (`decom_one_generators.py`) now warn
+with every dropped candidate's own volume when this fires, plus a
+matching fragment-count-mismatch warning at the `Gmake_compound` level
+for the same underlying symptom seen from `split_surfaces`' own vantage
+point. `geo/freecad/split.py`'s `SplitResult` gained the same field for
+interface parity only -- FreeCAD's own `Gsplit` path never populates it.
+
+**Verification**: direct reproduction confirmed `_raw_bop_split` now
+returns the closed, real result instead of silently dropping the
+fragment. `tests/geo` + `tests/test_cadtocsg.py` under `ocp`: no
+regressions from this work specifically (the one failing test,
+`cylBox.stp`, is confirmed pre-existing and unrelated -- see the
+`eligible_plane` section immediately below, which re-verified this same
+suite state after its own separate change).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

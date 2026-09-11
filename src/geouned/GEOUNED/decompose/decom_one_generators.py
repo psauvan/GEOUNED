@@ -21,9 +21,38 @@ def split_surfaces(solid, options, tolerances):
 
     solid_components = generic_split(solid, options, tolerances)
     comp = Gmake_compound(solid_components)
+
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > 0.001:
-        logger.info("Lost {volratio*100:6.2f}% of the original volume")
+        logger.warning(f"Lost {volratio * 100:6.2f}% of the original volume")
+
+    # A fragment Gsplit accepted as "sane" (BRepCheck-valid + a real
+    # volume, via _finalize_split's own filter) can still fail to
+    # resolve to a genuine TopoDS_Solid once wrapped into `comp`: a
+    # repair step inside _raw_bop_split's cascade (confirmed: Gsliver_
+    # heal's own ShapeUpgrade_UnifySameDomain step) can leave a fragment
+    # as a bare TopoDS_Compound/Shell that is still topologically valid
+    # and still reports a correct .Volume (computed shape-type-
+    # agnostically) -- but contains zero real solid leaves. Such a
+    # fragment silently disappears from `comp.Solids` (which only counts
+    # TopAbs_SOLID nodes, at any depth) with no crash and, critically,
+    # no volume-vs-input mismatch -- the `volratio` check above cannot
+    # see it, since `comp.Volume` already counts its volume regardless
+    # of the wrapper type. Detect it here by comparing fragment counts
+    # before vs after `comp` re-parses its own solid content, and warn
+    # with every fragment's own volume so the missing one can be
+    # identified -- this solid will NOT be part of this cell's boolean
+    # expression, a real, currently-unrepaired gap (see CLAUDE.md).
+    if len(comp.Solids) != len(solid_components):
+        dropped_volume = sum(abs(f.Volume) for f in solid_components) - sum(abs(s.Volume) for s in comp.Solids)
+        fragment_volumes = ", ".join(f"{abs(f.Volume):.2f}" for f in solid_components)
+        logger.warning(
+            f"generic_split produced {len(solid_components)} fragment(s) "
+            f"(volumes: {fragment_volumes}) but only {len(comp.Solids)} resolved to "
+            f"a real solid -- {dropped_volume:.2f} of volume silently dropped and "
+            "will NOT be considered when building this solid's boolean expression."
+        )
+
     return comp
 
 
@@ -67,9 +96,16 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                 tolerances,
             )
             comsolid_solids = result.solids
+            if result.dropped_no_solid:
+                vols = ", ".join(f"{v:.2f}" for v in result.dropped_no_solid)
+                logger.warning(
+                    f"Gsplit: {len(result.dropped_no_solid)} candidate fragment(s) (volumes: {vols}) never "
+                    "resolved to a real solid and were dropped -- this material will NOT be part of any "
+                    "cell's boolean expression."
+                )
         except Exception:
             comsolid_solids = [solid]
-            logger.info("Failed split base with {surf.shape.Faces[0].Surface} surface")
+            logger.info(f"Failed split base with {surf.shape.Faces[0].Surface} surface")
 
         if len(comsolid_solids) > 1:
             new_split = True

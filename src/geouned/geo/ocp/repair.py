@@ -547,13 +547,34 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
         solid_maker = BRepBuilderAPI_MakeSolid(shell)
         if not solid_maker.IsDone():
             return None
-        fixer = ShapeFix_Shape(solid_maker.Solid())
+        built_solid = solid_maker.Solid()
+        fixer = ShapeFix_Shape(built_solid)
         fixer.SetPrecision(OCCT_FIX_TOLERANCE)
         fixer.Perform()
         unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
         unify.SetLinearTolerance(OCCT_FIX_TOLERANCE)
         unify.Build()
         healed = unify.Shape()
+        # ShapeUpgrade_UnifySameDomain (and, more rarely, ShapeFix_Shape)
+        # can degrade a genuine TopoDS_Solid to a bare TopoDS_Shell/
+        # Compound that stays BRepCheck-valid (closed) but is never
+        # re-wrapped as a solid -- confirmed live on rev_pipe.stp
+        # (2026-09-11): _exploded_solids(healed) came back empty even
+        # though .Volume and BRepCheck both looked fine, silently
+        # dropping ~509606mm^3 from the final decomposition with no
+        # crash anywhere downstream (only .Solids' own recursive
+        # TopAbs_SOLID discovery, several layers up in generic_split,
+        # ever notices). "BRepCheck-valid" alone is not enough to trust
+        # a cosmetic cleanup step here either -- the same lesson this
+        # whole cascade already applies elsewhere (Gdefeature/
+        # Gcollapse_split_rings's own false-pass histories) -- so fall
+        # back to the closest earlier stage that still resolves to a
+        # genuine solid, rather than trusting the most "cleaned up"
+        # result blindly.
+        if not _exploded_solids(healed):
+            healed = fixer.Shape()
+            if not _exploded_solids(healed):
+                healed = built_solid
         # The face-by-face sew above can leave a bare TopoDS_Shell, or a
         # solid with a thin uncapped slot where a removed sliver face
         # wasn't re-capped. Hand it to the open-solid repair -- it
@@ -979,8 +1000,9 @@ from .open_solid_repair import _diagnose_open_solid as _diagnose_open, _repair_o
 def Gdiagnose_open_solid(solid: "GSolid", tolerances) -> "str | None":
     """After a split: classify why `solid` is not watertight.
     Returns None (watertight -- nothing to do), a known-cause tag
-    (currently only "split_duplicate_seam" -- a doubled BOPAlgo tangent
-    seam), or "unknown" (open, cause not recognised)."""
+    ("split_duplicate_seam" -- a doubled BOPAlgo tangent seam, or
+    "missing_sliver_strip" -- a thin uncapped slot left directly by the
+    split), or "unknown" (open, cause not recognised)."""
     return _diagnose_open(solid.__native__, tolerances)
 
 

@@ -38,6 +38,11 @@ class SplitResult:
     solids: list[GSolid]
     degenerate_case_handled: bool = False
     notes: str = ""
+    # Interface parity with occ/ocp's own SplitResult (their _finalize_
+    # split can populate this from a candidate that never resolved to a
+    # real TopoDS_Solid); the freecad Gsplit path has no equivalent
+    # check, so this stays empty here always.
+    dropped_no_solid: tuple = ()
 
 
 def Gsplit(
