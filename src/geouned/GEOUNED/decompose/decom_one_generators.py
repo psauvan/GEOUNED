@@ -89,6 +89,9 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     new_split = False
     for surf in get_surfaces(solid, omitfaces, tolerances):
         surf.build_surface(bbox, tolerances, forward=True)
+        if surf.shape is None:
+            logger.info(f"Cannot build {surf.Type} surface.")
+            continue
         try:
             result = Gsplit(
                 solid,

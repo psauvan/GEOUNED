@@ -361,7 +361,6 @@ class GeounedSurface:
             pnt = sph.Surf.Center
             self.shape = Gmake_sphere(pnt, rad).__native__
             self.shell = Gfirst_shell(self.shape)
-            return
 
         elif self.Type == "Torus" or self.Type == "TorusOnly":
             tor = self.Surf.Torus if self.Type == "Torus" else self
@@ -373,7 +372,6 @@ class GeounedSurface:
             torus_solid = Gmake_torus(center, axis, majorR, minorR)
             self.shape = torus_solid.Faces[0].__native__
             self.shell = Gfirst_shell(torus_solid.__native__)
-            return
 
         elif self.Type == "MultiPlane":
             Box = Box.enlarged(10)
@@ -405,8 +403,13 @@ class GeounedSurface:
             pass
 
         else:
-            logger.error(f"Cannot build {self.Type} shape")
+            logger.error(f"Cannot build {self.Type} surface")
             return
+
+        if self.shape is None:
+            logger.error(f"Error in building surface{self.Type}")
+            return
+
 
 
 class MetaSurfIndex:
