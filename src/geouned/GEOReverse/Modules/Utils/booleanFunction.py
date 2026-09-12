@@ -218,13 +218,22 @@ class BoolSequence:
         self.level_update()
 
     def removeSurf(self, name):
+        """Remove every occurrence of surface `name` from the expression,
+        regardless of sign -- an undefined surface can't be evaluated
+        either way, so a bare `+name`/`-name` reference to it must be
+        dropped (AND) or the whole clause trivialized to True (OR)
+        identically for both. Bug fixed 2026-09-12: the old `if e ==
+        name:` check only matched the positive literal, so a negative
+        reference (`-name`) to the same surface was silently left in
+        place -- confirmed live before the fix (`BoolSequence("1 2 -3
+        4").removeSurf(3)` left `-3` untouched)."""
         if type(self.elements) is bool:
             return
         ic = len(self.elements)
         for e in reversed(self.elements):
             ic -= 1
             if type(e) is int:
-                if e == name:
+                if abs(e) == name:
                     if self.operator == "AND":
                         self.elements.remove(e)
                     elif self.operator == "OR":

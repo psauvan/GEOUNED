@@ -287,10 +287,16 @@ gaps for whenever it's picked back up:
   never needs it). The one safe piece was extracted:
   `src/geouned/boolean_expression_parser.py` (`outer_terms`/`redundant`/
   `is_integer`, confirmed duplicated between the two `BoolSequence`
-  files' own `set_def`). A real, separate bug was found and flagged (not
-  fixed) along the way: `GEOReverse/Modules/Objects.py::cleanUndefined()`
-  calls a `.removeSurface(...)` method that doesn't exist anywhere in
-  GEOReverse.
+  files' own `set_def`). Two real bugs were found and fixed along the
+  way: `GEOReverse/Modules/Objects.py::cleanUndefined()` used to call a
+  `.removeSurface(...)` method that never existed anywhere in
+  GEOReverse (`BoolSequence` only has singular `removeSurf`) -- fixed by
+  looping `removeSurf` over each undefined surface; and
+  `BoolSequence.removeSurf` itself (`GEOReverse/Modules/Utils/
+  booleanFunction.py`) only matched positive surface references
+  (`if e == name:`), silently leaving a negative reference (`-name`) to
+  the same surface untouched -- fixed to `if abs(e) == name:`. Covered
+  by `tests/test_boolean_function.py`.
 - `Solidos/` STEP fixture tree (the test/regression corpus used mainly
   for GEOUNED verification) still has real, unresolved duplicates
   across the triage folders (`Solidos/test_models` is the curated

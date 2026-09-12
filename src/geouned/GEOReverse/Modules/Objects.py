@@ -194,8 +194,14 @@ class CadCell:
         for s in self.definition.get_surfaces_numbers():
             if self.surfaces[s].params is None:
                 undefined.append(s)
-        if undefined:
-            self.definition.removeSurface(undefined)
+        # `removeSurface` (plural, taking a list) never existed anywhere
+        # in GEOReverse -- BoolSequence only has removeSurf (singular,
+        # one surface at a time). This call would have raised
+        # AttributeError the moment a cell ever referenced an undefined
+        # surface. Fixed 2026-09-12: loop removeSurf over each undefined
+        # surface instead.
+        for s in undefined:
+            self.definition.removeSurf(s)
 
         for s in undefined:
             del self.surfaces[s]

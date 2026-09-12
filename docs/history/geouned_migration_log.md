@@ -12325,3 +12325,48 @@ pre-extraction baseline (the 2 failures on every engine are the already-
 documented `test_cylbox_convertion` regression, unrelated to parsing).
 This exercises the shared parser through both pipelines' own real
 MCNP-syntax cell-definition parsing, not just via import.
+
+### `BoolSequence.removeSurf`/`cleanUndefined` bugs: found and fixed, 2026-09-12
+
+Both bugs flagged (not fixed) in the previous entry, investigated at the
+user's explicit request ("si mira este bug"):
+
+1. `GEOReverse/Modules/Objects.py::CadCell.cleanUndefined()` called
+   `self.definition.removeSurface(undefined)` -- a method that never
+   existed anywhere in GEOReverse. `remh.py::Cline` has no
+   `removeSurface`; `BoolSequence` only has `removeSurf` (singular, one
+   surface number at a time). Confirmed via the real pipeline that
+   `cell.definition` genuinely is a `BoolSequence` instance (not `Cline`)
+   by the time `cleanUndefined()` runs: `buildCAD.py::BuildUniverseCells`
+   converts `NTcell.definition = BoolSequence(NTcell.definition.str)`
+   before ever calling `buildShape()` -> `BuildSolid()` (which calls
+   `cleanUndefined()` as its very first line, per `buildSolidCell.py`).
+   This call would have raised `AttributeError` the instant any cell
+   ever referenced an undefined surface. Fixed by looping `removeSurf`
+   over each undefined surface instead of one non-existent plural call.
+
+2. While verifying fix 1 against a live reproduction (scratchpad-isolated
+   copy of `booleanFunction.py`, import rewritten to a flat one, `sys.path`
+   trick to bypass the `geouned` package's CAD-kernel-requiring
+   `__init__.py` chain), a second, deeper bug surfaced:
+   `BoolSequence.removeSurf(self, name)`'s own element-matching check was
+   `if e == name:` -- since elements are signed ints (`+n` for a normal
+   reference, `-n` for a complemented one), this only ever matched the
+   *positive* literal. A negative reference (`-name`) to the exact same
+   surface was silently left in the expression untouched. Confirmed live
+   before the fix: `BoolSequence("1 2 -3 4").removeSurf(3)` left `-3` in
+   place. Fixed to `if abs(e) == name:` -- verified against 5 cases (AND
+   with a negative element, AND with only positive elements as a
+   regression check, OR collapsing to `True` for both a negative and a
+   positive element, and a nested sub-expression) all correct after the
+   fix.
+
+New regression test file `tests/test_boolean_function.py` (6 tests)
+covers both fixes directly against the real (non-scratchpad) classes.
+
+**Verified**: all 3 engines' full suites (`tests/geo` + `test_cadtocsg.py`
++ the new `test_boolean_function.py`, `freecad` also `test_csgtocad.py`)
+-- `ocp` 139 passed/1 skipped, `occ` 139 passed/1 skipped, `freecad` 167
+passed/2 skipped/2 failed (the 2 failures are the already-documented,
+pre-existing `test_cylbox_convertion` regression, unrelated to this fix)
+-- zero new regressions on any engine.
