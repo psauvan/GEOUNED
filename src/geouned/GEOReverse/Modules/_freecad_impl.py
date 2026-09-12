@@ -75,8 +75,8 @@ import FreeCAD
 import Import
 import Part
 
-from ...geo.vector_geometry import GVector
-from ...geo.freecad import GSolid, to_native_vector
+from ...geo import GSolid, GVector, arbitrary_perpendicular, to_gvector, to_native_vector
+from .cad_export_shared import cell_label_name, material_label_name, universe_label_name
 
 # ---------------------------------------------------------------------------
 # CAD export
@@ -96,7 +96,7 @@ def makeTree(CADdoc, CADCells):
     label, universeCADCells = CADCells
     groupObj = CADdoc.addObject("App::Part", "Materials")
 
-    groupObj.Label = f"Universe_{label[1]}_Container_{label[0]}"
+    groupObj.Label = universe_label_name(label[0], label[1])
 
     CADObj = {}
     for i, c in enumerate(universeCADCells):
@@ -104,7 +104,7 @@ def makeTree(CADdoc, CADCells):
             groupObj.addObject(makeTree(CADdoc, c))
         else:
             featObj = CADdoc.addObject("Part::FeaturePython", f"solid{i}")
-            featObj.Label = f"Cell_{c.name}_{c.MAT}"
+            featObj.Label = cell_label_name(c.name, c.MAT)
             featObj.Shape = c.shape.__native__
             if c.MAT not in CADObj.keys():
                 CADObj[c.MAT] = [featObj]
@@ -113,7 +113,7 @@ def makeTree(CADdoc, CADCells):
 
     for mat, matGroup in CADObj.items():
         groupMatObj = CADdoc.addObject("App::Part", "Materials")
-        groupMatObj.Label = f"Material_{mat}_{label[0]}{label[1]}"
+        groupMatObj.Label = material_label_name(mat, label[0], label[1])
         groupMatObj.addObjects(matGroup)
         groupObj.addObject(groupMatObj)
 
@@ -141,31 +141,6 @@ def export_freecad(buildCAD_list, formats, output_filename, barename):
 # ---------------------------------------------------------------------------
 # Exotic quadric surfaces
 # ---------------------------------------------------------------------------
-
-
-def ortoVect(axis: GVector) -> GVector:
-    """
-    An arbitrary unit vector perpendicular to `axis`, picked by crossing
-    `axis` with whichever of the 3 world axes it is *least* aligned with
-    (avoids a near-zero cross product). Pure GVector math, ported
-    verbatim from `Objects.py::ortoVect` -- no native call needed at all
-    (the original's `FreeCAD.Vector(vOrto)` was just a roundabout way to
-    build a literal unit vector).
-    """
-    vmax = 0.0
-    v_orto = None
-    if abs(axis.x) > vmax:
-        v_orto = GVector(0, 1, 0)
-        vmax = abs(axis.x)
-    if abs(axis.y) > vmax:
-        v_orto = GVector(0, 0, 1)
-        vmax = abs(axis.y)
-    if abs(axis.z) > vmax:
-        v_orto = GVector(1, 0, 0)
-        vmax = abs(axis.z)
-    if v_orto is None:
-        return None
-    return axis.cross(v_orto).normalized()
 
 
 # ---------------------------------------------------------------------------
@@ -202,13 +177,13 @@ class GEllipticCone:
     def transform(self, matrix: FreeCAD.Matrix) -> "GEllipticCone":
         rot = matrix.submatrix(3)
         return GEllipticCone(
-            to_gvector_(matrix.multVec(to_native_vector(self.Apex))),
-            to_gvector_(rot.multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Apex))),
+            to_gvector(rot.multVec(to_native_vector(self.Axis))),
             self.RefRadius,
             self.MajorRadius,
             self.MinorRadius,
-            to_gvector_(rot.multVec(to_native_vector(self.MajorAxis))),
-            to_gvector_(rot.multVec(to_native_vector(self.MinorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MajorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MinorAxis))),
             self.DoubleSheet,
         )
 
@@ -288,12 +263,12 @@ class GHyperboloid:
     def transform(self, matrix: FreeCAD.Matrix) -> "GHyperboloid":
         rot = matrix.submatrix(3)
         return GHyperboloid(
-            to_gvector_(matrix.multVec(to_native_vector(self.Center))),
-            to_gvector_(rot.multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Center))),
+            to_gvector(rot.multVec(to_native_vector(self.Axis))),
             self.MajorRadius,
             self.MinorRadius,
-            to_gvector_(rot.multVec(to_native_vector(self.MajorAxis))),
-            to_gvector_(rot.multVec(to_native_vector(self.MinorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MajorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MinorAxis))),
             self.OneSheet,
         )
 
@@ -416,12 +391,12 @@ class GEllipsoid:
     def transform(self, matrix: FreeCAD.Matrix) -> "GEllipsoid":
         rot = matrix.submatrix(3)
         return GEllipsoid(
-            to_gvector_(matrix.multVec(to_native_vector(self.Center))),
-            to_gvector_(rot.multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Center))),
+            to_gvector(rot.multVec(to_native_vector(self.Axis))),
             self.MajorRadius,
             self.MinorRadius,
-            to_gvector_(rot.multVec(to_native_vector(self.MajorAxis))),
-            to_gvector_(rot.multVec(to_native_vector(self.MinorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MajorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MinorAxis))),
         )
 
     def build_shape(self) -> GSolid:
@@ -474,12 +449,12 @@ class GEllipticCylinder:
     def transform(self, matrix: FreeCAD.Matrix) -> "GEllipticCylinder":
         rot = matrix.submatrix(3)
         return GEllipticCylinder(
-            to_gvector_(matrix.multVec(to_native_vector(self.Center))),
-            to_gvector_(rot.multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Center))),
+            to_gvector(rot.multVec(to_native_vector(self.Axis))),
             self.MajorRadius,
             self.MinorRadius,
-            to_gvector_(rot.multVec(to_native_vector(self.MajorAxis))),
-            to_gvector_(rot.multVec(to_native_vector(self.MinorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MajorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MinorAxis))),
         )
 
     def build_shape(self, height: float) -> GSolid:
@@ -528,12 +503,12 @@ class GHyperbolicCylinder:
     def transform(self, matrix: FreeCAD.Matrix) -> "GHyperbolicCylinder":
         rot = matrix.submatrix(3)
         return GHyperbolicCylinder(
-            to_gvector_(matrix.multVec(to_native_vector(self.Center))),
-            to_gvector_(rot.multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Center))),
+            to_gvector(rot.multVec(to_native_vector(self.Axis))),
             self.MajorRadius,
             self.MinorRadius,
-            to_gvector_(rot.multVec(to_native_vector(self.MajorAxis))),
-            to_gvector_(rot.multVec(to_native_vector(self.MinorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MajorAxis))),
+            to_gvector(rot.multVec(to_native_vector(self.MinorAxis))),
         )
 
     def build_shape(self, length: float) -> GSolid:
@@ -591,8 +566,8 @@ class GParaboloid:
 
     def transform(self, matrix: FreeCAD.Matrix) -> "GParaboloid":
         return GParaboloid(
-            to_gvector_(matrix.multVec(to_native_vector(self.Center))),
-            to_gvector_(matrix.submatrix(3).multVec(to_native_vector(self.Axis))),
+            to_gvector(matrix.multVec(to_native_vector(self.Center))),
+            to_gvector(matrix.submatrix(3).multVec(to_native_vector(self.Axis))),
             self.Focal,
         )
 
@@ -608,7 +583,7 @@ class GParaboloid:
         r = math.sqrt(4 * self.Focal * length)
         parabola = Part.Parabola()
         parabola.Center = center
-        parabola.Axis = to_native_vector(ortoVect(self.Axis))
+        parabola.Axis = to_native_vector(arbitrary_perpendicular(self.Axis))
         parabola.XAxis = axis
         parabola.Focal = self.Focal
 
@@ -640,7 +615,7 @@ def _make_torus_elliptic_native(
 ) -> GSolid:
     center_native = to_native_vector(center)
     z_axis = to_native_vector(axis)
-    x_axis = to_native_vector(ortoVect(axis))
+    x_axis = to_native_vector(arbitrary_perpendicular(axis))
 
     r_maj, r_min = major_radius, minor_radius
     major_dir, minor_dir = z_axis, x_axis
@@ -669,10 +644,6 @@ def _make_torus_elliptic_native(
         rev = shape.revolve(center_native, z_axis, 360)
     shell = Part.makeShell((rev,))
     return GSolid(Part.makeSolid(shell))
-
-
-def to_gvector_(fc_vector) -> GVector:
-    return GVector(fc_vector.x, fc_vector.y, fc_vector.z)
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +692,6 @@ def Gmake_torus_elliptic(
     cross-section radii (about the Z and X directions respectively, in
     MCNP SY/SX-card terms), `r_major_axis_offset` (MCNP's own `R`) is the
     tube center's distance from `center` along the perpendicular axis
-    `ortoVect(axis)` picks. Ported from `Objects.py::makeEllipticTorus`.
+    `arbitrary_perpendicular(axis)` picks. Ported from `Objects.py::makeEllipticTorus`.
     """
     return _make_torus_elliptic_native(center, axis, r_major_axis_offset, major_radius, minor_radius)

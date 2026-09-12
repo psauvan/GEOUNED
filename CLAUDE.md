@@ -153,7 +153,22 @@ engine-specific surface: `_freecad_impl.py` / `_occ_impl.py` / `_ocp_impl.py`
 (CAD export via XCAF with per-material color, plus the 6 "exotic
 quadric" surfaces GEOUNED never produces — still unimplemented stubs
 under occ/ocp), dispatched by `GEOReverse/Modules/__init__.py` the same
-way `geo/__init__.py` does. `GEOReverse`'s own `build_region`-equivalent
+way `geo/__init__.py` does. `Modules/cad_export_shared.py` holds the
+pure-Python pieces of that export confirmed duplicated across backends
+(2026-09-12): the Universe/Material/Cell label-name f-strings (identical
+across all 3 backends) and the per-material color-assignment logic
+(identical between `_occ_impl.py`/`_ocp_impl.py` only -- `freecad` has
+no color support, see "Environment notes"). `_freecad_impl.py`'s own
+`ortoVect`/local `to_gvector_` -- pure `GVector` math with zero native
+dependency, confirmed unused outside that one file -- moved to
+`geo.vector_geometry.arbitrary_perpendicular`/reused `geo.to_gvector`
+directly at the same time; NOT merged with GEOUNED's own, independently-
+validated `meta_surfaces_utils.py::_perpendicular_axis` (same kind of
+"arbitrary stable perpendicular" idea, different formula, different
+unrelated call sites -- kept distinct, see `arbitrary_perpendicular`'s
+own docstring). The 6 exotic-quadric dataclasses themselves stay in
+`_freecad_impl.py`, not `geo` -- deliberate, see the paragraph below.
+`GEOReverse`'s own `build_region`-equivalent
 (`buildSolidCell.py`/`splitFunction.py`/`Objects.py`) is a still-separate,
 not-yet-unified twin of GEOUNED's `build_region/` — see the portability
 analysis in the history log for what's already shareable (box algebra,
@@ -182,7 +197,11 @@ functions instead of ABC methods:
   `tests/test_csgtocad.py`), with only these known, long-standing,
   unrelated failures: GEOReverse's `test_cylbox_convertion` (cell-count
   mismatch in the reconstructed STEP — not yet root-caused, deliberately
-  deferred, see "Known open items"); `Mixed/ConeSphere.stp` still crashes
+  deferred, see "Known open items" -- **correction, 2026-09-12: this now
+  fails under `freecad` too**, confirmed via a clean `git worktree` at
+  this exact commit, not just under `occ`/`ocp` as this file previously
+  claimed; whatever regressed it is pre-existing at this commit, not
+  caused by any uncommitted work); `Mixed/ConeSphere.stp` still crashes
   natively under `occ`/`ocp` (`ShapeUpgrade_UnifySameDomain` access
   violation) and is an accepted permanent limitation there, translating
   cleanly only under `freecad`.
@@ -205,38 +224,63 @@ functions instead of ABC methods:
 
 (Supersedes every dated "Pending tasks" checkpoint inside the history
 log — those are kept there for their own historical record, but this
-list is the current one.)
+list is the current one. Verified against the live code/tests on
+2026-09-12 — see the history log's "Known-open-items audit" entry for
+how. `Big_complex_cell/modelcell_cut1.stp`/`modelCell_670000.stp`, the
+one item that audit found already fixed, has been dropped from this
+list — see that entry for the verification numbers.)
+
+### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
 - `AdjacentMultiplanePlanes` still needs the same RevCC-to-
   MultiRoundCorner extension flagged since 2026-08-21 — see the
   `project_mrc_adjacent_multiplane_pending` memory.
-- ~~`Big_complex_cell/modelcell_cut1.stp` and `modelCell_670000.stp` —
-  historically lose MCNP particles / convert very slowly~~ — **verified
-  fixed 2026-09-12** (real d1suned check, default settings: 0 lost
-  particles, tallies 0.996/1.9σ and 0.998/1.0σ; most likely a side
-  effect of `generic_split`'s new post-split volume-conservation guard,
-  see the history log's `large_cell_plane_split` entry). Still ask the
-  user before including any `Big_*`-named file or folder in a routine
-  corpus scan regardless — they dominate runtime, not because they're
-  broken (see `feedback_ask_before_big_models` memory).
 - `hylife-v06.stp` solid 45's slow decomposition (an O(n^2) same-surface
   face-adjacency cost on many duplicated cylinder/torus fragments) —
   root-caused, not fixed, explicitly deprioritized by the user.
+
+### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
+
+Deliberately paused as a whole — explicit user priority is to finish
+`GEOUNED` first (see "Current status"). These are the specific known
+gaps for whenever it's picked back up:
+
+- `tests/test_csgtocad.py::test_cylbox_convertion[mcnp]`/`[openmc_xml]`
+  fail under **all 3 engines** as of 2026-09-12 (this file previously
+  said "pass under `freecad`" -- wrong, re-verified via a clean
+  `git worktree` at this exact commit, `freecad` included: `assert 2 ==
+  4`/`assert 1 == 5`, byte-identical shape to the `occ`/`ocp` failure).
+  The reconstructed STEP has fewer, larger solids than expected (2 vs 4,
+  1 vs 5) — 3 geometrically separate/disjoint pieces of a single
+  multi-OR-term cell get fused into fewer solids somewhere in
+  `Objects.py::CellObj.buildShape`, not yet traced further
+  (`interferencia`/`fuse_solids` was ruled out live — it never even runs
+  for this fixture). Since this is now confirmed engine-independent, the
+  cause is almost certainly in the shared `Objects.py`/`build_region`-
+  equivalent code itself, not in any one backend's own `Gsplit`/`Gfuse`.
+- The `hylife-v06.stp` round-trip volume discrepancy: the reconstructed
+  CAD volume comes back ~1.401x the true solid vs. GEOUNED's own
+  d1suned tally of ~1.119x on the same unfixed file — the two don't
+  agree, and this was never chased down once the real GEOUNED-side
+  fix for that investigation was found via a different route.
 - The 6 "exotic quadric" surfaces (`Gmake_elliptic_cone`,
   `Gmake_hyperboloid`, `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
   `Gmake_hyperbolic_cylinder`, `Gmake_paraboloid`) remain unimplemented
-  stubs in `GEOReverse`'s `occ`/`ocp` backends.
-- `Solidos/` STEP fixture tree still has real, unresolved duplicates
+  stubs in the `occ`/`ocp` backends (`GEOReverse/Modules/_occ_impl.py`/
+  `_ocp_impl.py`).
+
+### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
+
+- `GEOUNED`'s `build_region/` and `GEOReverse`'s parallel
+  `buildSolidCell.py`/`splitFunction.py` remain two separate
+  implementations of near-identical logic. A written portability
+  analysis exists (see the history log's "`FuseSolid` ->
+  `geo.Gfuse_solids`; `build_region` portability analysis" entry) but no
+  further code has moved beyond `Gfuse_solids` itself.
+- `Solidos/` STEP fixture tree (the test/regression corpus used mainly
+  for GEOUNED verification) still has real, unresolved duplicates
   across the triage folders (`Solidos/test_models` is the curated
   regression set; older ad-hoc folders overlap with it in places).
-- `build_region`/`GEOReverse`'s parallel `buildSolidCell.py`/
-  `splitFunction.py` duplication has a written portability analysis
-  (see the history log's "`FuseSolid` -> `geo.Gfuse_solids`;
-  `build_region` portability analysis" entry) but no further code has
-  moved beyond `Gfuse_solids` itself.
-- GEOReverse's `test_cylbox_convertion` cell-count mismatch and the
-  `hylife-v06.stp` round-trip volume discrepancy — both deliberately
-  deferred per the user's own priority ordering (see "Current status").
 
 ## Reference docs
 

@@ -12118,3 +12118,120 @@ CLAUDE.md's "Known open items" list updated accordingly (the
 `modelcell_cut1.stp`/`modelCell_670000.stp` bullet struck through with
 the verification result; every other bullet left as-is, now with
 confirmed-current status rather than inherited-from-the-old-log status).
+
+## GEOReverse `_*_impl.py` move-analysis: `cad_export_shared.py`,
+`arbitrary_perpendicular`, and a re-confirmed `test_cylbox_convertion`
+regression (all 3 engines now)
+
+User request: analyze `GEOReverse/Modules/_freecad_impl.py`/`_occ_impl.py`/
+`_ocp_impl.py` (726/229/206 lines) for functions that could move into
+`geo/*` or a new shared file, now that `geo` itself has settled into its
+per-engine-folder shape.
+
+**Findings, checked against the real code (not assumed from the earlier
+docstrings alone)**:
+- `_freecad_impl.py` imported `from ...geo.vector_geometry import GVector`
+  and `from ...geo.freecad import GSolid, to_native_vector` -- bypassing
+  the single-import-point convention every other `GEOReverse/Modules/*.py`
+  file already follows (`from ...geo import (...)`, confirmed via
+  `Objects.py`/`matrix_utils.py`/`buildCAD.py`/`splitFunction.py`). Since
+  `_freecad_impl.py` only ever loads when `CAD_ENGINE == "freecad"` (per
+  `Modules/__init__.py`'s own dispatch, which runs first), `from ...geo
+  import GSolid, to_native_vector` resolves to the exact same objects --
+  fixed to match the established convention, no behavior change.
+- `_freecad_impl.py::to_gvector_(fc_vector)` was a byte-identical private
+  reimplementation of `geo.vector_geometry.to_gvector` (`GVector(v.x, v.y,
+  v.z)`), used at 26 call sites, all within the same file. Deleted; all
+  26 sites now call the real `to_gvector` imported from `...geo`.
+- `_freecad_impl.py::ortoVect(axis)` -- confirmed by its own docstring and
+  by reading its body ("no native call needed at all") to be pure
+  `GVector` arithmetic with zero FreeCAD dependency, used at 2 call sites
+  (`GParaboloid.build_shape`, `_make_torus_elliptic_native`). Moved to
+  `geo/vector_geometry.py::arbitrary_perpendicular` (renamed to match
+  that file's English/snake_case naming -- `arc_extent`/`to_gvector`, not
+  camelCase) and re-exported from `geo/__init__.py`'s shared block
+  alongside `to_gvector`/`arc_extent`. A near-duplicate idea already
+  exists in `GEOUNED/utils/meta_surfaces_utils.py::_perpendicular_axis`
+  ("an arbitrary stable perpendicular to axis", used by the winding-
+  closure check) -- confirmed via direct comparison that the two use
+  genuinely different formulas (world-axis-component-based vs.
+  fixed-reference-plus-cross-product) and were independently validated
+  for their own unrelated call sites; per this project's own repeated
+  "never blindly merge two independently-validated heuristics" lesson
+  (documented at length elsewhere in this log for `get_can_surfaces`/
+  `outer2_only`, `cyl_plane_region_conf`, etc.), these were **not**
+  unified -- `arbitrary_perpendicular`'s own docstring flags the
+  distinction explicitly so a future session doesn't try to collapse
+  them without re-verifying each caller.
+- The per-material color-assignment logic (`_MATERIAL_PALETTE`,
+  `_DEFAULT_COLOR`, `_GOLDEN_ANGLE`, `_extended_color`,
+  `_collect_materials`, `_material_colors`) was byte-identical between
+  `_occ_impl.py` and `_ocp_impl.py` -- confirmed by direct diff, not just
+  by the `_ocp_impl.py` docstring's own "verbatim" claim. `freecad` has
+  no equivalent at all (no color support -- FreeCAD's shape-color API
+  needs `Gui.ViewProvider`, confirmed no headless path exists, see the
+  `freecad_headless_no_viewprovider` project note). Extracted to a new
+  shared file rather than into `geo` itself: `geo` has no color concept
+  (GEOUNED's own forward pipeline never assigns one) and CLAUDE.md
+  already documents a deliberate decision to keep GEOReverse's exotic-
+  quadric/export concerns local to `GEOReverse` rather than pulled into
+  `geo`'s own scope -- consistent with that, the new file is
+  `GEOReverse/Modules/cad_export_shared.py`, imported by `_occ_impl.py`/
+  `_ocp_impl.py`.
+- The Universe/Material/Cell label-name f-strings
+  (`f"Universe_{uid}_Container_{name}"`, `f"Material_{mat}_{name}{uid}"`,
+  `f"Cell_{cell_name}_{mat}"`) were confirmed byte-identical across ALL
+  THREE backends (`_freecad_impl.py::makeTree`, `_occ_impl.py`/
+  `_ocp_impl.py::_build_tree`) -- a naming convention that had to be kept
+  in sync by hand across 3 files with nothing enforcing it. Factored into
+  3 tiny pure functions (`universe_label_name`/`material_label_name`/
+  `cell_label_name`) in the same new `cad_export_shared.py`, used by all
+  3 backends -- each backend keeps its own native call that *applies* the
+  name (`groupObj.Label = ...` vs. `TDataStd_Name.Set`/`.Set_s` +
+  `TCollection_ExtendedString`), only the string computation is shared.
+
+**Deliberately NOT moved, with reasoning**:
+- The 6 exotic-quadric dataclasses (`GEllipticCone`/`GHyperboloid`/
+  `GEllipsoid`/`GEllipticCylinder`/`GHyperbolicCylinder`/`GParaboloid`)
+  stay in `_freecad_impl.py` -- CLAUDE.md's own GEOReverse-migration
+  section already documents this as a deliberate scope decision (`geo`
+  stays scoped to surfaces GEOUNED's own forward decomposition can
+  classify), not something this pass should silently reverse. Their
+  `is_inside()` methods ARE pure `GVector` math (only `build_shape`/
+  `transform` touch native `Part`/`FreeCAD.Matrix`) -- a real, forward-
+  looking candidate for a shared `geo`-style duck-typed predicate module
+  once `_occ_impl.py`/`_ocp_impl.py` actually implement these (today
+  they're pure `_not_implemented(...)` stubs, so there's no second
+  implementation yet to deduplicate against) -- flagged as a follow-up,
+  not done now.
+- No restructuring of `GEOReverse/Modules/` into per-engine folders
+  (mirroring `geo/freecad/`, `geo/occ/`, `geo/ocp/`) -- those 3 files are
+  726/229/206 lines, nowhere near the ~1700-3200 lines that motivated
+  `geo`'s own folder split; not warranted at this size.
+
+**Verification**: all 3 engines' full suites re-run after the change
+(`tests/geo` minus the known DLL-incompatible `test_freecad_impl.py`
+cross-engine collection issue, `tests/test_cadtocsg.py`,
+`tests/test_csgtocad.py`) -- `ocp` 133 passed/1 skipped/2 failed,
+`occ` 133 passed/1 skipped/2 failed, `freecad` 161 passed/2 skipped/2
+failed. The 2 failures on every engine are `test_cylbox_convertion`.
+
+**A real, separate finding surfaced by this verification, unrelated to
+the move itself**: `freecad` was previously documented (both here and in
+CLAUDE.md) as passing `test_cylbox_convertion` cleanly, with only
+`occ`/`ocp` failing. That's no longer true. Confirmed via a clean
+`git worktree` checked out at the exact commit this session started from
+(no uncommitted changes at all, `git status` empty in the worktree) that
+`freecad` **already** fails both `test_cylbox_convertion[mcnp]`
+(`assert 2 == 4`) and `[openmc_xml]` (`assert 1 == 5`) at that commit --
+byte-identical failure shape to `occ`/`ocp`. So this is a real,
+pre-existing regression somewhere in recent history (not caused by this
+session's move, and not caused by whatever else is currently uncommitted
+in the working tree either, since the worktree had none of that) --
+whatever changed `Objects.py::CellObj.buildShape`'s behavior broke all 3
+engines identically, not just the 2 pyOCC ones as previously believed.
+Not root-caused this session -- `GEOReverse` work is still deliberately
+paused per the user's own standing priority; this is flagged here and in
+CLAUDE.md's "Known open items"/"Current status" so the next GEOReverse
+session starts from the correct, current picture rather than the stale
+"only occ/ocp fail" claim.

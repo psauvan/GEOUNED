@@ -36,6 +36,7 @@ from .vector_geometry import (
     GBoundBox,
     GMatrix,
     GVector,
+    arbitrary_perpendicular,
     arc_extent,
     to_gboundbox,
     to_gmatrix,

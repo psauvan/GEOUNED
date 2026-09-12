@@ -101,6 +101,38 @@ def to_gvector(vector) -> GVector:
     return GVector(vector.x, vector.y, vector.z)
 
 
+def arbitrary_perpendicular(axis: GVector) -> GVector:
+    """An arbitrary, deterministic unit vector perpendicular to `axis`,
+    picked by crossing `axis` with whichever world axis its own largest
+    component is aligned with (avoids a near-zero cross product).
+
+    Pure `GVector` math, moved here from `GEOReverse/Modules/_freecad_impl.py`'s
+    `ortoVect` (2026-09-12) once confirmed it had zero native dependency of
+    its own -- used by that file's exotic-quadric shape construction
+    (`GParaboloid.build_shape`, `_make_torus_elliptic_native`). NOT the
+    same formula as `GEOUNED/utils/meta_surfaces_utils.py::_perpendicular_axis`
+    (a separate, independently-validated "some stable perpendicular"
+    heuristic used by the winding-closure check) -- the two solve the same
+    kind of problem for unrelated call sites and were never verified to be
+    interchangeable, so they are kept as two distinct functions rather than
+    merged; do not swap one in for the other without re-verifying the
+    specific caller."""
+    vmax = 0.0
+    v_orto = None
+    if abs(axis.x) > vmax:
+        v_orto = GVector(0, 1, 0)
+        vmax = abs(axis.x)
+    if abs(axis.y) > vmax:
+        v_orto = GVector(0, 0, 1)
+        vmax = abs(axis.y)
+    if abs(axis.z) > vmax:
+        v_orto = GVector(1, 0, 0)
+        vmax = abs(axis.z)
+    if v_orto is None:
+        return None
+    return axis.cross(v_orto).normalized()
+
+
 # ---------------------------------------------------------------------------
 # Neutral 4x4 affine matrix
 # ---------------------------------------------------------------------------
@@ -391,8 +423,7 @@ def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[flo
         first, last = groups[0], groups[-1]
         if last["end_val"] < first["start_val"] + two_pi - tol:
             raise ValueError(
-                "arc_extent: pairs do not stitch into a single arc across "
-                "the 0/2*pi boundary (gap between the two groups)"
+                "arc_extent: pairs do not stitch into a single arc across " "the 0/2*pi boundary (gap between the two groups)"
             )
         return pairs[last["start_idx"]][0], last["start_idx"], pairs[first["end_idx"]][1], first["end_idx"]
 

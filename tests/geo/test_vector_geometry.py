@@ -3,7 +3,7 @@ import math
 import pytest
 
 from geouned.geo import GBoundBox, GCylinder, GPlane, GVector
-from geouned.geo.vector_geometry import to_gboundbox
+from geouned.geo.vector_geometry import arbitrary_perpendicular, to_gboundbox
 from geouned.geo.surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
@@ -196,3 +196,19 @@ def test_to_gboundbox():
 
     box = to_gboundbox(FakeBox())
     assert (box.XMin, box.YMin, box.ZMin, box.XMax, box.YMax, box.ZMax) == (0, 1, 2, 10, 11, 12)
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        GVector(1, 0, 0),
+        GVector(0, 1, 0),
+        GVector(0, 0, 1),
+        GVector(1, 1, 1).normalized(),
+        GVector(0.3, -0.7, 0.2).normalized(),
+    ],
+)
+def test_arbitrary_perpendicular(axis):
+    perp = arbitrary_perpendicular(axis)
+    assert abs(perp.dot(axis)) < 1e-9
+    assert abs(perp.length - 1.0) < 1e-9

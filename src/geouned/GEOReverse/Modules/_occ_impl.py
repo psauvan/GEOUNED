@@ -34,24 +34,25 @@ child_label, TopLoc_Location())`) through STEP and back via the
 already-verified `geo.Gload_step_labels`, confirming names and nesting
 both survive.
 
-**Per-solid color by material** (`_material_colors`/`_build_tree`'s
-`color_tool.SetColor` calls): every cell sharing the same `MAT` value
-gets the same color, via `XCAFDoc_DocumentTool.ColorTool` +
-`Quantity_Color(r, g, b, Quantity_TOC_RGB)`, `XCAFDoc_ColorGen`. Verified
-directly against a real STEP output (2026-08-16): `SetColor(label, color,
-XCAFDoc_ColorGen)` -- the label-based overload -- writes real
-`STYLED_ITEM`/`COLOUR_RGB` (or `DRAUGHTING_PRE_DEFINED_COLOUR` for an
-exact primary color) entities into the file, confirmed by direct
-inspection of the raw STEP text. **Found, not used**: the read-side
-`color_tool.GetColor(label, XCAFDoc_ColorType, Quantity_Color&)` overload
-raises a SWIG `TypeError` ("wrong number or type of arguments") in this
-pythonocc-core build despite matching one of the documented C++
-prototypes exactly -- a real binding quirk, not a usage mistake (confirmed
-by testing the identical call against a fresh single-shape document with
-no assembly nesting involved). The `GetColor(TopoDS_Shape const&, ...)`
-shape-based overload works fine. Not fixed/worked around here since
-nothing in this codebase currently reads colors back -- flagged for
-whenever that's needed.
+**Per-solid color by material** (`material_colors`/`_build_tree`'s
+`color_tool.SetColor` calls -- the color computation itself lives in
+`cad_export_shared.py`, shared verbatim with `_ocp_impl.py`): every cell
+sharing the same `MAT` value gets the same color, via
+`XCAFDoc_DocumentTool.ColorTool` + `Quantity_Color(r, g, b,
+Quantity_TOC_RGB)`, `XCAFDoc_ColorGen`. Verified directly against a real
+STEP output (2026-08-16): `SetColor(label, color, XCAFDoc_ColorGen)` --
+the label-based overload -- writes real `STYLED_ITEM`/`COLOUR_RGB` (or
+`DRAUGHTING_PRE_DEFINED_COLOUR` for an exact primary color) entities
+into the file, confirmed by direct inspection of the raw STEP text.
+**Found, not used**: the read-side `color_tool.GetColor(label,
+XCAFDoc_ColorType, Quantity_Color&)` overload raises a SWIG `TypeError`
+("wrong number or type of arguments") in this pythonocc-core build
+despite matching one of the documented C++ prototypes exactly -- a real
+binding quirk, not a usage mistake (confirmed by testing the identical
+call against a fresh single-shape document with no assembly nesting
+involved). The `GetColor(TopoDS_Shape const&, ...)` shape-based overload
+works fine. Not fixed/worked around here since nothing in this codebase
+currently reads colors back -- flagged for whenever that's needed.
 
 **Exotic quadric surfaces** (`Gmake_elliptic_cone`, `Gmake_hyperboloid`,
 `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`, `Gmake_hyperbolic_cylinder`,
@@ -65,8 +66,6 @@ and `BRepOffsetAPI_ThruSections` for the loft-based
 elliptic-cone/-cylinder builds. Flagged as its own follow-up phase.
 """
 
-import colorsys
-
 from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Quantity import Quantity_Color, Quantity_TOC_RGB
 from OCC.Core.STEPCAFControl import STEPCAFControl_Writer
@@ -76,71 +75,9 @@ from OCC.Core.TopLoc import TopLoc_Location
 from OCC.Core.XCAFApp import XCAFApp_Application
 from OCC.Core.XCAFDoc import XCAFDoc_ColorGen, XCAFDoc_DocumentTool
 
+from .cad_export_shared import cell_label_name, material_colors, material_label_name, universe_label_name
+
 SUPPORTED_FORMATS = {"stp", "step"}
-
-# matplotlib/D3 "tab10" -- the standard qualitative palette used across
-# visualization tooling (matplotlib's own default, D3's category10) to
-# give each of up to 10 categories a maximally distinguishable color.
-_MATERIAL_PALETTE = [
-    (0.121569, 0.466667, 0.705882),  # blue
-    (1.000000, 0.498039, 0.054902),  # orange
-    (0.172549, 0.627451, 0.172549),  # green
-    (0.839216, 0.152941, 0.156863),  # red
-    (0.580392, 0.403922, 0.741176),  # purple
-    (0.549020, 0.337255, 0.294118),  # brown
-    (0.890196, 0.466667, 0.760784),  # pink
-    (0.498039, 0.498039, 0.498039),  # gray
-    (0.737255, 0.741176, 0.133333),  # olive
-    (0.090196, 0.745098, 0.811765),  # cyan
-]
-# standard neutral CAD part color (matches FreeCAD's own default ShapeColor),
-# used when there's no material info to distinguish by, or only one value.
-_DEFAULT_COLOR = (0.8, 0.8, 0.8)
-
-# golden-angle hue rotation (the standard trick for generating N
-# incrementally-maximally-distinct colors, e.g. used by most "N distinct
-# colors" generators): once a model has more distinct materials than
-# _MATERIAL_PALETTE has entries, cycling the fixed palette would silently
-# collide two different materials onto the same color, defeating the whole
-# point -- generate further colors procedurally instead, so every material
-# always gets its own, never a reused one.
-_GOLDEN_ANGLE = 0.618033988749895
-
-
-def _extended_color(index):
-    hue = (index * _GOLDEN_ANGLE) % 1.0
-    return colorsys.hsv_to_rgb(hue, 0.65, 0.85)
-
-
-def _collect_materials(CADCells, seen):
-    _, universeCADCells = CADCells
-    for c in universeCADCells:
-        if isinstance(c, (tuple, list)):
-            _collect_materials(c, seen)
-        else:
-            seen.add(c.MAT)
-
-
-def _material_colors(buildCAD_list):
-    """One color per distinct cell.MAT value across the whole export, so
-    every solid sharing the same material gets the same color -- and every
-    material always gets its own color, never one shared with a different
-    material (see `_extended_color` for the >10-materials case). Falls
-    back to a single standard CAD gray when there's no real material info
-    to distinguish by (zero or one distinct value)."""
-    seen = set()
-    for CAD in buildCAD_list:
-        _collect_materials(CAD, seen)
-    if len(seen) <= 1:
-        return {mat: _DEFAULT_COLOR for mat in seen}
-    ordered = sorted(seen, key=lambda m: (m is None, m))
-    colors = {}
-    for i, mat in enumerate(ordered):
-        if i < len(_MATERIAL_PALETTE):
-            colors[mat] = _MATERIAL_PALETTE[i]
-        else:
-            colors[mat] = _extended_color(i)
-    return colors
 
 
 def _build_tree(shape_tool, color_tool, mat_colors, CADCells, parent_label):
@@ -153,10 +90,12 @@ def _build_tree(shape_tool, color_tool, mat_colors, CADCells, parent_label):
     does (inline, as they're encountered), with material grouping
     collected across the whole list and added afterward, same as there.
     Each cell's shape label is colored by its own material, via
-    `mat_colors` (see `_material_colors`)."""
+    `mat_colors` (see `cad_export_shared.material_colors`). Label text
+    itself comes from `cad_export_shared`'s naming functions, shared
+    with every other backend."""
     label, universeCADCells = CADCells
     universe_label = shape_tool.NewShape()
-    TDataStd_Name.Set(universe_label, f"Universe_{label[1]}_Container_{label[0]}")
+    TDataStd_Name.Set(universe_label, universe_label_name(label[0], label[1]))
     shape_tool.AddComponent(parent_label, universe_label, TopLoc_Location())
 
     mat_groups = {}
@@ -168,12 +107,12 @@ def _build_tree(shape_tool, color_tool, mat_colors, CADCells, parent_label):
 
     for mat, cells in mat_groups.items():
         mat_label = shape_tool.NewShape()
-        TDataStd_Name.Set(mat_label, f"Material_{mat}_{label[0]}{label[1]}")
+        TDataStd_Name.Set(mat_label, material_label_name(mat, label[0], label[1]))
         shape_tool.AddComponent(universe_label, mat_label, TopLoc_Location())
         color = Quantity_Color(*mat_colors[mat], Quantity_TOC_RGB)
         for c in cells:
             cell_label = shape_tool.AddShape(c.shape.__native__, False)
-            TDataStd_Name.Set(cell_label, f"Cell_{c.name}_{c.MAT}")
+            TDataStd_Name.Set(cell_label, cell_label_name(c.name, c.MAT))
             shape_tool.AddComponent(mat_label, cell_label, TopLoc_Location())
             color_tool.SetColor(cell_label, color, XCAFDoc_ColorGen)
 
@@ -192,7 +131,7 @@ def export_occ(buildCAD_list, formats, output_filename, barename):
     top_label = shape_tool.NewShape()
     TDataStd_Name.Set(top_label, barename)
 
-    mat_colors = _material_colors(buildCAD_list)
+    mat_colors = material_colors(buildCAD_list)
     for CAD in buildCAD_list:
         _build_tree(shape_tool, color_tool, mat_colors, CAD, top_label)
 
