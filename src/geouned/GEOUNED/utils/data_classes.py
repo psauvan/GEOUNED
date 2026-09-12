@@ -59,6 +59,16 @@ class Options:
             and cell definition building. Experimental doesn't give signicant
             improvements until freecad is base on python version > 3.12.
             Defaults to 1.
+        cut_large_cell (int, optional): face-count threshold above which a
+            solid is pre-cut in two by a single synthetic plane (through its
+            own center of mass, along the principal inertia axis closest to
+            its bounding box's longest dimension) before the normal
+            candidate-surface decomposition runs on each half. Keeps very
+            many-faced solids tractable by recursively halving them (each
+            resulting piece is checked against this same threshold) rather
+            than searching the full face list for a Can/RoundCorner/...
+            candidate directly. Defaults to a very large value (effectively
+            disabled) -- pass a real threshold (e.g. 100) to opt in.
     """
 
     def __init__(
@@ -75,6 +85,7 @@ class Options:
         prnt3PPlane: bool = False,
         forceNoOverlap: bool = False,
         n_thread: int = 1,
+        cut_large_cell: int = 1_000_000_000,
     ):
 
         self.forceCylinder = forceCylinder
@@ -91,6 +102,7 @@ class Options:
         self.prnt3PPlane = prnt3PPlane
         self.forceNoOverlap = forceNoOverlap
         self.n_thread = n_thread
+        self.cut_large_cell = cut_large_cell
 
     @property
     def forceCylinder(self):
@@ -216,6 +228,18 @@ class Options:
             raise TypeError(f"geouned.Options.n_thread should be a int, not a {type(value)}")
         self._n_thread = value
 
+    @property
+    def cut_large_cell(self):
+        return self._cut_large_cell
+
+    @cut_large_cell.setter
+    def cut_large_cell(self, value: int):
+        if not isinstance(value, int):
+            raise TypeError(f"geouned.Options.cut_large_cell should be a int, not a {type(value)}")
+        if value < 1:
+            raise ValueError(f"geouned.Options.cut_large_cell should be above 0, not {value}")
+        self._cut_large_cell = value
+
 
 class Tolerances:
     """A class for containing tolerances values
@@ -318,7 +342,7 @@ class Tolerances:
         add_pln_angle: float = 1.0e-2,
         min_face_width: float = 0.1,
         sliver_edge_rel_tol: float = 1.0e-4,
-        split_tolerance: typing.Optional[float] = 1.e-6,
+        split_tolerance: typing.Optional[float] = 1.0e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = 0.1,
         min_solid_volume: float = 1.0e-3,

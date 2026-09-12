@@ -102,7 +102,6 @@ from ._native_utils import (
     to_native_vector,
 )
 
-
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's classified surface, not
 # the face itself; the backend only knows about these 5 -- composite
@@ -911,7 +910,16 @@ class GSolid:
         self.BoundBox = _bnd_box(native)
         self.Orientation = _orientation_str(native)
         self.Area = _surface_props(native).Mass()
-        self.Volume = _volume_props(native).Mass()
+        Vprops = _volume_props(native)
+        principal = Vprops.PrincipalProperties()
+
+        self.Volume = Vprops.Mass()
+        self.CenterOfMass = GVector(*Vprops.CentreOfMass().Coord())
+        self.InertiaAxes = (
+            GVector(*principal.FirstAxisOfInertia().Coord()),
+            GVector(*principal.SecondAxisOfInertia().Coord()),
+            GVector(*principal.ThirdAxisOfInertia().Coord()),
+        )
 
         native_solids = []
         sexp = TopExp_Explorer(native, TopAbs_SOLID)

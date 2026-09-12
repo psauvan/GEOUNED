@@ -1196,8 +1196,20 @@ def eligible_plane(plane, tolerances=None):
         merged = [Ordered[0]]
         for e1, e2 in Ordered[1:]:
             prev_start, prev_end = merged[-1]
-            prev_dir = (prev_end - prev_start).normalized()
-            cur_dir = (e2 - e1).normalized()
+            prev_vec = prev_end - prev_start
+            cur_vec = e2 - e1
+            # A zero-length pair here (start == end -- confirmed reachable
+            # on a real fragment, 2026-09-12) is a genuinely degenerate
+            # segment slipping through the earlier edge-length filtering,
+            # not a spurious kink to merge away -- normalizing a zero
+            # vector would divide by zero. Leave it un-merged (append as
+            # its own entry, matching the pre-merge behavior) rather than
+            # crash or silently absorb a real degeneracy into a longer run.
+            if prev_vec.length < 1e-9 or cur_vec.length < 1e-9:
+                merged.append((e1, e2))
+                continue
+            prev_dir = prev_vec.normalized()
+            cur_dir = cur_vec.normalized()
             if abs(prev_dir.dot(cur_dir) - 1.0) < 1e-6:
                 merged[-1] = (prev_start, e2)
             else:

@@ -42,7 +42,6 @@ from ..surface_geometry import (
 from ._native_utils import to_native_vector
 from ..io_utils import suppress_native_stdout
 
-
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's Surface geometry, not
 # the face itself; the backend only knows about these 5 -- composite
@@ -892,6 +891,64 @@ class GSolid:
         self.Orientation = native.Orientation
         self.Area = native.Area
         self.Volume = native.Volume
+        # Ported from the ocp/occ engines' own GSolid.CenterOfMass/
+        # InertiaAxes -- same technique already used for
+        # GFace.CharacteristicWidth above (FreeCAD's Part API has no
+        # direct PrincipalProperties() call, so MatrixOfInertia -- here
+        # the volume-based tensor, since `native` is a solid, not a face
+        # -- is diagonalized by hand). Unlike the CharacteristicWidth
+        # case, the actual eigenVECTORS are needed here (the real
+        # principal axes of inertia), not just the eigenvalues, so this
+        # uses numpy.linalg.eigh (not eigvalsh).
+        #
+        # Unlike occ/ocp (where the OCCT-native GProp_GProps call these
+        # delegate to works generically on any shape, compound included),
+        # `Part.Compound.CenterOfMass`/`.MatrixOfInertia` genuinely don't
+        # exist in FreeCAD's own Part API -- confirmed live, 2026-09-12
+        # (`AttributeError: 'Part.Compound' object has no attribute
+        # 'CenterOfMass'`), reached constantly in practice since GSolid
+        # wraps a multi-solid `Gmake_compound()` result the same way it
+        # wraps a genuine single solid. Delegate to the one real solid's
+        # own values when there's exactly one (matching the same
+        # single-solid "self-referencing" convention `.Solids` already
+        # uses below); for a genuine multi-solid (or empty) compound
+        # there's no single meaningful center/axes to report, so both
+        # fields are left `None` -- nothing besides the new
+        # large_cell_plane_split feature reads them, and that feature
+        # only ever runs on a real, individual decomposition fragment,
+        # never on a raw multi-solid compound.
+        try:
+            com_native = native.CenterOfMass
+            mat_native = native.MatrixOfInertia
+        except AttributeError:
+            if len(native.Solids) == 1:
+                com_native = native.Solids[0].CenterOfMass
+                mat_native = native.Solids[0].MatrixOfInertia
+            else:
+                com_native = None
+                mat_native = None
+
+        if com_native is None:
+            self.CenterOfMass = None
+            self.InertiaAxes = None
+        else:
+            self.CenterOfMass = to_gvector(com_native)
+            solid_inertial = numpy.array(
+                (
+                    (mat_native.A11, mat_native.A12, mat_native.A13),
+                    (mat_native.A21, mat_native.A22, mat_native.A23),
+                    (mat_native.A31, mat_native.A32, mat_native.A33),
+                )
+            )
+            _, solid_eigvec = numpy.linalg.eigh(solid_inertial)
+            # Cast off numpy.float64 explicitly -- get_axis_inertia
+            # (decom_utils_generator.py) hit this exact class of bug
+            # before: a numpy scalar leaking into GVector silently turns
+            # a later `... > 0` comparison into numpy.bool_, which
+            # BoolSequence.clean() doesn't recognize as a real bool.
+            self.InertiaAxes = tuple(
+                GVector(float(solid_eigvec[0, i]), float(solid_eigvec[1, i]), float(solid_eigvec[2, i])) for i in range(3)
+            )
 
         if len(native.Solids) > 1:
             for s in native.Solids:

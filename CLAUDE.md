@@ -12048,6 +12048,163 @@ skipped, 1 failed -- the failure (`input_step_file2`/`cylBox.stp`,
 `git stash` to be pre-existing, reproducing byte-identically with this
 whole change removed -- not a regression.
 
+## `large_cell_plane_split` (user's own new feature): a real BOPAlgo
+under-separation found and fixed, `Options.cut_large_cell` added
+(default disabled), `GSolid.CenterOfMass`/`.InertiaAxes` ported to all
+3 engines
+
+The user introduced a new decomposition pre-step: any solid with more
+faces than a threshold gets pre-cut in two by a synthetic plane (through
+its own center of mass, along whichever principal inertia axis best
+aligns with its own bounding box's longest dimension) before the normal
+candidate-surface search runs on each half -- `generators.py::
+get_surfaces` yields this candidate first via `large_cell_plane_split`,
+which reads two new `GSolid` fields, `.CenterOfMass`/`.InertiaAxes`
+(added first to `geo/ocp/topology.py` only, by the user, via OCCT's
+`GProp_GProps.PrincipalProperties()`).
+
+### Investigation on `Big_complex_cell/modelCell_670000.stp`: not the first
+cut -- a silent volume loss several levels deeper
+
+User report: after cutting with the new feature, one of the two
+resulting solids "isn't closed / something's wrong with it." Isolated
+and traced the real pipeline directly (`generic_split`, `Gsplit`) rather
+than guessing:
+
+- **The first cut itself is fine**: both halves of the original 211-face
+  solid come back `is_valid()==True`, summing to the original volume
+  exactly (14749067.233 vs 14749067.228, float noise). Neither is
+  rejected.
+- **Two real, separate crashes found deeper in the recursion** (each
+  piece keeps recursing through `large_cell_plane_split` while it still
+  has >100 faces, so a solid can get cut this way several times before
+  falling back to the normal Can/RoundCorner/MultiPlane search):
+  1. `generic_split`'s own loop called `surf.build_surface(...)`
+     *outside* the `try/except` that already guards `Gsplit` -- so when
+     `round_corner_region`'s own "this configuration should not exist"
+     sanity-check assertion fires (a genuinely degenerate near-tangency
+     configuration, this function's own long-documented fragility --
+     see the `L1_S23.stp`/`rc16.stp` sections earlier in this file --
+     now reached more often because the synthetic cutting-plane faces
+     create corner configurations this classifier was never exercised
+     against), the exception propagated straight up and aborted the
+     whole decomposition instead of just skipping to the next candidate
+     (the same treatment `surf.shape is None` already gets). Fixed by
+     moving `build_surface` inside the existing `try/except`.
+  2. `eligible_plane`'s own collinear-edge-merge fix (from the previous
+     session, this file's own `eligible_plane` section above) crashed
+     with `ZeroDivisionError` on a zero-length edge pair (`e1==e2`)
+     slipping through -- confirmed reachable live, not previously seen
+     in the corpus. Fixed with a length guard (skip merging, append as-is,
+     when either segment's own vector length is ~0).
+- **The real "something's wrong" symptom, found after both crashes were
+  fixed**: the full decomposition then completed without error, but the
+  57 resulting pieces summed to only 10866277.13 mm^3 against the
+  original 14749067.23 -- a silent ~26% volume loss, with *zero*
+  warnings from any existing safety net (`dropped_no_solid`, the
+  fragment-count-mismatch check in `split_surfaces`). Traced to one
+  specific split: a `MultiPlane` candidate, applied to a fragment
+  4-5 `large_cell_plane_split` cuts deep (volume 3885468.75mm^3),
+  returned exactly 2 real, individually valid, correctly-sized pieces
+  (1204/1475mm^3) -- but those only summed to 2678.81mm^3, silently
+  losing essentially the whole fragment. Neither piece failed
+  `is_valid()` or any size threshold, so nothing in the existing
+  bookkeeping (which only tracks candidates that *fail* to resolve to a
+  real solid) ever noticed.
+
+  **Root cause, confirmed by direct comparison**: calling
+  `_raw_bop_split` on the *exact same, live* base+tool pair (no STEP
+  export/reload) reproduces the 2-piece under-separation deterministically
+  -- `BOPAlgo_Splitter` itself only finds 2 pieces on this
+  tolerance-accumulated, many-times-recut geometry. Round-tripping that
+  same base through STEP first (`Gheal_topology`) and re-running the
+  identical split then correctly finds all 4 real pieces, summing to the
+  base's volume exactly -- the same class of BOPAlgo tolerance-weld this
+  file's own "gated STEP round-trip heal" section (above) already
+  targets, just never triggered here: that retry is gated on `not
+  new_split` (no candidate produced *any* multi-piece result at all),
+  and this MultiPlane candidate *did* technically produce 2 pieces, so
+  the existing safety net never got a chance to fire. **Confirmed this
+  is not something `large_cell_plane_split` itself does wrong** -- the
+  bug is a pre-existing gap in `generic_split`'s own trust of "the split
+  produced >1 sane solids" as proof the split is *correct*; the new
+  feature just creates more opportunities to reach it, by feeding many
+  more heavily-recut fragments through the same candidate-surface search.
+
+  **Fix**: after any candidate split reports `>1` pieces, verify the
+  pieces' summed volume actually matches the base fragment's own volume
+  (`1e-4` relative tolerance) before trusting it. If they diverge this
+  much, discard the candidate (log a warning naming the surface type and
+  the volumes involved) and keep trying the next one -- which, once
+  every candidate is exhausted, falls straight through to the existing
+  STEP-heal retry, exactly the mechanism meant to fix this class of
+  BOPAlgo weld. **Verified**: the same file's full decomposition now
+  conserves volume exactly (14749067.034 vs 14749067.228, float noise),
+  75 pieces (was 57, since the previously-lost region is now correctly
+  found and further decomposed), all valid, no warnings, no crashes.
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` under `ocp`:
+128 passed, 1 skipped -- the previously-failing `cylBox.stp` test
+(`AttributeError: 'NoneType' object has no attribute 'Faces'`) is now
+also gone, since the same drive-by fix (using `surf.Type` instead of
+`surf.shape.Faces[0].Surface` in the exception-logging line, since
+`surf.shape` can now legitimately be `None` at that point) happened to
+close it too.
+
+### `Options.cut_large_cell` added, then defaulted to effectively-disabled
+
+Per explicit user request: `Options` gained `cut_large_cell: int = 100`
+(the face-count threshold `generators.py::get_surfaces` already read as
+a bare hardcoded `100`), with the same property/setter/validation
+pattern as every other `Options` field. Then, per a second explicit
+request, the default was changed to `1_000_000_000` -- effectively
+disabling the feature unless a caller explicitly opts in with a real
+threshold (e.g. `Options(cut_large_cell=100)`) -- since it's still new
+and its own volume-conservation risk (above) is now guarded against but
+not otherwise exhaustively corpus-tested.
+
+### `GSolid.CenterOfMass`/`.InertiaAxes` ported to `occ` and `freecad`
+
+The user had only added these two fields to `geo/ocp/topology.py`
+(needed by `large_cell_plane_split`). Ported to the other 2 engines:
+
+- **`occ`**: byte-identical code to `ocp` -- verified live that
+  `GProp_PrincipalProps.FirstAxisOfInertia()`/`Second`/`Third` return a
+  `gp_Vec` with a working `.Coord()` under *both* pythonocc-core and OCP
+  (a real, standard OCCT behavior here, not a binding-specific quirk
+  this time) -- confirmed byte-identical values to `ocp` on a real
+  fixture (`testing/inputSTEP/BC.stp`).
+- **`freecad`**: no direct `PrincipalProperties()` equivalent, so this
+  reuses the same technique already established for `GFace.
+  CharacteristicWidth` (diagonalize `native.MatrixOfInertia` by hand via
+  `numpy.linalg.eigh`) -- but keeping the eigen*vectors* this time, not
+  just the eigenvalues, via `eigh` rather than `eigvalsh`. Values match
+  `occ`/`ocp` up to sign/ordering (irrelevant here: `large_cell_plane_
+  split` already compares via `abs()`). Cast the eigenvector components
+  to plain `float()` explicitly -- the exact same `numpy.float64`-leaking
+  into `GVector` bug class already documented for `get_axis_inertia`
+  elsewhere in this file, which can silently turn a later `... > 0` into
+  `numpy.bool_`.
+
+**A real bug found while porting to `freecad`**: `Part.Compound` (unlike
+`Part.Solid`) genuinely has no `.CenterOfMass`/`.MatrixOfInertia` in
+FreeCAD's own API at all (confirmed live -- `occ`/`ocp`'s own OCCT-native
+volume-properties call has no such gap, computing these generically for
+any shape, compound included) -- crashing any `GSolid` wrapping a
+multi-solid compound (e.g. every `Gmake_compound()` result), a case
+reached constantly by the real pipeline and by `tests/geo/
+test_freecad_impl.py::test_make_compound`. Fixed: when the native
+attributes aren't available, delegate to the one real solid's own
+values if there's exactly one (matching the `.Solids` self-referencing
+convention already used a few lines below), else leave both fields
+`None` (nothing besides the new feature reads them, and it only ever
+runs on a genuine single-solid fragment, never a raw compound).
+
+**Verification**: `tests/geo` + `tests/test_cadtocsg.py` (+
+`test_csgtocad.py` for freecad) on all 3 engines: `ocp` 128/1skip, `occ`
+128/1skip, `freecad` 156/158 (the 2 failures are the already-documented
+pre-existing `GEOReverse` `test_cylbox_convertion` gap, unrelated).
+
 ## Code style preference
 
 - User prefers speaking/planning in Spanish, but ALL code — including

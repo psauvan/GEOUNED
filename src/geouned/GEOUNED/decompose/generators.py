@@ -9,7 +9,7 @@ from ..utils.functions import (
     build_roundC_params,
 )
 from ..utils.geometry_gu import SolidGu
-from ...geo import GPlane, GCylinder, GCone, GSphere, GTorus
+from ...geo import GPlane, GCylinder, GCone, GSphere, GTorus, GVector
 from .decom_utils_generator import (
     cks_bound_planes,
     torus_bound_planes,
@@ -19,9 +19,12 @@ from .decom_utils_generator import (
 )
 
 
-def get_surfaces(solid, omitfaces, tolerances, meta_surface=True):
+def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
 
     solid_GU = SolidGu(solid, tolerances=tolerances)
+
+    if len(solid_GU.Faces) > options.cut_large_cell:
+        yield large_cell_plane_split(solid_GU)
 
     if meta_surface:
 
@@ -254,5 +257,23 @@ def next_roundCorner(solid, cornerface_index):
                 else:
                     gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation)))
                     yield gc
-
     return None
+
+
+_XYZ = (GVector(1, 0, 0), GVector(0, 1, 0), GVector(0, 0, 1))
+
+
+def large_cell_plane_split(solid):
+    bbox = solid.BoundBox
+    lengths = [(bbox.XLength, 0), (bbox.YLength, 1), (bbox.ZLength, 2)]
+    lengths.sort()
+
+    axis = _XYZ[lengths[-1][1]]
+    dot_prod = []
+    for i, iaxis in enumerate(solid.InertiaAxes):
+        dot_prod.append((abs(axis.dot(iaxis)), i))
+    dot_prod.sort()
+
+    normal = solid.InertiaAxes[dot_prod[-1][1]]
+    position = solid.CenterOfMass
+    return GeounedSurface(("Plane", (position, normal, 1.0, 1.0)))
