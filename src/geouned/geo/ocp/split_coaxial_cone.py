@@ -44,8 +44,16 @@ from .primitives import Gmake_shell, Gmake_solid
 
 
 def _find_cone_face(shape) -> "GFace | None":
-    """First face of `shape` (anything with a `.Faces` list of GFace, e.g.
-    a GSolid) whose analytic surface is a GCone, or None if it has none."""
+    """First face of `shape` whose analytic surface is a GCone, or None if
+    it has none. `shape` is either a GSolid (checks its own `.Faces` list)
+    or a bare GFace (checked directly) -- GEOReverse's own cutting tools
+    are single faces, not solids, unlike every call site inside GEOUNED's
+    own forward pipeline (which always wraps its own tool in GSolid(...)
+    first) -- confirmed missing here 2026-09-12 via a live AttributeError
+    (`'GFace' object has no attribute 'Faces'`) the first time Gsplit was
+    ever called with a bare-face tool."""
+    if isinstance(shape, GFace):
+        return shape if isinstance(shape.Surface, GCone) else None
     for f in shape.Faces:
         if isinstance(f.Surface, GCone):
             return f

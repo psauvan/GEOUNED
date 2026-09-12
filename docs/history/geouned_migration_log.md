@@ -12571,3 +12571,175 @@ tests: the `simplify_sequence`-specific test was replaced with one
 confirming `BoolSequence.simplify()` (GEOUNED's own method) does the same
 job directly, and a new test locks in the structural-contradiction
 resolving case found during the equivalence check.
+
+### `test_cylbox_convertion` root-caused and fixed under `freecad`: `Gsplit` tolerance argument mismatch, 2026-09-12
+
+Investigated at the user's explicit request, following the same-day
+`BoolSequence` unification work. This test's own long-standing symptom
+("the reconstructed STEP has fewer, larger solids than expected")
+turned out to have nothing to do with the multi-OR-term box-splitting
+algorithm at all -- it was a plain API mismatch, invisible until traced
+end to end.
+
+**Investigation.** `cylinder_box.mcnp`'s cell 1 is an OR of 6 AND-clauses
+(a "Can"/tube-wall composite: two coaxial cylinders, surfaces 14 (r=16)
+and 15 (r=37.5), sliced by several axial planes). Built a scratchpad
+script reusing the real pipeline classes (`McnpInput`/`AssignSurfaceToCell`/
+`BuildDepth`/`getSubCell`) to measure each of the 6 clauses' own
+reconstructed volume independently: all 6 came back *individually*
+oversized, each shape's own volume equal (to float precision) to its own
+axis-aligned bounding box's volume -- i.e. none of them were being cut
+by their surfaces at all, just returning their own approximate
+bounding-box shape uncut. Added a temporary debug print inside
+`CAD/splitFunction.py::SplitSolid`'s `except Exception:` (normally
+silent) and re-ran: `TypeError: Gsplit() got an unexpected keyword
+argument 'tolerance'` -- on *every single call*, for *every surface*,
+including the plain planes. `geo.Gsplit`'s own `tolerances` parameter
+was refactored 2026-08-30 (see that date's own history entries; the
+signature is now `Gsplit(base, tool, tolerances)`, positional, expecting
+a `GEOUNED.utils.data_classes.Tolerances` instance with
+`.split_tolerance`/`.scale_up_floor`/`.scale` attributes, not a bare
+float) -- confirmed identical across all 3 engines' `geo/*/split.py`.
+`GEOReverse`'s own call sites were never updated to match: `SplitSolid`
+called `Gsplit(base.base, tool, tolerance=tolerance)` (wrong keyword
+name, wrong type), caught by its own `except Exception: Solids = []` ->
+`if not Solids: Solids = [base.base.__native__]` fallback -- silently
+returning the *uncut input* as if splitting had succeeded. A second
+identical call, `CAD/buildCAD.py::interferencia` (`Gsplit(cell.shape,
+container.shape, tolerance=0)`, used for FILL/nested-universe
+container-cutting), had no surrounding `try`/`except` at all -- would
+have crashed outright the instant any model used a FILL cell with
+`universeCut=True` (the default).
+
+**Fix.** Both call sites now build a real `Tolerances` instance and pass
+it positionally: `Gsplit(base.base, tool, Tolerances(split_tolerance=
+tolerance))` in `SplitSolid` (preserving GEOReverse's own existing
+`Options.splitTolerance` knob, threaded through unchanged), and
+`Gsplit(cell.shape, container.shape, Tolerances(split_tolerance=0))` in
+`interferencia` (preserving its own prior literal `0`). `Tolerances`
+lives in `GEOUNED.utils.data_classes` -- pulled in as a genuine
+cross-pipeline import (that module has zero native-kernel dependency of
+its own, only `typing`/`numbers.Real`/`geo.CAD_ENGINE`, so this adds no
+new coupling risk).
+
+**Result under `freecad`**: `test_cylbox_convertion[mcnp]` now passes
+outright. `[openmc_xml]` initially still failed (3 solids reconstructed
+vs. 5 expected) -- but inspecting the 3 reconstructed solids directly
+(1520814.97, 3864483.45, 20092792.76) showed 2 of them match the
+`openmc_xml` baseline's own expected values almost exactly, and the
+third (3864483.45, cell 2, the auto-generated void cell) doesn't appear
+in `openmc_xml`'s 5-value baseline at all -- but matches `mcnp`'s own
+already-passing expected value for its *logically identical* cell 2
+region (3864483.442) almost exactly. Two independent CSG input formats,
+after the real fix, independently reconstructing the same physical
+region to the same volume is strong cross-validation that this is the
+*correct* answer, and that `openmc_xml`'s old 5-value baseline (captured
+from the pre-FreeCAD-removal-migration build, per the test file's own
+comment) was itself wrong -- probably a pre-migration bug that split
+this one void cell into 3 spurious fragments instead of reconstructing
+it as the single connected solid it actually is. Corrected, per explicit
+user confirmation, to `[1520814.9834, 3864483.442, 20092792.2374]` --
+literally `mcnp`'s own finite-volume list, since `openmc_xml` has no
+`Graveyard` cell equivalent (`boundary="vacuum"` on surface 23 directly)
+and both formats' cells 1/2/3 are logically identical regions.
+
+**Still broken under `occ`/`ocp`**: both engines fail
+`test_cylbox_convertion` with a *different* symptom than before this fix
+(`openmc_xml` now reconstructs to exactly 1 solid of 4828372.61 mm^3,
+not any previously-seen value; `mcnp` still shows the old `assert 2 ==
+4` shape). Not yet root-caused. Surfaces 14/15 (two coaxial cylinders,
+same axis, radii 16 and 37.5) are exactly the shape of degeneracy this
+project already has a dedicated occ/ocp-only repair cascade for on the
+forward (`CadToCsg`) side (`geo/{occ,ocp}/split_coaxial_cone.py`) --
+`freecad`'s own `Gsplit` has no equivalent complexity and apparently
+doesn't need it for this fixture, which is at least circumstantial
+evidence the same underlying degeneracy is involved here too, but this
+has not been confirmed by tracing the occ/ocp failure the way the
+`freecad` one was.
+
+**Verified**: full 3-engine suites re-run after the fix -- `ocp` 149
+passed/1 skipped, `occ` 149 passed/1 skipped (neither runs
+`test_csgtocad.py` in this project's own established test invocation
+convention), `freecad` **179 passed, 2 skipped, 0 failed** -- every
+previously-failing test in this session's entire scope now passes
+under `freecad`, including both `test_cylbox_convertion` parametrizations.
+`occ`/`ocp` were additionally spot-checked by running `test_csgtocad.py`
+directly (not part of their routine suite) to confirm the remaining
+failure and capture its exact new symptom for this write-up.
+
+### `test_cylbox_convertion` fully fixed: a second real bug under occ/ocp, `_find_cone_face` crashing on a bare-face tool, 2026-09-12
+
+Continued at the user's explicit request ("sí investígalo") right after
+the write-up above. The remaining `occ`/`ocp` failure looked, at first,
+like it might be the project's own well-known coaxial-cone degeneracy
+(surfaces 14/15 in this fixture really are two coaxial cylinders) --
+but a per-clause volume breakdown (reusing the same scratchpad technique
+as the `freecad` investigation: call `BuildDepth`/`getSubCell` directly
+on each of cell 1's 6 OR-clauses in isolation) showed something more
+basic wrong: under `occ`, clause 1 (`AND[2 6 7 8 9 -1]`) -- 6 *plane*
+surfaces, no cylinders at all -- was already oversized (4142918.41 vs
+`freecad`'s now-correct 927449.99, a ~4.47x factor), ruling out
+"coaxial cylinders specifically" as the cause.
+
+Added a temporary debug print inside `CAD/splitFunction.py::SplitSolid`
+(right before its `return fullPart, cutPart`) showing, per surface cut,
+how many solids `Gsplit` actually returned and how many parts were
+classified full/cut. Re-running clause 1 alone under `occ`: every single
+one of its 6 sequential plane cuts reported `n_Solids_from_split=1` --
+`Gsplit` never actually split the box at all, at any step; the whole
+unclipped box just eventually got classified "fully inside" on the last
+surface (surface 2) once every earlier surface's own known-value made
+the AND clause's remaining literals agree by coincidence. Confirmed this
+wasn't a legitimate "nothing to cut" case with a minimal, hand-built
+reproduction: `Gmake_box(0,0,0,100,100,100)` split by a single plane
+face built via `Gmake_polygon_face`, under `occ`, with
+`Gsplit(box, face, Tolerances(split_tolerance=0.01))` --
+
+```
+AttributeError: 'GFace' object has no attribute 'Faces'
+  File "geo/occ/split.py", line 330, in Gsplit
+    if _find_cone_face(tool) is not None:
+  File "geo/occ/split_coaxial_cone.py", line 50, in _find_cone_face
+    for f in shape.Faces:
+```
+
+`Gsplit`'s own first line unconditionally probes whether `tool` carries
+a cone face (the entry point to the coaxial-cone degeneracy fallback),
+and `_find_cone_face`'s docstring already said what it assumed: "anything
+with a `.Faces` list of GFace, e.g. a GSolid". GEOUNED's own forward
+pipeline never violates that assumption -- its one call site
+(`GEOUNED/utils/build_region/splitFunction.py:69`) explicitly wraps its
+tool: `Gsplit(base.base, GSolid(Tools[0]), tolerances)`. GEOReverse's own
+`SplitSolid` passes `tool = surfacesCut[0].shape` directly -- a bare
+`GFace` (a single analytic surface, never a solid) -- because that's
+what a cutting *surface* naturally is in this pipeline's own model, and
+a bare face is in fact perfectly valid input for a real BOP split (a
+face-vs-solid cut is completely ordinary). `_find_cone_face` raising on
+that valid-but-untested input, immediately inside `Gsplit`'s first line,
+was silently swallowed by `SplitSolid`'s own broad `except Exception:`
+-- read as "cut failed, fall back to uncut input" for every one of the
+6 sequential plane cuts, the same silent-fallback shape as the
+tolerance-argument bug in the previous entry, just from a different
+trigger.
+
+**Fix**: `_find_cone_face` (identical in both `geo/occ/split_coaxial_cone.py`
+and `geo/ocp/split_coaxial_cone.py`) now checks `isinstance(shape,
+GFace)` first and returns directly from the single face's own `.Surface`
+in that case, only falling through to the `.Faces`-list walk for a
+solid. `GFace` was already imported in both files. Re-ran the minimal
+box+plane reproduction after the fix: `Gsplit` now correctly returns 2
+solids of 500000 mm^3 each (exact halves of the 1,000,000 mm^3 box).
+
+**Verified**: `test_csgtocad.py` alone, both engines: `occ` 2 passed,
+`ocp` 2 passed -- `test_cylbox_convertion[mcnp]`/`[openmc_xml]` now pass
+under every engine that runs it. Full 3-engine regression suites
+re-run once more, this time **including** `test_csgtocad.py` for `occ`/
+`ocp` too (not just their routine subset, precisely because this fix
+touches `split_coaxial_cone.py`, a file the *forward* pipeline's own
+degenerate-cone repair depends on, and deserved the extra scrutiny) --
+`ocp` 151 passed/1 skipped, `occ` 151 passed/1 skipped, `freecad` 179
+passed/2 skipped -- **zero failures on any engine**, zero regressions
+anywhere else in either pipeline. Both real bugs behind
+`test_cylbox_convertion` (the `Gsplit` tolerance-argument mismatch, and
+this `_find_cone_face` bare-face crash) are now fixed on all 3 engines;
+the item is closed out of "Known open items" in `CLAUDE.md`.

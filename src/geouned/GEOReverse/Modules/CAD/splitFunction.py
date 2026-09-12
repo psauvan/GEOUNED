@@ -1,5 +1,6 @@
 import math
 
+from ....GEOUNED.utils.data_classes import Tolerances
 from ....geo import GSolid, Gfuse_solids, Gsplit
 from ..Utils.booleanFunction import evaluate_three_valued
 
@@ -76,7 +77,19 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
     tool = surfacesCut[0].shape
     if tool is not None:
         try:
-            Solids = [s.__native__ for s in Gsplit(base.base, tool, tolerance=tolerance).solids]
+            # Gsplit's own `tolerances` argument was refactored (2026-08-30)
+            # from a plain float keyword to a positional Tolerances object
+            # (GEOUNED.utils.data_classes.Tolerances). GEOReverse's own
+            # SplitSolid still called it the old way
+            # (`Gsplit(base.base, tool, tolerance=tolerance)`) -- a
+            # TypeError on every single call, silently swallowed by the
+            # `except Exception` below, so every split silently fell back
+            # to the uncut input. Fixed 2026-09-12 (found while
+            # investigating test_cylbox_convertion): build a Tolerances
+            # instance from this function's own `tolerance` float (still
+            # sourced from GEOReverse's own `Options.splitTolerance`) and
+            # pass it positionally instead.
+            Solids = [s.__native__ for s in Gsplit(base.base, tool, Tolerances(split_tolerance=tolerance)).solids]
         except Exception:
             Solids = []
         if not Solids:

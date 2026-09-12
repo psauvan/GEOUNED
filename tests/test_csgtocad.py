@@ -12,9 +12,20 @@ from geouned.geo import CAD_ENGINE, Gload_step
 # for the pyOCC engine too -- cross-kernel (FreeCAD's OCCT build vs
 # pythonocc-core's own) differences are ~1e-8 relative, confirmed via a real
 # pyoccenv run (2026-08-16), comfortably inside the existing 1e-6 tolerance.
+#
+# `openmc_xml`'s own baseline was corrected 2026-09-12: the old 5-value
+# baseline (102747.4353, 1254566.101, 228095.8178 in place of a single
+# 3864483.442) reflected the pre-migration FreeCAD build's own bug --
+# `mcnp`'s and `openmc_xml`'s cell 2 (the auto-generated void cell) have the
+# identical region definition, and once GEOReverse's real Gsplit-tolerance
+# bug was fixed (see the history log's "Gsplit tolerance argument mismatch"
+# entry), both formats independently reconstruct it as the exact same
+# single solid (~3864483.45), cross-validating each other. `openmc_xml` has
+# no cell 4 (Graveyard) equivalent -- surface 23 carries `boundary="vacuum"`
+# directly instead -- so its own list has no huge 7.99e18 entry either.
 _EXPECTED_VOLUMES = {
     "mcnp": [1520814.9834, 3864483.442, 20092792.2374, 7.999999999974521e18],
-    "openmc_xml": [1520814.9834, 102747.4353, 1254566.101, 228095.8178, 20092792.2374],
+    "openmc_xml": [1520814.9834, 3864483.442, 20092792.2374],
 }
 
 

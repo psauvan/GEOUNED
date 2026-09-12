@@ -210,18 +210,17 @@ functions instead of ABC methods:
 
 ## Current status (as of commit `8149030`, 2026-09-12)
 
-- All 3 engines pass `tests/geo` + `tests/test_cadtocsg.py` (freecad also
-  `tests/test_csgtocad.py`), with only these known, long-standing,
-  unrelated failures: GEOReverse's `test_cylbox_convertion` (cell-count
-  mismatch in the reconstructed STEP — not yet root-caused, deliberately
-  deferred, see "Known open items" -- **correction, 2026-09-12: this now
-  fails under `freecad` too**, confirmed via a clean `git worktree` at
-  this exact commit, not just under `occ`/`ocp` as this file previously
-  claimed; whatever regressed it is pre-existing at this commit, not
-  caused by any uncommitted work); `Mixed/ConeSphere.stp` still crashes
-  natively under `occ`/`ocp` (`ShapeUpgrade_UnifySameDomain` access
-  violation) and is an accepted permanent limitation there, translating
-  cleanly only under `freecad`.
+- All 3 engines pass `tests/geo` + `tests/test_cadtocsg.py` +
+  `tests/test_csgtocad.py` **in full** as of 2026-09-12 -- the latter is
+  a new addition to that list: `test_cylbox_convertion` (both `[mcnp]`
+  and `[openmc_xml]`) used to fail under all 3 engines, root-caused to
+  two real bugs (a `Gsplit` tolerance-argument API mismatch, and
+  `_find_cone_face` crashing on a bare-`GFace` cutting tool under
+  occ/ocp) and fixed -- see "Known open items" -> GEOReverse for the
+  detail, and the history log for the full investigation. Separately,
+  `Mixed/ConeSphere.stp` still crashes natively under `occ`/`ocp`
+  (`ShapeUpgrade_UnifySameDomain` access violation) and is an accepted
+  permanent limitation there, translating cleanly only under `freecad`.
 - `Solidos/test_models` corpus (the d1suned MCNP stochastic volume check,
   ~140 STEP files excluding `Big_*`): the last full run recorded before
   the most recent 5 commits landed was 92.6% of solid-cell tallies within
@@ -262,19 +261,33 @@ Deliberately paused as a whole — explicit user priority is to finish
 `GEOUNED` first (see "Current status"). These are the specific known
 gaps for whenever it's picked back up:
 
-- `tests/test_csgtocad.py::test_cylbox_convertion[mcnp]`/`[openmc_xml]`
-  fail under **all 3 engines** as of 2026-09-12 (this file previously
-  said "pass under `freecad`" -- wrong, re-verified via a clean
-  `git worktree` at this exact commit, `freecad` included: `assert 2 ==
-  4`/`assert 1 == 5`, byte-identical shape to the `occ`/`ocp` failure).
-  The reconstructed STEP has fewer, larger solids than expected (2 vs 4,
-  1 vs 5) — 3 geometrically separate/disjoint pieces of a single
-  multi-OR-term cell get fused into fewer solids somewhere in
-  `Objects.py::CellObj.buildShape`, not yet traced further
-  (`interferencia`/`fuse_solids` was ruled out live — it never even runs
-  for this fixture). Since this is now confirmed engine-independent, the
-  cause is almost certainly in the shared `Objects.py`/`build_region`-
-  equivalent code itself, not in any one backend's own `Gsplit`/`Gfuse`.
+- ~~`test_cylbox_convertion` fails~~ -- **fixed on all 3 engines,
+  2026-09-12**. Two independent, real bugs, neither a reconstruction-
+  algorithm problem: (1) `geo.Gsplit`'s own `tolerances` argument was
+  refactored (2026-08-30) from a plain `tolerance=<float>` keyword to a
+  positional `Tolerances` object, but `CAD/splitFunction.py::SplitSolid`
+  and `CAD/buildCAD.py::interferencia` were never updated to match --
+  every single surface cut in the whole reverse pipeline raised
+  `TypeError`, silently swallowed by `SplitSolid`'s own broad
+  `except Exception:`, always falling back to the uncut input solid
+  (`interferencia`'s own call had no such guard -- would have crashed
+  outright the instant any model used a FILL/nested universe). (2)
+  `geo/{occ,ocp}/split_coaxial_cone.py::_find_cone_face` assumed its
+  `shape` argument always has a `.Faces` list (true for a `GSolid`, the
+  only way GEOUNED's own forward pipeline ever calls `Gsplit`) but
+  GEOReverse's own cutting tools are bare `GFace` objects (single
+  surfaces, never wrapped in a solid) -- crashed with `AttributeError`
+  the moment `Gsplit`'s coaxial-cone check ran on one, caught by the
+  same broad `except Exception:` in `SplitSolid` and misread as "no
+  degeneracy, cut normally" while actually silently no-op'ing every cut.
+  Fixed: (1) build a real `Tolerances(split_tolerance=...)` instance at
+  both call sites; (2) `_find_cone_face` now checks `isinstance(shape,
+  GFace)` directly before assuming `.Faces` exists, in both engines.
+  `openmc_xml`'s own expected-volumes baseline (`test_csgtocad.py`) was
+  also corrected: the old 5-solid baseline was a pre-migration-FreeCAD
+  artifact, cross-validated wrong by `mcnp`'s logically-identical cell 2
+  region independently reconstructing to the same single solid under
+  both formats now. See the history log for the full investigation.
 - The `hylife-v06.stp` round-trip volume discrepancy: the reconstructed
   CAD volume comes back ~1.401x the true solid vs. GEOUNED's own
   d1suned tally of ~1.119x on the same unfixed file — the two don't
