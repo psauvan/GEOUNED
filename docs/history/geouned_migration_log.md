@@ -12235,3 +12235,93 @@ paused per the user's own standing priority; this is flagged here and in
 CLAUDE.md's "Known open items"/"Current status" so the next GEOReverse
 session starts from the correct, current picture rather than the stale
 "only occ/ocp fail" claim.
+
+## `BoolSequence` unification analysis, and the one safe piece extracted:
+`boolean_expression_parser.py`
+
+Follow-up to the GEOReverse `_*_impl.py` move-analysis session, per direct
+user request: "mira si se puede unificar los objetos BoolSequence de
+Geouned y georeverse."
+
+**Found: this isn't 2 representations, it's 3.** GEOUNED's own
+`BoolSequence` (`utils/boolean_function.py`, 1341 lines) is a 3-tier
+system -- elements can be plain `int`, `BoolVariable` (a signed-int
+wrapper with a mutable shared `surfRef`, letting `write/functions.py::
+simplify_planes` flip every live reference to a surface's sign in
+place), or `BoolSurface` (wraps a `.region`, tracks `.reverse`,
+implements `isSameInterface`/`.components` -- the machinery behind
+essentially every Can/TCone/RoundCorner sign-bug investigation
+documented throughout this whole log). GEOReverse's own `BoolSequence`
+(`Modules/Utils/booleanFunction.py`, 647 lines) is plain-`int`-only,
+with no equivalent to any of that -- GEOReverse has no meta-surface
+concept at all. A third representation sits upstream of both:
+`Modules/remh.py::Cline`, a raw-text/regex class (its own
+`get_surfaces_numbers()`, `remove_comments()`, etc., working directly on
+the MCNP string, not a parsed tree) that `Objects.py::CadCell.definition`
+holds *before* it becomes a real `BoolSequence`.
+
+**Confirmed the real consumer, `BuildDepth`/`filterparts`, already uses
+an identical narrow subset on both sides**: diffed
+`GEOUNED/utils/build_region/build_region.py` against
+`GEOReverse/Modules/buildSolidCell.py` line by line -- both touch only
+`.group_single()`, `.level`, `.operator`, `.elements`, `.append()`,
+`.to_integer()`, confirming the earlier portability-analysis entry's own
+claim (this was previously asserted, now independently re-verified).
+
+**Why a full class merge is NOT recommended right now**:
+- GEOUNED's `BoolVariable`/`BoolSurface` tier is deeply load-bearing and
+  historically fragile -- built up across dozens of documented sessions
+  specifically to get sign conventions right for composite surfaces.
+  Forcing GEOReverse to carry it (or stripping GEOUNED down to match
+  GEOReverse's simpler class) risks reopening exactly that class of bug
+  for a feature GEOReverse never needs.
+- `factorize()`'s signature genuinely differs (`CT` object vs.
+  `true_set`/`false_set` dicts pre-computed by the caller) -- but
+  confirmed via `grep` that GEOReverse **never actually passes a real
+  `CT`** anywhere (`remh.py:788: cellSeq.simplify(None)` is the only real
+  call site) -- the CT-aware branches in GEOReverse's own class are dead
+  code in practice, which lowers the real risk of this specific
+  divergence but doesn't eliminate the need to verify the rest.
+- A real, previously-undiscovered bug found while tracing this:
+  `Objects.py::cleanUndefined()` calls `self.definition.removeSurface(undefined)`
+  -- **this method does not exist anywhere in GEOReverse** (`Cline` has
+  no `removeSurface`; `BoolSequence` only has `removeSurf(name)`,
+  singular, one argument, never called from outside its own file). Would
+  raise `AttributeError` the moment a cell references an undefined
+  surface. Not fixed -- flagged for whenever `GEOReverse` work resumes
+  in earnest, since it's unrelated to the parser move below and its own
+  caller (`buildSolidCell.py:19`) is untested territory.
+- `GEOReverse/Modules/remh.py::Cline`'s own overlapping-but-distinct API
+  (a third representation of "what surfaces does this definition
+  reference") would need folding into the same effort to make a merge
+  actually coherent, not just cosmetic.
+
+**What WAS extracted, low-risk, done this session**: `outer_terms`/
+`redundant`/`is_integer` (plus the `mostinner`/`mix`/`TFX` regexes) were
+confirmed, by direct side-by-side comparison, to be functionally
+identical between the two files -- differing only in cosmetic variable
+renames (`left_ok`/`right_ok` vs `leftOK`/`rightOK`, `new_pos` vs
+`newpos`) and docstrings. GEOReverse's own copy additionally carried 4
+confirmed-dead regexes (`number`, `PValue`, `NValue`, `conversion` --
+zero references anywhere in that file's real code, and the `outer_terms`
+branch that would use `TFX`/`conversion` is never reached by any real
+caller either) -- evidence the two copies had already silently diverged
+once, exactly the risk this kind of duplication invites. Extracted to a
+new top-level module, `src/geouned/boolean_expression_parser.py`
+(alongside `geo`, not inside either pipeline's own subpackage, since
+both `GEOUNED/utils/boolean_function.py::BoolSequence.set_def` and
+`GEOReverse/Modules/Utils/booleanFunction.py::BoolSequence.set_def` need
+it) -- zero dependency on anything else in the package, not even `geo`.
+Both `BoolSequence.set_def` implementations now import from there
+instead of carrying their own copy; `GEOReverse/Modules/Objects.py`'s own
+`from .Utils.booleanFunction import BoolSequence, outer_terms` needed no
+change, since `booleanFunction.py` still re-exports `outer_terms` (now
+via an import rather than a local definition).
+
+**Verified**: all 3 engines' full suites (`tests/geo` + `test_cadtocsg.py`
++ `test_csgtocad.py`) re-run after the extraction -- `ocp` 133/1skip/2fail,
+`occ` 133/1skip/2fail, `freecad` 161/2skip/2fail -- byte-identical to the
+pre-extraction baseline (the 2 failures on every engine are the already-
+documented `test_cylbox_convertion` regression, unrelated to parsing).
+This exercises the shared parser through both pipelines' own real
+MCNP-syntax cell-definition parsing, not just via import.

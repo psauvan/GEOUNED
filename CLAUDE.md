@@ -277,6 +277,20 @@ gaps for whenever it's picked back up:
   analysis exists (see the history log's "`FuseSolid` ->
   `geo.Gfuse_solids`; `build_region` portability analysis" entry) but no
   further code has moved beyond `Gfuse_solids` itself.
+- `GEOUNED`'s and `GEOReverse`'s own `BoolSequence` classes remain
+  separate (a 3-tier `int`/`BoolVariable`/`BoolSurface` system in
+  GEOUNED vs. a plain-`int`-only class in GEOReverse, plus a third,
+  text-based representation, `GEOReverse/Modules/remh.py::Cline`) --
+  a written analysis exists (history log's "`BoolSequence` unification
+  analysis" entry) concluding a full merge isn't advisable right now
+  (GEOUNED's tier is historically fragile and load-bearing; GEOReverse
+  never needs it). The one safe piece was extracted:
+  `src/geouned/boolean_expression_parser.py` (`outer_terms`/`redundant`/
+  `is_integer`, confirmed duplicated between the two `BoolSequence`
+  files' own `set_def`). A real, separate bug was found and flagged (not
+  fixed) along the way: `GEOReverse/Modules/Objects.py::cleanUndefined()`
+  calls a `.removeSurface(...)` method that doesn't exist anywhere in
+  GEOReverse.
 - `Solidos/` STEP fixture tree (the test/regression corpus used mainly
   for GEOUNED verification) still has real, unresolved duplicates
   across the triage folders (`Solidos/test_models` is the curated

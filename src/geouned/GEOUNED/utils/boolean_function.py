@@ -3,13 +3,10 @@
 #
 
 import logging
-import re
+
+from ...boolean_expression_parser import is_integer, outer_terms, redundant
 
 logger = logging.getLogger("general_logger")
-
-mostinner = re.compile(r"\([^\(^\)]*\)")  # identify most inner parentheses
-mix = re.compile(r"(?P<value>([-+]?\d+|\[0+\]))")  # identify signed integer or [000...] pattern. Record the value.
-TFX = re.compile(r"(?P<value>[FTXo]+)")  # identify pattern including F,T,X, or o sequence ( in any order).
 
 
 def BoolSeq_int_to_BoolRegion(Seq):
@@ -1233,109 +1230,3 @@ def substitute_integer_element(Seq, target, newElement):
                 Seq.elements[i] = newElement
         else:
             substitute_integer_element(e, target, newElement)
-
-
-def outer_terms(expression, value="number"):
-    """Return the list and the boolean operator of the outter terms of the expression."""
-    if value == "number":
-        # reValue = number
-        reValue = mix
-        nullVal = "0"
-    else:
-        reValue = TFX
-        nullVal = "o"
-
-    expr = expression
-
-    # Loop until no redundant parentheses are found
-    cont = True
-
-    while cont:
-        # Loop over most inner parentheses
-        pos = 0
-        cont = False
-        while True:
-            m = mostinner.search(expr, pos)
-            if not m:
-                break
-            cont = True
-            if redundant(m, expr):
-                # remove redundant parentheses
-                expr = expr[: m.start()] + " " + expr[m.start() + 1 : m.end() - 1] + " " + expr[m.end() :]
-            else:
-                # replace no redundant parentheses by 0 and : by ;
-                zeros = "[" + nullVal * (m.end() - m.start() - 2) + "]"
-                expr = expr[: m.start()] + zeros + expr[m.end() :]
-
-            pos = m.end()
-
-    if ":" in expr:
-        terms = []
-        pos = 0
-        while True:
-            new_pos = expr.find(":", pos)
-            if new_pos == -1:
-                terms.append(expression[pos:].strip())
-                break
-            terms.append(expression[pos:new_pos].strip())
-            pos = new_pos + 1
-        return (terms, "OR")
-    else:
-        terms = []
-        pos = 0
-        while True:
-            m = reValue.search(expr, pos)
-            if not m:
-                break
-            terms.append(expression[m.start() : m.end()])
-            pos = m.end()
-        return (terms, "AND")
-
-
-def redundant(m, geom):
-    """Check if the inner parentheses are redundant."""
-    term = m.group()
-
-    # Find first valid character at the left of the  parenthese
-    left_ok = True
-    left = m.start() - 1
-    while left > -1:
-        if geom[left] in ("\n", "C", "$", " "):
-            left -= 1
-        else:
-            if geom[left] not in ("(", ":"):
-                left_ok = False
-            break
-
-    # check if no ':' (or) are inside the parenthese
-    # if not, parentheses are redundants
-    if term.find(":") == -1:
-        return True
-
-    # Find first valid character at the right of the  parenthese
-    right_ok = True
-    right = m.end()
-    while right < len(geom):
-        if geom[right] in ("\n", "C", "$", " "):
-            right += 1
-        else:
-            if geom[right] not in (")", ":"):
-                right_ok = False
-            break
-
-    # if parentheses are like:
-    # {( or : } ( ....... ) {) or :}
-    # parentheses are redundants
-
-    if left_ok and right_ok:
-        return True
-    else:
-        return False
-
-
-def is_integer(x):
-    try:
-        int(x.strip("(").strip(")"))
-        return True
-    except:
-        return False
