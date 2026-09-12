@@ -2,9 +2,9 @@ import math
 
 import numpy as np
 
-from .buildSolidCell import BuildSolid
-from .remh import Cline
-from .Utils.booleanFunction import BoolSequence, outer_terms
+from .CAD.buildSolidCell import BuildSolid
+from .MCNP_parser.remh import Cline
+from .Utils.booleanFunction import BoolSequence, outer_terms, remove_surf
 from .Utils.boundBox import solid_plane_box, myBox, BoxSettings, makePlane
 from . import (
     Gmake_elliptic_cone,
@@ -26,7 +26,7 @@ from ...geo import (
     Gmake_sphere,
     Gmake_torus,
 )
-from .matrix_utils import matrix_multVec, matrix_rotate_vec, transform_solid
+from .Utils.matrix_utils import matrix_multVec, matrix_rotate_vec, transform_solid
 
 
 class CadCell:
@@ -77,7 +77,12 @@ class CadCell:
     def copy(self):
         cpCell = CadCell(settings=self.settings)
         cpCell.solid_plane = self.solid_plane.copy()
-        cpCell.surfaceList = self.surfaceList[:]
+        # self.surfaceList may be a tuple (Cline.get_surfaces_numbers, before
+        # the definition is converted to BoolSequence) or a set (BoolSequence
+        # .get_surfaces_numbers, after) -- neither the old [:] slice (sets
+        # don't support it) nor a plain .copy() (tuples don't have one) works
+        # for both, so rebuild the same container type explicitly.
+        cpCell.surfaceList = type(self.surfaceList)(self.surfaceList)
         cpCell.externalBox = self.externalBox
         cpCell.boundBox = self.boundBox
         cpCell.surfaces = {}
@@ -194,14 +199,8 @@ class CadCell:
         for s in self.definition.get_surfaces_numbers():
             if self.surfaces[s].params is None:
                 undefined.append(s)
-        # `removeSurface` (plural, taking a list) never existed anywhere
-        # in GEOReverse -- BoolSequence only has removeSurf (singular,
-        # one surface at a time). This call would have raised
-        # AttributeError the moment a cell ever referenced an undefined
-        # surface. Fixed 2026-09-12: loop removeSurf over each undefined
-        # surface instead.
         for s in undefined:
-            self.definition.removeSurf(s)
+            remove_surf(self.definition, s)
 
         for s in undefined:
             del self.surfaces[s]

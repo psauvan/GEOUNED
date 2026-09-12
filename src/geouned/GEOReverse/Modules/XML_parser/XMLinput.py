@@ -6,9 +6,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from numpy import linalg as LA
 
-from .Objects import CadCell, Cone, Cylinder, Plane, Sphere, Torus
+from ..Objects import CadCell, Cone, Cylinder, Plane, Sphere, Torus
 from .XMLParser import get_cards
-from ...geo import GVector
+from ....geo import GVector
 
 
 def _gvec(values) -> GVector:

@@ -75,8 +75,8 @@ import FreeCAD
 import Import
 import Part
 
-from ...geo import GSolid, GVector, arbitrary_perpendicular, to_gvector, to_native_vector
-from .cad_export_shared import cell_label_name, material_label_name, universe_label_name
+from ....geo import GSolid, GVector, arbitrary_perpendicular, to_gvector, to_native_vector
+from ..Utils.cad_export_shared import cell_label_name, material_label_name, universe_label_name
 
 # ---------------------------------------------------------------------------
 # CAD export

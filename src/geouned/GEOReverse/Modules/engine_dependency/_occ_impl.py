@@ -75,7 +75,7 @@ from OCC.Core.TopLoc import TopLoc_Location
 from OCC.Core.XCAFApp import XCAFApp_Application
 from OCC.Core.XCAFDoc import XCAFDoc_ColorGen, XCAFDoc_DocumentTool
 
-from .cad_export_shared import cell_label_name, material_colors, material_label_name, universe_label_name
+from ..Utils.cad_export_shared import cell_label_name, material_colors, material_label_name, universe_label_name
 
 SUPPORTED_FORMATS = {"stp", "step"}
 

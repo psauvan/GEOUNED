@@ -4,7 +4,7 @@
 
 import logging
 
-from ...boolean_expression_parser import is_integer, outer_terms, redundant
+from .boolean_expression_parser import is_integer, outer_terms, redundant
 
 logger = logging.getLogger("general_logger")
 

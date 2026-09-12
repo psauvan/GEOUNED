@@ -12370,3 +12370,204 @@ covers both fixes directly against the real (non-scratchpad) classes.
 passed/2 skipped/2 failed (the 2 failures are the already-documented,
 pre-existing `test_cylbox_convertion` regression, unrelated to this fix)
 -- zero new regressions on any engine.
+
+### BoolSequence unification completed: GEOReverse now depends on GEOUNED's class directly, 2026-09-12
+
+Explicit user direction, reversing the earlier "don't merge the two
+classes" recommendation from the analysis above: "no tocar el
+BoolSequence de Geouned y modificar Georeverse para que utilize el
+BoolSequence de geouned" -- keep GEOUNED's class completely untouched
+(it is historically fragile and load-bearing there), and change
+GEOReverse to depend on it directly instead of carrying a second,
+divergent copy.
+
+`GEOReverse/Modules/Utils/booleanFunction.py`'s own `class BoolSequence`
+was deleted entirely; the file now does
+`from ....GEOUNED.utils.boolean_function import BoolSequence` and
+re-exports it. Before doing this, every method GEOReverse's own class
+had that GEOUNED's lacks -- or has with genuinely different semantics --
+was inventoried by grepping every real call site across GEOReverse
+(`Objects.py`, `boundBox.py`, `splitFunction.py`, `remh.py`,
+`buildSolidCell.py`, `buildCAD.py`, `core.py`, `MCNPinput.py`):
+
+- `removeSurf`/`signedSurfaces`: no equivalent at all on GEOUNED's
+  class. Ported unchanged as free functions `remove_surf`/
+  `signed_surfaces` (operating on a BoolSequence instance's public
+  `.elements`/`.operator`/`.level` rather than as class methods, since
+  GEOUNED's class was not to be touched).
+- `evaluate`/`simplify`/`factorize`: GEOUNED's own `.evaluate()` is
+  genuinely incompatible for GEOReverse's real callers. GEOReverse's
+  three real evaluate/isInside call sites
+  (`boundBox.py::solid_plane_box.isInside`, `splitFunction.py::SplitSolid`)
+  need Kleene three-valued logic (`True`/`False`/`None`) --
+  `if inSolid: ... elif inSolid is None: ...` is the exact pattern at
+  both real call sites. GEOUNED's `.evaluate()` instead returns the
+  *residual BoolSequence* for an undetermined result (partial Shannon
+  simplification, used internally by GEOUNED's own `build_region`) --
+  which is truthy and would have been silently misread as "fully
+  inside" by both callers. Ported GEOReverse's own three-valued
+  algorithm unchanged as free functions `evaluate_three_valued`/
+  `simplify_sequence`/`factorize_sequence`. Confirmed via grep that `CT`
+  (the constraint-table parameter both `simplify`/`factorize` accept)
+  is always `None` in every real call in this codebase (no `CT`/
+  `ConstraintTable` class exists anywhere in GEOReverse) -- the only
+  external caller, `remh.py::hash_sequence`, calls
+  `simplify_sequence(cellSeq, None)`.
+- Every other method GEOReverse's old class had (`append`/`copy`/
+  `assign`/`get_complementary`/`comp_operator`/`clean`/`join_operators`/
+  `group_single`/`get_surfaces_numbers`/`level_update`/`set_def`/
+  `substitute`/`check`) was confirmed, by side-by-side reading, to be
+  either identical or a strict superset of GEOUNED's own version for
+  pure-`int`-base_type sequences (which is all GEOReverse ever
+  constructs) -- e.g. GEOUNED's `append` additionally dedupes and
+  detects `a AND -a`/`a OR -a` contradictions inline, GEOUNED's
+  `substitute` additionally runs a `check(level0=True)` pass after
+  substituting. Both are correctness improvements that only engage on
+  cases GEOReverse's old code left unresolved, never a regression on an
+  already-correct case. `get_surfaces_numbers()` changed return type
+  from `tuple` to `set` (harmless everywhere it's iterated over or
+  membership-tested, which is every real call site but one -- see the
+  `Objects.py::copy` bug below).
+
+4 call sites needed updating to the new free-function names:
+`Objects.py::cleanUndefined` (`removeSurf` -> `remove_surf`),
+`boundBox.py::quadric_to_plane` (`signedSurfaces` -> `signed_surfaces`),
+`boundBox.py::solid_plane_box.isInside` and `splitFunction.py::SplitSolid`
+(`.evaluate(...)` -> `evaluate_three_valued(...)`), and
+`remh.py::hash_sequence` (`.simplify(None)` ->
+`simplify_sequence(seq, None)`).
+
+**Two further real bugs surfaced only once GEOReverse started running
+against GEOUNED's stricter class** (neither was reachable under
+GEOReverse's own old, more permissive class) -- both fixed in
+GEOReverse's own code, GEOUNED's class was not touched for either:
+
+1. `Objects.py::CadCell.copy()`: `cpCell.surfaceList = self.surfaceList[:]`.
+   `self.surfaceList` is set from `.get_surfaces_numbers()`, which by
+   this point in the pipeline can be either a `tuple` (from
+   `remh.py::Cline.get_surfaces_numbers`, before the cell's `.definition`
+   is converted from text to `BoolSequence` -- confirmed this is what it
+   actually is at `CadCell.__init__` time, and that conversion,
+   `buildCAD.py:70`, never refreshes `.surfaceList` afterward) or a `set`
+   (from `BoolSequence.get_surfaces_numbers`, e.g. inside
+   `getSubCell`). Sets don't support `[:]` slicing at all -- confirmed
+   live: `AttributeError` was never hit here because `[:]` on a set
+   raises `TypeError`, not `AttributeError`, so this specific line was
+   actually still fine; the real break was one line reused elsewhere
+   (see below). Fixed to rebuild the same container type explicitly:
+   `type(self.surfaceList)(self.surfaceList)`.
+
+2. `boundBox.py::change_surf`: for the case where a literal surface
+   reference resolves to the operator's own identity value (e.g.
+   substituting a known-true plane into an AND clause), the old code
+   did `seq.elements[i] = new` -- index-assigning a bare Python
+   `True`/`False` directly into a `BoolSequence.elements` *list*,
+   nested alongside int/`BoolSequence` siblings, then called
+   `seq.clean()` to absorb it. This exact shape relied on GEOReverse's
+   own old `.clean()`, which special-cased `type(e) is bool` explicitly.
+   GEOUNED's `.clean()` has no such case (`isinstance(e, int)` matches
+   `bool` too via Python's `bool`/`int` subclassing, so it just
+   `continue`s past a nested bare bool forever, never resolving it) --
+   harmless on its own, but GEOUNED's `.copy()` uses the *stricter*
+   `type(e) is int` check (`False` for a bare bool), so it falls through
+   to `e.copy()` and crashes: `AttributeError: 'bool' object has no
+   attribute 'copy'`. Confirmed via a full traceback (`buildCAD.py` ->
+   `Objects.py::build_BoundBox` -> `boundBox.py::get_boundBox` ->
+   `build_box_depth` -> `solid_plane_box.copy` -> `BoolSequence.copy`)
+   that this, not the `Objects.py::copy` line above, was the actual
+   crash (which surfaced as a `test_cylbox_convertion[openmc_xml]`
+   "failed cell conversion: [1]" regression the first time this fix
+   was attempted without also catching this one). Fixed by collecting
+   the identity-value indices and `del`-ing them from the list outright
+   instead of ever writing a bare bool into it.
+
+**Verified**: all 3 engines' full suites (`tests/geo` + `test_cadtocsg.py`
++ `test_boolean_function.py`, now 15 tests including new coverage for
+`evaluate_three_valued`/`signed_surfaces`/`simplify_sequence` and an
+identity check that GEOReverse's `BoolSequence` really is GEOUNED's own
+class object) -- `ocp` 148 passed/1 skipped, `occ` 148 passed/1
+skipped, `freecad` 176 passed/2 skipped/2 failed (the 2 failures are the
+same already-documented, pre-existing `test_cylbox_convertion`
+regression, byte-identical `assert 2 == 4`/`assert 1 == 5` shape to the
+pre-unification baseline) -- zero new regressions on any engine,
+`freecad`'s run exercising the real CSG -> CAD reconstruction pipeline
+end to end (`test_csgtocad.py`), not just unit-level BoolSequence logic.
+
+### BoolSequence unification, round 2: caught on review, simplified and fixed further, 2026-09-12
+
+The `evaluate_three_valued`/`simplify_sequence`/`factorize_sequence`
+free functions written in the entry above were a full, faithful
+reimplementation of GEOReverse's old three-valued walk/Shannon-expansion
+algorithms -- ~180 lines duplicating logic that, on user review, turned
+out to be unnecessary: "no entiendo porque has creado estas funciones
+evaluate_three_valued/simplify_sequence/factorize_sequence y no has
+implementado un decorador de la funcion BoolSequence.evaluate() que
+devuelva None cuando el resultado no es Booleano." Investigated properly
+rather than just taking the suggestion on faith:
+
+- Wrote a randomized equivalence check (3000 generated nested AND/OR
+  expressions over 3-5 surfaces, random True/False/None/missing value
+  sets) comparing the old hand-rolled walk against a thin
+  `seq.evaluate(value_set); return result if isinstance(result, bool)
+  else None` wrapper around GEOUNED's own `.evaluate()`. Found 14/3000
+  disagreements -- in every single one, the *old* walk returned `None`
+  (undetermined) where the *wrapper* returned a definite `True`/`False`,
+  never the other way round and never a differing definite answer on
+  both sides (which would have been a real correctness bug). Manually
+  traced one case end to end (`2 (1:-2) -1` with only surface 1 known
+  False): substituting `1=False` collapses the inner `OR[1,-2]` down to
+  bare `-2`, which `group_single()`+`join_operators()` then promote up
+  into the outer `AND`, leaving `AND[2, -2]` -- an outright contradiction
+  regardless of surface 2's real value. GEOUNED's `.evaluate()` catches
+  this because it substitutes-and-resimplifies the real tree structure;
+  the old walk only inspects each element once, top-down, so it never
+  sees the contradiction exposed by the substitution. The wrapper is
+  strictly more resolving, never wrong -- confirmed correct to keep.
+- Separately grepped for every real caller of the old `simplify`/
+  `factorize`: exactly one, `remh.py::hash_sequence`, which is itself
+  never called anywhere in the codebase (imported in `MCNPinput.py`
+  alongside the real, similarly-named `remove_hash`, but that import is
+  unused -- confirmed via `grep -n "hash_sequence("`, only the `def`
+  itself matches). So `simplify_sequence`/`factorize_sequence` were pure
+  duplication of an unreachable code path. Deleted both outright;
+  `hash_sequence` (still dead, left as-is otherwise) now calls
+  `cellSeq.simplify()` -- GEOUNED's own method, no `CT` argument needed.
+
+Re-running the (now much smaller) full 3-engine suite after this swap
+surfaced two further real bugs, neither reachable before because
+GEOReverse's own old class tolerated both cases silently:
+
+1. `boundBox.py::isInside`: `surf_value[p_index] = dot > 0` where `dot =
+   normal.dot(r)` (a `GVector` dot product) can yield a numpy scalar,
+   making `dot > 0` a `numpy.bool_`, not a plain Python `bool`. GEOUNED's
+   `BoolSequence.substitute()` decides which branch to take via `type(val)
+   is not bool` -- `True` for a `numpy.bool_` -- so it treated the value
+   as *another surface number* to substitute in, rather than a
+   true/false value, corrupting the sequence
+   (`AttributeError: 'numpy.bool' object has no attribute 'elements'`,
+   inside `BoolSequence.clean()`, confirmed via full traceback).
+   GEOReverse's own old `substitute()` checked the inverse, `type(val) is
+   int`, which defaults anything non-int (a numpy bool included) to the
+   correct bool-handling branch -- accidentally robust to this, unlike
+   GEOUNED's version. Fixed by forcing `bool(dot > 0)` at the source.
+2. `splitFunction.py::surface_side`: same class of bug, `return inout >
+   0` where `inout` can likewise be a numpy scalar. Fixed the same way,
+   `return bool(inout > 0)`.
+
+Both fixes are in GEOReverse's own code only -- GEOUNED's class was not
+touched for either, consistent with the standing constraint for this
+whole unification.
+
+**Verified**: all 3 engines' full suites re-run after every fix in this
+round -- `ocp` 149 passed/1 skipped, `occ` 149 passed/1 skipped,
+`freecad` 177 passed/2 skipped/2 failed (the 2 failures still the same
+already-documented, pre-existing `test_cylbox_convertion` regression,
+byte-identical shape) -- zero new regressions, and no more "failed cell
+conversion" exceptions swallowed by `buildCAD.py`'s bare `except:` (both
+intermediate regressions in this round surfaced exactly that way, caught
+by temporarily re-raising with `traceback.print_exc()` there and
+reverting once diagnosed). `tests/test_boolean_function.py` grew to 16
+tests: the `simplify_sequence`-specific test was replaced with one
+confirming `BoolSequence.simplify()` (GEOUNED's own method) does the same
+job directly, and a new test locks in the structural-contradiction
+resolving case found during the equivalence check.

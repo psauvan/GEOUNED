@@ -6,7 +6,7 @@ import math
 
 logger = logging.getLogger("general_logger")
 
-from .boolean_function import BoolVariable
+from ...boolean_utils.boolean_function import BoolVariable
 from .geometry_gu import ShellFaceGu
 from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances

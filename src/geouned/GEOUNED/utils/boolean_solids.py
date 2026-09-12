@@ -4,7 +4,7 @@
 #
 import logging
 
-from .boolean_function import BoolSequence, BoolSurface
+from ...boolean_utils.boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
 from ...geo import GSolid, GVector, Gdistance, Gsplit, surface_geometry
 

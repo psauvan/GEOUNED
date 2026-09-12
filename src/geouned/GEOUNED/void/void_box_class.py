@@ -4,7 +4,7 @@ import logging
 
 from ..conversion import cell_definition as Conv
 from ..decompose.decom_one_generators import main_split
-from ..utils.boolean_function import BoolSequence, BoolVariable, BoolSurface
+from ...boolean_utils.boolean_function import BoolSequence, BoolVariable, BoolSurface
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from ...geo import GBoundBox, GSolid, GVector, Gcommon, Gdistance, Gmake_box, to_gboundbox

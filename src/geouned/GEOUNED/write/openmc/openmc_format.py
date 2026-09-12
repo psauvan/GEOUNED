@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from ...code_version import *
-from ...utils.boolean_function import BoolVariable
+from ....boolean_utils.boolean_function import BoolVariable
 from ..functions import open_mc_surface, write_openmc_region
 from ..functions import get_cell_surf_summary as _get_cell_surf_summary
 from ..functions import simplify_planes as _simplify_planes

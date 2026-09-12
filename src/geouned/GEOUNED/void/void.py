@@ -3,7 +3,7 @@ import logging
 from tqdm import tqdm
 
 from ..loadfile import load_functions as LF
-from ..utils.boolean_function import BoolSequence
+from ...boolean_utils.boolean_function import BoolSequence
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from . import void_functions as VF
 from .void_box_class import VoidBox

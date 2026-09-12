@@ -1,10 +1,10 @@
 import numpy as np
 from tqdm import tqdm
 
-from ...geo import Gcommon, Gfuse_solids, Gsplit
-from .matrix_utils import to_gmatrix_from_np
-from .Utils.booleanFunction import BoolSequence
-from .Utils.boundBox import myBox
+from ....geo import Gcommon, Gfuse_solids, Gsplit
+from ..Utils.matrix_utils import to_gmatrix_from_np
+from ..Utils.booleanFunction import BoolSequence
+from ..Utils.boundBox import myBox
 
 
 def interferencia(container, cell, mode="slice"):

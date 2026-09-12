@@ -25,7 +25,7 @@ here) now lives in `geo.solid_ops`, shared with GEOUNED's own
 
 import numpy as np
 
-from ...geo import GMatrix, GSolid, GVector, to_native_matrix
+from ....geo import GMatrix, GSolid, GVector, to_native_matrix
 
 IDENTITY_MATRIX = np.eye(4)
 

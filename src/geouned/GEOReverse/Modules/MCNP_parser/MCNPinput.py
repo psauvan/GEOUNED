@@ -5,7 +5,7 @@ import re
 import numpy as np
 from numpy import linalg as LA
 
-from .Objects import (
+from ..Objects import (
     Box,
     CadCell,
     Cone,
@@ -22,8 +22,8 @@ from .Objects import (
 )
 from .Parser import parser as mp
 from .remh import CellCardString, remove_hash, hash_sequence
-from .Objects import CadCell
-from ...geo import GVector
+from ..Objects import CadCell
+from ....geo import GVector
 
 
 def _gvec(values) -> GVector:

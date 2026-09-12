@@ -15,7 +15,7 @@ from ..utils.functions import (
     shapes_in_contact,
     get_box,
 )
-from ..utils.boolean_function import BoolSequence
+from ...boolean_utils.boolean_function import BoolSequence
 from ..utils.meta_surfaces_utils import merge_same_surface_faces
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (

@@ -2,12 +2,12 @@ import typing
 
 from pathlib import Path
 
-from .Modules.buildCAD import AssignSurfaceToCell, BuildUniverseCells
+from .Modules.CAD.buildCAD import AssignSurfaceToCell, BuildUniverseCells
 from .Modules.Utils.booleanFunction import BoolSequence
 from .Modules.Utils.boundBox import BoxSettings
 from .Modules.Objects import CadCell
-from .Modules.MCNPinput import McnpInput
-from .Modules.XMLinput import XmlInput
+from .Modules.MCNP_parser.MCNPinput import McnpInput
+from .Modules.XML_parser.XMLinput import XmlInput
 from ..geo import CAD_ENGINE
 from .Modules import SUPPORTED_FORMATS, export as export_cad_engine
 

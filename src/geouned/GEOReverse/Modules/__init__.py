@@ -13,7 +13,7 @@ neither imports the per-engine implementation files directly.
 from ...geo import CAD_ENGINE
 
 if CAD_ENGINE == "occ":
-    from ._occ_impl import (
+    from .engine_dependency._occ_impl import (
         SUPPORTED_FORMATS,
         export_occ as export,
         Gmake_elliptic_cone,
@@ -25,7 +25,7 @@ if CAD_ENGINE == "occ":
         Gmake_torus_elliptic,
     )
 elif CAD_ENGINE == "ocp":
-    from ._ocp_impl import (
+    from .engine_dependency._ocp_impl import (
         SUPPORTED_FORMATS,
         export_ocp as export,
         Gmake_elliptic_cone,
@@ -37,7 +37,7 @@ elif CAD_ENGINE == "ocp":
         Gmake_torus_elliptic,
     )
 else:
-    from ._freecad_impl import (
+    from .engine_dependency._freecad_impl import (
         SUPPORTED_FORMATS,
         export_freecad as export,
         Gmake_elliptic_cone,

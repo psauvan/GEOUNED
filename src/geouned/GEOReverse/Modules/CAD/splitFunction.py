@@ -1,6 +1,7 @@
 import math
 
-from ...geo import GSolid, Gfuse_solids, Gsplit
+from ....geo import GSolid, Gfuse_solids, Gsplit
+from ..Utils.booleanFunction import evaluate_three_valued
 
 
 class SplitBase:
@@ -91,7 +92,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
         # inSolid = cellObj.definition.evaluate(fullPos)
 
         pos.update(base.knownSurf)
-        inSolid = cellObj.definition.evaluate(pos)
+        inSolid = evaluate_three_valued(cellObj.definition, pos)
 
         # if solidTool :
         #  ii += 1
@@ -296,7 +297,13 @@ def surface_side(p, surf):
         print(f"surface type {surf[0]} not considered")
         return
 
-    return inout > 0
+    # bool(...): `inout` can be a numpy scalar (from GVector dot products /
+    # lengths), so `inout > 0` may be numpy.bool_ rather than a plain
+    # Python bool. GEOUNED's own BoolSequence.substitute() branches on
+    # `type(val) is not bool`, which is True for numpy.bool_ -- it would
+    # take the wrong branch (treating the value as another surface number
+    # instead of a true/false substitution) and corrupt the sequence.
+    return bool(inout > 0)
 
 
 def btwPPlanes(p, p0, v):

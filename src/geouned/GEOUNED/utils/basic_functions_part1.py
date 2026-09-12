@@ -5,7 +5,7 @@ import math
 from turtle import distance
 
 from .data_constants import mask, twoPi
-from .boolean_function import BoolSurface
+from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
 

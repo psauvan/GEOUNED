@@ -3,7 +3,7 @@ import numpy
 import typing
 
 from ....geo import GVector, GBoundBox, GPlane, GLine, Gmake_polygon_face
-from .booleanFunction import BoolSequence
+from .booleanFunction import BoolSequence, evaluate_three_valued, signed_surfaces
 
 twoPi = math.pi * 2
 
@@ -234,8 +234,15 @@ class solid_plane_box:
             if abs(dot) < self.insolid_tolerance:
                 surf_value[p_index] = None  # undefined value for point close to the surface
             else:
-                surf_value[p_index] = dot > 0
-        inside = self.definition.evaluate(surf_value)
+                # bool(...): GVector.dot() can return a numpy scalar, so
+                # `dot > 0` may be a numpy.bool_ rather than a plain Python
+                # bool. GEOUNED's own BoolSequence.substitute() branches on
+                # `type(val) is not bool`, which is True for numpy.bool_ --
+                # it would take the wrong branch (treating the value as
+                # another surface number instead of a true/false
+                # substitution) and corrupt the sequence.
+                surf_value[p_index] = bool(dot > 0)
+        inside = evaluate_three_valued(self.definition, surf_value)
 
         # if point close to the surface assume inside the solid independently if inside or outside
         # inside if point close to boundary
@@ -381,7 +388,7 @@ def quadric_to_plane(cellDef, surfaces, orientation):
     surf_planes_dict = dict()
     planes = dict()
 
-    surf_index = cellDef.signedSurfaces()
+    surf_index = signed_surfaces(cellDef)
     next = list({abs(s) for s in surf_index})
     next.sort()
     next_index = next[-1] + 1
@@ -738,7 +745,18 @@ def plane_definition(seq, surf_index, orientation):
 
 
 def change_surf(seq, old, new):
+    # A plain literal element that resolves to the operator's identity
+    # value (case below) is dropped from the list outright rather than
+    # index-assigned as a bare True/False -- GEOUNED's own BoolSequence
+    # (the canonical class since the 2026-09-12 BoolSequence unification)
+    # only expects `.elements` list entries to be int literals or
+    # BoolSequence instances; a bare bool sitting nested inside the list
+    # crashes `.copy()` (`AttributeError: 'bool' object has no attribute
+    # 'copy'`) and is silently ignored (never actually removed) by
+    # `.clean()`. Collecting indices and deleting them below never
+    # creates that shape in the first place.
     clean = False
+    to_remove = []
     for i, e in enumerate(seq.elements):
         if type(e) is BoolSequence:
             if abs(old) in e.get_surfaces_numbers():
@@ -756,10 +774,12 @@ def change_surf(seq, old, new):
                         seq.elements = new
                         return
                     else:
-                        seq.elements[i] = new
+                        to_remove.append(i)
                         clean = True
                 else:
                     seq.elements[i] = new
+    for i in sorted(to_remove, reverse=True):
+        del seq.elements[i]
     if clean:
         seq.clean()
 

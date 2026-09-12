@@ -1,8 +1,8 @@
-from .data_class import Options
+from ..data_class import Options
 
 from .splitFunction import SplitBase, SplitSolid, joinBase
-from .Utils.booleanFunction import BoolSequence
-from .Utils.boundBox import myBox
+from ..Utils.booleanFunction import BoolSequence
+from ..Utils.boundBox import myBox
 
 
 def getPart(slist):

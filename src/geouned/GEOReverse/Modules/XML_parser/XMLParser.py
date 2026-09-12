@@ -1,4 +1,4 @@
-from .remh import Cline
+from ..MCNP_parser.remh import Cline
 
 
 class CellCard:

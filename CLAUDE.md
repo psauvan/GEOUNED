@@ -149,12 +149,19 @@ Layout:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
 `GEOReverse/Modules/` mirrors this for its own, much smaller
-engine-specific surface: `_freecad_impl.py` / `_occ_impl.py` / `_ocp_impl.py`
-(CAD export via XCAF with per-material color, plus the 6 "exotic
-quadric" surfaces GEOUNED never produces — still unimplemented stubs
-under occ/ocp), dispatched by `GEOReverse/Modules/__init__.py` the same
-way `geo/__init__.py` does. `Modules/cad_export_shared.py` holds the
-pure-Python pieces of that export confirmed duplicated across backends
+engine-specific surface, reorganized into subpackages by the user
+2026-09-12 (after the `BoolSequence` unification below): `engine_dependency/`
+(`_freecad_impl.py` / `_occ_impl.py` / `_ocp_impl.py` -- CAD export via
+XCAF with per-material color, plus the 6 "exotic quadric" surfaces
+GEOUNED never produces, still unimplemented stubs under occ/ocp),
+dispatched by `Modules/__init__.py` the same way `geo/__init__.py`
+does; `CAD/` (`buildCAD.py`/`buildSolidCell.py`/`splitFunction.py` --
+the CSG -> CAD solid-reconstruction core); `MCNP_parser/`
+(`remh.py`/`MCNPinput.py`, plus the vendored `Parser/` sub-package);
+`XML_parser/` (`XMLinput.py`/`XMLParser.py`, for OpenMC XML input);
+`Utils/` (`booleanFunction.py`/`boundBox.py`/`cad_export_shared.py`/
+`matrix_utils.py`). `Utils/cad_export_shared.py` holds the pure-Python
+pieces of the CAD export confirmed duplicated across backends
 (2026-09-12): the Universe/Material/Cell label-name f-strings (identical
 across all 3 backends) and the per-material color-assignment logic
 (identical between `_occ_impl.py`/`_ocp_impl.py` only -- `freecad` has
@@ -169,11 +176,21 @@ unrelated call sites -- kept distinct, see `arbitrary_perpendicular`'s
 own docstring). The 6 exotic-quadric dataclasses themselves stay in
 `_freecad_impl.py`, not `geo` -- deliberate, see the paragraph below.
 `GEOReverse`'s own `build_region`-equivalent
-(`buildSolidCell.py`/`splitFunction.py`/`Objects.py`) is a still-separate,
-not-yet-unified twin of GEOUNED's `build_region/` — see the portability
-analysis in the history log for what's already shareable (box algebra,
-`BuildDepth`/`SplitSolid` core) versus genuinely blocked (two divergent
-`BoolSequence` implementations, two divergent surface/cell models).
+(`CAD/buildSolidCell.py`/`CAD/splitFunction.py`/`Objects.py`) is a
+still-separate, not-yet-unified twin of GEOUNED's `build_region/` — see
+the portability analysis in the history log for what's already
+shareable (box algebra, `BuildDepth`/`SplitSolid` core) versus
+genuinely blocked (two divergent surface/cell models -- the
+`BoolSequence` split itself was closed out, see below).
+
+`src/geouned/boolean_utils/` (`boolean_function.py`, `boolean_expression_parser.py`)
+holds the `BoolSequence` class and its MCNP-syntax parser -- moved here
+2026-09-12 from `GEOUNED/utils/boolean_function.py` and the top-level
+`boolean_expression_parser.py`, as a genuinely shared module now that
+`GEOReverse` depends on it directly (see the `BoolSequence` unification
+entry below): zero dependency on anything else in the package, not even
+`geo`, importable from both pipelines without either pulling in the
+other.
 
 Design points that survive from attempt 1, now living as methods/free
 functions instead of ABC methods:
@@ -266,37 +283,81 @@ gaps for whenever it's picked back up:
 - The 6 "exotic quadric" surfaces (`Gmake_elliptic_cone`,
   `Gmake_hyperboloid`, `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
   `Gmake_hyperbolic_cylinder`, `Gmake_paraboloid`) remain unimplemented
-  stubs in the `occ`/`ocp` backends (`GEOReverse/Modules/_occ_impl.py`/
-  `_ocp_impl.py`).
+  stubs in the `occ`/`ocp` backends
+  (`GEOReverse/Modules/engine_dependency/_occ_impl.py`/`_ocp_impl.py`).
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
 - `GEOUNED`'s `build_region/` and `GEOReverse`'s parallel
-  `buildSolidCell.py`/`splitFunction.py` remain two separate
+  `CAD/buildSolidCell.py`/`CAD/splitFunction.py` remain two separate
   implementations of near-identical logic. A written portability
   analysis exists (see the history log's "`FuseSolid` ->
   `geo.Gfuse_solids`; `build_region` portability analysis" entry) but no
   further code has moved beyond `Gfuse_solids` itself.
-- `GEOUNED`'s and `GEOReverse`'s own `BoolSequence` classes remain
-  separate (a 3-tier `int`/`BoolVariable`/`BoolSurface` system in
-  GEOUNED vs. a plain-`int`-only class in GEOReverse, plus a third,
-  text-based representation, `GEOReverse/Modules/remh.py::Cline`) --
-  a written analysis exists (history log's "`BoolSequence` unification
-  analysis" entry) concluding a full merge isn't advisable right now
-  (GEOUNED's tier is historically fragile and load-bearing; GEOReverse
-  never needs it). The one safe piece was extracted:
-  `src/geouned/boolean_expression_parser.py` (`outer_terms`/`redundant`/
-  `is_integer`, confirmed duplicated between the two `BoolSequence`
-  files' own `set_def`). Two real bugs were found and fixed along the
-  way: `GEOReverse/Modules/Objects.py::cleanUndefined()` used to call a
-  `.removeSurface(...)` method that never existed anywhere in
-  GEOReverse (`BoolSequence` only has singular `removeSurf`) -- fixed by
-  looping `removeSurf` over each undefined surface; and
-  `BoolSequence.removeSurf` itself (`GEOReverse/Modules/Utils/
-  booleanFunction.py`) only matched positive surface references
-  (`if e == name:`), silently leaving a negative reference (`-name`) to
-  the same surface untouched -- fixed to `if abs(e) == name:`. Covered
-  by `tests/test_boolean_function.py`.
+- `GEOUNED` and `GEOReverse` used to carry two separate `BoolSequence`
+  implementations (a 3-tier `int`/`BoolVariable`/`BoolSurface` system in
+  GEOUNED vs. a plain-`int`-only class in GEOReverse). The shared parser
+  (`outer_terms`/`redundant`/`is_integer`, now
+  `src/geouned/boolean_utils/boolean_expression_parser.py`) was
+  extracted first. Two real bugs were then found and fixed in
+  GEOReverse's own class: `Objects.py::cleanUndefined()` called a
+  nonexistent `.removeSurface(...)`, and `BoolSequence.removeSurf` only
+  matched positive surface references, silently leaving a negative
+  reference untouched.
+- **Unification completed 2026-09-12**: per explicit user direction,
+  GEOReverse no longer carries its own `BoolSequence` class at all --
+  `GEOReverse/Modules/Utils/booleanFunction.py` now imports the
+  canonical class directly (`from ....boolean_utils.boolean_function
+  import BoolSequence`; both `GEOUNED` and `GEOReverse` import from this
+  shared module, moved there from `GEOUNED/utils/boolean_function.py` --
+  see the `boolean_utils` paragraph in "Current architecture") and the
+  class itself was left untouched throughout (it is historically
+  fragile and load-bearing in GEOUNED). Only 3 free functions
+  remain in that file instead of class methods: `remove_surf`/
+  `signed_surfaces` (no GEOUNED equivalent at all), and
+  `evaluate_three_valued` -- a **thin adapter, not a reimplementation**:
+  it calls GEOUNED's own `.evaluate()` and downgrades a non-bool result
+  (the residual `BoolSequence` GEOUNED's `.evaluate()` returns for an
+  undetermined case) to plain `None`, which every real caller here needs
+  (`boundBox.py`'s `isInside`/`splitFunction.py`'s `if inSolid: ... elif
+  inSolid is None: ...`). The first attempt at this wrongly reimplemented
+  a whole second copy of GEOReverse's old three-valued walk plus its old
+  `simplify`/`factorize` -- caught on user review ("no entiendo porque
+  has creado estas funciones... y no has implementado un decorador de la
+  funcion BoolSequence.evaluate()"); confirmed by randomized testing
+  (3000 generated expressions) that the thin wrapper is at least as
+  resolving as the hand-rolled walk, and strictly more so in some cases
+  (`.evaluate()`'s use of `.substitute()` catches structural
+  contradictions -- e.g. an inner OR collapsing until an outer AND is
+  left holding both `+n` and `-n` of the same surface -- that a single
+  top-down tree walk misses); separately confirmed GEOReverse's old
+  `simplify`/`factorize` had exactly one caller, `remh.py::hash_sequence`,
+  which is itself dead code (imported, never called) -- so that pair was
+  deleted outright rather than ported, and `hash_sequence` (still dead)
+  now calls GEOUNED's own `.simplify()` directly.
+  Three further real, latent bugs surfaced only once GEOReverse started
+  depending on GEOUNED's stricter class, all fixed in GEOReverse's own
+  code (not GEOUNED's): `Objects.py::copy()`'s `self.surfaceList[:]`
+  (sets don't support slicing, and `get_surfaces_numbers()` can return
+  either a tuple -- from `remh.py::Cline`, before the cell definition is
+  converted -- or a set -- from `BoolSequence`, after) -- fixed to
+  rebuild the same container type explicitly; `boundBox.py::change_surf`
+  used to index-assign a bare `True`/`False` directly into a
+  `BoolSequence.elements` list (relying on GEOReverse's own old
+  `.clean()` to absorb it) -- GEOUNED's class only expects list entries
+  to be int literals or `BoolSequence` instances, and crashes `.copy()`
+  on a nested bare bool -- fixed to drop the identity element from the
+  list outright instead; and `boundBox.py::isInside`/
+  `splitFunction.py::surface_side` fed a `numpy.bool_` (from a `GVector`
+  dot-product comparison) into `evaluate_three_valued`'s value dict --
+  GEOUNED's own `substitute()` branches on `type(val) is not bool`
+  (`True` for `numpy.bool_`, unlike GEOReverse's old `type(val) is int`
+  check, which defaulted anything non-int including a numpy bool to the
+  correct branch), so it silently took the wrong branch and corrupted the
+  sequence -- fixed by forcing a plain `bool(...)` at both source sites.
+  Verified clean (zero new regressions) across all 3 engines, `freecad`
+  also via the real `test_csgtocad.py` pipeline. Covered by
+  `tests/test_boolean_function.py`.
 - `Solidos/` STEP fixture tree (the test/regression corpus used mainly
   for GEOUNED verification) still has real, unresolved duplicates
   across the triage folders (`Solidos/test_models` is the curated

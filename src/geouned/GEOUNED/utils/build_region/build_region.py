@@ -1,6 +1,6 @@
 from .splitFunction import SplitBase, SplitSolid, joinBase
 from .Objects import CellObj, CellSurface, myBox
-from ..boolean_function import BoolSequence
+from ....boolean_utils.boolean_function import BoolSequence
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
 from ....geo import GCone, GCylinder, GPlane, GSphere
 

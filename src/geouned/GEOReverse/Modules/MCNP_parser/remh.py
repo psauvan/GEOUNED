@@ -1,7 +1,7 @@
 import math
 import re
 
-from .Utils.booleanFunction import BoolSequence
+from ..Utils.booleanFunction import BoolSequence
 
 #########################################
 # define patterns to be found in string #
@@ -785,5 +785,5 @@ def hash_sequence(cards, cname):
         return cellDef, cellSeq
 
     cellDef, cellSeq = remove(cards[cname])
-    cellSeq.simplify(None)
+    cellSeq.simplify()
     return cellDef, cellSeq

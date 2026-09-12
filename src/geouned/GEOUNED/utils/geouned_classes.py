@@ -29,7 +29,7 @@ from .basic_functions_part1 import round_corner_region, multi_round_corner_regio
 from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
 
 from .data_classes import NumericFormat, Options, Tolerances
-from .boolean_function import BoolSurface, BoolVariable, literal_sign
+from ...boolean_utils.boolean_function import BoolSurface, BoolVariable, literal_sign
 from .build_shape_functions import (
     makePlane,
     makeCylinder,
