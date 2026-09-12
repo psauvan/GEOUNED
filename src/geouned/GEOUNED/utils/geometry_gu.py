@@ -372,6 +372,7 @@ class FaceGu(object):
             return (distmin,)
         else:
             shape2 = shape.__face__
+            return shape1.distToShape(shape2)
 
         if shape1 is shape2:
             return (0,)
@@ -665,6 +666,7 @@ def other_face_edge(current_edge, current_face, Faces, outer_only=False):
         for edge in Edges:
             if current_edge.isSame(edge):
                 return face
+    return None
 
 
 def join_wires(wireList):

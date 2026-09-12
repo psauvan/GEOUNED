@@ -196,52 +196,56 @@ def round_corner_region(p1id, p2id, cid, pid, configuration):
 
 def multi_round_corner_region(mRoundC):
 
-    multi_rc_region = None
+    planes_region = None
+    revCyl_region = None
+    fwdCyl_region = None
+
     if mRoundC.Orientation == "Forward":
         for plane in mRoundC.Surf.Planes:
             pid = BoolSurface(0, plane.bVar)
-            multi_rc_region = BoolSurface.mult(multi_rc_region, pid)
+            planes_region = BoolSurface.mult(planes_region, pid)
 
-        or_comp = []
         for rc in mRoundC.Surf.Corners:
-            cid = BoolSurface(0, rc.Surf.Cylinder.bVar)
-            if rc.Surf.Plane is not None:
-                pcid = BoolSurface(0, rc.Surf.Plane.bVar)
+            cylinder = rc.Surf.Cylinder.Surf.Cylinder
+            cid = BoolSurface(0, cylinder.bVar)
+            if rc.Surf.Cylinder.Surf.Plane is not None:
+                pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
             else:
-                pcid = None
+                pcid = BoolSurface(0, rc.Surf.Planes[0].bVar)
+                if rc.Surf.Cylinder.Orientation == "Forward":
+                    pcid = -pcid
 
-            if rc.Orientation == "Forward":
-                if pcid is not None:
-                    multi_rc_region = BoolSurface.mult(multi_rc_region, -pcid)
-                or_comp.append(-cid)
+            if rc.Surf.Cylinder.Orientation == "Forward":
+                planes_region = BoolSurface.mult(planes_region, -pcid)
+                fwdCyl_region = BoolSurface.add(fwdCyl_region, -cid * pcid)
             else:
-                multi_rc_region = BoolSurface.mult(multi_rc_region, pcid) * cid
+                planes_region = BoolSurface.mult(planes_region, pcid)
+                revCyl_region = BoolSurface.mult(revCyl_region, cid)
 
-        for c in or_comp:
-            multi_rc_region = multi_rc_region + c
+        multi_rc_region = (planes_region + fwdCyl_region) * revCyl_region
     else:
         for plane in mRoundC.Surf.Planes:
             pid = BoolSurface(0, plane.bVar)
-            multi_rc_region = BoolSurface.add(multi_rc_region, pid)
+            planes_region = BoolSurface.add(planes_region, pid)
 
-        and_comp = []
         for rc in mRoundC.Surf.Corners:
-            cid = BoolSurface(0, rc.Surf.Cylinder.bVar)
-            if rc.Surf.Plane is not None:
-                pcid = BoolSurface(0, rc.Surf.Plane.bVar)
+            cylinder = rc.Surf.Cylinder.Surf.Cylinder
+            cid = BoolSurface(0, cylinder.bVar)
+            if rc.Surf.Cylinder.Surf.Plane is not None:
+                pcid = BoolSurface(0, rc.Surf.Cylinder.Surf.Plane.bVar)
             else:
-                pcid = None
+                pcid = BoolSurface(0, rc.Surf.Planes[0].bVar)
+                if rc.Surf.Cylinder.Orientation == "Forward":
+                    pcid = -pcid
 
-            if rc.Orientation == "Forward":
-                if pcid is not None:
-                    multi_rc_region = BoolSurface.add(multi_rc_region, -pcid) - cid
-                else:
-                    multi_rc_region = multi_rc_region - cid
+            if rc.Surf.Cylinder.Orientation == "Forward":
+                planes_region = BoolSurface.add(planes_region, -pcid)
+                fwdCyl_region = BoolSurface.add(fwdCyl_region, -cid)
             else:
-                multi_rc_region = BoolSurface.add(multi_rc_region, pcid)
-                and_comp.append(cid)
-        for c in and_comp:
-            multi_rc_region = multi_rc_region * c
+                planes_region = BoolSurface.add(planes_region, pcid)
+                revCyl_region = BoolSurface.mult(revCyl_region, -pcid + cid)
+
+        multi_rc_region = (planes_region * revCyl_region) + fwdCyl_region
 
     return multi_rc_region
 

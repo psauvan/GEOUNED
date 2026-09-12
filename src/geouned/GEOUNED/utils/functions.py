@@ -15,7 +15,7 @@ from .geouned_classes import GeounedSurface
 from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
 from .meta_surfaces_utils import commonEdge, commonVertex, no_convex, planar_edges, eligible_plane
-from ..decompose.decom_utils_generator import cyl_edge_plane
+from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
 from .basic_functions_part2 import is_same_plane
 
@@ -186,11 +186,9 @@ def build_roundC_params(rc_list):
     roundcorner_list = []
     plane_list = []
     var_id = 0
-    for cyl, p1, p2, config_orientation in rc_list:
 
+    for cyl, p1, p2, config_orientation in rc_list:
         config, fwd_corner = config_orientation
-        # cross_in = config & mask.cross_in == mask.cross_in
-        cross_in = False
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
         cylOnly.bVar = BoolVariable(var_id)
@@ -198,8 +196,12 @@ def build_roundC_params(rc_list):
             gpa = None
         else:
             gpa = get_additional_corner_plane(cyl, p1, p2)
-            var_id += 1
-            gpa.bVar = BoolVariable(var_id)
+            if gpa in plane_list:
+                index = plane_list.index(gpa)
+                gpa.bVar = plane_list[index].bVar
+            else:
+                var_id += 1
+                gpa.bVar = BoolVariable(var_id)
         gcyl = GeounedSurface(("Cylinder", (cylOnly, gpa), cyl.Orientation))
 
         p1Axis = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
@@ -207,17 +209,29 @@ def build_roundC_params(rc_list):
 
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
-        var_id += 1
-        gp1.bVar = BoolVariable(var_id)
-        if gp1 != gp2:
+
+        if gp1 in plane_list:
+            index = plane_list.index(gp1)
+            gp1.bVar = plane_list[index].bVar
+        else:
             var_id += 1
-        gp2.bVar = BoolVariable(var_id)
+            gp1.bVar = BoolVariable(var_id)
+
+        if gp1 != gp2:
+            if gp2 in plane_list:
+                index = plane_list.index(gp2)
+                gp2.bVar = plane_list[index].bVar
+            else:
+                var_id += 1
+                gp2.bVar = BoolVariable(var_id)
+            plane_list.extend((gp1, gp2))
+        else:
+            plane_list.append(gp1)
         params = (gcyl, (gp1, gp2), config)
 
         orientation = "Forward" if fwd_corner else "Reversed"
         rc = GeounedSurface(("RoundCorner", params, orientation))
         roundcorner_list.append(rc)
-        plane_list.extend((gp1, gp2))
 
     multi_round = False
     orientation = None
@@ -232,25 +246,13 @@ def build_roundC_params(rc_list):
                     del plane_list[n - j]
             i += 1
 
-        center = FreeCAD.Vector(0, 0, 0)
-        for p in plane_list:
-            center = center + p.Surf.Position
-        center = center / len(plane_list)
-
-        ref = plane_list[0].Surf.Axis.dot(plane_list[0].Surf.Position - center)
-        orientation = "Forward" if ref > 0 else "Reversed"
-
-        for p in plane_list[1:]:
-            dot = p.Surf.Axis.dot(p.Surf.Position - center)
-            if dot * ref < 0:
-                multi_round = False
-                break
+        multi_round, orientation = convex_planes(plane_list, cyl.Surface.Axis)
 
         if multi_round:
             cylinder_list = []
-            for rc in roundcorner_list:
-                cylinder_list.append(rc.Surf.Cylinder)
-            roundcorner_list = cylinder_list
+            # for rc in roundcorner_list:
+            #    cylinder_list.append(rc.Surf.Cylinder)
+            # roundcorner_list = cylinder_list
             center = FreeCAD.Vector(0, 0, 0)
             for p in plane_list:
                 center = center + p.Surf.Position
@@ -261,6 +263,78 @@ def build_roundC_params(rc_list):
             else:
                 orientation = "Reversed" if dotvalue > 0 else "Forward"
     params = (roundcorner_list, plane_list, multi_round, orientation)
+    return params
+
+
+def build_RCC_params(rc):
+    cylcones = []
+    plane_dict = dict()
+    add_planes = []
+    init = None
+    for cc in rc:
+        if cc.Type == "Cylinder":
+            gcylcone, plane, addP = cc.Params
+        else:
+            cone, apexPlane, plane, addP = cc.Params
+            gcylcone = GeounedSurface(("Cone", (cone, apexPlane, None), "Reversed"))
+
+        add_planes.extend(addP)
+        if len(cc.Connections) == 1:
+            init = cc.Index
+        plane_dict[cc.Index] = (cc.Connections, plane)
+        cylcones.append(gcylcone)
+
+    if len(rc) == 1:
+        loop = False
+        init = tuple(plane_dict.keys())[0]
+        planeSeq = [plane_dict[init][1]]
+    else:
+        loop = True
+        if init is None:
+            init = tuple(plane_dict.keys())[0]
+        nextip, operator = plane_dict[init][0][0]
+        ip = init
+        if operator == "OR":
+            gp = plane_dict[init][1]
+            ORPlanes = [gp]
+            planeSeq = []
+        else:
+            ORPlanes = []
+            gp = plane_dict[init][1]
+            planeSeq = [gp]
+
+    while loop:
+        connect = plane_dict[nextip][0]
+        if len(connect) == 1:
+            ip = nextip
+            nextip, nextop = connect[0]
+            loop = False
+        else:
+            next1, op1 = connect[0]
+            next2, op2 = connect[1]
+            if ip != next1:
+                ip = nextip
+                nextip = next1
+                nextop = op1
+            else:
+                ip = nextip
+                nextip = next2
+                nextop = op2
+            if nextip == init:
+                loop = False
+
+        gp = plane_dict[ip][1]
+        if operator == "OR":
+            ORPlanes.append(gp)
+            if not loop:
+                planeSeq.append(ORPlanes)
+        else:
+            if ORPlanes:
+                planeSeq.append(ORPlanes)
+                ORPlanes = []
+            planeSeq.append(gp)
+        operator = nextop
+    params = (cylcones, planeSeq, add_planes)
     return params
 
 
@@ -290,7 +364,7 @@ def build_can_params(cs):
             else:
                 edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
 
-            pa = cyl_edge_plane(cyl, edges)
+            pa = cks_edge_plane(cyl, edges)
             if pa is not None:
                 sid += 1
                 pa.bVar = BoolVariable(sid)
@@ -337,7 +411,7 @@ def build_can_params(cs):
                     apexPlane.bVar = BoolVariable(sid)
                 pa = None
             else:
-                pa = cyl_edge_plane(cyl, edges)
+                pa = cks_edge_plane(cyl, edges)
                 apexPlane = None
                 if pa is not None:
                     sid += 1
@@ -361,7 +435,7 @@ def build_can_params(cs):
             sid += 1
             sphOnly.bVar = BoolVariable(sid)
 
-            pa = cyl_edge_plane(cyl, edges)
+            pa = cks_edge_plane(cyl, edges)
             if pa is not None:
                 sid += 1
                 pa.bVar = BoolVariable(sid)
@@ -456,6 +530,50 @@ def build_multip_params(plane_list):
             vertexes.append((v, n + 1))
 
     return (planeparams, edges, vertexes)
+
+
+def convex_planes(plane_list, zaxis):
+
+    center = FreeCAD.Vector(0, 0, 0)
+    for p in plane_list:
+        center = center + p.Surf.Position
+    center = center / len(plane_list)
+
+    ref = plane_list[0].Surf.Position - center
+    ref.normalize()
+    orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) > 0 else "Reversed"
+
+    if len(plane_list) < 3:
+        return True, orientation
+
+    angles = []
+    for i, p in enumerate(plane_list[1:]):
+        rp = p.Surf.Position - center
+        rp.normalize()
+        cosa = ref.dot(rp)
+        cross = ref.cross(rp)
+        sina = cross.Length
+        if cross.dot(ref) < 0:
+            sina = -sina
+        angles.append((math.atan2(sina, cosa), i))
+
+    angles.sort()
+
+    p1 = ref
+    p0 = plane_list[angles[-1][1] + 1].Surf.Axis
+    signref = zaxis.dot(p0.cross(p1))
+
+    p0 = p1
+    convex = True
+    for a, i in angles:
+        p1 = plane_list[i + 1].Surf.Axis
+        sign = zaxis.dot(p0.cross(p1))
+        if signref * sign < 0:
+            convex = False
+            break
+        p0 = p1
+
+    return convex, orientation
 
 
 def material_direction(pos, face_in, edge):

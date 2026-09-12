@@ -377,9 +377,10 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
 
         for adj in new_adjacent1:
             parents = [x[0] for x in adj.Connections]
+            plane_param_index = 2 if adj.Type == "Cone" else 1
             if face.Index in parents:
                 i = parents.index(face.Index)
-                adjPlane = adj.Params[1].Surf
+                adjPlane = adj.Params[plane_param_index].Surf
                 operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
@@ -388,9 +389,10 @@ def get_join_cone_cyl(face, parent_id, GUFaces, multiplanes, omitFaces, toleranc
         d = -d
         for adj in new_adjacent2:
             parents = [x[0] for x in adj.Connections]
+            plane_param_index = 2 if adj.Type == "Cone" else 1
             if face.Index in parents:
                 i = parents.index(face.Index)
-                adjPlane = adj.Params[1].Surf
+                adjPlane = adj.Params[plane_param_index].Surf
                 operator = "AND" if d.dot(adjPlane.Axis) > 0 else "OR"
                 adj.Connections[i][1] = operator
                 facein.Connections.append([adj.Index, operator])
@@ -856,18 +858,14 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     pr1 = ac1.cross(p1.Surface.Axis)
     if pr1.dot(p1.CenterOfMass - r1) < 0:
         n1 = -p1.Surface.Axis
-        notp1 = True
     else:
         n1 = p1.Surface.Axis
-        notp1 = False
 
     pr2 = -ac1.cross(p2.Surface.Axis)
     if pr2.dot(p2.CenterOfMass - r2) < 0:
         n2 = -p2.Surface.Axis
-        notp2 = True
     else:
         n2 = p2.Surface.Axis
-        notp2 = False
 
     fwd_cyl = cylinder.Orientation == "Forward"
     n1xnd = n1.cross(nd)
@@ -897,107 +895,10 @@ def cyl_plane_region_conf(cylinder, ep1, ep2):
     configuration += AND_p1_pd * mask.p1_pd
     configuration += AND_p2_pd * mask.p2_pd
     configuration += OR_p12_bracket * mask.p1_p2
-    configuration += notp1 * mask.notp1
-    configuration += notp2 * mask.notp2
     configuration += same_p1_pd * mask.same_p1_pd
     configuration += same_p2_pd * mask.same_p2_pd
 
     return configuration
-
-
-def plane_region(ep1, ep2, cross_in):
-
-    e1, p1 = ep1
-    e2, p2 = ep2
-    same_plane = False
-
-    n1 = p1.Surface.Axis if p1.Orientation == "Reversed" else -p1.Surface.Axis
-    n2 = p2.Surface.Axis if p2.Orientation == "Reversed" else -p2.Surface.Axis
-
-    v1, _ = material_direction(e1.Vertexes[0].Point, p1, e1)
-    v2, _ = material_direction(e2.Vertexes[0].Point, p2, e2)
-
-    z = e1.Curve.Direction
-    z.normalize()
-    x1 = e1.Vertexes[0].Point
-    x2 = e2.Vertexes[0].Point
-    r2 = 0.5 * (x2 - x1)
-    rz = r2.dot(z)
-    r2 = r2 - z * rz
-    r2.normalize()
-
-    dot1 = -r2.dot(n1)
-    dot2 = r2.dot(n2)
-
-    if abs(dot1) < 1e-6:
-        dot1 = 0
-        p12 = "AND" if dot2 < 0 else "OR"
-    elif abs(dot2) < 1e-6:
-        dot2 = 0
-        p12 = "AND" if dot1 < 0 else "OR"
-    elif dot1 * dot2 > 0:
-        dot12 = dot1 if abs(dot1) > abs(dot2) else dot2
-        p12 = "AND" if dot12 < 0 else "OR"
-    else:
-        p12 = None
-
-    if v1.dot(v2) > 0.99999:
-        # parallel p1 p2 to same direction
-        same_pc_side = True
-        v1_inter_dir = False
-    elif v1.dot(v2) < -0.99999:
-        # parallel p1 p2 to opposite direction
-        dist = p1.Surface.Axis.dot(p1.Surface.Position) - p1.Surface.Axis.dot(p2.Surface.Position)
-        if abs(dist) < 1e-5:
-            v1_inter_dir = False
-            same_pc_side = True
-            same_plane = True
-            p12 = "AND"
-        else:
-            same_pc_side = False
-            v1_inter_dir = False
-            # if same_pc_side false, p12 meaning is which p1 or p2 has AND/OR operator
-            # p12 "AND" means cell def is something like (X AND p1) (X OR p2)
-            # p12 "OR" means cell def is something like  (X OR p1) (X AND p2)
-            p12 = "AND" if dot1 < 0 else "OR"
-    else:
-        v1c = v1.cross(r2)
-        v2c = v2.cross(r2)
-        dotv12 = v1c.dot(v2c)
-        if abs(dotv12) < 1e-8:
-            # p1 or p2 parallel to pc
-            same_pc_side = True
-            v1_inter_dir = None
-        elif dotv12 > 0:
-            same_pc_side = True
-            v1_inter_dir = False
-        else:
-            same_pc_side = False
-            if cross_in:
-                p12 = None
-                v1_inter_dir = False
-            else:
-                # p12 "AND" means cell def is something like (X AND p1) (X OR p2)
-                # p12 "OR" means cell def is something like  (X OR p1) (X AND p2)
-                p12 = "AND" if dot1 < 0 else "OR"
-                v12 = v1.cross(v2)
-                v1_inter_dir = v12.dot(v1c) > 0
-
-    return same_pc_side, p12, v1_inter_dir, same_plane
-
-
-def cross_in_cylinder(p1, p2, cyl):
-    fp1 = Part.Plane(p1.Surface.Position, p1.Surface.Axis)
-    fp2 = Part.Plane(p2.Surface.Position, p2.Surface.Axis)
-    inter = fp1.intersect(fp2)
-    if len(inter) > 0:
-        line = inter[0]
-        rp = line.Location - cyl.Surface.Center
-        d = rp - rp.dot(cyl.Surface.Center) * cyl.Surface.Center
-        inside = d.Length < cyl.Surface.Radius
-    else:
-        inside = False
-    return inside
 
 
 def material_direction(pos, face_in, edge):
@@ -1118,7 +1019,7 @@ def planar_edges(edges):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < 1e-8:
+    if e0.Length < 1e-5:
         return False
     if type(e0.Curve) is Part.BSplineCurve:
         d0 = e0.derivative1At(0)

@@ -1034,75 +1034,9 @@ def inertia_matrix(points):
     Ixz = Sxz / npoints - x0 * z0
     Iyz = Syz / npoints - y0 * z0
 
-    inertia_matrix = numpy.array(((Ixx, Ixy, Ixz), (Ixy, Iyy, Iyz), (Ixz, Iyz, Izz)))
-    eigvalue, vectors = numpy.linalg.eig(inertia_matrix)
+    imatrix = numpy.array(((Ixx, Ixy, Ixz), (Ixy, Iyy, Iyz), (Ixz, Iyz, Izz)))
+    eigvalue, vectors = numpy.linalg.eig(imatrix)
     return
-
-
-def box_intersect_not_used(Fbox, Rbox):
-    PX1 = (Fbox.Box.XMin, Fbox.Box.XMax)
-    PX2 = (Rbox.Box.XMin, Rbox.Box.XMax)
-    PY1 = (Fbox.Box.YMin, Fbox.Box.YMax)
-    PY2 = (Rbox.Box.YMin, Rbox.Box.YMax)
-    PZ1 = (Fbox.Box.ZMin, Fbox.Box.ZMax)
-    PZ2 = (Rbox.Box.ZMin, Rbox.Box.ZMax)
-
-    orientation = Fbox.Orientation
-    bXmin, bXmax = Fbox.Box.XMin, Fbox.Box.XMax
-    bYmin, bYmax = Fbox.Box.YMin, Fbox.Box.YMax
-    bZmin, bZmax = Fbox.Box.ZMin, Fbox.Box.ZMax
-
-    xmin, xmax = plane_region(PX1, PX2, orientation)
-    boxes = []
-    if xmin is not None:
-        box = FreeCAD.BoundBox(xmin, bYmin, bZmin, xmax, bYmax, bZmax)
-        boxes.append(box)
-
-    ymin, ymax = plane_region(PY1, PY2, orientation)
-    if ymin is not None:
-        box = FreeCAD.BoundBox(bXmin, ymin, bZmin, bXmax, ymax, bZmax)
-        boxes.append(box)
-
-    zmin, zmax = plane_region(PZ1, PZ2, orientation)
-    if zmin is not None:
-        box = FreeCAD.BoundBox(bXmin, bYmin, zmin, bXmax, bYmax, zmax)
-        boxes.append(box)
-
-    if len(boxes) > 0:
-        box = boxes[0]
-        for b in boxes[1:]:
-            box.add(b)
-        return box
-    else:
-        return None
-
-
-def plane_region_not_used(PF, PR, orient1):
-    pfmin, pfmax = PF
-    prmin, prmax = PR
-
-    if pfmin >= prmax:
-        return (pfmin, pfmax) if orient1 == "Forward" else (prmin, prmax)
-    elif pfmax <= prmin:
-        return (pfmin, pfmax) if orient1 == "Forward" else (prmin, prmax)
-    else:
-        if pfmin < prmin:
-            if pfmax < prmax:
-                return (pfmin, prmin) if orient1 == "Forward" else (pfmax, prmax)
-            else:
-                return (pfmin, pfmax) if orient1 == "Forward" else (None, None)
-        elif pfmin > prmin:
-            if pfmax <= prmax:
-                return (None, None) if orient1 == "Forward" else (prmin, prmax)  # OK
-            else:
-                return (prmax, pfmax) if orient1 == "Forward" else (prmin, pfmin)
-        else:
-            if pfmax < prmax:
-                return (None, None) if orient1 == "Forward" else (pfmax, prmax)
-            elif pfmax > prmax:
-                return (prmax, pfmax) if orient1 == "Forward" else (None, None)
-            else:
-                return (None, None)
 
 
 def operate_box(definition, boxes):

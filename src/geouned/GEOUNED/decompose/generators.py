@@ -10,7 +10,7 @@ from ..utils.functions import (
 )
 from ..utils.geometry_gu import SolidGu, PlaneGu, CylinderGu, ConeGu
 from .decom_utils_generator import (
-    cyl_bound_planes,
+    cks_bound_planes,
     torus_bound_planes,
     exclude_no_cutting_planes,
     order_plane_face,
@@ -82,15 +82,15 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
         surf = str(face.Surface)
 
         if surf == "<Cylinder object>":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf == "<Cone object>":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf[0:6] == "Sphere":
-            for p in cyl_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces):
                 yield p
 
         elif surf == "<Toroid object>":
@@ -167,14 +167,15 @@ def next_multiplanes(solidFaces, plane_index_set):
         if isinstance(f.Surface, PlaneGu):
             planes.append(f)
 
+    used_plane = set()
     for p in planes:
-        if p.Index in plane_index_set:
+        if p.Index in used_plane:
             continue
         if not eligible_plane(p):
             continue
         mp_plane_index = set()
         mplanes = multiplane(p, planes, mp_plane_index)
-        plane_index_set.update(mp_plane_index)
+        used_plane.update(mp_plane_index)
         if len(mplanes) != 1:
             if no_convex(mplanes):
                 remove_twice_parallel(mplanes)
@@ -216,7 +217,6 @@ def next_truncCone(solid, tconeface_index):
             if f.Index in tconeface_index:
                 continue
 
-            solid.solid.exportStep("sol.stp")
             cs, surfindex = get_tcone_surfaces(f, solidFaces)
             if cs is not None:
                 gc = GeounedSurface(("TCone", build_tcone_params(cs)))

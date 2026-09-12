@@ -211,10 +211,23 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
     p1, p2 = ep1[1], ep2[1]
 
     configuration = cyl_plane_region_conf(cylinder, ep1, ep2)
-    fwd_corner = configuration & mask.fwd_corner == mask.fwd_corner
+    # check if not degenerated round corner
+    # if degenerated discard it
+    AND_cyl_p1 = configuration & mask.p1_cyl == mask.p1_cyl
+    AND_cyl_p2 = configuration & mask.p2_cyl == mask.p2_cyl
+    if not AND_cyl_p1:
+        AND_p1_pd = configuration & mask.p1_pd == mask.p1_pd
+        if AND_p1_pd:
+            return None, None
+    if not AND_cyl_p2:
+        AND_p2_pd = configuration & mask.p2_pd == mask.p2_pd
+        if AND_p2_pd:
+            return None, None
+
+    fwd_cyl = configuration & mask.fwd_cyl == mask.fwd_cyl
 
     face_index.update({cylinder.Index, p1.Index, p2.Index})
-    rc_list.append((cylinder, p1, p2, (configuration, fwd_corner)))
+    rc_list.append((cylinder, p1, p2, (configuration, fwd_cyl)))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
@@ -234,11 +247,6 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0):
             if rc is None:
                 cylinders_set.remove(f.Index)
                 continue
-
-            # rc[0][3][1] fwd_corner value of new round corner
-            # if fwd_corner != rc[0][3][1]:
-            #    cylinders_set.remove(f.Index)
-            #    continue
 
             rc_list.extend(rc)
             face_index.update(newindex)

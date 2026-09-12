@@ -11,6 +11,7 @@ from ..utils.functions import (
     get_roundCorner,
     get_Can,
     get_TCone,
+    get_reversed_cone_cylinder,
     my_dist_to_shape,
     get_box,
 )
@@ -87,6 +88,11 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
             multiplane_surface = True
+
+        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplane_surface, omitFaces)
+        for cs in reversedCC:
+            cc_region = Surfaces.add_reversedCC(cs)
+            component_definition.append(cc_region)
 
     else:
         omitFaces = set()
