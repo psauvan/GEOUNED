@@ -7,6 +7,7 @@ import numpy as np
 from numpy import linalg as LA
 
 from ..Objects import CadCell, Cone, Cylinder, Plane, Sphere, Torus
+from ..data_class import Tolerances
 from .XMLParser import get_cards
 from ....geo import GVector
 
@@ -461,9 +462,15 @@ def gq2cyl(x):
     # Conversion de GQ a Cyl
     # Ax2+By2+Cz2+Dxy+Eyz+Fxz+Gx+Hy+Jz+K=0
     # x.T*M*x + b.T*x + K = 0
-    minWTol = 5.0e-2
-    minRTol = 1.0e-3
-    # minRTol=3.e-1
+    #
+    # Unified 2026-09-14 with MCNP_parser/MCNPinput.py's own GQ
+    # classifier (see its own investigation, and Tolerances' own
+    # docstring in data_class.py, for why these must be relative
+    # tolerances): minWTol/minRTol here play the same "is this
+    # eigenvalue ~0"/"are these two eigenvalues ~equal" roles as
+    # gq_eigen_zero_rel/gq_eigen_equal_rel there.
+    minWTol = Tolerances.gq_eigen_zero_rel
+    minRTol = Tolerances.gq_eigen_equal_rel
     # lx = np.array(x)
     tp = ""
     M = np.array(

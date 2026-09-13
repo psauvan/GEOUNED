@@ -365,13 +365,17 @@ gaps for whenever it's picked back up:
   figure rounding, a genuinely 20%-eccentric elliptic cylinder correctly
   *not* rounded down to circular, and an axis-aligned control) plus
   `test_csgtocad.py::test_cylbox_convertion` (both `mcnp`/`openmc_xml`)
-  green on all 3 engines. **Deliberately out of scope**: `XML_parser/
-  XMLinput.py`'s own, separate `gq2cyl` classifier (used for OpenMC-XML
-  input) was not touched -- it already used relative tolerances (just
-  looser ones, `5e-2`/`1e-3`, and only supports cylinder/cone), so
-  unifying it with the new `Tolerances` values risked an unverified
-  regression on its own passing test without the same demonstrated bug
-  to justify it; left as a follow-up decision.
+  green on all 3 engines.
+  **Unified with `XML_parser/XMLinput.py`'s own classifier, 2026-09-14**:
+  that file's separate `gq2cyl` (used for OpenMC-XML input, cylinder/cone
+  only) already used relative tolerances, just its own looser local
+  literals (`minWTol=5e-2`, `minRTol=1e-3`) playing the exact same "is
+  this eigenvalue ~0"/"are these two eigenvalues ~equal" roles as
+  `gq_eigen_zero_rel`/`gq_eigen_equal_rel` above -- swapped in directly
+  (a 3-4 order-of-magnitude tightening). Re-verified
+  `test_cylbox_convertion[openmc_xml]` (the only real exercise of this
+  path in the repo) still green on all 3 engines after the tightening,
+  so both parsers now classify the same GQ coefficients the same way.
 - The 7 "exotic quadric" surfaces GEOReverse's own MCNP/OpenMC-XML
   `GQ`/`SQ` parser can produce -- **all 7 now implemented under `occ`/
   `ocp`, 2026-09-13/14**: `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
