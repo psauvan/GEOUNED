@@ -80,6 +80,7 @@ from .primitives import (
     Gmake_solid,
     Gmake_sphere,
     Gmake_torus,
+    Gmake_torus_elliptic,
     Gmake_wire,
 )
 from .boolean import Gcommon, Gcut, Gfuse

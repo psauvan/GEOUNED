@@ -152,8 +152,9 @@ Layout:
 engine-specific surface, reorganized into subpackages by the user
 2026-09-12 (after the `BoolSequence` unification below): `engine_dependency/`
 (`_freecad_impl.py` / `_occ_impl.py` / `_ocp_impl.py` -- CAD export via
-XCAF with per-material color, plus the 6 "exotic quadric" surfaces
-GEOUNED never produces, still unimplemented stubs under occ/ocp),
+XCAF with per-material color, plus the 7 "exotic quadric" surfaces
+GEOUNED's forward pipeline never produces itself; see "Known open items"
+-> GEOReverse for which ones are implemented as of 2026-09-13),
 dispatched by `Modules/__init__.py` the same way `geo/__init__.py`
 does; `CAD/` (`buildCAD.py`/`buildSolidCell.py`/`splitFunction.py` --
 the CSG -> CAD solid-reconstruction core); `MCNP_parser/`
@@ -173,8 +174,17 @@ directly at the same time; NOT merged with GEOUNED's own, independently-
 validated `meta_surfaces_utils.py::_perpendicular_axis` (same kind of
 "arbitrary stable perpendicular" idea, different formula, different
 unrelated call sites -- kept distinct, see `arbitrary_perpendicular`'s
-own docstring). The 6 exotic-quadric dataclasses themselves stay in
-`_freecad_impl.py`, not `geo` -- deliberate, see the paragraph below.
+own docstring). The exotic-quadric dataclasses (`GEllipsoid`,
+`GEllipticCylinder`, ...) stay local to each engine's own
+`_occ_impl.py`/`_ocp_impl.py` (`_freecad_impl.py` for that engine),
+never in `geo` -- deliberate, GEOReverse-only constructions. The one
+exception is `Gmake_torus_elliptic` (**moved to `geo/occ/primitives.py`/
+`geo/ocp/primitives.py`, 2026-09-13**, right after `Gmake_torus`, not a
+separate file -- see "Known open items" -> GEOReverse): unlike the other
+exotic quadrics, GEOUNED's own forward pipeline has a real, live need for
+degenerate-torus single-sheet construction too (its current
+`build_surface()` doesn't have it yet -- a known gap, same section), so
+it's a genuinely shared primitive, not a GEOReverse-only one.
 `GEOReverse`'s own `build_region`-equivalent
 (`CAD/buildSolidCell.py`/`CAD/splitFunction.py`/`Objects.py`) is a
 still-separate, not-yet-unified twin of GEOUNED's `build_region/` — see
@@ -208,11 +218,15 @@ functions instead of ABC methods:
   found and verified. `freecad`'s `Gsplit` only has the original
   tolerance-scaling retry; the deeper repairs are occ/ocp-only.
 
-## Current status (as of commit `8149030`, 2026-09-12)
+## Current status (as of 2026-09-13)
 
 - All 3 engines pass `tests/geo` + `tests/test_cadtocsg.py` +
-  `tests/test_csgtocad.py` **in full** as of 2026-09-12 -- the latter is
-  a new addition to that list: `test_cylbox_convertion` (both `[mcnp]`
+  `tests/test_csgtocad.py` **in full** as of 2026-09-13, occ/ocp also
+  `tests/test_georeverse_occ_impl.py`/`_ocp_impl.py` (163 passed/2
+  skipped freecad, 154 passed occ, 154 passed ocp) -- confirms the
+  `Gmake_ellipsoid`/`Gmake_elliptic_cylinder`/`Gmake_torus_elliptic`
+  work below is a zero-regression addition. `test_cylbox_convertion`
+  (both `[mcnp]`
   and `[openmc_xml]`) used to fail under all 3 engines, root-caused to
   two real bugs (a `Gsplit` tolerance-argument API mismatch, and
   `_find_cone_face` crashing on a bare-`GFace` cutting tool under
@@ -293,11 +307,115 @@ gaps for whenever it's picked back up:
   d1suned tally of ~1.119x on the same unfixed file — the two don't
   agree, and this was never chased down once the real GEOUNED-side
   fix for that investigation was found via a different route.
-- The 6 "exotic quadric" surfaces (`Gmake_elliptic_cone`,
-  `Gmake_hyperboloid`, `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
-  `Gmake_hyperbolic_cylinder`, `Gmake_paraboloid`) remain unimplemented
-  stubs in the `occ`/`ocp` backends
-  (`GEOReverse/Modules/engine_dependency/_occ_impl.py`/`_ocp_impl.py`).
+- The 7 "exotic quadric" surfaces GEOReverse's own MCNP/OpenMC-XML
+  `GQ`/`SQ` parser can produce: `Gmake_ellipsoid`,
+  `Gmake_elliptic_cylinder`, `Gmake_torus_elliptic` (all three
+  **implemented under `occ`/`ocp`, 2026-09-13** -- see below);
+  `Gmake_elliptic_cone`, `Gmake_hyperboloid`, `Gmake_hyperbolic_cylinder`,
+  `Gmake_paraboloid` remain unimplemented stubs in the `occ`/`ocp`
+  backends (`GEOReverse/Modules/engine_dependency/_occ_impl.py`/
+  `_ocp_impl.py`).
+  **`Gmake_ellipsoid`, 2026-09-13**: implemented in both `occ` and `ocp`,
+  per direct user instruction on the construction technique -- draw the
+  ellipse curve in a plane, revolve it around an axis in that plane to
+  sweep the surface, close/cap if needed, sew to a shell, then a solid.
+  For the ellipsoid specifically, only the HALF of the ellipse profile on
+  one side of the axis of revolution is built (its own two endpoints then
+  land exactly on the axis, i.e. the spheroid's two poles), so a 360-
+  degree revolve already produces a closed, watertight shell with no
+  separate capping step -- a more robust technique than
+  `_freecad_impl.py`'s own (full curve revolved 180 degrees, or a
+  parameter-space half revolved 360), which is documented (that file's
+  own module docstring) to already fail in `Part.makeSolid` on the
+  current FreeCAD version. Verified against the analytic spheroid volume
+  (4/3 * pi * perp_radius^2 * rev_radius) for a prolate case, an oblate
+  case, a degenerate sphere case, and an arbitrary non-axis-aligned
+  orientation, all exact to float precision on both engines -- see
+  `tests/test_georeverse_occ_impl.py`/`test_georeverse_ocp_impl.py` and
+  the history log for the full derivation and verification script. A
+  separate, unrelated bug was found (not fixed) while tracing the
+  parameter path: `MCNP_parser/MCNPinput.py::get_ellipsoid_parameters`
+  appears to return the axis of revolution as a bare integer index
+  (`iaxis`) rather than the corresponding `GVector` direction -- flagged,
+  not chased down (no real GQ-ellipsoid MCNP/XML fixture has been found
+  to exercise this path end to end yet; the implementation above was
+  verified via direct/synthetic parameters, matching how
+  `_freecad_impl.py`'s own known ellipsoid gaps were originally verified).
+  **`Gmake_elliptic_cylinder`, 2026-09-13**: implemented in both `occ`
+  and `ocp` -- an ellipse drawn in the plane normal to the cylinder axis
+  and centered on it, extruded `height` along that axis starting at
+  `center` (matching `_freecad_impl.py`'s own start-point convention),
+  then capped with two planar faces. Verified against the analytic
+  volume (`pi * major_radius * minor_radius * height`) and that the
+  built solid's bounding box spans exactly `[center, center +
+  height*axis]` along the axis.
+  **`Gmake_torus_elliptic`, 2026-09-13**: implemented in both `occ` and
+  `ocp`, covering both the non-degenerate case (ellipse or circle
+  revolved 360 degrees around the torus axis, closed on its own, no
+  capping needed) and the degenerate/self-intersecting case (the profile
+  crosses the axis at 2 points, splitting it into a long and a short arc;
+  only one is kept and revolved -- the long arc gives the "outer" sheet,
+  the short arc the "inner" one). Signature:
+  `Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a,
+  minor_radius_b, outer=None)` -- `major_radius` is the tube center's
+  offset from `center` (MCNP's own `R`), `minor_radius_a` is the tube
+  cross-section radius along the *same* (radial) direction as
+  `major_radius`, `minor_radius_b` along the torus axis direction
+  (`minor_radius_a > minor_radius_b` = flattened/oblate torus,
+  `minor_radius_a < minor_radius_b` = elongated along the axis,
+  `minor_radius_a == minor_radius_b` = plain circular-section torus).
+  Parameter names went through one real correction after an initial,
+  wrongly-labeled `(r_major_axis_offset, major_radius, minor_radius)`
+  version shipped -- caught on user review, fixed with a full call-site
+  and test-argument-order audit (positions 2/3 needed swapping, not just
+  renaming, since the old "major_radius" paired with the axis direction
+  and the old "minor_radius" with the radial direction -- the reverse of
+  the corrected `minor_radius_a`/`minor_radius_b` mapping). `outer`
+  defaults to `None` = derive from the sign of `major_radius` itself
+  (`>= 0` outer, `< 0` inner), matching the round-trip convention already
+  established via `GTorus.a_sign`/`torus_sheet_sign` on the forward side
+  (`GEOUNED/write/functions.py`'s `radMaj *= surf.a_sign`) -- **confirmed
+  this is GEOUNED's own internal encoding, not a real MCNP/OpenMC/
+  Serpent/PHITS format feature**: none of those formats has a field to
+  disambiguate a degenerate torus's two sheets, so GEOUNED repurposes the
+  sign of the written major radius for its own write/read round-trip
+  (the same trick already used for a cone's signed `SemiAngle`) rather
+  than inventing a new output field. Verified against the closed-form
+  torus volume for the non-degenerate case and an independent Pappus
+  numerical integration over the kept arc for the degenerate case
+  (circular and elliptical, both sheets), plus `BRepCheck_Analyzer`
+  validity, on both engines.
+  **Moved into `geo/occ/primitives.py`/`geo/ocp/primitives.py`,
+  2026-09-13** (right next to `Gmake_torus`, not a separate file --
+  an earlier attempt at a dedicated `torus_elliptic.py` sibling file was
+  corrected on review: `primitives.py` already holds every other
+  `Gmake_*` constructor flat in one file, so a special-cased split wasn't
+  justified), re-exported from `GEOReverse/Modules/engine_dependency/
+  _occ_impl.py`/`_ocp_impl.py` rather than duplicated there, and wired
+  into `geo/__init__.py`'s occ/ocp dispatch (NOT freecad -- freecad's own
+  `_freecad_impl.py::Gmake_torus_elliptic` has no outer/inner support and
+  stays local, out of scope for this move). `GEOReverse/Modules/
+  Objects.py::Torus.buildShape`'s call site, and its own `__init__`
+  parameter-validation warnings (which used to mislabel `params[3]`/
+  `params[4]` and to always warn on a negative major radius even in the
+  legitimate degenerate/inner case), were updated to match. **Still not
+  consumed by GEOUNED's own forward pipeline**: `GeounedSurface.
+  build_surface()`'s Torus branch (`GEOUNED/utils/geouned_classes.py`)
+  builds its degenerate-torus cutting tool via plain `Gmake_torus` (the
+  full self-intersecting double-sheet primitive) and never reads the
+  surface's own `Degenerated`/`a_sign` fields -- confirmed, not yet
+  fixed, a real candidate for unnecessary over-cutting during boolean
+  decomposition wherever a degenerate torus is a cutting tool (the two
+  live consumers are `decompose/decom_one_generators.py::generic_split()`
+  and `utils/boolean_solids.py::build_c_table_from_solids()`/
+  `split_solid_fast()`). Deliberately deferred (per explicit user
+  sequencing, "primero miramos el movimiento a geo" -- the move above
+  came first) to a separate follow-up; verification target when it
+  happens: `Solidos/test_models/Torus/2_degen_torii.stp` (2 degenerate
+  tori, both inner/`a_sign=-1`, already confirmed converting cleanly
+  today at tally `1.00032 +/- 0.17%`, 0 lost particles) as the
+  before/after regression check, `Torus/Torus_solid1.stp` (non-
+  degenerate) as the zero-behavior-change control.
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 

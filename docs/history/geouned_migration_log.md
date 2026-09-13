@@ -12743,3 +12743,113 @@ anywhere else in either pipeline. Both real bugs behind
 `test_cylbox_convertion` (the `Gsplit` tolerance-argument mismatch, and
 this `_find_cone_face` bare-face crash) are now fixed on all 3 engines;
 the item is closed out of "Known open items" in `CLAUDE.md`.
+
+### `Gmake_ellipsoid` implemented for occ/ocp: first of the 7 exotic quadric surfaces, 2026-09-13
+
+Per direct user instruction, kicking off implementing GEOReverse's
+remaining engine-specific gap (the "exotic quadric" surfaces, still
+FreeCAD-only stubs under `occ`/`ocp`) -- starting with the ellipse-based
+ones, beginning with the ellipsoid. First produced a full inventory of
+every surface `Objects.py` knows how to represent as a CAD shape (13
+classes total: `Plane`/`Sphere`/`Cylinder`/`Cone`/`Torus`(circular)/`Box`
+already working on all 3 engines via `geo`'s own shared primitives, plus
+7 -- not 6, `CLAUDE.md` had been missing `Gmake_torus_elliptic` --
+engine-specific "exotic" ones still `occ`/`ocp` stubs:
+`EllipticCone`/`EllipticCylinder`/`HyperbolicCylinder`/`Hyperboloid`/
+`Ellipsoid`/`Paraboloid`/`Torus`-elliptic). Also surfaced, while reading
+`_freecad_impl.py`'s own module docstring for reference, that two of
+these are *already documented broken even under `freecad`*:
+`GEllipsoid.build_shape()` fails in `Part.makeSolid` ("No shells or
+compsolids found"), and `GHyperboloid.build_shape(one_sheet=True)` fails
+via a shell-sewing tolerance issue -- both pre-existing, confirmed
+against the original unmigrated `Objects.py` at the time, not introduced
+by any port.
+
+**User's specified construction technique** (applies to all of the
+ellipse/hyperbola/parabola-based surfaces planned): draw the curve in a
+plane, revolve it around an axis lying in that plane to sweep out the
+surface, cap the open ends if needed, sew into a shell, then into a
+solid.
+
+**Ellipsoid specifically**: a spheroid of revolution -- the ellipse
+profile's own two semi-axes are `rev_radius` (along the axis of
+revolution, the polar radius) and `perp_radius` (perpendicular to it in
+the ellipse's plane, the equatorial radius). Rather than replicate
+`_freecad_impl.py`'s own two-branch technique (full closed curve
+revolved 180 degrees when the axis is the ellipse's minor axis, or a
+`[0, pi]` half revolved 360 degrees when it's the major axis) -- already
+known-broken in `Part.makeSolid` per the docstring above -- used the
+standard, more robust construction: keep only the HALF of the ellipse
+profile on the `perp_radius >= 0` side. Its two endpoints then land
+exactly ON the axis of revolution (the spheroid's two poles), so
+revolving that half by 360 degrees already produces a closed, watertight
+shell on its own -- no separate capping step needed for this particular
+surface (unlike the open hyperbola/parabola profiles planned next, which
+will need it).
+
+Implementation detail: `Geom_Ellipse` requires its own MajorRadius >=
+MinorRadius, so whichever of `rev_radius`/`perp_radius` is numerically
+larger has to be used as the ellipse's own major direction -- worked out
+the correct half-parameter range (`u1`, `u2`) for both cases by hand
+(prolate: axis is the bigger radius, half is `[0, pi]`; oblate: axis is
+the smaller radius, half is `[-pi/2, pi/2]`) rather than special-casing
+which of major/minor the axis corresponds to at the call site.
+
+**Verified independently before touching the real files**: a standalone
+scratchpad script (`gp_Ax2`/`Geom_Ellipse`/`BRepBuilderAPI_MakeEdge`/
+`BRepPrimAPI_MakeRevol`/`BRepBuilderAPI_MakeSolid`, no GEOReverse code
+involved) against the analytic spheroid volume (4/3 * pi * perp_radius^2
+* rev_radius) for a prolate case, an oblate case, and a third case with
+a fully arbitrary (non-axis-aligned) revolution axis -- all three exact
+to 8 decimal digits (`BRepCheck_Analyzer.IsValid()` also true in all
+three), except each came back with the OPPOSITE sign (a flipped/inverted
+solid orientation) for two of the three cases -- fixed by checking
+`GSolid.Volume < 0` and calling `.reverse()` (the same pattern already
+used elsewhere in this codebase, e.g. `splitFunction.py::space_decomposition`).
+
+Wired into `GEOReverse/Modules/engine_dependency/_occ_impl.py` and
+`_ocp_impl.py`: a `GEllipsoid` dataclass (mirroring `_freecad_impl.py`'s
+own field shape and its `is_inside` method -- ported as-is, including
+that method's own pre-existing, NOT-fixed-here bug, per this project's
+standing discipline of not silently fixing an unrelated bug while
+building something else), `_revolve_half_ellipse_to_solid` (the general
+half-profile-revolve helper above), `_make_ellipsoid_native` (picks
+`rev_radius`/`perp_axis`/`perp_radius` based on whether `Axis` matches
+`MinorAxis` or not, exactly mirroring `_freecad_impl.py`'s own branch),
+and `Gmake_ellipsoid` itself replacing the `_not_implemented` stub. Both
+engine files are near-identical -- only the OCP module paths (`OCP.*`
+instead of `OCC.Core.*`) and the `TopoDS.Shell(...)` cast (no `_s` suffix
+needed for that one call, unlike `TDataStd_Name.Set_s`/etc. elsewhere in
+that same file) differ.
+
+**A separate, unrelated bug found while tracing the parameter path, not
+fixed**: `MCNP_parser/MCNPinput.py::get_ellipsoid_parameters` returns
+`(pos, iaxis, [RMin, RMaj], [minorAxis, majorAxis])`, and the caller
+unpacks it as `p, v, radii, raxes = quadric` -- binding `v` (meant to be
+the axis-of-revolution `GVector`) to `iaxis`, a bare integer index
+(0/1/2), not the corresponding eigenvector direction. This would almost
+certainly break `Gmake_ellipsoid`'s own `(axis - minor_axis)` GVector
+subtraction the moment it's reached through a real MCNP/XML GQ-ellipsoid
+fixture. Not chased down further: no such fixture has been found in the
+corpus to actually exercise this path end to end, so the new
+implementation above was verified with direct/synthetic parameters
+instead (`GEllipsoid.from_values(...)`/`Gmake_ellipsoid(...)` called
+directly, and once through the real `Objects.py::Ellipsoid.buildShape`
+with hand-supplied `params`) -- the same way `_freecad_impl.py`'s own
+known ellipsoid gap was originally verified, per that file's own
+docstring.
+
+New test files, one per engine (matching `tests/geo/test_occ_impl.py`/
+`test_ocp_impl.py`'s own `importorskip` + `GEOUNED_CAD_ENGINE` self-skip
+pattern so they're safe to include in any invocation regardless of which
+engine is active): `tests/test_georeverse_occ_impl.py`,
+`tests/test_georeverse_ocp_impl.py` -- 4 tests each (prolate, oblate,
+degenerate-sphere, arbitrary-axis-orientation), all checking both
+`BRepCheck_Analyzer.IsValid()` and the analytic volume.
+
+**Verified**: full 3-engine suites (this project's own established
+command set, now also including the 2 new test files) -- `freecad` 179
+passed/4 skipped, `occ` 155 passed/2 skipped, `ocp` 155 passed/2 skipped
+-- zero failures anywhere, and each engine's own new test file runs its
+4 real tests while the *other* engine's file (and, under `freecad`,
+both) skip cleanly via their own `importorskip` guard.

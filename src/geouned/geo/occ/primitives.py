@@ -10,6 +10,7 @@ import math
 
 from OCC.Core.BRep import BRep_Builder
 from OCC.Core.BRepBuilderAPI import (
+    BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakePolygon,
     BRepBuilderAPI_MakeSolid,
@@ -21,15 +22,19 @@ from OCC.Core.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
     BRepPrimAPI_MakeCylinder,
+    BRepPrimAPI_MakeRevol,
     BRepPrimAPI_MakeSphere,
     BRepPrimAPI_MakeTorus,
 )
+from OCC.Core.Geom import Geom_Ellipse
 from OCC.Core.gp import (
+    gp_Ax1,
     gp_Ax2,
     gp_Ax3,
     gp_Dir,
     gp_Pnt,
     gp_Trsf,
+    gp_Vec,
 )
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
@@ -38,7 +43,7 @@ from OCC.Core.TopoDS import (
     TopoDS_Shell,
     topods,
 )
-from ..vector_geometry import GVector
+from ..vector_geometry import GVector, arbitrary_perpendicular
 from .topology import GEdge, GFace, GPlane, GShell, GSolid, GWire
 from ._native_utils import to_native_vector
 from .boolean import Gfuse
@@ -91,6 +96,134 @@ def Gmake_torus(center: GVector, axis: GVector, major_radius: float, minor_radiu
     ax2 = gp_Ax2(to_native_vector(center), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeTorus(ax2, major_radius, minor_radius).Shape()
     return GSolid(native)
+
+
+# `Gmake_torus_elliptic` -- circular or elliptic torus, including the
+# degenerate case where the tube self-intersects the revolution axis and
+# only one of the two resulting sheets ("outer" or "inner") is wanted.
+# Moved here from `GEOReverse/Modules/engine_dependency/_occ_impl.py`
+# (2026-09-13), where it was first implemented and verified
+# (`tests/test_georeverse_occ_impl.py`) -- GEOUNED's own forward pipeline
+# needs the same degenerate-sheet selection capability (see CLAUDE.md's
+# "Known open items" -> GEOUNED), so it now lives here as the single
+# shared implementation, re-exported back into GEOReverse rather than
+# duplicated.
+#
+# Construction technique (per direct user instruction, 2026-09-13): draw an
+# ellipse (or circle) in a plane whose center sits at distance `major_radius`
+# from the torus center, along an arbitrary direction perpendicular to the
+# torus axis; depending on the profile's own parameters, either
+# `minor_radius_a` or `minor_radius_b` is parallel to the torus axis.
+# Revolve this profile 360 degrees around the torus axis to build the torus.
+#
+# **Non-degenerate** (`abs(major_radius) >= minor_radius_a`, the tube not
+# self-intersecting the axis): the profile never touches the axis, so
+# revolving the full closed curve 360 degrees already produces a closed,
+# watertight shell on its own -- no capping needed (mirrors this file's own
+# circular-profile `Gmake_torus` above).
+#
+# **Degenerate** (`abs(major_radius) < minor_radius_a`, the tube
+# self-intersects the axis): the profile crosses the torus axis line at 2
+# points, splitting it into 2 open arcs. Only ONE of them is kept -- the
+# longer arc revolved gives the "outer" surface, the shorter arc revolved
+# gives the "inner" surface (per direct user instruction; `outer` selects
+# which). Both arcs' own endpoints land exactly ON the axis (the 2 crossing
+# points), so revolving either one 360 degrees closes into a valid shell on
+# its own, pinched at those 2 points -- the same "open profile with both
+# ends on the axis needs no capping" trick used for a half-profile
+# ellipsoid.
+def Gmake_torus_elliptic(
+    center, axis, major_radius, minor_radius_a, minor_radius_b, outer: "bool | None" = None
+) -> GSolid:
+    """`major_radius` (MCNP's own `R`) is the tube center's distance from
+    `center` along the perpendicular direction `arbitrary_perpendicular(axis)`
+    picks. `minor_radius_a`/`minor_radius_b` are the tube's own elliptical
+    cross-section radii: `minor_radius_a` along the *same* (radial)
+    direction as `major_radius` itself, `minor_radius_b` along the torus
+    axis direction -- `minor_radius_a > minor_radius_b` gives a flattened
+    ("oblate") torus, `minor_radius_a < minor_radius_b` gives a torus
+    elongated along its own axis, and `minor_radius_a == minor_radius_b`
+    is the plain circular-section torus (`geo.Gmake_torus`'s own case).
+
+    `outer` (only meaningful in the degenerate case, ignored otherwise)
+    defaults to `None`, meaning: derive it from the *sign* of
+    `major_radius` itself (`>= 0` -> outer, `< 0` -> inner) -- matching
+    the round-trip convention already established on the forward
+    (`CadToCsg`) side: `geo.surface_geometry.torus_sheet_sign` classifies
+    a real degenerate-torus face's sheet as `GTorus.a_sign` (+1 outer, -1
+    inner), and `GEOUNED/write/functions.py` writes it back out to
+    MCNP/OpenMC/etc by negating the major radius for the inner sheet
+    (`radMaj *= surf.a_sign`) rather than adding a format field that
+    doesn't exist -- so a real MCNP/OpenMC file's own signed `R` already
+    carries this distinction, and the caller doesn't need to compute
+    anything extra: it can keep passing `Ra` straight through, sign
+    included. Pass an explicit `True`/`False` to override. The magnitude
+    `abs(major_radius)` is what's actually used for every geometric
+    computation below -- the sign only ever selects `outer`."""
+    R = abs(major_radius)
+    if outer is None:
+        outer = major_radius >= 0
+
+    native_center = to_native_vector(center)
+    z_dir = gp_Dir(axis.x, axis.y, axis.z)
+    x_axis = arbitrary_perpendicular(axis)
+    x_dir = gp_Dir(x_axis.x, x_axis.y, x_axis.z)
+
+    # minor_radius_a pairs with the radial direction (x_dir, the same
+    # direction major_radius/R itself is measured along), minor_radius_b
+    # pairs with the torus axis direction (z_dir). Geom_Ellipse requires
+    # its own MajorRadius >= MinorRadius, so swap for the API call while
+    # tracking which physical direction each radius actually belongs to.
+    ellipse_major_r, ellipse_minor_r = minor_radius_a, minor_radius_b
+    ellipse_major_dir, ellipse_minor_dir = x_dir, z_dir
+    if ellipse_major_r < ellipse_minor_r:
+        ellipse_major_r, ellipse_minor_r = ellipse_minor_r, ellipse_major_r
+        ellipse_major_dir, ellipse_minor_dir = ellipse_minor_dir, ellipse_major_dir
+
+    e_center = to_native_vector(center + x_axis * R)
+
+    normal = gp_Dir(
+        gp_Vec(ellipse_major_dir.X(), ellipse_major_dir.Y(), ellipse_major_dir.Z()).Crossed(
+            gp_Vec(ellipse_minor_dir.X(), ellipse_minor_dir.Y(), ellipse_minor_dir.Z())
+        )
+    )
+    ax2 = gp_Ax2(e_center, normal, ellipse_major_dir)
+    ellipse = Geom_Ellipse(ax2, ellipse_major_r, ellipse_minor_r)
+
+    if R < minor_radius_a:
+        pz = minor_radius_b * math.sqrt(1.0 - (R / minor_radius_a) ** 2)
+        pz1 = to_native_vector(center - axis * pz)
+        pz2 = to_native_vector(center + axis * pz)
+
+        def _param(point: gp_Pnt) -> float:
+            rel = GVector(point.X() - e_center.X(), point.Y() - e_center.Y(), point.Z() - e_center.Z())
+            u = rel.dot(GVector(ellipse_major_dir.X(), ellipse_major_dir.Y(), ellipse_major_dir.Z()))
+            v = rel.dot(GVector(ellipse_minor_dir.X(), ellipse_minor_dir.Y(), ellipse_minor_dir.Z()))
+            return math.atan2(v / ellipse_minor_r, u / ellipse_major_r)
+
+        p1 = _param(pz1) % (2.0 * math.pi)
+        p2 = _param(pz2) % (2.0 * math.pi)
+        if p2 < p1:
+            p1, p2 = p2, p1
+        # (p1, p2) and (p2, p1 + 2pi) are the two candidate arcs between the
+        # crossing points; whichever spans more than half the full circle
+        # is the longer ("outer") one.
+        if (p2 - p1) > math.pi:
+            arc_long, arc_short = (p1, p2), (p2, p1 + 2.0 * math.pi)
+        else:
+            arc_short, arc_long = (p1, p2), (p2, p1 + 2.0 * math.pi)
+        t_start, t_end = arc_long if outer else arc_short
+
+        edge = BRepBuilderAPI_MakeEdge(ellipse, t_start, t_end).Edge()
+    else:
+        edge = BRepBuilderAPI_MakeEdge(ellipse).Edge()
+
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    shell = BRepPrimAPI_MakeRevol(wire, gp_Ax1(native_center, z_dir), 2.0 * math.pi).Shape()
+    solid = GSolid(BRepBuilderAPI_MakeSolid(topods.Shell(shell)).Solid())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
 
 
 def Gmake_half_space(plane: GPlane) -> GSolid:

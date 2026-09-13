@@ -616,12 +616,21 @@ class Torus:
         self.id = Id
         self.shape = None
         self.params = params
-        if params[2] < 0:
+        if params[2] < 0 and abs(params[2]) >= params[4]:
+            # A negative major radius only has meaning for a degenerate
+            # (self-intersecting) torus, where its sign selects the inner
+            # sheet -- GEOUNED's own round-trip encoding convention (no
+            # MCNP/OpenMC/Serpent/PHITS format has a real field for this;
+            # see `geo/*/primitives.py::Gmake_torus_elliptic`'s docstring
+            # and `GEOUNED/write/functions.py`'s `radMaj *= surf.a_sign`),
+            # not a general negative-value error. Outside the degenerate
+            # case (abs(Ra) >= minor_radius_a, i.e. params[4]) the sign is
+            # meaningless, so a negative value there really is bad.
             print(f"{self.type} surface {label} has a negative major radius: {params[2]}")
         if params[3] <= 0:
-            print(f"{self.type} surface {label} has a bad minor radius a value: {params[3]}")
+            print(f"{self.type} surface {label} has a bad minor radius b value: {params[3]}")
         if params[4] <= 0:
-            print(f"{self.type} surface {label} has a bad minor radius b value: {params[4]}")
+            print(f"{self.type} surface {label} has a bad minor radius a value: {params[4]}")
 
         if tr is not None:
             self.transform(tr)
@@ -640,7 +649,11 @@ class Torus:
         if (abs(Rb - Rc) < 1e-5) and Ra > 0:
             self.shape = Gmake_torus(center, axis, Ra, Rb)  # circular Torus
         else:
-            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rb, Rc)  # elliptic Torus
+            # Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a,
+            # minor_radius_b): minor_radius_a pairs with the same (radial)
+            # direction as major_radius/Ra itself -- that's Rc here, not Rb
+            # (see Gmake_torus_elliptic's own docstring in geo/*/primitives.py).
+            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rc, Rb)  # elliptic Torus
 
 
 class Box:
