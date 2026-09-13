@@ -166,8 +166,6 @@ def export_occ(buildCAD_list, formats, output_filename, barename):
                 raise RuntimeError(f"STEP export failed for {filename} (status={status})")
 
 
-
-
 # ---------------------------------------------------------------------------
 # GEllipsoid
 #
@@ -429,7 +427,9 @@ def _make_hyperboloid_sheet(surf: "GHyperboloid", length: float, major_axis: GVe
     center_native = to_native_vector(surf.Center)
     major_dir = gp_Dir(major_axis.x, major_axis.y, major_axis.z)
     minor_dir = gp_Dir(surf.MinorAxis.x, surf.MinorAxis.y, surf.MinorAxis.z)
-    normal = gp_Dir(gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z())))
+    normal = gp_Dir(
+        gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z()))
+    )
     ax2 = gp_Ax2(center_native, normal, major_dir)
     hyperbola = Geom_Hyperbola(ax2, surf.MajorRadius, surf.MinorRadius)
 
@@ -553,7 +553,9 @@ def _make_hyperbolic_cylinder_native(surf: "GHyperbolicCylinder", height: float)
     center_native = to_native_vector(surf.Center)
     major_dir = gp_Dir(surf.MajorAxis.x, surf.MajorAxis.y, surf.MajorAxis.z)
     minor_dir = gp_Dir(surf.MinorAxis.x, surf.MinorAxis.y, surf.MinorAxis.z)
-    normal = gp_Dir(gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z())))
+    normal = gp_Dir(
+        gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z()))
+    )
     ax2 = gp_Ax2(center_native, normal, major_dir)
     hyperbola = Geom_Hyperbola(ax2, surf.MajorRadius, surf.MinorRadius)
 
@@ -621,9 +623,7 @@ class GHyperbolicCylinder:
 
 
 def Gmake_hyperbolic_cylinder(center, axis, major_radius, minor_radius, major_axis, minor_axis, height) -> GSolid:
-    return GHyperbolicCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(
-        height
-    )
+    return GHyperbolicCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(height)
 
 
 def Gmake_ellipsoid(center, axis, major_radius, minor_radius, major_axis, minor_axis) -> GSolid:

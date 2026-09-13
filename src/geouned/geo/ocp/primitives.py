@@ -107,9 +107,7 @@ def Gmake_torus(center: GVector, axis: GVector, major_radius: float, minor_radiu
 # construction-technique writeup; only the OCP module paths and the
 # `TopoDS.Shell(...)` cast (no `_s`-suffixed free function needed here)
 # differ from the pythonocc-core version.
-def Gmake_torus_elliptic(
-    center, axis, major_radius, minor_radius_a, minor_radius_b, outer: "bool | None" = None
-) -> GSolid:
+def Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a, minor_radius_b, outer: "bool | None" = None) -> GSolid:
     """`major_radius` (MCNP's own `R`) is the tube center's distance from
     `center` along the perpendicular direction `arbitrary_perpendicular(axis)`
     picks. `minor_radius_a`/`minor_radius_b` are the tube's own elliptical

@@ -48,7 +48,6 @@ from .topology import GEdge, GFace, GPlane, GShell, GSolid, GWire
 from ._native_utils import to_native_vector
 from .boolean import Gfuse
 
-
 # ---------------------------------------------------------------------------
 # Primitive construction
 # ---------------------------------------------------------------------------
@@ -132,9 +131,7 @@ def Gmake_torus(center: GVector, axis: GVector, major_radius: float, minor_radiu
 # its own, pinched at those 2 points -- the same "open profile with both
 # ends on the axis needs no capping" trick used for a half-profile
 # ellipsoid.
-def Gmake_torus_elliptic(
-    center, axis, major_radius, minor_radius_a, minor_radius_b, outer: "bool | None" = None
-) -> GSolid:
+def Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a, minor_radius_b, outer: "bool | None" = None) -> GSolid:
     """`major_radius` (MCNP's own `R`) is the tube center's distance from
     `center` along the perpendicular direction `arbitrary_perpendicular(axis)`
     picks. `minor_radius_a`/`minor_radius_b` are the tube's own elliptical
