@@ -579,30 +579,109 @@ gaps for whenever it's picked back up:
   `test_georeverse_*_impl.py` on occ/ocp, now 43 tests each) still green
   on all 3 engines after all of the above (freecad 163 passed, occ 178
   passed, ocp 178 passed, 2026-09-14).
-  **Pending / not yet done, as of 2026-09-14** -- all verification above
-  is unit-level (direct `Gmake_*` calls with synthetic parameters, plus
-  the 40-point `is_inside` ground truth); none of the 7 has been
-  exercised end to end yet:
-  - No real MCNP/OpenMC fixture in the corpus is known to actually
-    contain a `GQ`/`SQ` ellipsoid, elliptic cone, hyperboloid, hyperbolic
-    cylinder, or paraboloid surface -- the full round-trip path
-    (`MCNP_parser`/`XML_parser` -> `Objects.py` -> `CAD/buildSolidCell.py`
-    -> STEP export) has never actually run for any of them. Finding or
-    building one such fixture per surface type is the natural next step
-    before trusting these on a real model.
+  **End-to-end fixtures + `convert_to_planes` support, 2026-09-14**:
+  real MCNP fixtures were built and round-tripped (`MCNP_parser` ->
+  `Objects.py` -> `Utils/boundBox.py::convert_to_planes` ->
+  `CAD/buildSolidCell.py`/`splitFunction.py` -> STEP export) for 3 of
+  the 7 surfaces -- ellipsoid (prolate, capped by nothing since the
+  surface is already closed), elliptic cylinder (a=50cm/b=30cm,
+  Z-aligned, capped with 2 planes), and elliptic cone (apex at origin,
+  RefRadius=100/MajorRadius=50/MinorRadius=30, capped with 2 planes) --
+  each verified against its own closed-form analytic volume, exact to
+  float precision on both `occ` and `ocp`. This is the first time any
+  of the 7 exotic quadrics has been exercised through the real pipeline
+  rather than via direct/synthetic `Gmake_*` calls. `convert_to_planes`
+  (the bounding-plane approximation `buildSolidCell.py` needs before
+  calling the real shape builder, previously only implemented for
+  plane/cylinder/cone/sphere/torus) gained 3 new branches:
+  `elliptic_cylinder_to_planes` (same 4-tangent-plane idea as
+  `cylinder_to_planes`, but the single radius `R` replaced by the
+  ellipse's own `major_radius`/`minor_radius` taken directly from the
+  surface's stored axes, not `get_orto_axis`), `ellipsoid_to_planes`
+  (a `sphere_to_planes`/`cylinder_to_planes` mix -- 4 equatorial planes
+  at the same distance from `center`, using whichever radius is
+  perpendicular to the revolution axis, plus 2 polar caps at the other
+  radius), and `elliptic_cone_to_planes` (same idea as `cone_to_planes`,
+  but the major/minor cross-section directions get their own distinct
+  half-angle `atan(radius/RefRadius)` instead of one shared value, and
+  use only 4 fixed directions -- `+/-major_axis`, `+/-minor_axis` --
+  instead of `nface` evenly-spaced ones, since the two directions aren't
+  interchangeable). `hyperboloid`/`cylinder_hyperbolic` still have no
+  `convert_to_planes` branch -- blocked on the classifier-dispatch
+  question below.
+  **3 more real, independent bugs found and fixed while building these
+  fixtures** (none are tolerance issues -- all pre-existing, unrelated
+  to each other):
+  1. `MCNP_parser/MCNPinput.py::get_ellipsoid_parameters`'s
+     already-flagged axis-as-bare-int bug is now **fixed**: the final
+     return used to hand back the raw eigenvector index (`iaxis`, an
+     `int`) in the axis-of-revolution slot instead of the matching
+     `GVector` -- crashed the instant a real GQ-ellipsoid reached
+     `GEllipsoid.build_shape`'s own `(self.Axis - self.MinorAxis)`
+     subtraction (no such operator on an `int`). Fixed to
+     `eVect.T[iaxis]` via `_gvec(...)`, matching every other
+     parameter-getter's own convention.
+  2. `MCNP_parser/MCNPinput.py::get_cone_parameters`'s elliptic-cone
+     branch computed `Ra`/`Rmin`/`Rmaj` as `abs(1 / eVal[...])` --
+     missing a `sqrt`. Eigenvalues carry units of 1/length^2 (quadratic-
+     form coefficients), so `1/eVal` has units of length^2, not length;
+     the circular-cone branch just above it already gets this right
+     (`tan = sqrt(-eVal[...] / eVal[iaxis])`). Silently gave the wrong
+     (squared) cross-section scale to every real elliptic cone -- caught
+     via the new `elliptic_cone.mcnp` fixture's volume coming back ~6.67x
+     too small; fixed to `sqrt(abs(1 / eVal[...]))` for all three, which
+     is also the scale-invariant form (the `Rmaj/Ra`, `Rmin/Ra` ratios
+     `Gmake_elliptic_cone` actually uses stay constant under any overall
+     GQ-coefficient rescaling, matching this session's own established
+     scale-invariance principle for this whole classifier).
+  3. `CAD/splitFunction.py::surface_side` -- a SEPARATE, parallel
+     point-classification implementation from the dataclass-level
+     `is_inside()` methods fixed earlier this session in
+     `_occ_impl.py`/`_ocp_impl.py` (this one is the one actually invoked
+     during real boolean solid-splitting, confirmed via a live traceback
+     while converting the `ellipsoid.mcnp` fixture) -- had the same bug
+     family, independently: a `Center`-double-subtraction in both its
+     `hyperboloid` branch (`v = r - (rX * rAxes[1] + center)`, `r` is
+     already relative to `center`) and its `ellipsoid` branch
+     (`rY = r - (rX * axis + center)`, plus `rY` was left as a `GVector`
+     instead of a scalar distance), and a `radY, radY = radii` typo in
+     the `ellipsoid` branch that left `radX` completely undefined
+     (`UnboundLocalError` the moment a real ellipsoid reached this code).
+     All 3 fixed to match the already-established, already-verified
+     logic in `_occ_impl.py::GEllipsoid.is_inside`/`GHyperboloid.is_inside`.
+  Verified: `elliptic_cylinder.mcnp`/`ellipsoid.mcnp`/`elliptic_cone.mcnp`
+  all convert cleanly and match their analytic volumes on both `occ` and
+  `ocp`; full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` +
+  `test_georeverse_*_impl.py` + `test_gq_classification.py` +
+  `test_boolean_function.py` still green on all 3 engines (199 passed +
+  1 skipped on occ/ocp each) after all of the above -- these 3 bug
+  fixes are zero-regression.
+  **Still pending / not yet done, as of 2026-09-14**:
+  - No real fixture yet for hyperboloid, hyperbolic cylinder, or
+    paraboloid -- `paraboloid` already has a `convert_to_planes` branch
+    (`parabola_to_planes`, pre-existing) but has never been exercised
+    end to end either.
+  - **Open, unresolved question, raised to the user, not yet answered**:
+    the GQ classifier's `stype="cylinder_hyperbolic"` (from
+    `get_cylinder_parameters`, requiring a genuinely zero eigenvalue --
+    a true flat/straight-prism axis) is mathematically different from a
+    real hyperboloid-of-one-sheet-of-revolution (all 3 eigenvalues
+    nonzero, circular cross-section), which always classifies as
+    `stype="hyperboloid"` and routes to `Gmake_hyperboloid`, never to
+    the new revolve-around-minor-axis `Gmake_hyperbolic_cylinder` --
+    meaning a real "hourglass" surface (like the cooling-tower fixture
+    drafted this session, not yet committed/kept) is never actually
+    routed to the constructor built for it. Blocks both the
+    hyperboloid/cylinder_hyperbolic `convert_to_planes` branches and any
+    real end-to-end fixture for either surface until resolved.
   - `GHyperboloid`'s `OneSheet` flag changed meaning this session (branch
     1 only vs. both, no longer the standard math one-sheet/two-sheet
     distinction -- see its own entry above). Not yet checked: whether
     whatever `MCNP_parser`/`XML_parser` code parses a real hyperboloid
     card's own one/two-sheet indicator produces a value consistent with
     this *new* meaning, or was written assuming the old one -- a real
-    semantic risk until a live fixture exercises it.
-  - The already-flagged `MCNP_parser/MCNPinput.py::get_ellipsoid_parameters`
-    bug (returns the axis of revolution as a bare integer index rather
-    than a `GVector` direction) is still unfixed. Not yet checked: whether
-    the analogous parameter-getters for the other 6 surfaces have the
-    same class of bug -- worth a quick audit before relying on any of
-    them against real parsed input.
+    semantic risk until a live fixture exercises it (entangled with the
+    classifier-dispatch question above).
   - `freecad`'s own exotic-quadric implementations (`_freecad_impl.py`)
     were deliberately left untouched and are now a genuinely different
     surface from the occ/ocp versions for at least
@@ -610,6 +689,9 @@ gaps for whenever it's picked back up:
     documented, not a bug -- but means the same MCNP file can reconstruct
     visibly different CAD depending on `GEOUNED_CAD_ENGINE` for these 7
     surfaces specifically, unlike everything else in the project.
+    `freecad`'s own `CAD/splitFunction.py::surface_side` is the SAME file
+    across all 3 engines (no per-engine branching there), so the 3 bug
+    fixes above apply equally to `freecad`.
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 

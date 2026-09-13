@@ -1089,9 +1089,23 @@ def get_cone_parameters(eVal, eVect, T, iaxis):
         axis = _gvec(np.transpose(eVect)[iaxis])
         minAxis = _gvec(np.transpose(eVect)[other1])
         majAxis = _gvec(np.transpose(eVect)[other2])
-        Ra = abs(1 / eVal[iaxis])
-        Rmin = abs(1 / eVal[other1])
-        Rmaj = abs(1 / eVal[other2])
+        # Fixed 2026-09-14: these three used to be `abs(1 / eVal[...])`,
+        # missing the sqrt -- eigenvalues carry units of 1/length^2 (they
+        # are coefficients of a quadratic form), so `1/eVal` has units of
+        # length^2, not length. Undetected by the one synthetic elliptic-
+        # cone test that existed at the time only because its own GQ card
+        # happened to use eVal[iaxis] == -1 exactly (sqrt(1) == 1, so `Ra`
+        # alone didn't change) -- Rmin/Rmaj were visibly wrong (e.g. 0.09
+        # instead of the correct 0.3), scaling the built cone's real
+        # cross-section by the wrong (squared) factor. `sqrt(abs(1/eVal))`
+        # matches the circular-cone branch above (`tan = sqrt(-eVal[...]
+        # / eVal[iaxis])`) and is scale-invariant: multiplying the whole
+        # GQ card by a constant scales every eVal by that same constant,
+        # which cancels in the Rmaj/Ra, Rmin/Ra ratios `Gmake_elliptic_cone`
+        # actually uses.
+        Ra = float(np.sqrt(abs(1 / eVal[iaxis])))
+        Rmin = float(np.sqrt(abs(1 / eVal[other1])))
+        Rmaj = float(np.sqrt(abs(1 / eVal[other2])))
 
         if Rmin > Rmaj:
             Rmin, Rmaj = Rmaj, Rmin
@@ -1178,7 +1192,18 @@ def get_ellipsoid_parameters(eVal, eVect, T, k):
     if t > cylTan:
         return get_cylinder_parameters(eVal, eVect, T, k, iMaj)
     else:
-        return "ellipsoid", (pos, iaxis, [RMin, RMaj], [minorAxis, majorAxis])
+        # Fixed 2026-09-14: this used to return the bare int `iaxis`
+        # (an eigenvector *index*) in the axis-of-revolution slot instead
+        # of the corresponding GVector direction -- crashed the moment a
+        # real GQ-ellipsoid surface reached `GEllipsoid.build_shape`'s
+        # own `(self.Axis - self.MinorAxis)` subtraction (an int has no
+        # such operator against a GVector). `eVect.T[iaxis]` is exactly
+        # equal to either `majorAxis` or `minorAxis` above (whichever one
+        # kept `iaxis`'s own index after the possible major/minor swap),
+        # matching `GEllipsoid`'s own convention that `Axis` must equal
+        # one of its two named axes exactly.
+        axis = _gvec(np.transpose(eVect)[iaxis])
+        return "ellipsoid", (pos, axis, [RMin, RMaj], [minorAxis, majorAxis])
 
 
 def getGQAxis(eVal, k):

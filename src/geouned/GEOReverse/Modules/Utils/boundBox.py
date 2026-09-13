@@ -454,8 +454,14 @@ def quadric_to_plane(cellDef, surfaces, orientation):
 def convert_to_planes(s, pos):
     if s.type == "cylinder":
         return cylinder_to_planes(s, pos)
+    elif s.type == "cylinder_elliptic":
+        return elliptic_cylinder_to_planes(s, pos)
+    elif s.type == "ellipsoid":
+        return ellipsoid_to_planes(s, pos)
     elif s.type == "cone":
         return cone_to_planes(s, pos)
+    elif s.type == "cone_elliptic":
+        return elliptic_cone_to_planes(s, pos)
     elif s.type == "sphere":
         return sphere_to_planes(s, pos)
     elif s.type == "torus":
@@ -505,6 +511,38 @@ def cylinder_to_planes(cyl, pos):
     return (p1, p2, p3, p4)
 
 
+def elliptic_cylinder_to_planes(cyl, pos):
+    """Same idea as `cylinder_to_planes` (a bounding/bounded rectangle of
+    4 tangent planes, shrunk by 1/sqrt(2) for a conservative "inside"
+    approximation, left full-size for a conservative "outside" one,
+    averaged when the sense is undetermined), just with the single
+    radius `R` replaced by the ellipse's own two semi-axes `a`
+    (`major_radius`, along `major_axis`) and `b` (`minor_radius`, along
+    `minor_axis`) -- unlike the circular case, these two directions are
+    NOT interchangeable, so they're taken directly from the surface's
+    own stored axes instead of `get_orto_axis(axis)`."""
+    center, axis, radii, raxes = cyl.params
+    minor_radius, major_radius = radii
+    minor_axis, major_axis = raxes
+    if pos is None:
+        minor_radius = minor_radius * 0.8535533906
+        major_radius = major_radius * 0.8535533906
+    elif pos:
+        minor_radius = minor_radius * 0.70710678
+        major_radius = major_radius * 0.70710678
+
+    r1 = center + major_axis * major_radius
+    r2 = center - major_axis * major_radius
+    r3 = center + minor_axis * minor_radius
+    r4 = center - minor_axis * minor_radius
+
+    p1 = GPlane.from_values(r1, -major_axis)
+    p2 = GPlane.from_values(r2, major_axis)
+    p3 = GPlane.from_values(r3, -minor_axis)
+    p4 = GPlane.from_values(r4, minor_axis)
+    return (p1, p2, p3, p4)
+
+
 def cone_to_planes(cone, pos):
     apex, axis, t, dbl = cone.params
     if pos is None:
@@ -532,6 +570,49 @@ def cone_to_planes(cone, pos):
     return cplanes
 
 
+def elliptic_cone_to_planes(cone, pos):
+    """Same idea as `cone_to_planes`, but the cross-section's two principal
+    directions (`major_axis`/`minor_axis`) get their own distinct half-angle
+    instead of sharing a single, direction-independent one -- same principle
+    as `elliptic_cylinder_to_planes` vs. `cylinder_to_planes`: the tangent
+    planes are built directly from the surface's own stored major/minor
+    axes (not an arbitrary `get_orto_axis` basis), one pair of planes per
+    axis instead of `nface` evenly-spaced directions, since the two
+    directions are not interchangeable. `ref_radius` is the axial distance
+    at which the cross-section ellipse's semi-axes equal `major_radius`/
+    `minor_radius` exactly (the MCNP GQ/SQ scale-with-distance convention),
+    so each direction's own half-angle is `atan(radius / ref_radius)`."""
+    apex, axis, ref_radius, radii, raxes, dblsht = cone.params
+    minor_radius, major_radius = radii
+    minor_axis, major_axis = raxes
+
+    t_major = major_radius / ref_radius
+    t_minor = minor_radius / ref_radius
+    if pos is None:
+        t_major = t_major * 0.8535533906
+        t_minor = t_minor * 0.8535533906
+    elif pos:
+        t_major = t_major * 0.70710678
+        t_minor = t_minor * 0.70710678
+
+    sa_major = math.atan(t_major)
+    sa_minor = math.atan(t_minor)
+
+    directions = (
+        (major_axis, sa_major),
+        (-major_axis, sa_major),
+        (minor_axis, sa_minor),
+        (-minor_axis, sa_minor),
+    )
+    cplanes = []
+    for rho, sa in directions:
+        ni = -axis * math.sin(sa) + rho * math.cos(sa)
+        cplanes.append(GPlane.from_values(apex, -ni))
+
+    cplanes.append(GPlane.from_values(apex, axis))
+    return tuple(cplanes)
+
+
 def sphere_to_planes(sphere, pos):
     center, radius = sphere.params
     if pos is None:
@@ -556,6 +637,50 @@ def sphere_to_planes(sphere, pos):
     p4 = GPlane.from_values(r4, y)
     p5 = GPlane.from_values(r5, -z)
     p6 = GPlane.from_values(r6, z)
+    return (p1, p2, p3, p4, p5, p6)
+
+
+def ellipsoid_to_planes(ellip, pos):
+    """Mix of `sphere_to_planes` and `cylinder_to_planes` (per direct
+    user instruction): 4 planes surround the equator, all at the SAME
+    distance from `center` (the equatorial cross-section of a spheroid
+    of revolution is always a circle) -- that shared distance is
+    `perp_radius`, whichever of the ellipsoid's own two radii is
+    perpendicular to `axis` (`major_radius` if oblate, `minor_radius` if
+    prolate, matching `_make_ellipsoid_native`'s own prolate/oblate
+    branch). 2 more planes close it off at each pole, at `rev_radius`
+    (the other radius, the one along `axis` itself)."""
+    center, axis, radii, raxes = ellip.params
+    minor_radius, major_radius = radii
+    minor_axis, major_axis = raxes
+
+    if (axis - minor_axis).length < 1e-5:
+        rev_radius, perp_radius = minor_radius, major_radius
+    else:
+        rev_radius, perp_radius = major_radius, minor_radius
+
+    if pos is None:
+        rev_radius = rev_radius * 0.8535533906
+        perp_radius = perp_radius * 0.8535533906
+    elif pos:
+        rev_radius = rev_radius * 0.70710678
+        perp_radius = perp_radius * 0.70710678
+
+    x, y = get_orto_axis(axis)
+
+    r1 = center + x * perp_radius
+    r2 = center - x * perp_radius
+    r3 = center + y * perp_radius
+    r4 = center - y * perp_radius
+    r5 = center + axis * rev_radius
+    r6 = center - axis * rev_radius
+
+    p1 = GPlane.from_values(r1, -x)
+    p2 = GPlane.from_values(r2, x)
+    p3 = GPlane.from_values(r3, -y)
+    p4 = GPlane.from_values(r4, y)
+    p5 = GPlane.from_values(r5, -axis)
+    p6 = GPlane.from_values(r6, axis)
     return (p1, p2, p3, p4, p5, p6)
 
 

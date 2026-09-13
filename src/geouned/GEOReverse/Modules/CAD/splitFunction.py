@@ -228,7 +228,7 @@ def surface_side(p, surf):
 
         r = p - center
         rX = r.dot(rAxes[1])
-        v = r - (rX * rAxes[1] + center)
+        v = r - rX * rAxes[1]
         d = v.length
 
         one = 1 if onesht else -1
@@ -245,12 +245,12 @@ def surface_side(p, surf):
 
         r = p - center
         rX = r.dot(axis)
-        rY = r - (rX * axis + center)
+        rY = (r - rX * axis).length
 
         if (axis - rAxes[0]).length < 1e-5:
-            radX, radY = radii
+            radX, radY = radii[0], radii[1]
         else:
-            radY, radY = radii
+            radX, radY = radii[1], radii[0]
 
         radical = 1 - (rX / radX) ** 2
         if radical > 0:
