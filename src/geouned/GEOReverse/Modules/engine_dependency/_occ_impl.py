@@ -54,16 +54,16 @@ involved). The `GetColor(TopoDS_Shape const&, ...)` shape-based overload
 works fine. Not fixed/worked around here since nothing in this codebase
 currently reads colors back -- flagged for whenever that's needed.
 
-**Exotic quadric surfaces**: `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`
-and `Gmake_torus_elliptic` (the last one now shared with GEOUNED, imported
-from `geo` -- see its own module for the construction technique) are
-implemented. `Gmake_elliptic_cone`, `Gmake_hyperboloid` and
-`Gmake_hyperbolic_cylinder` are still NOT implemented -- building these
-needs pyOCC equivalents of `_freecad_impl.py`'s own
-`Part.Hyperbola`/`.extrude()`/`Part.makeLoft` constructions -- likely
-`Geom_Hyperbola`, `BRepPrimAPI_MakePrism` for the extrude-based
-hyperbolic-cylinder build, and `BRepOffsetAPI_ThruSections` for the
-loft-based elliptic-cone build. Flagged as its own follow-up phase.
+**Exotic quadric surfaces**: all 7 are now implemented --
+`Gmake_ellipsoid`, `Gmake_elliptic_cylinder`, `Gmake_torus_elliptic` (the
+last one now shared with GEOUNED, imported from `geo`), `Gmake_elliptic_cone`,
+`Gmake_hyperboloid`, `Gmake_hyperbolic_cylinder` (see their own
+module-level comment blocks for the construction techniques and, for
+the latter, how it revolves rather than extrudes -- a genuinely
+different surface from `_freecad_impl.py`'s own version) and
+`Gmake_paraboloid` (same one-branch-revolve technique as
+`Gmake_hyperboloid`, but always a single sheet -- no second branch to
+mirror).
 """
 
 import math
@@ -73,12 +73,13 @@ from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakeSolid,
+    BRepBuilderAPI_MakeVertex,
     BRepBuilderAPI_MakeWire,
     BRepBuilderAPI_Sewing,
 )
 from OCC.Core.BRepOffsetAPI import BRepOffsetAPI_ThruSections
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeRevol
-from OCC.Core.Geom import Geom_Ellipse
+from OCC.Core.Geom import Geom_Circle, Geom_Ellipse, Geom_Hyperbola, Geom_Parabola
 from OCC.Core.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Vec
 from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Quantity import Quantity_Color, Quantity_TOC_RGB
@@ -92,7 +93,7 @@ from OCC.Core.TopoDS import topods
 from OCC.Core.XCAFApp import XCAFApp_Application
 from OCC.Core.XCAFDoc import XCAFDoc_ColorGen, XCAFDoc_DocumentTool
 
-from ....geo import GSolid, GVector, Gmake_torus_elliptic, arbitrary_perpendicular, to_native_vector
+from ....geo import GSolid, GVector, Gfuse, Gmake_compound, Gmake_torus_elliptic, arbitrary_perpendicular, to_native_vector
 from ..Utils.cad_export_shared import cell_label_name, material_colors, material_label_name, universe_label_name
 
 SUPPORTED_FORMATS = {"stp", "step"}
@@ -165,16 +166,6 @@ def export_occ(buildCAD_list, formats, output_filename, barename):
                 raise RuntimeError(f"STEP export failed for {filename} (status={status})")
 
 
-def _not_implemented(name):
-    def _raise(*args, **kwargs):
-        raise NotImplementedError(
-            f"{name} has no pyOCC implementation yet -- exotic quadric surfaces "
-            "(ellipsoid/hyperboloid/elliptic cone/elliptic or hyperbolic cylinder/paraboloid/elliptic "
-            "torus) are still FreeCAD-only. See this module's own docstring for what's needed to add one."
-        )
-
-    _raise.__name__ = name
-    return _raise
 
 
 # ---------------------------------------------------------------------------
@@ -215,27 +206,36 @@ class GEllipsoid:
         return cls(center, axis, major_radius, minor_radius, major_axis, minor_axis)
 
     def is_inside(self, point: GVector) -> bool:
-        """Ported as-is from `_freecad_impl.py::GEllipsoid.is_inside` (pure
-        GVector math, identical on every engine) -- including its own
-        pre-existing bug in the "revolution around minor axis" branch (see
-        that method's own docstring). NOT fixed here, per this project's
-        standing discipline of not silently fixing an unrelated bug while
-        porting/building something else."""
+        """Fixed 2026-09-14 -- independently verified against 44 hand-
+        computed ground-truth points (see the history log for the
+        verification script): the version ported as-is from
+        `_freecad_impl.py::GEllipsoid.is_inside` had two real bugs, not
+        just the one its own docstring flagged. (1) `ry_vec = r - (rx *
+        self.Axis + self.Center)` double-subtracted `Center` (`r` is
+        already relative to `Center`), breaking every case once `Center`
+        isn't the origin. (2) BOTH branches picked the wrong pairing of
+        radius to axis: the "else" branch (revolve around `MajorAxis`)
+        used `MinorRadius` for both the axial and radial extent, ignoring
+        `MajorRadius` entirely; the "if" branch (revolve around
+        `MinorAxis`, believed correct by the old docstring) swapped which
+        radius belongs to the axial direction vs. the radial one. Fixed:
+        whichever axis `Axis` actually is (`MajorAxis` or `MinorAxis`)
+        keeps its own matching radius as the axial extent, the other
+        radius as the perpendicular (radial) extent."""
         r = point - self.Center
         rx = r.dot(self.Axis)
-        ry_vec = r - (rx * self.Axis + self.Center)
-        ry = ry_vec.length
+        perp = r - rx * self.Axis
+        ry = perp.length
 
-        if (self.Axis - self.MinorAxis).length < 1e-5:
-            rad_x, rad_y = self.MajorRadius, self.MinorRadius
+        if (self.Axis - self.MajorAxis).length < 1e-5:
+            axial_radius, radial_radius = self.MajorRadius, self.MinorRadius
         else:
-            rad_y = self.MinorRadius  # pre-existing bug: rad_x left undefined, ported as-is
-            rad_x = rad_y
+            axial_radius, radial_radius = self.MinorRadius, self.MajorRadius
 
-        radical = 1 - (rx / rad_x) ** 2
+        radical = 1 - (rx / axial_radius) ** 2
         if radical > 0:
-            y = rad_y * math.sqrt(radical)
-            return ry - y < 0
+            y = radial_radius * math.sqrt(radical)
+            return ry < y
         return False
 
     def build_shape(self) -> GSolid:
@@ -296,12 +296,334 @@ def _make_ellipsoid_native(surf: "GEllipsoid") -> GSolid:
     return _revolve_half_ellipse_to_solid(surf.Center, surf.Axis, rev_radius, perp_axis, perp_radius)
 
 
-def Gmake_elliptic_cone(*args, **kwargs):
-    return _not_implemented("Gmake_elliptic_cone")(*args, **kwargs)
+# ---------------------------------------------------------------------------
+# GEllipticCone
+#
+# Construction technique (per direct user instruction, 2026-09-14): from
+# the apex and the cone's own axis, define an ellipse in a plane whose
+# normal is the axis, at distance `length` from the apex along the axis --
+# the ellipse's center is the point where the axis crosses that plane.
+# Sweep a straight line from the apex to every point around the ellipse's
+# contour; the resulting surface is the elliptic cone. Built here via a
+# ruled loft (`BRepOffsetAPI_ThruSections`) from the apex vertex to the
+# ellipse wire, with `isSolid=True` so it closes directly into a solid --
+# same idea as `_freecad_impl.py::_make_elliptic_cone_native`'s own
+# `Part.makeLoft([point, ellipse_shape], True)`, ported to pyOCC's own
+# vertex+wire loft API. `RefRadius`/`MajorRadius`/`MinorRadius` match the
+# MCNP GQ/SQ-derived quadric convention (`_freecad_impl.py::GEllipticCone`'s
+# own docstring): the cross-section ellipse's real semi-axes at axial
+# distance `length` from the apex are `MajorRadius/RefRadius * length` and
+# `MinorRadius/RefRadius * length` -- i.e. the cross-section scales
+# linearly with distance from the apex, and `RefRadius` is the axial
+# distance at which the semi-axes equal `MajorRadius`/`MinorRadius` exactly.
+# `DoubleSheet` (both nappes of the cone from the same apex, matching
+# `geo.Gmake_cone_double_sheet`'s own circular-cone case) fuses the
+# forward and axis-reversed single sheets.
+# ---------------------------------------------------------------------------
 
 
-def Gmake_hyperboloid(*args, **kwargs):
-    return _not_implemented("Gmake_hyperboloid")(*args, **kwargs)
+@dataclass
+class GEllipticCone:
+    Apex: GVector
+    Axis: GVector
+    RefRadius: float
+    MajorRadius: float
+    MinorRadius: float
+    MajorAxis: GVector
+    MinorAxis: GVector
+    DoubleSheet: bool = False
+
+    @classmethod
+    def from_values(
+        cls, apex, axis, ref_radius, major_radius, minor_radius, major_axis, minor_axis, double_sheet=False
+    ) -> "GEllipticCone":
+        return cls(apex, axis, ref_radius, major_radius, minor_radius, major_axis, minor_axis, double_sheet)
+
+    def is_inside(self, point: GVector) -> bool:
+        """Ported as-is from `_freecad_impl.py::GEllipticCone.is_inside`
+        (pure GVector math, identical on every engine)."""
+        r = point - self.Apex
+        x = r.dot(self.MajorAxis)
+        y = r.dot(self.MinorAxis)
+        z = r.dot(self.Axis)
+        if self.DoubleSheet:
+            z = abs(z)
+        return (x / self.MajorRadius) ** 2 + (y / self.MinorRadius) ** 2 - z / self.RefRadius < 0
+
+    def build_shape(self, length: float) -> GSolid:
+        if not self.DoubleSheet:
+            return _make_elliptic_cone_native(self, length, forward=True)
+        sheet1 = _make_elliptic_cone_native(self, length, forward=True)
+        sheet2 = _make_elliptic_cone_native(self, length, forward=False)
+        fused = Gfuse([sheet1, sheet2])
+        return fused.refine()
+
+
+def _make_elliptic_cone_native(surf: "GEllipticCone", length: float, forward: bool) -> GSolid:
+    axis_vec = surf.Axis if forward else -surf.Axis
+    axis_dir = gp_Dir(axis_vec.x, axis_vec.y, axis_vec.z)
+    xdir = gp_Dir(surf.MajorAxis.x, surf.MajorAxis.y, surf.MajorAxis.z)
+
+    major_r = surf.MajorRadius / surf.RefRadius * length
+    minor_r = surf.MinorRadius / surf.RefRadius * length
+    ellipse_center = to_native_vector(surf.Apex + axis_vec * length)
+    wire = _make_ellipse_wire(ellipse_center, axis_dir, xdir, major_r, minor_r)
+
+    apex_vertex = BRepBuilderAPI_MakeVertex(to_native_vector(surf.Apex)).Vertex()
+
+    lofter = BRepOffsetAPI_ThruSections(True, True)  # isSolid=True, ruled=True
+    lofter.AddVertex(apex_vertex)
+    lofter.AddWire(wire)
+    lofter.Build()
+    solid = GSolid(lofter.Shape())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
+
+
+def Gmake_elliptic_cone(
+    apex, axis, ref_radius, major_radius, minor_radius, major_axis, minor_axis, double_sheet, length
+) -> GSolid:
+    return GEllipticCone.from_values(
+        apex, axis, ref_radius, major_radius, minor_radius, major_axis, minor_axis, double_sheet
+    ).build_shape(length)
+
+
+# ---------------------------------------------------------------------------
+# GHyperboloid
+#
+# Construction technique (per direct user instruction, 2026-09-14): draw
+# only ONE branch of the hyperbola, from its own vertex (where it crosses
+# `MajorAxis`, on the axis of revolution itself) to a point on the curve
+# whose projection onto `MajorAxis` is at distance `length` from `Center`.
+# Revolving this arc 360 degrees around `MajorAxis` gives "branch 1" --
+# the sheet on the positive `MajorAxis` side. The vertex end already sits
+# ON the revolution axis, so it closes on its own (same "point on axis
+# needs no capping" trick as the half-profile ellipsoid); the far end is
+# an open circular rim at axial distance `length`, capped with a planar
+# disc.
+#
+# `OneSheet` (default `True`, per direct user instruction, 2026-09-14):
+# `True` builds ONLY branch 1 (the single positive-axis sheet -- the
+# default). `False` also builds branch 2 -- this same construction
+# mirrored through the plane through `Center` perpendicular to
+# `MajorAxis` (equivalent to just negating `MajorAxis` for both the
+# vertex/rim offsets and the revolution axis direction, since it's the
+# same line either way) -- and assembles both as a compound, not a fuse:
+# the two sheets never touch (a real gap between the two vertices, per
+# the actual geometry), matching `_freecad_impl.py`'s own
+# `Part.makeCompound((hyper1, hyper2))`.
+#
+# `is_inside` (fixed 2026-09-14, per direct user instruction): the
+# (two-sheet) hyperboloid's own quadric region is the *complement* of
+# the same-parameters `GHyperbolicCylinder`'s (one-sheet) region -- both
+# come from the same hyperbola, just revolved around the opposite axis.
+# `OneSheet=True` needs one extra check beyond that shared complement
+# test, to tell which of the two disjoint sheets a point is near (the
+# sign of its axial coordinate along `MajorAxis`) -- see `is_inside`'s
+# own docstring below.
+# ---------------------------------------------------------------------------
+
+
+def _make_hyperboloid_sheet(surf: "GHyperboloid", length: float, major_axis: GVector) -> GSolid:
+    center_native = to_native_vector(surf.Center)
+    major_dir = gp_Dir(major_axis.x, major_axis.y, major_axis.z)
+    minor_dir = gp_Dir(surf.MinorAxis.x, surf.MinorAxis.y, surf.MinorAxis.z)
+    normal = gp_Dir(gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z())))
+    ax2 = gp_Ax2(center_native, normal, major_dir)
+    hyperbola = Geom_Hyperbola(ax2, surf.MajorRadius, surf.MinorRadius)
+
+    # OCCT's own Geom_Hyperbola parametrization: P(t) = Center +
+    # MajorRadius*cosh(t)*XDir + MinorRadius*sinh(t)*YDir -- t=0 is
+    # exactly the vertex (on-axis), and cosh(t_end) = length/MajorRadius
+    # puts the far end's axial projection at `length` from Center.
+    t_end = math.acosh(length / surf.MajorRadius)
+    edge = BRepBuilderAPI_MakeEdge(hyperbola, 0.0, t_end).Edge()
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    shell = BRepPrimAPI_MakeRevol(wire, gp_Ax1(center_native, major_dir), 2.0 * math.pi).Shape()
+
+    rim_radius = surf.MinorRadius * math.sqrt((length / surf.MajorRadius) ** 2 - 1.0)
+    rim_center = to_native_vector(surf.Center + major_axis * length)
+    cap = _make_disc_face(rim_center, major_dir, rim_radius)
+
+    sewer = BRepBuilderAPI_Sewing(1e-6)
+    sewer.Add(shell)
+    sewer.Add(cap)
+    sewer.Perform()
+    sewn = sewer.SewedShape()
+
+    solid = GSolid(BRepBuilderAPI_MakeSolid(topods.Shell(sewn)).Solid())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
+
+
+def _make_disc_face(center: gp_Pnt, normal_dir: gp_Dir, radius: float):
+    """Shared by `GHyperboloid`'s rim cap and `GHyperbolicCylinder`'s two
+    rim caps below -- a plain planar disc, normal `normal_dir`, radius
+    `radius`, centered at `center`."""
+    circle = Geom_Circle(gp_Ax2(center, normal_dir), radius)
+    wire = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(circle).Edge()).Wire()
+    return BRepBuilderAPI_MakeFace(wire).Face()
+
+
+@dataclass
+class GHyperboloid:
+    Center: GVector
+    Axis: GVector
+    MajorRadius: float
+    MinorRadius: float
+    MajorAxis: GVector
+    MinorAxis: GVector
+    OneSheet: bool = True
+
+    @classmethod
+    def from_values(cls, center, axis, major_radius, minor_radius, major_axis, minor_axis, one_sheet=True) -> "GHyperboloid":
+        return cls(center, axis, major_radius, minor_radius, major_axis, minor_axis, one_sheet)
+
+    def is_inside(self, point: GVector) -> bool:
+        """Fixed and redesigned 2026-09-14 (per direct user instruction),
+        replacing the old ported-as-is version (which had its own
+        pre-existing Center-mixing bug on top of testing a different
+        `OneSheet` meaning than `build_shape` uses -- see the history
+        log). A point is inside the (two-sheet) hyperboloid's own
+        quadric region exactly when it is NOT inside the same-parameters
+        `GHyperbolicCylinder` (the one-sheet "hourglass") -- both surfaces
+        come from the same hyperbola, just revolved around the opposite
+        axis, so their regions are complementary. `OneSheet=True` (only
+        branch 1, the positive-`MajorAxis` side) needs one more check on
+        top of that shared quadric test: which of the two disjoint sheets
+        the point is actually near, via the sign of the axial coordinate.
+        Independently verified against hand-computed ground-truth points
+        (see the history log)."""
+        cylinder_equivalent = GHyperbolicCylinder(
+            self.Center, self.Axis, self.MajorRadius, self.MinorRadius, self.MajorAxis, self.MinorAxis
+        )
+        inside_quadric = not cylinder_equivalent.is_inside(point)
+        if not self.OneSheet:
+            return inside_quadric
+        rx = (point - self.Center).dot(self.MajorAxis)
+        return inside_quadric and rx > 0
+
+    def build_shape(self, length: float) -> GSolid:
+        sheet1 = _make_hyperboloid_sheet(self, length, self.MajorAxis)
+        if self.OneSheet:
+            return sheet1
+        sheet2 = _make_hyperboloid_sheet(self, length, -self.MajorAxis)
+        return Gmake_compound([sheet1, sheet2])
+
+
+def Gmake_hyperboloid(center, axis, major_radius, minor_radius, major_axis, minor_axis, one_sheet, length) -> GSolid:
+    return GHyperboloid.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis, one_sheet).build_shape(
+        length
+    )
+
+
+# ---------------------------------------------------------------------------
+# GHyperbolicCylinder
+#
+# Construction technique (per direct user instruction, 2026-09-14):
+# revolving a hyperbola around its own MINOR (conjugate) axis -- unlike
+# `GHyperboloid` above, which revolves around `MajorAxis` -- always gives
+# a single, fully-connected "hourglass" surface (the waist sits exactly
+# at the vertex, radius `MajorRadius`, widening symmetrically on either
+# side; never two disjoint pieces, whatever `length`/`height` is used).
+# `center` doubles as both the hyperbola's own analytic center AND the
+# revolved portion's own start point (`v=0`, the waist) -- matching
+# `Gmake_elliptic_cylinder`'s own "center = start point, not true
+# midpoint" convention (and this surface's own real call site,
+# `Objects.py::HyperbolicCylinder.buildShape`, which already computes
+# `point = center + dmin*axis` before calling this). The revolved portion
+# spans `v` in `[0, height]` along `MinorAxis` from `center` -- NEITHER
+# end sits on the revolution axis here (the waist itself, at v=0, still
+# has radius `MajorRadius` > 0), so BOTH ends need a capping disc, unlike
+# `GHyperboloid`'s single on-axis vertex.
+#
+# This supersedes `_freecad_impl.py::GHyperbolicCylinder.build_shape`'s
+# own extrude-based technique (translating two mirrored hyperbola
+# branches along a separate `Axis` field) with this revolve-based one --
+# a genuinely different surface (a curved one-sheet hyperboloid segment,
+# not a flat-generator translated hyperbolic prism). `is_inside` below
+# is fixed to match (2026-09-14, see its own docstring) -- the old
+# ported-as-is version tested the superseded extruded-prism definition.
+# ---------------------------------------------------------------------------
+
+
+def _make_hyperbolic_cylinder_native(surf: "GHyperbolicCylinder", height: float) -> GSolid:
+    center_native = to_native_vector(surf.Center)
+    major_dir = gp_Dir(surf.MajorAxis.x, surf.MajorAxis.y, surf.MajorAxis.z)
+    minor_dir = gp_Dir(surf.MinorAxis.x, surf.MinorAxis.y, surf.MinorAxis.z)
+    normal = gp_Dir(gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z())))
+    ax2 = gp_Ax2(center_native, normal, major_dir)
+    hyperbola = Geom_Hyperbola(ax2, surf.MajorRadius, surf.MinorRadius)
+
+    # P(t) = Center + MajorRadius*cosh(t)*XDir + MinorRadius*sinh(t)*YDir
+    # -- v (offset along MinorAxis) = MinorRadius*sinh(t), so t=0 is the
+    # waist (v=0) and asinh(height/MinorRadius) puts the far end's own
+    # MinorAxis offset at `height`.
+    t_end = math.asinh(height / surf.MinorRadius)
+    edge = BRepBuilderAPI_MakeEdge(hyperbola, 0.0, t_end).Edge()
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    shell = BRepPrimAPI_MakeRevol(wire, gp_Ax1(center_native, minor_dir), 2.0 * math.pi).Shape()
+
+    cap0 = _make_disc_face(center_native, minor_dir, surf.MajorRadius)
+    rim_radius = surf.MajorRadius * math.sqrt(1.0 + (height / surf.MinorRadius) ** 2)
+    rim_center = to_native_vector(surf.Center + surf.MinorAxis * height)
+    cap1 = _make_disc_face(rim_center, minor_dir, rim_radius)
+
+    sewer = BRepBuilderAPI_Sewing(1e-6)
+    sewer.Add(shell)
+    sewer.Add(cap0)
+    sewer.Add(cap1)
+    sewer.Perform()
+    sewn = sewer.SewedShape()
+
+    solid = GSolid(BRepBuilderAPI_MakeSolid(topods.Shell(sewn)).Solid())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
+
+
+@dataclass
+class GHyperbolicCylinder:
+    Center: GVector
+    Axis: GVector
+    MajorRadius: float
+    MinorRadius: float
+    MajorAxis: GVector
+    MinorAxis: GVector
+
+    @classmethod
+    def from_values(cls, center, axis, major_radius, minor_radius, major_axis, minor_axis) -> "GHyperbolicCylinder":
+        return cls(center, axis, major_radius, minor_radius, major_axis, minor_axis)
+
+    def is_inside(self, point: GVector) -> bool:
+        """Fixed 2026-09-14 to match the revolve-based `build_shape` above
+        (the old version, ported as-is from `_freecad_impl.py`, tested the
+        superseded extruded-prism definition instead -- see this section's
+        own module-level comment). The waist -- at `v=0`, i.e. `Center`
+        itself -- has radius `MajorRadius`; it grows with `|v|` along
+        `MinorAxis` as `MajorRadius*sqrt(1 + (v/MinorRadius)^2)`. `d` is
+        the FULL 3D perpendicular distance from the `MinorAxis`-line
+        through `Center` (not just the `MajorAxis`-plane projection the
+        old version used), matching an actual solid of revolution.
+        Independently verified against hand-computed ground-truth points
+        (see the history log)."""
+        r = point - self.Center
+        v = r.dot(self.MinorAxis)
+        perp = r - v * self.MinorAxis
+        d = perp.length
+        y = self.MajorRadius * math.sqrt(1.0 + (v / self.MinorRadius) ** 2)
+        return d < y
+
+    def build_shape(self, height: float) -> GSolid:
+        return _make_hyperbolic_cylinder_native(self, height)
+
+
+def Gmake_hyperbolic_cylinder(center, axis, major_radius, minor_radius, major_axis, minor_axis, height) -> GSolid:
+    return GHyperbolicCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(
+        height
+    )
 
 
 def Gmake_ellipsoid(center, axis, major_radius, minor_radius, major_axis, minor_axis) -> GSolid:
@@ -399,11 +721,92 @@ def Gmake_elliptic_cylinder(center, axis, major_radius, minor_radius, major_axis
     return GEllipticCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(height)
 
 
-def Gmake_hyperbolic_cylinder(*args, **kwargs):
-    return _not_implemented("Gmake_hyperbolic_cylinder")(*args, **kwargs)
+# ---------------------------------------------------------------------------
+# GParaboloid
+#
+# Construction technique (per direct user instruction, 2026-09-14): same
+# idea as `GHyperboloid` -- draw the profile curve (a parabola here, one
+# branch of a hyperbola there) from its own vertex (on the revolution
+# axis) out to a point whose axial projection is at distance `length`
+# from `Center`, then revolve 360 degrees around `Axis`; the vertex end
+# is already on the axis (no capping needed there), the far end is an
+# open circular rim, capped with a planar disc. Unlike `GHyperboloid`,
+# a paraboloid only ever has ONE sheet -- there is no second branch to
+# mirror, no `OneSheet` flag needed at all.
+#
+# OCCT's own `Geom_Parabola` parametrization: P(u) = Center +
+# (u^2/(4*Focal))*XDir + u*YDir -- at parameter `u`, the axial offset is
+# u^2/(4*Focal) and the radial offset is exactly `u` itself, so solving
+# axial-offset=`length` for `u` gives `u_end = sqrt(4*Focal*length)`,
+# which is simultaneously the far rim's own radius -- no separate rim
+# formula needed, unlike the hyperbola case.
+# ---------------------------------------------------------------------------
 
 
-Gmake_paraboloid = _not_implemented("Gmake_paraboloid")
+@dataclass
+class GParaboloid:
+    Center: GVector
+    Axis: GVector
+    Focal: float
+
+    @classmethod
+    def from_values(cls, center, axis, focal) -> "GParaboloid":
+        return cls(center, axis, focal)
+
+    def is_inside(self, point: GVector) -> bool:
+        """Ported as-is from `_freecad_impl.py::GParaboloid.is_inside`
+        (pure GVector math, identical on every engine) -- unlike
+        `GEllipsoid`/`GHyperboloid`'s own versions, this one has no
+        Center-mixing bug (`perp = r - x*self.Axis` never re-adds
+        `Center`), confirmed correct by the same independent
+        ground-truth verification used for the other surfaces."""
+        r = point - self.Center
+        x = r.dot(self.Axis)
+        if x < 0:
+            return False
+        perp = r - x * self.Axis
+        d = perp.length
+        y = math.sqrt(4 * self.Focal * x)
+        return d < y
+
+    def build_shape(self, length: float) -> "GSolid | None":
+        return _make_paraboloid_native(self, length)
+
+
+def _make_paraboloid_native(surf: "GParaboloid", length: float) -> "GSolid | None":
+    if length <= 0:
+        return None
+
+    center_native = to_native_vector(surf.Center)
+    axis_dir = gp_Dir(surf.Axis.x, surf.Axis.y, surf.Axis.z)
+    perp_axis = arbitrary_perpendicular(surf.Axis)
+    perp_dir = gp_Dir(perp_axis.x, perp_axis.y, perp_axis.z)
+    normal = gp_Dir(gp_Vec(axis_dir.X(), axis_dir.Y(), axis_dir.Z()).Crossed(gp_Vec(perp_dir.X(), perp_dir.Y(), perp_dir.Z())))
+    ax2 = gp_Ax2(center_native, normal, axis_dir)
+    parabola = Geom_Parabola(ax2, surf.Focal)
+
+    u_end = math.sqrt(4.0 * surf.Focal * length)
+    edge = BRepBuilderAPI_MakeEdge(parabola, 0.0, u_end).Edge()
+    wire = BRepBuilderAPI_MakeWire(edge).Wire()
+    shell = BRepPrimAPI_MakeRevol(wire, gp_Ax1(center_native, axis_dir), 2.0 * math.pi).Shape()
+
+    rim_center = to_native_vector(surf.Center + surf.Axis * length)
+    cap = _make_disc_face(rim_center, axis_dir, u_end)
+
+    sewer = BRepBuilderAPI_Sewing(1e-6)
+    sewer.Add(shell)
+    sewer.Add(cap)
+    sewer.Perform()
+    sewn = sewer.SewedShape()
+
+    solid = GSolid(BRepBuilderAPI_MakeSolid(topods.Shell(sewn)).Solid())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
+
+
+def Gmake_paraboloid(center, axis, focal, length) -> "GSolid | None":
+    return GParaboloid.from_values(center, axis, focal).build_shape(length)
 
 
 # `Gmake_torus_elliptic` (circular or elliptic torus, including the

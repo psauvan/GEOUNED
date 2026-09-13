@@ -219,15 +219,14 @@ functions instead of ABC methods:
   found and verified. `freecad`'s `Gsplit` only has the original
   tolerance-scaling retry; the deeper repairs are occ/ocp-only.
 
-## Current status (as of 2026-09-13)
+## Current status (as of 2026-09-14)
 
 - All 3 engines pass `tests/geo` + `tests/test_cadtocsg.py` +
-  `tests/test_csgtocad.py` **in full** as of 2026-09-13, occ/ocp also
-  `tests/test_georeverse_occ_impl.py`/`_ocp_impl.py` (163 passed/2
-  skipped freecad, 154 passed occ, 154 passed ocp) -- confirms the
-  `Gmake_ellipsoid`/`Gmake_elliptic_cylinder`/`Gmake_torus_elliptic`
-  work below is a zero-regression addition. `test_cylbox_convertion`
-  (both `[mcnp]`
+  `tests/test_csgtocad.py` **in full** as of 2026-09-14, occ/ocp also
+  `tests/test_georeverse_occ_impl.py`/`_ocp_impl.py` (163 passed
+  freecad, 178 passed occ, 178 passed ocp) -- confirms all 7 exotic
+  quadric surfaces (see "Known open items" -> GEOReverse) are a
+  zero-regression addition. `test_cylbox_convertion` (both `[mcnp]`
   and `[openmc_xml]`) used to fail under all 3 engines, root-caused to
   two real bugs (a `Gsplit` tolerance-argument API mismatch, and
   `_find_cone_face` crashing on a bare-`GFace` cutting tool under
@@ -247,9 +246,12 @@ functions instead of ABC methods:
   sliver-arc fix, and `large_cell_plane_split`'s volume-conservation
   guard have each independently fixed further corpus files — a fresh
   full-corpus re-run with all of them together has not been done yet.
-- `GEOReverse` (CsgToCad) work is deliberately paused: explicit user
-  priority is to finish cleaning up known `GEOUNED`/`CadToCsg` bugs
-  first. Do not start GEOReverse-side debugging unless asked.
+- `GEOReverse` (CsgToCad) debugging work in general is deliberately
+  paused: explicit user priority is to finish cleaning up known
+  `GEOUNED`/`CadToCsg` bugs first. Do not start GEOReverse-side
+  debugging unless asked. The one explicit exception, actively worked
+  2026-09-13/14: the 7 exotic-quadric surfaces (occ/ocp construction +
+  `is_inside` correctness) -- see "Known open items" -> GEOReverse.
 
 ## Known open items
 
@@ -309,13 +311,14 @@ gaps for whenever it's picked back up:
   agree, and this was never chased down once the real GEOUNED-side
   fix for that investigation was found via a different route.
 - The 7 "exotic quadric" surfaces GEOReverse's own MCNP/OpenMC-XML
-  `GQ`/`SQ` parser can produce: `Gmake_ellipsoid`,
-  `Gmake_elliptic_cylinder`, `Gmake_torus_elliptic` (all three
-  **implemented under `occ`/`ocp`, 2026-09-13** -- see below);
-  `Gmake_elliptic_cone`, `Gmake_hyperboloid`, `Gmake_hyperbolic_cylinder`,
-  `Gmake_paraboloid` remain unimplemented stubs in the `occ`/`ocp`
-  backends (`GEOReverse/Modules/engine_dependency/_occ_impl.py`/
-  `_ocp_impl.py`).
+  `GQ`/`SQ` parser can produce -- **all 7 now implemented under `occ`/
+  `ocp`, 2026-09-13/14**: `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
+  `Gmake_torus_elliptic`, `Gmake_elliptic_cone`, `Gmake_hyperboloid`,
+  `Gmake_hyperbolic_cylinder`, `Gmake_paraboloid`
+  (`GEOReverse/Modules/engine_dependency/_occ_impl.py`/`_ocp_impl.py`;
+  the now-unused `_not_implemented()` stub helper was deleted from both
+  files). `is_inside()` was also independently verified for all 7 (see
+  its own entry below) -- three had real bugs, now fixed.
   **`Gmake_ellipsoid`, 2026-09-13**: implemented in both `occ` and `ocp`,
   per direct user instruction on the construction technique -- draw the
   ellipse curve in a plane, revolve it around an axis in that plane to
@@ -430,10 +433,86 @@ gaps for whenever it's picked back up:
   particular fixture's downstream boolean simplification already
   absorbed the extra complexity from the old double-sheet cut, so the
   fix is a correctness improvement with no visible effect on this one
-  fixture's output, not a regression risk). Full `tests/geo` +
-  `test_cadtocsg.py` + `test_csgtocad.py` (+ `test_georeverse_*_impl.py`
-  on occ/ocp) still green on all 3 engines after this change (freecad
-  163 passed, occ 154 passed, ocp 154 passed).
+  fixture's output, not a regression risk).
+  **`Gmake_elliptic_cone`, 2026-09-13**: implemented in both `occ` and
+  `ocp` -- from the apex and axis, an ellipse is drawn in the plane
+  normal to the axis at distance `length` from the apex (semi-axes
+  `MajorRadius/RefRadius*length`/`MinorRadius/RefRadius*length`, the
+  MCNP GQ/SQ scale-with-distance convention -- `RefRadius` is the axial
+  distance at which the cross-section ellipse's semi-axes equal
+  `MajorRadius`/`MinorRadius` exactly), then a ruled loft
+  (`BRepOffsetAPI_ThruSections`, `isSolid=True`) from the apex vertex to
+  that ellipse's wire closes directly into a solid -- the apex needs no
+  separate capping (it's a single point, not on the revolution axis in
+  the ellipsoid/torus/hyperboloid sense, but the loft's own vertex
+  degenerate section closes it the same way). `DoubleSheet` fuses the
+  forward and axis-reversed single sheets, matching
+  `geo.Gmake_cone_double_sheet`'s own circular-cone case. Signature
+  matches `_freecad_impl.py::Gmake_elliptic_cone` and the real call
+  site (`Objects.py::EllipticCone.buildShape`) exactly: `(apex, axis,
+  ref_radius, major_radius, minor_radius, major_axis, minor_axis,
+  double_sheet, length)`. Verified against the analytic cone volume
+  (`pi/3 * a * b * length` for the base ellipse's own semi-axes `a`/`b`
+  at `length`), the double-sheet volume being exactly 2x the single
+  sheet's, and the apex/base bounding-box position, on both engines.
+  **`Gmake_hyperboloid`/`Gmake_hyperbolic_cylinder`, 2026-09-14**: the
+  same hyperbola (`Center`/`MajorRadius`/`MinorRadius`/`MajorAxis`/
+  `MinorAxis`) revolved around two different axes gives two different
+  real surfaces -- `Gmake_hyperboloid` revolves around `MajorAxis`
+  (branch 1's own vertex, on the revolution axis, out to a capped rim at
+  `length`; the standard two-sheet hyperboloid, since revolving a
+  transverse-axis hyperbola around its own transverse axis always
+  produces two disjoint cups); `Gmake_hyperbolic_cylinder` revolves the
+  *same* hyperbola around `MinorAxis` instead (the conjugate axis), which
+  always gives a single, fully-connected "hourglass" (waist radius
+  `MajorRadius` sitting exactly at `Center`, both ends capped since
+  neither is on the revolution axis) -- this **supersedes**
+  `_freecad_impl.py::GHyperbolicCylinder`'s own extrude-based technique
+  (translating two mirrored hyperbola branches along a separate `Axis`
+  field) with a genuinely different surface. `GHyperboloid.OneSheet`
+  (default `True`, matching the pre-existing dataclass default) means
+  "build only branch 1 (positive `MajorAxis` side)"; `False` also mirrors
+  branch 1 through `Center` for branch 2 and assembles both as a
+  compound (`Gmake_compound`, not a fuse -- the two sheets never touch).
+  Both verified against closed-form volumes (`pi*a^2*(L + L^3/(3*b^2))`
+  for the cylinder's hourglass segment; the equivalent integral for one
+  hyperboloid branch) and `BRepCheck_Analyzer` validity on both engines.
+  **`Gmake_paraboloid`, 2026-09-14**: same one-branch-revolve technique
+  as `Gmake_hyperboloid` (vertex on the revolution axis needs no capping,
+  the far rim does) but always a single sheet -- a parabola has no
+  second branch to mirror, so no `OneSheet` flag at all. OCCT's own
+  `Geom_Parabola` parametrization conveniently makes the far end's own
+  curve parameter *equal* to the rim's radius (`u_end =
+  sqrt(4*Focal*length)`), needing no separate rim-radius formula unlike
+  the hyperbola case. Returns `None` when `length <= 0` (matches
+  `_freecad_impl.py::GParaboloid.build_shape`'s own documented contract
+  and the real caller's `if dmax <= 0: return` guard). Verified against
+  the analytic volume (`pi*2*Focal*length^2`), vertex/rim position, and
+  the `None` contract, on both engines.
+  **`is_inside()` independently verified for all 7, 2026-09-14**: 40
+  hand-computed ground-truth points (never reusing a class's own
+  formula) found `GEllipticCylinder`/`GEllipticCone`/`GParaboloid`
+  already correct, and 3 real bugs, now fixed: `GEllipsoid.is_inside`
+  had TWO bugs, not just the one `_freecad_impl.py`'s own docstring
+  flagged (a `Center`-double-subtraction, present in both branches, and
+  a swapped axial/radial radius pairing in *both* branches -- the
+  "if" branch, previously believed correct, turned out just as wrong as
+  the flagged "else" one); `GHyperboloid.is_inside` had the same
+  `Center`-double-subtraction bug (only manifests once `Center` isn't
+  the origin) on top of testing a different `OneSheet` meaning than the
+  redesigned `build_shape` now uses; `GHyperbolicCylinder.is_inside`
+  still tested the superseded extruded-prism definition (only the
+  `MajorAxis`/`MinorAxis`-plane projection, ignoring the third axis
+  entirely) instead of the new revolve-based one. Fixed, per direct user
+  design: `GHyperboloid`'s (two-sheet) region is now computed as the
+  *complement* of the same-parameters `GHyperbolicCylinder`'s (one-sheet)
+  region -- both come from the same hyperbola, revolved around opposite
+  axes -- plus one extra check for `OneSheet=True` (the sign of the axial
+  coordinate along `MajorAxis`) to pick the correct branch.
+  Full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` (+
+  `test_georeverse_*_impl.py` on occ/ocp, now 43 tests each) still green
+  on all 3 engines after all of the above (freecad 163 passed, occ 178
+  passed, ocp 178 passed, 2026-09-14).
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
