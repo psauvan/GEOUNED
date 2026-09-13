@@ -182,9 +182,10 @@ exception is `Gmake_torus_elliptic` (**moved to `geo/occ/primitives.py`/
 `geo/ocp/primitives.py`, 2026-09-13**, right after `Gmake_torus`, not a
 separate file -- see "Known open items" -> GEOReverse): unlike the other
 exotic quadrics, GEOUNED's own forward pipeline has a real, live need for
-degenerate-torus single-sheet construction too (its current
-`build_surface()` doesn't have it yet -- a known gap, same section), so
-it's a genuinely shared primitive, not a GEOReverse-only one.
+degenerate-torus single-sheet construction too --
+`GeounedSurface.build_surface()`'s Torus branch now calls it (occ/ocp
+only, see same section for the fix and its verification), so it's a
+genuinely shared primitive, not a GEOReverse-only one.
 `GEOReverse`'s own `build_region`-equivalent
 (`CAD/buildSolidCell.py`/`CAD/splitFunction.py`/`Objects.py`) is a
 still-separate, not-yet-unified twin of GEOUNED's `build_region/` — see
@@ -398,24 +399,41 @@ gaps for whenever it's picked back up:
   Objects.py::Torus.buildShape`'s call site, and its own `__init__`
   parameter-validation warnings (which used to mislabel `params[3]`/
   `params[4]` and to always warn on a negative major radius even in the
-  legitimate degenerate/inner case), were updated to match. **Still not
-  consumed by GEOUNED's own forward pipeline**: `GeounedSurface.
-  build_surface()`'s Torus branch (`GEOUNED/utils/geouned_classes.py`)
-  builds its degenerate-torus cutting tool via plain `Gmake_torus` (the
-  full self-intersecting double-sheet primitive) and never reads the
-  surface's own `Degenerated`/`a_sign` fields -- confirmed, not yet
-  fixed, a real candidate for unnecessary over-cutting during boolean
-  decomposition wherever a degenerate torus is a cutting tool (the two
-  live consumers are `decompose/decom_one_generators.py::generic_split()`
-  and `utils/boolean_solids.py::build_c_table_from_solids()`/
-  `split_solid_fast()`). Deliberately deferred (per explicit user
-  sequencing, "primero miramos el movimiento a geo" -- the move above
-  came first) to a separate follow-up; verification target when it
-  happens: `Solidos/test_models/Torus/2_degen_torii.stp` (2 degenerate
-  tori, both inner/`a_sign=-1`, already confirmed converting cleanly
-  today at tally `1.00032 +/- 0.17%`, 0 lost particles) as the
-  before/after regression check, `Torus/Torus_solid1.stp` (non-
-  degenerate) as the zero-behavior-change control.
+  legitimate degenerate/inner case), were updated to match.
+  **Now consumed by GEOUNED's own forward pipeline too, 2026-09-13**:
+  `GeounedSurface.build_surface()`'s Torus branch
+  (`GEOUNED/utils/geouned_classes.py`) used to build its degenerate-torus
+  cutting tool via plain `Gmake_torus` (the full self-intersecting
+  double-sheet primitive) regardless of `Degenerated`/`a_sign` -- a real
+  candidate for unnecessary over-cutting wherever a degenerate torus is a
+  cutting tool (the two live consumers are
+  `decompose/decom_one_generators.py::generic_split()` and
+  `utils/boolean_solids.py::build_c_table_from_solids()`/
+  `split_solid_fast()`). Fixed: when `tor.Surf.Degenerated` and the
+  active engine isn't `freecad` (checked via the newly-imported
+  `CAD_ENGINE` from `geo`), it now calls `Gmake_torus_elliptic(center,
+  axis, majorR, minorR, minorR, outer=tor.Surf.a_sign > 0)` (a circular
+  cross-section, `minor_radius_a == minor_radius_b == minorR`) to build
+  only the correct single sheet instead. Imported via a function-local
+  `from ...geo import Gmake_torus_elliptic` inside the branch (never a
+  top-level import) specifically because that name doesn't exist under
+  `geo/freecad/__init__.py` -- freecad keeps today's `Gmake_torus`-only
+  behavior unconditionally, both because the `CAD_ENGINE != "freecad"`
+  guard skips the new path entirely and because a top-level import would
+  have broken freecad-engine GEOUNED at module load time regardless.
+  Verified against `Solidos/test_models/Torus/2_degen_torii.stp` (2
+  degenerate tori, both inner/`a_sign=-1`) and the non-degenerate
+  `Torus/Torus_solid1.stp` control, both converted under all 3 engines:
+  identical cell count, volume, and written `TZ` surface cards
+  before/after on every engine (occ/ocp now matching `freecad`'s own
+  unaffected output byte-for-byte on `2_degen_torii.stp` -- this
+  particular fixture's downstream boolean simplification already
+  absorbed the extra complexity from the old double-sheet cut, so the
+  fix is a correctness improvement with no visible effect on this one
+  fixture's output, not a regression risk). Full `tests/geo` +
+  `test_cadtocsg.py` + `test_csgtocad.py` (+ `test_georeverse_*_impl.py`
+  on occ/ocp) still green on all 3 engines after this change (freecad
+  163 passed, occ 154 passed, ocp 154 passed).
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 

@@ -42,6 +42,7 @@ from .build_shape_functions import (
 )
 from .basic_functions_part1 import is_parallel, is_opposite
 from ...geo import (
+    CAD_ENGINE,
     GBoundBox,
     GSolid,
     GVector,
@@ -369,7 +370,21 @@ class GeounedSurface:
             majorR = tor.Surf.MajorRadius
             minorR = tor.Surf.MinorRadius
 
-            torus_solid = Gmake_torus(center, axis, majorR, minorR)
+            if tor.Surf.Degenerated and CAD_ENGINE != "freecad":
+                # A self-intersecting (spindle) torus is two geometrically
+                # distinct sheets satisfying the same implicit equation --
+                # build only the one this face actually is (a_sign, +1
+                # outer/-1 inner, see geo.surface_geometry.torus_sheet_sign)
+                # instead of Gmake_torus's full double-sheet primitive,
+                # which would let a boolean cut against this surface remove
+                # more material than intended. freecad has no equivalent
+                # single-sheet constructor (Gmake_torus_elliptic is
+                # occ/ocp-only), so it keeps today's full-torus behavior.
+                from ...geo import Gmake_torus_elliptic
+
+                torus_solid = Gmake_torus_elliptic(center, axis, majorR, minorR, minorR, outer=tor.Surf.a_sign > 0)
+            else:
+                torus_solid = Gmake_torus(center, axis, majorR, minorR)
             self.shape = torus_solid.Faces[0].__native__
             self.shell = Gfirst_shell(torus_solid.__native__)
 
