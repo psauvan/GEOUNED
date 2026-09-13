@@ -249,9 +249,11 @@ functions instead of ABC methods:
 - `GEOReverse` (CsgToCad) debugging work in general is deliberately
   paused: explicit user priority is to finish cleaning up known
   `GEOUNED`/`CadToCsg` bugs first. Do not start GEOReverse-side
-  debugging unless asked. The one explicit exception, actively worked
+  debugging unless asked. The one explicit exception, worked and closed
   2026-09-13/14: the 7 exotic-quadric surfaces (occ/ocp construction +
-  `is_inside` correctness) -- see "Known open items" -> GEOReverse.
+  `is_inside` correctness) -- see "Known open items" -> GEOReverse for
+  what's implemented and the specific validation gaps still open (none
+  has been exercised end to end against a real MCNP/OpenMC file yet).
 
 ## Known open items
 
@@ -513,6 +515,37 @@ gaps for whenever it's picked back up:
   `test_georeverse_*_impl.py` on occ/ocp, now 43 tests each) still green
   on all 3 engines after all of the above (freecad 163 passed, occ 178
   passed, ocp 178 passed, 2026-09-14).
+  **Pending / not yet done, as of 2026-09-14** -- all verification above
+  is unit-level (direct `Gmake_*` calls with synthetic parameters, plus
+  the 40-point `is_inside` ground truth); none of the 7 has been
+  exercised end to end yet:
+  - No real MCNP/OpenMC fixture in the corpus is known to actually
+    contain a `GQ`/`SQ` ellipsoid, elliptic cone, hyperboloid, hyperbolic
+    cylinder, or paraboloid surface -- the full round-trip path
+    (`MCNP_parser`/`XML_parser` -> `Objects.py` -> `CAD/buildSolidCell.py`
+    -> STEP export) has never actually run for any of them. Finding or
+    building one such fixture per surface type is the natural next step
+    before trusting these on a real model.
+  - `GHyperboloid`'s `OneSheet` flag changed meaning this session (branch
+    1 only vs. both, no longer the standard math one-sheet/two-sheet
+    distinction -- see its own entry above). Not yet checked: whether
+    whatever `MCNP_parser`/`XML_parser` code parses a real hyperboloid
+    card's own one/two-sheet indicator produces a value consistent with
+    this *new* meaning, or was written assuming the old one -- a real
+    semantic risk until a live fixture exercises it.
+  - The already-flagged `MCNP_parser/MCNPinput.py::get_ellipsoid_parameters`
+    bug (returns the axis of revolution as a bare integer index rather
+    than a `GVector` direction) is still unfixed. Not yet checked: whether
+    the analogous parameter-getters for the other 6 surfaces have the
+    same class of bug -- worth a quick audit before relying on any of
+    them against real parsed input.
+  - `freecad`'s own exotic-quadric implementations (`_freecad_impl.py`)
+    were deliberately left untouched and are now a genuinely different
+    surface from the occ/ocp versions for at least
+    `Gmake_hyperbolic_cylinder` (extrude vs. revolve). Expected and
+    documented, not a bug -- but means the same MCNP file can reconstruct
+    visibly different CAD depending on `GEOUNED_CAD_ENGINE` for these 7
+    surfaces specifically, unlike everything else in the project.
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
