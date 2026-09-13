@@ -23,6 +23,7 @@ from ..Objects import (
 from .Parser import parser as mp
 from .remh import CellCardString, remove_hash, hash_sequence
 from ..Objects import CadCell
+from ..data_class import Tolerances
 from ....geo import GVector
 
 
@@ -1029,7 +1030,7 @@ def get_cylinder_parameters(eVal, eVect, T, k, iaxis):
 
     axis = _gvec(np.transpose(eVect)[iaxis])
     pos = _gvec(T)
-    if abs(eMin - eMaj) < 1.0e-5:
+    if abs(eMin - eMaj) < Tolerances.gq_eigen_equal_rel * max(abs(eMin), abs(eMaj)):
         radius = float(np.sqrt(k / eMaj))
         return "cylinder", (pos, axis, radius)
     else:
@@ -1073,7 +1074,7 @@ def get_cone_parameters(eVal, eVect, T, iaxis):
     other2 = (iaxis + 2) % 3
     pos = _gvec(T)
 
-    if abs(eVal[other1] - eVal[other2]) < 1e-5:
+    if abs(eVal[other1] - eVal[other2]) < Tolerances.gq_eigen_equal_rel * max(abs(eVal[other1]), abs(eVal[other2])):
         axis = _gvec(np.transpose(eVect)[iaxis])
         tan = float(np.sqrt(-eVal[other1] / eVal[iaxis]))
         return "cone", (pos, axis, tan, True)
@@ -1100,8 +1101,8 @@ def get_cone_parameters(eVal, eVect, T, iaxis):
 
 
 def get_hyperboloid_parameters(eVal, eVect, T, k, iaxis):
-    cylTan = 1e3
-    coneRad = 0.1
+    cylTan = Tolerances.cylinder_ratio
+    coneRad = Tolerances.cone_min_radius
 
     ellipsoid = False
     if iaxis is None:
@@ -1144,10 +1145,10 @@ def get_hyperboloid_parameters(eVal, eVect, T, k, iaxis):
 
 def get_ellipsoid_parameters(eVal, eVect, T, k):
 
-    cylTan = 1e3
+    cylTan = Tolerances.cylinder_ratio
     iaxis = None
     for i in range(3):
-        if abs(eVal[i] - eVal[(i + 1) % 3]) < 1e-3:
+        if abs(eVal[i] - eVal[(i + 1) % 3]) < Tolerances.gq_eigen_equal_rel * max(abs(eVal[i]), abs(eVal[(i + 1) % 3])):
             iaxis = (i + 2) % 3
             break
 
@@ -1182,10 +1183,18 @@ def get_ellipsoid_parameters(eVal, eVect, T, k):
 
 def getGQAxis(eVal, k):
 
+    # Single scale reference for every "is this ~0"/"are these two ~equal"
+    # test below -- both the eigenvalues and `k` scale identically under
+    # the GQ-coefficient-normalization invariance (see Tolerances' own
+    # docstring), so one relative tolerance against this one scale is
+    # valid for all of them. Guard against an all-zero eVal (a degenerate/
+    # invalid GQ card, not a real quadric) to avoid a spurious division.
+    scale = max(abs(eVal[0]), abs(eVal[1]), abs(eVal[2]), 1e-300)
+
     # check if there is two equal eigenValues
     iaxis = None
     for i in range(3):
-        if abs(eVal[i] - eVal[(i + 1) % 3]) < 1e-5:
+        if abs(eVal[i] - eVal[(i + 1) % 3]) < Tolerances.gq_eigen_equal_rel * scale:
             iaxis = (i + 2) % 3
             break
 
@@ -1195,9 +1204,10 @@ def getGQAxis(eVal, k):
     e0 = eVal[iaxis]
     e1 = eVal[(iaxis + 1) % 3]
     e2 = eVal[(iaxis + 2) % 3]
+    zero_tol = Tolerances.gq_eigen_zero_rel * scale
 
-    if k == 0:  # k == 0
-        if e0 == 0:  # e1*X^2 + e2*Y^2             = 0    Intersecting  planes (real or imaginary)
+    if abs(k) < zero_tol:  # k == 0
+        if abs(e0) < zero_tol:  # e1*X^2 + e2*Y^2             = 0    Intersecting  planes (real or imaginary)
             ek = None
         elif np.sign(e0) == np.sign(e1) and np.sign(e1) == np.sign(
             e2
@@ -1207,7 +1217,7 @@ def getGQAxis(eVal, k):
             ek = (-1, 0)
 
     elif np.sign(k) == np.sign(e1):  # e1 and k same sign  (e1 > 0)
-        if e0 == 0:
+        if abs(e0) < zero_tol:
             if np.sign(e1) == np.sign(e2):  # e1*X^2 + e2*Y^2          + |k| = 0  Imaginary Elliptic cylinder
                 ek = None
             else:  # e1*X^2 - e2*Y^2          + |k| = 0  Hyperpolic cylinder
@@ -1220,7 +1230,7 @@ def getGQAxis(eVal, k):
             ek = (-1, 1)
 
     else:  # e1 and k different sign
-        if e0 == 0:  # e1*X^2 + e2*Y^2          - |k| = 0  Elliptic cylinder
+        if abs(e0) < zero_tol:  # e1*X^2 + e2*Y^2          - |k| = 0  Elliptic cylinder
             ek = (0, -1)
         elif np.sign(e0) == np.sign(e1) and np.sign(e1) == np.sign(e2):  # e1*X^2 + e2*Y^2 + e0*Z^2 - |k| = 0  Ellipsoid
             ek = (1, -1)
@@ -1288,10 +1298,25 @@ def gq2params(x):
     eVal, vect = LA.eigh(mat3)
     XD = np.matmul(X, vect)  # X in diagonalised base
 
-    nonzero = np.where(abs(eVal) > 1e-8)
-    Dinv = eVal[:]
-    Dinv[nonzero] = 1 / eVal[nonzero]  # get inverse eigen value where eigen > 1e-8
-    zero = (abs(eVal) < 1e-8).nonzero()  # index in eigen value vector where eigen < 1e-8
+    # Relative, not absolute, zero test -- see Tolerances.gq_eigen_zero_rel's
+    # own docstring: eVal (and, below, comp) scale together with the GQ
+    # card's own arbitrary coefficient normalization, so the zero cutoff
+    # must scale with them too rather than being a fixed literal.
+    eval_scale = max(abs(eVal[0]), abs(eVal[1]), abs(eVal[2]), 1e-300)
+    eval_zero_tol = Tolerances.gq_eigen_zero_rel * eval_scale
+
+    nonzero = np.where(abs(eVal) > eval_zero_tol)
+    # `eVal[:]` is a numpy VIEW, not a copy -- `Dinv[nonzero] = ...` below
+    # would silently overwrite `eVal` itself in place (a real, pre-existing
+    # bug found 2026-09-14 while adding a synthetic classifier test: it was
+    # masked in the one real fixture this project has ever exercised this
+    # code against, tests/csg_files/cylinder_box.mcnp, only because that
+    # cylinder's own nonzero eigenvalues happen to already equal 1.0, so
+    # `1/eigenvalue` was a no-op overwrite there). `eVal` is used again
+    # below (via `conicSurface`) after this point, so it must stay intact.
+    Dinv = eVal.copy()
+    Dinv[nonzero] = 1 / eVal[nonzero]  # get inverse eigen value where eigen is not ~0
+    zero = (abs(eVal) < eval_zero_tol).nonzero()  # index in eigen value vector where eigen is ~0
     zero = zero[0]  # nonzero return a tuple with array containing the nonzero indexes
     TD = -XD * Dinv  # Translation vector in diagonalized base
 
@@ -1302,7 +1327,20 @@ def gq2params(x):
         comp = 2 * XD[iz]
         # zero eigenvalue but corresponding component in XD vector is non zero => paraboloid Curve
         # => the k/comp value is the translation in this component direction
-        if abs(comp) > 1e-6:
+        #
+        # `comp` shares units with XD's own other components (both are
+        # linear coefficients in the diagonalized frame), not with the
+        # eigenvalues -- so it's compared against their own magnitude,
+        # not eval_scale. Uses the looser gq_eigen_equal_rel tier (not
+        # gq_eigen_zero_rel): for an off-origin, rotated cylinder, real
+        # MCNP-card rounding of ~6 significant figures perturbs `comp`
+        # away from its true zero by roughly (rounding step) * (center
+        # distance) -- comparable in scale to the eigenvalue-pair
+        # rounding gq_eigen_equal_rel already exists to forgive, not to
+        # the tighter numerical-noise floor gq_eigen_zero_rel targets.
+        lin_scale = max(abs(XD[0]), abs(XD[1]), abs(XD[2]), 1e-300)
+        lin_zero_tol = Tolerances.gq_eigen_equal_rel * lin_scale
+        if abs(comp) > lin_zero_tol:
             TD[iz] = -k / comp
             U = (k, (iz, comp))
         else:

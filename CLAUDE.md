@@ -312,6 +312,66 @@ gaps for whenever it's picked back up:
   d1suned tally of ~1.119x on the same unfixed file — the two don't
   agree, and this was never chased down once the real GEOUNED-side
   fix for that investigation was found via a different route.
+- **GQ/SQ surface-type classifier (`MCNP_parser/MCNPinput.py::gq2params`
+  -> `getGQAxis` -> `get_cylinder_parameters`/`get_cone_parameters`/
+  `get_hyperboloid_parameters`/`get_ellipsoid_parameters`), fixed
+  2026-09-14**: this is the function that decides, from a raw GQ/SQ
+  card's 10 coefficients (via eigenvalue decomposition of the quadratic
+  form), which specific surface type it is -- cylinder, cone, ellipsoid,
+  hyperboloid, etc. Investigated after the user flagged that a *real*
+  circular cylinder (a card whose non-axis-aligned rotation makes all 10
+  coefficients nonzero) can misclassify as an ellipsoid or hyperbolic
+  cylinder once its coefficients have been rounded. Root cause: every
+  "are these two eigenvalues equal"/"is this eigenvalue zero" test used
+  a fixed *absolute* tolerance (`1e-5` in three places, `1e-3` in one,
+  `1e-8` in one) or outright *exact* `== 0` equality -- but the GQ
+  equation is invariant under multiplying all 10 coefficients by any
+  nonzero scalar, which scales every eigenvalue (and the reduced
+  constant `k`) by that same scalar, so no fixed absolute tolerance can
+  work across differently-normalized cards representing the same
+  surface. Confirmed live against the only real GQ fixture in the repo
+  (`tests/csg_files/cylinder_box.mcnp`, a clean circular cylinder): its
+  eigenvalues are `[-5.55e-17, 1.0, 1.0]`, and the old `e0 == 0` test
+  missed that `-17`-order residual entirely, misrouting classification
+  to "hyperboloid" -- it only produced the right final answer by
+  accident, via an unrelated large-radius-ratio fallback deep in
+  `get_hyperboloid_parameters`. Fixed: every such comparison now uses a
+  *relative* tolerance instead, scaled against the eigenvalues' own
+  magnitude (`max(abs(eigenvalues))`) -- two new tiers added to a new
+  `Tolerances` class in `GEOReverse/Modules/data_class.py`
+  (`gq_eigen_zero_rel = 1e-6` for numerical-noise-level zero checks,
+  `gq_eigen_equal_rel = 1e-5` for the looser "forgive real MCNP-card
+  rounding" pairwise-equal check -- there's a wide, safe margin between
+  6-8-significant-figure rounding noise and any genuinely, intentionally
+  elliptic real-world design, so this doesn't risk false positives). The
+  previously-hardcoded `cylTan`/`coneRad` ratio-based fallbacks were also
+  centralized into this same `Tolerances` class (`cylinder_ratio =
+  1e3`/`cone_min_radius = 0.1`, values unchanged).
+  **Two further, independent bugs found and fixed while verifying this**
+  (not tolerance issues, but only surfaced by testing a non-axis-aligned
+  cylinder with non-unity eigenvalues, which no existing fixture in the
+  repo happened to exercise): (1) `gq2params`'s `Dinv = eVal[:]` was a
+  numpy *view*, not a copy -- `Dinv[nonzero] = 1/eVal[nonzero]` silently
+  overwrote `eVal` itself in place, corrupting the eigenvalues used by
+  every downstream classification step; masked in the one real fixture
+  only because that cylinder's own nonzero eigenvalues already happened
+  to equal `1.0` (`1/1.0` is a no-op overwrite). Fixed to `Dinv =
+  eVal.copy()`. (2) The paraboloid-vs-cylinder `comp` check compared a
+  linear-coefficient-scale quantity against the eigenvalue scale
+  (dimensionally mismatched); fixed to compare against the diagonalized
+  linear-coefficient vector's own magnitude instead.
+  Verified: new `tests/test_gq_classification.py` (5 tests -- the real
+  fixture, a rotated circular cylinder surviving 6- and 8-significant-
+  figure rounding, a genuinely 20%-eccentric elliptic cylinder correctly
+  *not* rounded down to circular, and an axis-aligned control) plus
+  `test_csgtocad.py::test_cylbox_convertion` (both `mcnp`/`openmc_xml`)
+  green on all 3 engines. **Deliberately out of scope**: `XML_parser/
+  XMLinput.py`'s own, separate `gq2cyl` classifier (used for OpenMC-XML
+  input) was not touched -- it already used relative tolerances (just
+  looser ones, `5e-2`/`1e-3`, and only supports cylinder/cone), so
+  unifying it with the new `Tolerances` values risked an unverified
+  regression on its own passing test without the same demonstrated bug
+  to justify it; left as a follow-up decision.
 - The 7 "exotic quadric" surfaces GEOReverse's own MCNP/OpenMC-XML
   `GQ`/`SQ` parser can produce -- **all 7 now implemented under `occ`/
   `ocp`, 2026-09-13/14**: `Gmake_ellipsoid`, `Gmake_elliptic_cylinder`,
