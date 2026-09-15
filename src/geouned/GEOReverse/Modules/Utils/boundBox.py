@@ -441,6 +441,40 @@ def quadric_to_plane(cellDef, surfaces, orientation):
                     p_in.append(next_index)
                     next_index += 1
                 surf_planes_dict[s_label] = ("torus", p_ext, p_in)
+            elif s.type == "hyperboloid":
+                if s.params[4]:
+                    # one-sheet hourglass: `hyperboloid_to_planes` returns 3
+                    # separate groups (2 mirrored asymptotic sheets + a waist
+                    # band) that must be OR'd together, not AND'd as a flat
+                    # list would imply -- a point only needs to satisfy one
+                    # group, never all 3 at once (see that function's own
+                    # docstring).
+                    groups_idx = []
+                    for group in surf_planes:
+                        idx = []
+                        for p in group:
+                            planes[next_index] = p
+                            idx.append(next_index)
+                            next_index += 1
+                        groups_idx.append(idx)
+                    surf_planes_dict[s_label] = ("hyp1sheet", groups_idx)
+                else:
+                    p_index = []
+                    for p in surf_planes:
+                        planes[next_index] = p
+                        p_index.append(next_index)
+                        next_index += 1
+                    surf_planes_dict[s_label] = ("hyp2sheet", p_index)
+            elif s.type == "cylinder_hyperbolic":
+                groups_idx = []
+                for group in surf_planes:
+                    idx = []
+                    for p in group:
+                        planes[next_index] = p
+                        idx.append(next_index)
+                        next_index += 1
+                    groups_idx.append(idx)
+                surf_planes_dict[s_label] = ("cylhyp", groups_idx)
             else:
                 p_index = []
                 for p in surf_planes:
@@ -462,6 +496,10 @@ def convert_to_planes(s, pos):
         return cone_to_planes(s, pos)
     elif s.type == "cone_elliptic":
         return elliptic_cone_to_planes(s, pos)
+    elif s.type == "hyperboloid":
+        return hyperboloid_to_planes(s, pos)
+    elif s.type == "cylinder_hyperbolic":
+        return cylinder_hyperbolic_to_planes(s, pos)
     elif s.type == "sphere":
         return sphere_to_planes(s, pos)
     elif s.type == "torus":
@@ -488,7 +526,7 @@ def get_orto_axis(axis):
     w = v.cross(axis)
     w = w.normalized()
 
-    return v, w
+    return w, v
 
 
 def cylinder_to_planes(cyl, pos):
@@ -611,6 +649,223 @@ def elliptic_cone_to_planes(cone, pos):
 
     cplanes.append(GPlane.from_values(apex, axis))
     return tuple(cplanes)
+
+
+def cylinder_hyperbolic_to_planes(cyl, pos):
+    """Bounding-plane approximation for the "cylinder_hyperbolic" GQ
+    stype -- the real MCNP flat hyperbolic prism (a genuinely zero
+    eigenvalue along the extrusion axis, from `get_cylinder_parameters`;
+    NOT the same surface as "hyperboloid"'s `onesht=True` revolve-based
+    hourglass -- see the history log for the full distinction). Per
+    direct user instruction, 2026-09-14: same ring/vertex technique as
+    `_hyperboloid_two_sheets_planes` (the 2-sheet hyperboloid's own
+    single-branch model), called TWICE -- once for the surface's own
+    `major_axis`, once rotated 180 degrees around `axis` (the true
+    extrusion axis, perpendicular to the hyperbola's own plane -- NOT
+    simply negating `major_axis` alone, which would mirror rather than
+    rotate the construction and leave the resulting planes' normals
+    pointing the wrong way for the second branch) -- since a real flat
+    hyperbolic prism genuinely has BOTH branches present as bounding
+    walls (unlike the 2-sheet hyperboloid, where only one branch is
+    ever real material). The azimuthal sweep is restricted to `np=2`
+    (phi=0/pi) with `x` set to the surface's own `minor_axis` exactly
+    (not an arbitrary perpendicular from `get_orto_axis`) -- this is a
+    flat 2D curve extruded along `axis`, not a surface of revolution,
+    so there is no azimuthal direction to sweep at all; `y` (=`axis`
+    itself here) is never actually used since sin(0)=sin(pi)=0 exactly,
+    but still needed to complete the orthonormal basis
+    `_hyperboloid_two_sheets_planes` expects.
+
+    `_hyperboloid_two_sheets_planes`'s own planes point OUTWARD (away
+    from `center`, beyond the vertex) -- correct for its own use (a
+    2-sheet hyperboloid's real material sits BEYOND its one real
+    vertex). Here the real material is the OPPOSITE: the channel
+    BETWEEN the two branches, i.e. BEFORE each branch's own vertex --
+    so every returned plane's normal is negated relative to the reused
+    function's own output."""
+    center, axis, radii, rAxes = cyl.params
+    a_len, b_len = radii[1], radii[0]
+    x, y = get_orto_axis(axis)
+    nt = 2
+    rmax = 7.5e5
+
+    p0 = b_len / a_len
+    cplanes = [[], []]
+
+    for n in range(nt):
+        if n == 0:
+            xn = math.sqrt((rmax * rmax + b_len * b_len) / (1 + p0 * p0))
+            yn = math.sqrt(p0 * p0 * xn * xn - b_len * b_len)
+            slope = p0
+        else:
+            pn = (n + 1) * p0
+            n2 = 1 / ((n + 1) * (n + 1))
+            xn = a_len / math.sqrt(1 - n2)  # (p0/pn)^2 == 1/(n+1)^2
+            yn = xn * p0 / (n + 1)
+            slope = pn
+
+        for i in range(2):
+            slope_1 = -slope * x + y
+            slope_2 = -slope * x - y
+            xe_1 = center + yn * y + xn * x
+            xe_2 = center - yn * y + xn * x
+            normal_1 = slope_1.normalized()
+            normal_2 = slope_2.normalized()
+            cplanes[i].append(GPlane.from_values(xe_1, normal_1))
+            cplanes[i].append(GPlane.from_values(xe_2, normal_2))
+            x = -x
+            y = -y
+
+        xe_1 = center + a_len * x
+        xe_2 = center - a_len * x
+        cplanes[0].append(GPlane.from_values(xe_1, -x))
+        cplanes[1].append(GPlane.from_values(xe_2, x))
+
+    return cplanes
+
+
+def _hyperboloid_two_sheets_planes(center, major_axis, x, y, a_len, b_len, np, nt, rmax):
+    """One vertex-on-`axis` hyperboloid sheet's own tangent-plane ring
+    sequence -- the shared core of the "2-sheet" technique in
+    `hyperboloid_to_planes` below (`parabola_to_planes`'s own faceted,
+    converging-ring model, just built from the hyperbola's own curve
+    instead of the parabola's, with the outermost ring built from the
+    exact asymptote instead of an approximation -- see that function's
+    own docstring for the full derivation). `a_len` (semi-transverse,
+    along `axis`, the vertex offset from `center`) and `b_len` (semi-
+    conjugate, radial) are the hyperbola's own two defining lengths;
+    `x`/`y` is the orthonormal basis perpendicular to `axis`."""
+    dphi = twoPi / np
+    vertex = center + major_axis * b_len
+    # x0 chosen so the outermost ring (n == nt) lands at the radial
+    # coordinate whose asymptote-axial-position is ~rmax (mirrors
+    # parabola_to_planes's own x0, just solved through the hyperbola's
+    # own asymptote z ~ (a/b)*xp instead of the parabola's z=xp^2/(4f)).
+
+    p0 = b_len / a_len
+
+    cplanes = [GPlane.from_values(vertex, major_axis)]
+    for n in range(nt):
+        if n == 0:
+            xn = math.sqrt((rmax * rmax + b_len * b_len) / (1 + p0 * p0))
+            z_local = math.sqrt(p0 * p0 * xn * xn - b_len * b_len)
+            slope_rho_coeff = b_len
+            slope_axis_coeff = a_len
+        else:
+            pn = p0 / (n + 1)
+            n2 = (n + 1) * (n + 1)
+            nsq = math.sqrt(n + 1)
+            xn = a_len / math.sqrt(1 + n2)  # (p0/pn)^2 == (n+1)^2
+            yn = xn * pn * n2
+            z_local = yn
+            slope_rho_coeff = b_len / nsq
+            slope_axis_coeff = a_len * nsq
+
+        for i in range(np):
+            phi = i * dphi
+            rho = x * math.cos(phi) + y * math.sin(phi)
+            slope = -slope_rho_coeff * rho + slope_axis_coeff * major_axis
+            xe = center + xn * rho + z_local * major_axis
+            normal = slope.normalized()
+            cplanes.append(GPlane.from_values(xe, normal))
+
+    return cplanes
+
+
+def _hyperboloid_one_sheet_planes(center, major_axis, x, y, a_len, b_len, np, nt, rmax):
+    """One vertex-on-`axis` hyperboloid sheet's own tangent-plane ring
+    sequence -- the shared core of the "2-sheet" technique in
+    `hyperboloid_to_planes` below (`parabola_to_planes`'s own faceted,
+    converging-ring model, just built from the hyperbola's own curve
+    instead of the parabola's, with the outermost ring built from the
+    exact asymptote instead of an approximation -- see that function's
+    own docstring for the full derivation). `a_len` (semi-transverse,
+    along `axis`, the vertex offset from `center`) and `b_len` (semi-
+    conjugate, radial) are the hyperbola's own two defining lengths;
+    `x`/`y` is the orthonormal basis perpendicular to `axis`."""
+    dphi = twoPi / np
+
+    p0 = a_len / b_len
+    cplanes = [[] for _ in range(np)]
+
+    for n in range(nt):
+        if n == 0:
+            xn = math.sqrt((rmax * rmax + a_len * a_len) / (1 + p0 * p0))
+            z_local = math.sqrt(p0 * p0 * xn * xn - a_len * a_len)
+            slope_rho_coeff = a_len
+            slope_axis_coeff = b_len
+        else:
+            pn = (n + 1) * p0
+            n2 = 1 / ((n + 1) * (n + 1))
+            nsq = math.sqrt(n + 1)
+            xn = b_len / math.sqrt(1 - n2)  # (p0/pn)^2 == 1/(n+1)^2
+            yn = xn * pn * n2
+            z_local = yn
+            slope_rho_coeff = a_len * nsq
+            slope_axis_coeff = b_len / nsq
+
+        for i in range(np):
+            phi = i * dphi
+            rho = x * math.cos(phi) + y * math.sin(phi)
+            slope_1 = -slope_rho_coeff * rho + slope_axis_coeff * major_axis
+            slope_2 = -slope_rho_coeff * rho - slope_axis_coeff * major_axis
+            xe_1 = center + xn * rho + z_local * major_axis
+            xe_2 = center + xn * rho - z_local * major_axis
+            normal_1 = slope_1.normalized()
+            normal_2 = slope_2.normalized()
+            cplanes[i].append(GPlane.from_values(xe_1, normal_1))
+            cplanes[i].append(GPlane.from_values(xe_2, normal_2))
+
+    for i in range(np):
+        phi = i * dphi
+        rho = x * math.cos(phi) + y * math.sin(phi)
+        xe = center + b_len * rho
+        cplanes[i].append(GPlane.from_values(xe, -rho))
+
+    return cplanes
+
+
+def hyperboloid_to_planes(hyp, pos):
+    """Bounding-plane approximation for the "hyperboloid" GQ stype, built
+    differently depending on `onesht` (per direct user instruction,
+    2026-09-14 -- the two surfaces are NOT bounded the same way):
+
+    `onesht=False` (standard 2-sheet, only the +axis branch is ever
+    built, matching `Objects.py::Hyperboloid.buildShape`'s own
+    convention): a single `_hyperboloid_sheet_planes` call -- same model
+    as `parabola_to_planes`.
+
+    `onesht=True` (the connected one-sheet "hourglass", revolved around
+    the true conjugate axis -- `axis`/`rAxes[1]` here): built from TWO
+    `_hyperboloid_sheet_planes` calls, mirrored on `+major_axis` and
+    `-major_axis` (an outer, cone-like envelope sharing the surface's own
+    real asymptotic slope, even though `major_axis` isn't its true
+    revolution axis), PLUS 4 simple tangent planes wrapping `minor_axis`
+    at the waist radius (`cylinder_to_planes`'s own technique, using
+    `minor_axis` as the cylinder axis) to close off the near-waist region
+    where the mirrored sheets are a poor local bound (the true surface
+    has no vertex there at all -- the waist already has nonzero radius).
+
+    Returned as 3 SEPARATE plane groups (a point only needs to satisfy
+    ALL of one group, not all 3 groups at once -- the two mirrored sheets
+    are mutually exclusive almost everywhere, so requiring both at the
+    same time, as a flat plane list normally implies, would leave almost
+    no point "inside" at all). `quadric_to_plane`/`plane_definition` know
+    to OR the 3 groups together for this specific return shape (`"cone"`/
+    `"torus"` already get equivalent special-cased treatment there for
+    the same reason)."""
+    center, axis, radii, rAxes, onesht = hyp.params
+    axis = axis.normalized()
+    np = 4
+    nt = 2
+    rmax = 7.5e5
+
+    a_len, b_len = radii[1], radii[0]  # a=semi-transverse(axial), b=semi-conjugate(radial)
+    x, y = get_orto_axis(axis)
+    if onesht:
+        return _hyperboloid_one_sheet_planes(center, axis, x, y, a_len, b_len, np, nt, rmax)
+    else:
+        return _hyperboloid_two_sheets_planes(center, axis, x, y, b_len, a_len, np, nt, rmax)
 
 
 def sphere_to_planes(sphere, pos):
@@ -787,6 +1042,7 @@ def parabola_to_planes(parabola, pos):
 
     center, axis, focal = parabola.params
     nt = 7
+    np = 4
     a = 0.22
     rmax = 7.5e5
     b = 1 - math.sqrt(2 * a)
@@ -794,8 +1050,7 @@ def parabola_to_planes(parabola, pos):
 
     axis = axis.normalized()
     x, y = get_orto_axis(axis)
-    dphi = twoPi / 4
-    phi = 0
+    dphi = twoPi / np
 
     p0 = GPlane.from_values(center, axis)
     cplanes = [p0]
@@ -803,7 +1058,8 @@ def parabola_to_planes(parabola, pos):
     xp = x0
     for n in range(nt + 1):
         zi = 0.25 * xp * xp / focal
-        for i in range(4):
+        phi = 0
+        for i in range(np):
             rho = x * math.cos(phi) + y * math.sin(phi)
             vec = y * math.cos(phi) - x * math.sin(phi)
             slope = 2 * focal * rho + xp * axis  # slope xp/(2*focal)
@@ -835,15 +1091,29 @@ def plane_definition(seq, surf_index, orientation):
                     pm = extm
             elif planes[0] == "dblcone":
                 addpos = True
-                cplanes = planes[1]
-                cone1 = BoolSequence(" ".join((str(p) for p in cplanes)))
-                cone2 = BoolSequence(" ".join((str(-p) for p in cplanes)))
+                cone1 = BoolSequence(" ".join((str(p) for p in planes[1])))
+                cone2 = BoolSequence(" ".join((str(-p) for p in planes[1])))
                 pm = BoolSequence(operator="OR")
                 pm.append(cone1, cone2)
-            else:
-                cplanes = planes[1]
+            elif planes[0] == "hyp1sheet":
                 addpos = True
-                pm = BoolSequence(" ".join((str(p) for p in cplanes)))
+                pm = BoolSequence(operator="AND")
+                for side in planes[1]:
+                    groups = BoolSequence(":".join((str(p) for p in side)))
+                    pm.append(groups)
+            elif planes[0] == "hyp2sheet":
+                addpos = True
+                s = -s  # hyperboloid 2 sheet has inverted orientation sign
+                pm = BoolSequence(" ".join((str(p) for p in planes[1])))
+            elif planes[0] == "cylhyp":
+                addpos = True
+                pm = BoolSequence(operator="AND")
+                side1 = BoolSequence(":".join((str(p) for p in planes[1][0])))
+                side2 = BoolSequence(":".join((str(p) for p in planes[1][1])))
+                pm.append(side1, side2)
+            else:
+                addpos = True
+                pm = BoolSequence(" ".join((str(p) for p in planes[1])))
         else:
             pm = BoolSequence(" ".join((str(p) for p in planes)))
         if type(seq.elements) is bool:

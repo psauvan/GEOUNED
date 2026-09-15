@@ -54,12 +54,16 @@ from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeWire,
     BRepBuilderAPI_Sewing,
 )
+from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
-from OCP.Geom import Geom_Circle, Geom_Ellipse, Geom_Hyperbola, Geom_Parabola
+from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol
+from OCP.Geom import Geom_BSplineSurface, Geom_Circle, Geom_Ellipse, Geom_Hyperbola, Geom_Parabola
+from OCP.GeomAbs import GeomAbs_SurfaceOfRevolution
+from OCP.GeomAdaptor import GeomAdaptor_Surface
 from OCP.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Vec
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Quantity import Quantity_Color, Quantity_TOC_RGB
+from OCP.ShapeCustom import ShapeCustom
 from OCP.STEPCAFControl import STEPCAFControl_Writer
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
@@ -72,9 +76,67 @@ from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import XCAFDoc_ColorGen, XCAFDoc_DocumentTool
 
 from ....geo import GSolid, GVector, Gfuse, Gmake_compound, Gmake_torus_elliptic, arbitrary_perpendicular, to_native_vector
+from ....geo.io_utils import suppress_native_stdout
 from ..Utils.cad_export_shared import cell_label_name, material_colors, material_label_name, universe_label_name
 
 SUPPORTED_FORMATS = {"stp", "step"}
+
+
+def _has_revolution_surface(native_shape) -> bool:
+    """See `_occ_impl.py`'s own copy: a cheap face-type scan, used to
+    skip `_revolution_to_bspline` entirely for the vast majority of
+    solids that never need it."""
+    explorer = TopExp_Explorer(native_shape, TopAbs_FACE)
+    while explorer.More():
+        face = TopoDS.Face(explorer.Current())
+        if GeomAdaptor_Surface(BRep_Tool.Surface_s(face)).GetType() == GeomAbs_SurfaceOfRevolution:
+            return True
+        explorer.Next()
+    return False
+
+
+def _revolution_to_bspline(native_shape, extra_knots: int = 8):
+    """See `_occ_impl.py`'s own copy of this function for the full
+    derivation: a `Geom_SurfaceOfRevolution` built from a `Geom_Hyperbola`
+    (the `GHyperboloid`/`GHyperbolicCylinder` side face) writes to STEP
+    fine but `STEPControl_Reader` raises translating it back (a real
+    OCCT/OCP limitation, confirmed with a minimal, GEOUNED-free
+    reproduction) -- converting just the revolution surface(s) to an
+    equivalent `Geom_BSplineSurface` before export avoids it. `extra_knots`
+    uniformly-spaced knots are then inserted into each converted face's
+    own U/V knot vectors for a denser, less visibly-faceted control net
+    (exact -- knot insertion doesn't change the surface's own (u,v)->
+    (x,y,z) mapping, so the pcurves `ShapeCustom.ConvertToBSpline` already
+    built stay valid). Unlike pythonocc's own SWIG binding, OCP's
+    `BRep_Tool.Surface(face)` already returns the concrete-most Python
+    type (pybind11's automatic polymorphic downcast) -- a plain
+    `isinstance` check is enough, no `IsKind`/`DownCast` dance needed.
+
+    Called ONLY at export time (`_build_tree`, right before
+    `shape_tool.AddShape`), gated by `_has_revolution_surface` -- NOT
+    inside `_make_hyperboloid_sheet`/`_make_hyperbolic_cylinder_native`
+    themselves (confirmed with the user, 2026-09-14, this was tried
+    first and reverted): every OTHER consumer of a `GHyperboloid`/
+    `GHyperbolicCylinder` tool -- `Gsplit`/`Gcut`/`Gfuse` boolean cuts
+    against it, volume/bbox queries -- must keep operating on the EXACT
+    analytic hyperbola surface for correctness; only the final exported
+    STEP document needs the approximation, and only for file-format
+    compatibility."""
+    converted = ShapeCustom.ConvertToBSpline_s(native_shape, False, True, False)
+    builder = BRep_Builder()
+    explorer = TopExp_Explorer(converted, TopAbs_FACE)
+    while explorer.More():
+        face = TopoDS.Face(explorer.Current())
+        surf = BRep_Tool.Surface_s(face)
+        if isinstance(surf, Geom_BSplineSurface):
+            u1, u2, v1, v2 = surf.Bounds()
+            for i in range(1, extra_knots + 1):
+                surf.InsertUKnot(u1 + (u2 - u1) * i / (extra_knots + 1), 1, 1e-9, False)
+            for i in range(1, extra_knots + 1):
+                surf.InsertVKnot(v1 + (v2 - v1) * i / (extra_knots + 1), 1, 1e-9, False)
+            builder.UpdateFace(face, surf, face.Location(), BRep_Tool.Tolerance_s(face))
+        explorer.Next()
+    return converted
 
 
 def _build_tree(shape_tool, color_tool, mat_colors, CADCells, parent_label):
@@ -108,7 +170,10 @@ def _build_tree(shape_tool, color_tool, mat_colors, CADCells, parent_label):
         shape_tool.AddComponent(universe_label, mat_label, TopLoc_Location())
         color = Quantity_Color(*mat_colors[mat], Quantity_TOC_RGB)
         for c in cells:
-            cell_label = shape_tool.AddShape(c.shape.__native__, False)
+            native = c.shape.__native__
+            if _has_revolution_surface(native):
+                native = _revolution_to_bspline(native)
+            cell_label = shape_tool.AddShape(native, False)
             TDataStd_Name.Set_s(cell_label, TCollection_ExtendedString(cell_label_name(c.name, c.MAT)))
             shape_tool.AddComponent(mat_label, cell_label, TopLoc_Location())
             color_tool.SetColor(cell_label, color, XCAFDoc_ColorGen)
@@ -137,9 +202,10 @@ def export_ocp(buildCAD_list, formats, output_filename, barename):
     for fmt in formats:
         if fmt in ("stp", "step"):
             writer = STEPCAFControl_Writer()
-            writer.Transfer(doc)
             filename = f"{output_filename}.{fmt}"
-            status = writer.Write(filename)
+            with suppress_native_stdout():
+                writer.Transfer(doc)
+                status = writer.Write(filename)
             if status != IFSelect_RetDone:
                 raise RuntimeError(f"STEP export failed for {filename} (status={status})")
 
@@ -411,7 +477,7 @@ def Gmake_hyperboloid(center, axis, major_radius, minor_radius, major_axis, mino
 # `_occ_impl.py`'s own comment block for the full writeup.
 
 
-def _make_hyperbolic_cylinder_native(surf: "GHyperbolicCylinder", height: float) -> GSolid:
+def _make_hyperbolic_cylinder_native(surf: "GHyperbolicCylinder", height: float, v_min: float = 0.0) -> GSolid:
     center_native = to_native_vector(surf.Center)
     major_dir = gp_Dir(surf.MajorAxis.x, surf.MajorAxis.y, surf.MajorAxis.z)
     minor_dir = gp_Dir(surf.MinorAxis.x, surf.MinorAxis.y, surf.MinorAxis.z)
@@ -421,15 +487,23 @@ def _make_hyperbolic_cylinder_native(surf: "GHyperbolicCylinder", height: float)
     ax2 = gp_Ax2(center_native, normal, major_dir)
     hyperbola = Geom_Hyperbola(ax2, surf.MajorRadius, surf.MinorRadius)
 
+    # `v_min` (default 0.0, preserving the original one-directional
+    # behavior) lets the caller build a piece spanning BOTH sides of the
+    # true waist (v_min < 0 < height) in one continuous revolve -- see
+    # `_occ_impl.py`'s own copy of this function for the full derivation.
+    t_min = math.asinh(v_min / surf.MinorRadius)
     t_end = math.asinh(height / surf.MinorRadius)
-    edge = BRepBuilderAPI_MakeEdge(hyperbola, 0.0, t_end).Edge()
+    edge = BRepBuilderAPI_MakeEdge(hyperbola, t_min, t_end).Edge()
     wire = BRepBuilderAPI_MakeWire(edge).Wire()
     shell = BRepPrimAPI_MakeRevol(wire, gp_Ax1(center_native, minor_dir), 2.0 * math.pi).Shape()
 
-    cap0 = _make_disc_face(center_native, minor_dir, surf.MajorRadius)
-    rim_radius = surf.MajorRadius * math.sqrt(1.0 + (height / surf.MinorRadius) ** 2)
-    rim_center = to_native_vector(surf.Center + surf.MinorAxis * height)
-    cap1 = _make_disc_face(rim_center, minor_dir, rim_radius)
+    rim_radius0 = surf.MajorRadius * math.sqrt(1.0 + (v_min / surf.MinorRadius) ** 2)
+    rim_center0 = to_native_vector(surf.Center + surf.MinorAxis * v_min)
+    cap0 = _make_disc_face(rim_center0, minor_dir, rim_radius0)
+
+    rim_radius1 = surf.MajorRadius * math.sqrt(1.0 + (height / surf.MinorRadius) ** 2)
+    rim_center1 = to_native_vector(surf.Center + surf.MinorAxis * height)
+    cap1 = _make_disc_face(rim_center1, minor_dir, rim_radius1)
 
     sewer = BRepBuilderAPI_Sewing(1e-6)
     sewer.Add(shell)
@@ -469,12 +543,81 @@ class GHyperbolicCylinder:
         y = self.MajorRadius * math.sqrt(1.0 + (v / self.MinorRadius) ** 2)
         return d < y
 
-    def build_shape(self, height: float) -> GSolid:
-        return _make_hyperbolic_cylinder_native(self, height)
+    def build_shape(self, height: float, v_min: float = 0.0) -> GSolid:
+        return _make_hyperbolic_cylinder_native(self, height, v_min)
 
 
-def Gmake_hyperbolic_cylinder(center, axis, major_radius, minor_radius, major_axis, minor_axis, height) -> GSolid:
-    return GHyperbolicCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(height)
+def Gmake_hyperbolic_cylinder(center, axis, major_radius, minor_radius, major_axis, minor_axis, height, v_min=0.0) -> GSolid:
+    return GHyperbolicCylinder.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(
+        height, v_min
+    )
+
+
+# ---------------------------------------------------------------------------
+# GHyperbolicPrism -- see `_occ_impl.py`'s own copy for the full derivation:
+# the real MCNP "cylinder_hyperbolic" GQ surface (a genuinely zero
+# eigenvalue along the extrusion axis) is a FLAT hyperbolic prism, NOT
+# revolved (that's the different "hyperboloid" `onesht=True` surface --
+# `GHyperbolicCylinder` above, unrelated despite the similar name).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GHyperbolicPrism:
+    Center: GVector
+    Axis: GVector
+    MajorRadius: float
+    MinorRadius: float
+    MajorAxis: GVector
+    MinorAxis: GVector
+
+    @classmethod
+    def from_values(cls, center, axis, major_radius, minor_radius, major_axis, minor_axis) -> "GHyperbolicPrism":
+        return cls(center, axis, major_radius, minor_radius, major_axis, minor_axis)
+
+    def is_inside(self, point: GVector) -> bool:
+        r = point - self.Center
+        x = r.dot(self.MajorAxis)
+        y = r.dot(self.MinorAxis)
+        return (x / self.MajorRadius) ** 2 - (y / self.MinorRadius) ** 2 - 1 < 0
+
+    def build_shape(self, extrusion_length: float, y_reach: float) -> GSolid:
+        """See `_occ_impl.py`'s own copy for the full derivation:
+        `extrusion_length` (along `Axis`) and `y_reach` (the hyperbola
+        profile's own reach along `MinorAxis`) are independent extents,
+        fixed 2026-09-15 after a real fixture showed the profile built
+        too short when they genuinely differ."""
+        center_native = to_native_vector(self.Center)
+        major_dir = gp_Dir(self.MajorAxis.x, self.MajorAxis.y, self.MajorAxis.z)
+        minor_dir = gp_Dir(self.MinorAxis.x, self.MinorAxis.y, self.MinorAxis.z)
+        normal = gp_Dir(
+            gp_Vec(major_dir.X(), major_dir.Y(), major_dir.Z()).Crossed(gp_Vec(minor_dir.X(), minor_dir.Y(), minor_dir.Z()))
+        )
+
+        t_end = math.asinh(y_reach / self.MinorRadius)
+
+        ax2_1 = gp_Ax2(center_native, normal, major_dir)
+        hyperbola1 = Geom_Hyperbola(ax2_1, self.MajorRadius, self.MinorRadius)
+        wire1 = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(hyperbola1, -t_end, t_end).Edge()).Wire()
+
+        rev_major_dir = gp_Dir(-major_dir.X(), -major_dir.Y(), -major_dir.Z())
+        ax2_2 = gp_Ax2(center_native, normal, rev_major_dir)
+        hyperbola2 = Geom_Hyperbola(ax2_2, self.MajorRadius, self.MinorRadius)
+        wire2 = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(hyperbola2, -t_end, t_end).Edge()).Wire()
+
+        d = gp_Vec(self.Axis.x, self.Axis.y, self.Axis.z) * extrusion_length
+
+        sheet1 = GSolid(BRepPrimAPI_MakePrism(wire1, d).Shape())
+        sheet2 = GSolid(BRepPrimAPI_MakePrism(wire2, d).Shape())
+        return Gmake_compound([sheet1, sheet2])
+
+
+def Gmake_hyperbolic_prism(
+    center, axis, major_radius, minor_radius, major_axis, minor_axis, extrusion_length, y_reach
+) -> GSolid:
+    return GHyperbolicPrism.from_values(center, axis, major_radius, minor_radius, major_axis, minor_axis).build_shape(
+        extrusion_length, y_reach
+    )
 
 
 def Gmake_ellipsoid(center, axis, major_radius, minor_radius, major_axis, minor_axis) -> GSolid:

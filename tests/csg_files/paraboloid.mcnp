@@ -1,0 +1,10 @@
+Paraboloid test (focal=100cm, axis=Z, vertex at origin, capped 0<z<500)
+1      0      -1 2 -3   imp:n=1
+2      0      (1 : -2 : 3)  imp:n=0
+
+1      GQ   1.0  1.0  0.0  0.0  0.0  0.0  0.0  0.0  -400.0
+          0.0
+2      PZ   0
+3      PZ   500
+
+MODE N

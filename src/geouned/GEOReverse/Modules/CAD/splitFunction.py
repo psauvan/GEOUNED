@@ -236,9 +236,9 @@ def surface_side(p, surf):
 
         if radical > 0:
             Y = radii[0] * math.sqrt(radical)
-            inout = d - Y
+            inout = (d - Y) * one
         else:
-            inout = 1
+            inout = one
 
     elif surf.type == "ellipsoid":
         center, axis, radii, rAxes = surf.params

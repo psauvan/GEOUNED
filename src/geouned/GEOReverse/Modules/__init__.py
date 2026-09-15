@@ -20,6 +20,7 @@ if CAD_ENGINE == "occ":
         Gmake_elliptic_cylinder,
         Gmake_ellipsoid,
         Gmake_hyperbolic_cylinder,
+        Gmake_hyperbolic_prism,
         Gmake_hyperboloid,
         Gmake_paraboloid,
         Gmake_torus_elliptic,
@@ -32,11 +33,18 @@ elif CAD_ENGINE == "ocp":
         Gmake_elliptic_cylinder,
         Gmake_ellipsoid,
         Gmake_hyperbolic_cylinder,
+        Gmake_hyperbolic_prism,
         Gmake_hyperboloid,
         Gmake_paraboloid,
         Gmake_torus_elliptic,
     )
 else:
+    # freecad's own `Gmake_hyperbolic_cylinder` already IS the flat-prism
+    # technique (extrude, never redesigned to revolve this session -- see
+    # CLAUDE.md's "Known open items" for why that's a deliberate, accepted
+    # asymmetry) -- aliased here so `Objects.py::HyperbolicCylinder.buildShape`
+    # can call `Gmake_hyperbolic_prism` uniformly across all 3 engines and
+    # still resolve to the geometrically-correct technique per engine.
     from .engine_dependency._freecad_impl import (
         SUPPORTED_FORMATS,
         export_freecad as export,
@@ -44,6 +52,7 @@ else:
         Gmake_elliptic_cylinder,
         Gmake_ellipsoid,
         Gmake_hyperbolic_cylinder,
+        Gmake_hyperbolic_cylinder as Gmake_hyperbolic_prism,
         Gmake_hyperboloid,
         Gmake_paraboloid,
         Gmake_torus_elliptic,

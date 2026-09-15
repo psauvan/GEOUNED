@@ -1,0 +1,11 @@
+Two-sheet hyperboloid, outside region (-1), radially bounded by a coaxial CZ cylinder instead of the universe boundbox limit
+1      0      -1 2 -3 -4   imp:n=1
+2      0      (1 : -2 : 3 : 4)  imp:n=0
+
+1      GQ   -1.0  -1.0  1.5  0.0  0.0  0.0  0.0  0.0  0.0
+          -1.0e6
+2      PZ   0
+3      PZ   6000
+4      CZ   10000
+
+MODE N

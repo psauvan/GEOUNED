@@ -1,0 +1,10 @@
+Elliptic cone test (apex at origin, axis=Z, RefRadius=100, MajorRadius=50 along X, MinorRadius=30 along Y, capped 0<z<200)
+1      0      -1 2 -3   imp:n=1
+2      0      (1 : -2 : 3)  imp:n=0
+
+1      GQ   4.0  11.111111111  -1.0  0.0  0.0  0.0  0.0  0.0  0.0
+          0.0
+2      PZ   0
+3      PZ   200
+
+MODE N

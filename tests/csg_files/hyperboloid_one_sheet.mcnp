@@ -1,0 +1,10 @@
+One-sheet hyperboloid test (a=200cm transverse X/Y, b=300cm conjugate Z, waist at origin, capped -600<z<600)
+1      0      -1 2 -3   imp:n=1
+2      0      (1 : -2 : 3)  imp:n=0
+
+1      GQ   2.5e-5  2.5e-5  -1.11111111e-5  0.0  0.0  0.0  0.0  0.0  0.0
+          -1.0
+2      PZ   -600
+3      PZ   600
+
+MODE N

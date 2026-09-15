@@ -1,0 +1,11 @@
+Hyperbolic cylinder test: flat prism along Z (X^2/400-Y^2/400=1), bounded by a coaxial CZ 50 cylinder and PZ 0 / PZ 40 planes
+1      0      -1 -2 3 -4   imp:n=1
+2      0      (1 : 2 : -3 : 4)  imp:n=0
+
+1      GQ   0.0025  -0.005  0.0  0.0  0.0  0.0  0.0  0.0  0.0
+          -1.0
+2      CZ   500
+3      PZ   0
+4      PZ   40
+
+MODE N

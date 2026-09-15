@@ -1011,11 +1011,33 @@ def points_to_coeffs(scf):
 def get_parabola_parameters(eVal, eVect, T, U):
     iaxis, comp = U[1]
     center = _gvec(T)
-    axis = _gvec(eVect[iaxis])
+    # Fixed 2026-09-14: was `eVect[iaxis]` (a ROW of the eigenvector
+    # matrix), not `eVect.T[iaxis]`/`np.transpose(eVect)[iaxis]` (the
+    # actual iaxis-th eigenVECTOR, a COLUMN) -- every other parameter-
+    # getter in this file uses the column form. Only coincidentally
+    # harmless for an axis-aligned card (whose eigenvector matrix happens
+    # to be its own transpose); wrong in general for a rotated one.
+    axis = _gvec(np.transpose(eVect)[iaxis])
     e1 = eVal[(iaxis + 1) % 3]
     focal = comp / (4 * e1)
+    # Fixed 2026-09-14: the reduced quadric (after translating out the
+    # constant term) is `e1*X'^2 + e2*Y'^2 + comp*Z' = 0` with Z' measured
+    # along the RAW (unflipped) eigenvector above -- real material exists
+    # only where `-comp*Z'` has the same sign as `e1` (so the left side,
+    # `e1*(X'^2+Y'^2)`, is realizable), i.e. `sign(Z') = -sign(e1*comp)`.
+    # `focal`'s own sign is `sign(comp)*sign(e1)` (since `1/e1` shares
+    # e1's sign) -- so `focal < 0` means `e1`/`comp` have OPPOSITE signs,
+    # which is exactly the case where material sits at Z' > 0 (the raw
+    # eigenvector's own positive direction) and `axis` must be left
+    # UNFLIPPED to still point at the material -- the old code did the
+    # opposite in both branches (flipped exactly when it shouldn't have,
+    # and vice versa), confirmed via a direct build: with the old code,
+    # `Objects.py::Paraboloid.buildShape` constructed material on the
+    # Z<0 side for a GQ card whose own equation (x^2+y^2=400z) only has
+    # solutions for z>=0.
     if focal < 0:
         focal = -focal
+    else:
         axis = -axis
     return (center, axis, focal)
 

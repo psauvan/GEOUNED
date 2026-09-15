@@ -11,6 +11,7 @@ from . import (
     Gmake_elliptic_cylinder,
     Gmake_ellipsoid,
     Gmake_hyperbolic_cylinder,
+    Gmake_hyperbolic_prism,
     Gmake_hyperboloid,
     Gmake_paraboloid,
     Gmake_torus_elliptic,
@@ -437,8 +438,49 @@ class Hyperboloid:
             dmin = min(d, dmin)
             dmax = max(d, dmax)
 
-        length = max(abs(dmin), abs(dmax))
-        self.shape = Gmake_hyperboloid(center, axis, radii[1], radii[0], rAxes[1], rAxes[0], onesht, length)
+        if onesht:
+            # Fixed 2026-09-14: `axis` here is `get_hyperboloid_parameters`'s
+            # own "majorAxis" (the algebraically distinct/odd-sign-out
+            # eigenvector) -- for the SAME hyperbola, revolving around this
+            # axis gives a 2-sheet hyperboloid when `onesht` is False, but
+            # gives the connected one-sheet "hourglass" when `onesht` is
+            # True (both come from the same curve; only the axis role
+            # differs, per direct user design -- see the history log for
+            # the empirical derivation with known analytic examples).
+            # `Gmake_hyperboloid`'s own construction technique (a vertex
+            # ON the revolution axis, single branch capped at one end)
+            # is only valid for the 2-sheet/transverse-axis case; the
+            # one-sheet/conjugate-axis case has no on-axis vertex at all
+            # (the waist, at v=0, already has nonzero radius) and needs
+            # `Gmake_hyperbolic_cylinder`'s own waist-based technique
+            # instead. In this branch, `radii`/`rAxes` (classifier fields
+            # still named "minor"/"major" from the generic iaxis
+            # convention) are exactly swapped relative to their usual
+            # roles: `radii[1]`/`rAxes[1]` (classifier's "majorAxis") is
+            # the true CONJUGATE axis here (the one to revolve around),
+            # and `radii[0]`/`rAxes[0]` (classifier's "minorAxis") is the
+            # true TRANSVERSE axis (the waist-radius direction) --
+            # confirmed empirically against known analytic one-sheet
+            # examples (see the history log). `dmin`/`dmax` above are
+            # already projected onto `axis` (== the true revolution axis
+            # here), matching `Gmake_hyperbolic_cylinder`'s own v_min/
+            # height convention directly, letting one continuous revolve
+            # cover both sides of the true waist at `center`. `boundBox`
+            # itself only ever approximates the cell's real extent (via
+            # `hyperboloid_to_planes`'s own faceted plane set), so unlike
+            # a real boolean cut against the cell's true bounding
+            # surfaces, `dmin`/`dmax` here become the SOLID's own real
+            # geometric extent directly, with nothing downstream to
+            # correct an under-sized approximation -- same 10% margin
+            # `HyperbolicCylinder.buildShape` already applies for the
+            # same reason (both consume an approximate `boundBox`).
+            span = dmax - dmin
+            dmin -= 0.1 * span
+            dmax += 0.1 * span
+            self.shape = Gmake_hyperbolic_cylinder(center, axis, radii[0], radii[1], rAxes[0], rAxes[1], dmax, v_min=dmin)
+        else:
+            length = max(abs(dmin), abs(dmax))
+            self.shape = Gmake_hyperboloid(center, axis, radii[1], radii[0], rAxes[1], rAxes[0], onesht, length)
 
 
 class Ellipsoid:
@@ -544,13 +586,29 @@ class HyperbolicCylinder:
 
     def buildShape(self, boundBox):
         center, axis, radii, rAxes = self.params
+        minor_axis = rAxes[0]
 
+        # `axis` (the true flat/zero-eigenvalue extrusion direction) and
+        # `minor_axis` (the hyperbola profile's own conjugate direction)
+        # are independent extents -- fixed 2026-09-15: `dmin`/`dmax` size
+        # the EXTRUSION (along `axis`); `ymin`/`ymax`, projected onto
+        # `minor_axis` instead, size how far the profile curve itself
+        # must reach to cover the real cell (previously reused `height`
+        # for both, which is wrong whenever the two extents genuinely
+        # differ -- confirmed via a real fixture where the extrusion was
+        # only 40cm but the profile needed to reach ~500cm radially).
         dmin = axis.dot(boundBox.get_point(0) - center)
         dmax = dmin
+        ymin = minor_axis.dot(boundBox.get_point(0) - center)
+        ymax = ymin
         for i in range(1, 8):
-            d = axis.dot(boundBox.get_point(i) - center)
+            p = boundBox.get_point(i) - center
+            d = axis.dot(p)
             dmin = min(d, dmin)
             dmax = max(d, dmax)
+            y = minor_axis.dot(p)
+            ymin = min(y, ymin)
+            ymax = max(y, ymax)
 
         height = dmax - dmin
         dmin -= 0.1 * height
@@ -558,7 +616,10 @@ class HyperbolicCylinder:
         height = dmax - dmin
         point = center + dmin * axis
 
-        self.shape = Gmake_hyperbolic_cylinder(point, axis, radii[1], radii[0], rAxes[1], rAxes[0], height)
+        y_reach = max(abs(ymin), abs(ymax), radii[0])
+        y_reach *= 1.1
+
+        self.shape = Gmake_hyperbolic_prism(point, axis, radii[1], radii[0], rAxes[1], rAxes[0], height, y_reach)
 
 
 class Paraboloid:
@@ -646,14 +707,35 @@ class Torus:
 
     def buildShape(self, boundBox):
         center, axis, Ra, Rb, Rc = self.params  # Ra distance from torus axis; R radius of toroidal-cylinder
-        if (abs(Rb - Rc) < 1e-5) and Ra > 0:
-            self.shape = Gmake_torus(center, axis, Ra, Rb)  # circular Torus
+        circular = abs(Rb - Rc) < 1e-5
+        degenerate = abs(Ra) < max(Rb, Rc)
+        if circular and Ra > 0 and not degenerate:
+            self.shape = Gmake_torus(center, axis, Ra, Rb)  # circular, non-degenerate torus
         else:
             # Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a,
             # minor_radius_b): minor_radius_a pairs with the same (radial)
             # direction as major_radius/Ra itself -- that's Rc here, not Rb
             # (see Gmake_torus_elliptic's own docstring in geo/*/primitives.py).
-            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rc, Rb)  # elliptic Torus
+            #
+            # Fixed 2026-09-16: a DEGENERATE circular torus (abs(Ra) <
+            # Rb == Rc) used to also take the `Gmake_torus` branch above
+            # (only `Ra > 0` was checked, not degeneracy) -- but
+            # `Gmake_torus`'s own plain, non-degenerate-aware
+            # `BRepPrimAPI_MakeTorus` builds the FULL, self-intersecting
+            # double-sheet torus (both inner and outer lobes merged into
+            # one ambiguous solid), not the correct single sheet
+            # `Gmake_torus_elliptic` already builds for the elliptic
+            # degenerate case via its own arc-splitting technique.
+            # Confirmed via a real fixture (a=b=50cm degenerate circular
+            # torus, R=30cm, "outer"): `Gsplit`'s own boolean cut against
+            # this self-intersecting solid picked an interior point AT
+            # the origin for what should have been the "outside" piece
+            # (the self-intersection makes the naive solid's own "hole"
+            # ambiguous), so `surface_side` (correctly testing membership
+            # against the *intended* single-sheet surface) misclassified
+            # it as also "inside", and the two pieces got fused back into
+            # the uncut box.
+            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rc, Rb)  # elliptic OR degenerate circular torus
 
 
 class Box:

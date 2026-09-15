@@ -1,0 +1,10 @@
+Elliptic cylinder test (a=50, b=30, axis=Z through origin)
+1      0      -1 2 -3   imp:n=1
+2      0      (1 : -2 : 3)  imp:n=0
+
+1      GQ   0.0004  0.0011111111111  0.0  0.0  0.0  0.0  0.0  0.0  0.0
+          -1.0
+2      PZ   -100
+3      PZ   100
+
+MODE N

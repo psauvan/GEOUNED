@@ -1,0 +1,8 @@
+Prolate ellipsoid test (major=80cm along Z, minor=50cm perpendicular, centered at origin)
+1      0      -1   imp:n=1
+2      0      1    imp:n=0
+
+1      GQ   0.0004  0.0004  0.00015625  0.0  0.0  0.0  0.0  0.0  0.0
+          -1.0
+
+MODE N

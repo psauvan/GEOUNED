@@ -1,0 +1,7 @@
+Degenerate elliptic torus, INNER sheet: R=-30cm, A=40cm (axis-dir), B=50cm (radial dir, B>R, self-intersecting; negative R selects inner)
+1      0      -1   imp:n=1
+2      0      1    imp:n=0
+
+1      TZ   0 0 0   -30 40 50
+
+MODE N

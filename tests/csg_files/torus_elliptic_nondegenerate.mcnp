@@ -1,0 +1,7 @@
+Non-degenerate elliptic torus: R=100cm, axis-dir semi-axis A=20cm, radial semi-axis B=30cm (B<R, no self-intersection)
+1      0      -1   imp:n=1
+2      0      1    imp:n=0
+
+1      TZ   0 0 0   100 20 30
+
+MODE N

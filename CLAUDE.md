@@ -656,42 +656,179 @@ gaps for whenever it's picked back up:
   `test_boolean_function.py` still green on all 3 engines (199 passed +
   1 skipped on occ/ocp each) after all of the above -- these 3 bug
   fixes are zero-regression.
-  **Still pending / not yet done, as of 2026-09-14**:
-  - No real fixture yet for hyperboloid, hyperbolic cylinder, or
-    paraboloid -- `paraboloid` already has a `convert_to_planes` branch
-    (`parabola_to_planes`, pre-existing) but has never been exercised
-    end to end either.
-  - **Open, unresolved question, raised to the user, not yet answered**:
-    the GQ classifier's `stype="cylinder_hyperbolic"` (from
-    `get_cylinder_parameters`, requiring a genuinely zero eigenvalue --
-    a true flat/straight-prism axis) is mathematically different from a
-    real hyperboloid-of-one-sheet-of-revolution (all 3 eigenvalues
-    nonzero, circular cross-section), which always classifies as
-    `stype="hyperboloid"` and routes to `Gmake_hyperboloid`, never to
-    the new revolve-around-minor-axis `Gmake_hyperbolic_cylinder` --
-    meaning a real "hourglass" surface (like the cooling-tower fixture
-    drafted this session, not yet committed/kept) is never actually
-    routed to the constructor built for it. Blocks both the
-    hyperboloid/cylinder_hyperbolic `convert_to_planes` branches and any
-    real end-to-end fixture for either surface until resolved.
-  - `GHyperboloid`'s `OneSheet` flag changed meaning this session (branch
-    1 only vs. both, no longer the standard math one-sheet/two-sheet
-    distinction -- see its own entry above). Not yet checked: whether
-    whatever `MCNP_parser`/`XML_parser` code parses a real hyperboloid
-    card's own one/two-sheet indicator produces a value consistent with
-    this *new* meaning, or was written assuming the old one -- a real
-    semantic risk until a live fixture exercises it (entangled with the
-    classifier-dispatch question above).
-  - `freecad`'s own exotic-quadric implementations (`_freecad_impl.py`)
-    were deliberately left untouched and are now a genuinely different
-    surface from the occ/ocp versions for at least
-    `Gmake_hyperbolic_cylinder` (extrude vs. revolve). Expected and
-    documented, not a bug -- but means the same MCNP file can reconstruct
-    visibly different CAD depending on `GEOUNED_CAD_ENGINE` for these 7
-    surfaces specifically, unlike everything else in the project.
-    `freecad`'s own `CAD/splitFunction.py::surface_side` is the SAME file
-    across all 3 engines (no per-engine branching there), so the 3 bug
-    fixes above apply equally to `freecad`.
+  **Classifier-dispatch mismatch, resolved 2026-09-15/16** (supersedes
+  the "open, unresolved question" this entry used to end on): the
+  `hyperboloid`/`cylinder_hyperbolic` GQ stypes are genuinely two
+  different surfaces, per direct user clarification -- `hyperboloid`
+  (from `get_hyperboloid_parameters`, all 3 eigenvalues nonzero) is
+  always a revolution of the same hyperbola, `onesht=False` around its
+  own `MajorAxis` (2 disjoint sheets, only the +axis branch is ever
+  built, matching the existing `Gmake_hyperboloid` convention unchanged)
+  and `onesht=True` around its own `MinorAxis` instead (the connected
+  "hourglass", `Gmake_hyperbolic_cylinder`'s own revolve technique,
+  unchanged) -- `Objects.py::Hyperboloid.buildShape` now branches on
+  `onesht` to pick the axis/technique (previously always called
+  `Gmake_hyperboloid`, ignoring `onesht` in this respect). Separately,
+  `cylinder_hyperbolic` (from `get_cylinder_parameters`, a genuinely
+  zero eigenvalue -- a true flat/straight-prism axis) is a FLAT prism
+  (the hyperbola profile translated straight along the zero-eigenvalue
+  axis, never revolved) -- restored under occ/ocp as a new
+  `Gmake_hyperbolic_prism`/`GHyperbolicPrism` (an open compound of the
+  profile's 2 branches, each `BRepPrimAPI_MakePrism`-extruded, no end
+  caps -- mirrors `_freecad_impl.py::GHyperbolicCylinder.build_shape`'s
+  own pre-existing technique exactly, which stays untouched and is now
+  aliased to the same `Gmake_hyperbolic_prism` name via
+  `GEOReverse/Modules/__init__.py`'s per-engine dispatch, so
+  `Objects.py::HyperbolicCylinder.buildShape` calls one name uniformly
+  across all 3 engines). Also fixed in the process: `GHyperbolicPrism`'s
+  own `build_shape` used to conflate the Z-extrusion distance and the
+  profile's own radial reach into a single `length` argument (ported
+  as-is from `_freecad_impl.py`, which has the same conflation) -- wrong
+  whenever the two extents genuinely differ (confirmed via a real
+  fixture, `hyperbolic_cylinder_test.mcnp`: a 40cm-tall prism bounded by
+  a 500cm coaxial cylinder needed the profile to reach ~500cm radially,
+  but the old code capped it at ~40cm since it reused the Z-height) --
+  split into two independent parameters, `extrusion_length` (along the
+  true axis) and `y_reach` (along `MinorAxis`, sized from the real
+  `boundBox`'s own projection onto that axis, not reused from the
+  Z-height). `boundBox.py` gained `cylinder_hyperbolic_to_planes`
+  (reuses the 2-sheet hyperboloid's own vertex/ring technique, called
+  once per branch with normals negated -- the real material is the
+  channel BETWEEN the two branches, i.e. before each one's own vertex,
+  the opposite sense from a hyperboloid's own single real branch, which
+  sits BEYOND its vertex). Separately, `surface_side`'s own `hyperboloid`
+  branch needed one more sign fix beyond the Center-double-subtraction
+  fix noted above: the 2-sheet case (`onesht=False`) needs the OPPOSITE
+  boolean sense from the 1-sheet case for the SAME `d`/`Y` comparison
+  (`inout = (d - Y) * one` and `inout = one` in the `else` branch, `one
+  = 1 if onesht else -1` -- previously both branches used the 1-sheet
+  sense unconditionally). `quadric_to_plane`/`plane_definition`'s own
+  combinator tags for these were refined again after this fix, directly
+  by the user, to keep the box-approximation side consistent with the
+  new `surface_side` sign: `hyperboloid` now dispatches to `"hyp1sheet"`
+  (onesht=True, an AND of `:`-joined per-branch-OR sub-sequences) or
+  `"hyp2sheet"` (onesht=False, a plain flat AND list, but with the
+  surface's own signed reference `s` negated right before the final
+  `change_surf` calls -- `s = -s`, commented "hyperboloid 2 sheet has
+  inverted orientation sign" -- to match `surface_side`'s own flipped
+  sense for this case); `cylinder_hyperbolic` dispatches to `"cylhyp"`
+  (an AND of the 2 branches' own `:`-joined OR sub-sequences). The exact
+  tag names/structure may keep evolving -- `plane_definition` itself
+  (`Utils/boundBox.py`) is the source of truth, not this paragraph.
+  **STEP round-trip for `Geom_Hyperbola`-based revolution/extrusion
+  surfaces, fixed 2026-09-15**: `Geom_SurfaceOfRevolution` built from a
+  `Geom_Hyperbola` (the `hyperboloid`/`cylinder_hyperbolic` side faces)
+  writes to STEP (AP214) as a valid-looking entity pair, but
+  pythonocc-core 7.9's own `STEPControl_Reader` raises translating it
+  back (`TransferRoots()` returns 0, the whole root silently dropped) --
+  confirmed with a minimal, GEOUNED-free OCCT reproduction (bare
+  `Geom_Hyperbola` + `BRepPrimAPI_MakeRevol`, no solid, no caps): the
+  write succeeds, the read fails. Not a GEOUNED bug, and not fixable by
+  changing how the surface is built. Fixed by converting just the
+  revolution surface(s) to an equivalent `Geom_BSplineSurface` via
+  `ShapeCustom.ConvertToBSpline` (`revolMode=True` only) -- applied ONLY
+  at export time (`_build_tree`, gated by a cheap `_has_revolution_surface`
+  face-type scan so the vast majority of solids never pay for it), NOT
+  inside the surface constructors themselves (tried first, reverted per
+  direct user request: every other consumer of these tools -- `Gsplit`/
+  `Gcut`/`Gfuse` boolean cuts, volume/bbox queries -- must keep operating
+  on the exact analytic hyperbola for correctness; only the final
+  exported STEP document needs the approximation, and only for
+  file-format compatibility). The default conversion is visibly coarse
+  (~25x14 poles) -- 8 extra knots inserted into each converted face's own
+  U/V knot vectors afterward for a denser control net (exact -- knot
+  INSERTION, unlike `GeomConvert_ApproxSurface`-based re-approximation
+  tried first, doesn't change the surface's own (u,v)->(x,y,z) mapping,
+  so the pcurves `ShapeCustom.ConvertToBSpline` already built stay
+  valid; the re-approximation attempt produced an invalid solid despite
+  still round-tripping through STEP). Also fixed in the same area:
+  `export_occ`/`export_ocp`'s own `STEPCAFControl_Writer.Transfer`/
+  `.Write` calls weren't wrapped in `geo.io_utils.suppress_native_stdout`
+  (unlike `geo`'s own `Gexport_step`), so every export printed OCCT's own
+  "Statistics on Transfer (Write)" banner -- now silent.
+  **Degenerate circular torus, fixed 2026-09-16**: `Objects.py::
+  Torus.buildShape`'s own circular-vs-elliptic branch
+  (`if abs(Rb - Rc) < 1e-5 and Ra > 0: Gmake_torus(...) else:
+  Gmake_torus_elliptic(...)`) only checked `Ra > 0`, not degeneracy
+  (`abs(Ra) < max(Rb, Rc)`) -- a degenerate CIRCULAR torus (equal minor
+  radii, but still self-intersecting) took the plain `Gmake_torus`
+  branch, whose own `BRepPrimAPI_MakeTorus` builds the FULL,
+  self-intersecting double-sheet torus (both lobes merged into one
+  ambiguous solid) instead of the correct single sheet
+  `Gmake_torus_elliptic` already builds for the elliptic degenerate case
+  via its own arc-splitting technique -- this is the SAME class of bug
+  already fixed on the forward (`CadToCsg`) side for `GeounedSurface.
+  build_surface()`'s Torus branch, just never ported to this (`CsgToCad`)
+  side. Confirmed via a real fixture (`torus_circular_degenerate_outer.mcnp`,
+  R=30cm, A=B=50cm): `Gsplit`'s own boolean cut against the ambiguous
+  self-intersecting solid picked an interior point AT the origin for
+  what should have been the cell's own "outside" piece, so the two
+  pieces got fused back into the uncut container box instead of properly
+  separating. Fixed by widening the degeneracy check to cover BOTH the
+  circular and elliptic cases uniformly.
+  **Pending for next session -- a REAL, not-yet-understood bug, found
+  2026-09-16 while verifying the torus fix above**: for every one of the
+  5 new torus fixtures (`torus_*.mcnp` in `tests/csg_files/`), the
+  cell's own COMPLEMENT ("outside") region never appears in the final
+  STEP output (only 1 solid instead of 2) -- confirmed NOT specific to
+  torus: a bare `Gsplit(hugeBox, smallTool, ...)` (no GEOUNED surface
+  logic involved at all) returns the box UNCUT once the box/tool size
+  ratio crosses some threshold between 12.5:1 and 62.5:1 (confirmed with
+  a plain sphere too) -- the default universe box is +/-1e6mm, a
+  ~600-1250:1 ratio against a typically ~800-1600mm exotic-quadric
+  surface. **Per direct user correction**: this is NOT really a `Gsplit`
+  bug to chase -- the actual root cause is that the CELL's own `boundBox`
+  (computed from `convert_to_planes`'s own plane approximation) is
+  wrong/too loose for a "reversed"/complement cell -- it should be sized
+  much closer to the real surface's own extent, not fall back to the
+  full universe box, and fixing THAT (not `Gsplit`'s own tolerance
+  handling) is the right next step. Likely a *silent*, long-standing
+  issue affecting every OTHER exotic quadric's own complement cell too
+  (ellipsoid, hyperboloid, elliptic cylinder/cone, paraboloid) -- their
+  own "outside" cell's reported volume (~8e18mm^3, the raw universe box)
+  would look IDENTICAL whether the small surface's own volume was
+  correctly subtracted or not, since float64 only carries ~15-17
+  significant digits and the two shapes differ by 9+ orders of
+  magnitude -- so this was never actually distinguishable by eye in any
+  of this session's own "does the volume look right" checks. Needs a
+  from-scratch look at how a "Reversed"-orientation cell's own `boundBox`
+  gets computed (`Objects.py::CadCell.build_BoundBox` ->
+  `Utils/boundBox.py::solid_plane_box.get_boundBox`/
+  `get_component_boundBox`), not at `Gsplit`.
+  **New test fixtures, 2026-09-14/16** (all copied into
+  `tests/csg_files/`, none wired into a pytest test yet -- that's also
+  pending): `ellipsoid.mcnp`, `ellipse_cyl.mcnp`, `elliptic_cone.mcnp`,
+  `paraboloid.mcnp`, `hyperboloid_one_sheet.mcnp`,
+  `hyperboloid_two_sheet_one_branch.mcnp` (kept at `1 2 -3`, the correct
+  sense for the real branch), `hyperboloid_two_sheet_outside.mcnp` (the
+  `-1` "outside" sense instead, radially bounded by a coaxial `CZ`
+  cylinder so it stays finite), `hyperbolic_cylinder_test.mcnp` (the real
+  flat-prism `cylinder_hyperbolic` surface), `cooling_tower.mcnp` (2
+  coaxial hourglasses + `PZ` caps, the fixture that originally motivated
+  this whole investigation), and 5 torus fixtures --
+  `torus_elliptic_nondegenerate.mcnp`, `torus_circular_degenerate_outer/
+  inner.mcnp`, `torus_elliptic_degenerate_outer/inner.mcnp` (inner/outer
+  selected via the sign of the card's own major radius `R`, per
+  `Gmake_torus_elliptic`'s own established round-trip convention). All
+  individually verified end to end against their own analytic volumes on
+  `occ`/`ocp` (matching within the tiny residual expected from
+  `convert_to_planes`'s own faceted approximation) EXCEPT the torus
+  fixtures' own complement cell, per the pending item above.
+  `GHyperboloid`'s `OneSheet` flag semantics and how `MCNP_parser`/
+  `XML_parser` populate it are now confirmed self-consistent (see the
+  classifier-dispatch resolution above) -- the semantic-risk flag this
+  entry used to carry is closed.
+  `freecad`'s own exotic-quadric implementations (`_freecad_impl.py`)
+  were deliberately left untouched throughout, and now genuinely
+  correspond 1:1 with the occ/ocp techniques for all 7 surfaces
+  (including `cylinder_hyperbolic`, now that its own flat-prism
+  technique is shared via the `Gmake_hyperbolic_prism` alias) --
+  the only remaining engine asymmetry is implementation detail (native
+  `Part.Hyperbola`/`toBSpline` vs `Geom_Hyperbola`/`BRepPrimAPI_MakePrism`),
+  not a different surface. `freecad`'s own `CAD/splitFunction.py::
+  surface_side` is the SAME file across all 3 engines (no per-engine
+  branching there), so every fix in this entire section applies equally
+  to `freecad`.
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
