@@ -673,7 +673,12 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
             Stype = "torus"
             p = _gvec(MCNPparams[0:3])
             Ra, Rb, Rc = MCNPparams[3:6]
-
+            if abs(Ra) < abs(Rc) : # check degenerate
+                deg = -1 if Ra < 0 else 1
+                Ra = abs(Ra)
+            else:
+                deg =  0
+                
             if MCNPtype == "TX":
                 v = X_vec
             elif MCNPtype == "TY":
@@ -687,7 +692,7 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
                 Rc *= scale
                 p = p * scale
 
-            params = (p, v, Ra, Rb, Rc)
+            params = (p, v, Ra, Rb, Rc, deg)
 
         elif MCNPtype == "GQ" or MCNPtype == "SQ":
             Qparams = tuple(MCNPparams[0:10])

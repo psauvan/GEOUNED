@@ -700,16 +700,15 @@ class Torus:
         return Torus(self.label, self.id, self.params)
 
     def transform(self, matrix):
-        p, v, Ra, Rb, Rc = self.params
+        p, v, Ra, Rb, Rc, deg = self.params
         v = matrix_rotate_vec(matrix, v)
         p = matrix_multVec(matrix, p)
-        self.params = (p, v, Ra, Rb, Rc)
+        self.params = (p, v, Ra, Rb, Rc, deg)
 
     def buildShape(self, boundBox):
-        center, axis, Ra, Rb, Rc = self.params  # Ra distance from torus axis; R radius of toroidal-cylinder
+        center, axis, Ra, Rb, Rc, degenerated = self.params  # Ra distance from torus axis; R radius of toroidal-cylinder
         circular = abs(Rb - Rc) < 1e-5
-        degenerate = abs(Ra) < max(Rb, Rc)
-        if circular and Ra > 0 and not degenerate:
+        if circular and Ra > 0 and degenerated == 0:
             self.shape = Gmake_torus(center, axis, Ra, Rb)  # circular, non-degenerate torus
         else:
             # Gmake_torus_elliptic(center, axis, major_radius, minor_radius_a,
@@ -735,7 +734,11 @@ class Torus:
             # against the *intended* single-sheet surface) misclassified
             # it as also "inside", and the two pieces got fused back into
             # the uncut box.
-            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rc, Rb)  # elliptic OR degenerate circular torus
+            if degenerated == 0:
+                outer = None
+            else:
+                outer = degenerated > 0    
+            self.shape = Gmake_torus_elliptic(center, axis, Ra, Rc, Rb, outer)  # elliptic OR degenerate circular torus
 
 
 class Box:

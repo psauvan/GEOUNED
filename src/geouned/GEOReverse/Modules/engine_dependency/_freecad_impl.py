@@ -611,7 +611,7 @@ class GParaboloid:
 
 
 def _make_torus_elliptic_native(
-    center: GVector, axis: GVector, r_major_axis_offset: float, major_radius: float, minor_radius: float
+    center: GVector, axis: GVector, r_major_axis_offset: float, major_radius: float, minor_radius: float, degenetated: int,
 ) -> GSolid:
     center_native = to_native_vector(center)
     z_axis = to_native_vector(axis)
@@ -628,7 +628,7 @@ def _make_torus_elliptic_native(
     s2 = e_center + minor_dir * r_min
 
     ellipse = Part.Ellipse(s1, s2, e_center)
-    if abs(r_major_axis_offset) < minor_radius:  # degenerate torus (self-intersecting tube)
+    if degenetated != 0:  # degenerate torus (self-intersecting tube)
         pz = major_radius * math.sqrt(1 - (r_major_axis_offset / minor_radius) ** 2)
         pz1 = center_native - pz * z_axis
         pz2 = center_native + pz * z_axis
@@ -685,7 +685,7 @@ def Gmake_paraboloid(center, axis, focal, length) -> GSolid | None:
 
 
 def Gmake_torus_elliptic(
-    center: GVector, axis: GVector, r_major_axis_offset: float, major_radius: float, minor_radius: float
+    center: GVector, axis: GVector, r_major_axis_offset: float, major_radius: float, minor_radius: float, degenerated: int
 ) -> GSolid:
     """
     Elliptic torus: `major_radius`/`minor_radius` are the *tube's own*
@@ -694,4 +694,4 @@ def Gmake_torus_elliptic(
     tube center's distance from `center` along the perpendicular axis
     `arbitrary_perpendicular(axis)` picks. Ported from `Objects.py::makeEllipticTorus`.
     """
-    return _make_torus_elliptic_native(center, axis, r_major_axis_offset, major_radius, minor_radius)
+    return _make_torus_elliptic_native(center, axis, r_major_axis_offset, major_radius, minor_radius, degenerated)

@@ -766,35 +766,53 @@ gaps for whenever it's picked back up:
   pieces got fused back into the uncut container box instead of properly
   separating. Fixed by widening the degeneracy check to cover BOTH the
   circular and elliptic cases uniformly.
-  **Pending for next session -- a REAL, not-yet-understood bug, found
-  2026-09-16 while verifying the torus fix above**: for every one of the
-  5 new torus fixtures (`torus_*.mcnp` in `tests/csg_files/`), the
-  cell's own COMPLEMENT ("outside") region never appears in the final
-  STEP output (only 1 solid instead of 2) -- confirmed NOT specific to
-  torus: a bare `Gsplit(hugeBox, smallTool, ...)` (no GEOUNED surface
-  logic involved at all) returns the box UNCUT once the box/tool size
-  ratio crosses some threshold between 12.5:1 and 62.5:1 (confirmed with
-  a plain sphere too) -- the default universe box is +/-1e6mm, a
-  ~600-1250:1 ratio against a typically ~800-1600mm exotic-quadric
-  surface. **Per direct user correction**: this is NOT really a `Gsplit`
-  bug to chase -- the actual root cause is that the CELL's own `boundBox`
-  (computed from `convert_to_planes`'s own plane approximation) is
-  wrong/too loose for a "reversed"/complement cell -- it should be sized
-  much closer to the real surface's own extent, not fall back to the
-  full universe box, and fixing THAT (not `Gsplit`'s own tolerance
-  handling) is the right next step. Likely a *silent*, long-standing
-  issue affecting every OTHER exotic quadric's own complement cell too
-  (ellipsoid, hyperboloid, elliptic cylinder/cone, paraboloid) -- their
-  own "outside" cell's reported volume (~8e18mm^3, the raw universe box)
-  would look IDENTICAL whether the small surface's own volume was
-  correctly subtracted or not, since float64 only carries ~15-17
-  significant digits and the two shapes differ by 9+ orders of
-  magnitude -- so this was never actually distinguishable by eye in any
-  of this session's own "does the volume look right" checks. Needs a
-  from-scratch look at how a "Reversed"-orientation cell's own `boundBox`
-  gets computed (`Objects.py::CadCell.build_BoundBox` ->
-  `Utils/boundBox.py::solid_plane_box.get_boundBox`/
-  `get_component_boundBox`), not at `Gsplit`.
+  **Complement-cell / degenerate-torus boundBox, closed out 2026-09-17**
+  (supersedes the 2026-09-16 "Pending for next session" entry this used
+  to be): that entry conflated two separate things.
+  1. A real bug, now fixed directly by the user: `Utils/boundBox.py::
+     torus_to_planes`'s degenerate-torus case used to fall through the
+     SAME bounding-plane approximation as the non-degenerate torus
+     (sized from the full, non-degenerate `majorRadius`/`minorR`
+     geometry) -- wrong-shaped for a degenerate single sheet, and the
+     proximate cause of the "complement never appears" symptom for the
+     torus fixtures specifically. Fixed with a dedicated branch that
+     derives the sheet's own tight axial half-height `h` from the real
+     degenerate geometry (separately for the `outer`/inner cases and for
+     `minorA > minorR` vs. `minorA <= minorR`), instead of reusing the
+     non-degenerate shape. This needed knowing degeneracy (and inner/
+     outer sense) reliably at every consumer, so a `degenerated` flag
+     was threaded through as `Torus.params`'s 6th element: derived once,
+     directly from the raw MCNP card's own `Ra` coefficient, at parse
+     time (`MCNP_parser/MCNPinput.py::Get_primitive_surfaces`'s torus
+     branch: `abs(Ra) < abs(Rc)` -> degenerate, `sign(Ra)` -> inner/
+     outer) -- replacing the post-hoc `abs(Ra) < max(Rb, Rc)`
+     re-derivation this session had added to `Objects.py::
+     Torus.buildShape` -- and carried through `Torus.transform()`,
+     `Torus.buildShape()` (now `Gmake_torus_elliptic(..., outer=deg >
+     0)` when `deg != 0`, `outer=None` when `deg == 0`),
+     `splitFunction.py::surface_side`'s torus branch (unpacked for
+     signature symmetry, not otherwise used -- the point-vs-torus
+     inequality itself doesn't need degeneracy), and
+     `_freecad_impl.py::Gmake_torus_elliptic`/
+     `_make_torus_elliptic_native` (now takes `degenerated` directly
+     instead of re-deriving it via `abs(r_major_axis_offset) <
+     minor_radius`). `XML_parser/XMLinput.py`'s own torus branch always
+     sets `deg = 0` -- OpenMC-XML input has no degenerate-torus encoding
+     in this path, unaffected.
+  2. Per direct user clarification, the remaining part of the original
+     symptom -- a torus fixture's own COMPLEMENT ("outside") solid not
+     showing up as a distinct, tightly-bounded piece -- is **not a bug**:
+     that region is genuinely unbounded (nothing else in these
+     single-surface fixtures constrains it), so its own `boundBox`
+     correctly falls back to the full universe box -- there is no
+     tighter box to compute, the solid really is that large. And this
+     kind of cell (everything outside an exotic quadric, out to the
+     universe boundary) has no real MCNP/OpenMC modeling interest of its
+     own regardless, so its absence (or an imprecise reported volume for
+     it) isn't worth chasing further. This reasoning generalizes to
+     every OTHER exotic quadric's own complement cell too (ellipsoid,
+     hyperboloid, elliptic cylinder/cone, paraboloid) -- not a
+     *hidden* bug there either, on the same basis.
   **New test fixtures, 2026-09-14/16** (all copied into
   `tests/csg_files/`, none wired into a pytest test yet -- that's also
   pending): `ellipsoid.mcnp`, `ellipse_cyl.mcnp`, `elliptic_cone.mcnp`,

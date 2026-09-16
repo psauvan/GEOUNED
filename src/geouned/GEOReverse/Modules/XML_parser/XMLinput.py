@@ -410,7 +410,7 @@ def Get_primitive_surfaces(mcnp_surfaces, scale=10.0):
                 r2 *= scale
                 p = p * scale
 
-            params = (p, v, Ra, r1, r2)
+            params = (p, v, Ra, r1, r2, 0)
 
         elif MCNPtype == "quadric":
             Qparams = tuple(MCNPparams[0:10])

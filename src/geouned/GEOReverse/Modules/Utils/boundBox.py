@@ -940,83 +940,149 @@ def ellipsoid_to_planes(ellip, pos):
 
 
 def torus_to_planes(torus, pos):
-    center, axis, majorRadius, minorR, minorA = torus.params
+    center, axis, majorRadius, minorR, minorA, degenerated = torus.params
 
     x = GVector(1, 0, 0)
     y = GVector(0, 1, 0)
     z = GVector(0, 0, 1)
 
-    if pos is None:
-        dist = (majorRadius + minorR) * 0.8535533906
-        difR = (majorRadius - minorR) * 0.8535533906
-    elif pos:
-        dist = (majorRadius + minorR) * 0.70710678
-        difR = majorRadius - minorR
-    else:
-        dist = majorRadius + minorR
-        difR = (majorRadius - minorR) * 0.70710678
+    if degenerated == 0:
+        if pos is None:
+            dist = (majorRadius + minorR) * 0.8535533906
+            difR = (majorRadius - minorR) * 0.8535533906
+        elif pos:
+            dist = (majorRadius + minorR) * 0.70710678
+            difR = majorRadius - minorR
+        else:
+            dist = majorRadius + minorR
+            difR = (majorRadius - minorR) * 0.70710678
+        if abs(abs(axis.dot(x)) - 1) < 1e-5:
+            r1 = center + x * minorA
+            r2 = center - x * minorA
+            r3 = center + y * dist
+            r4 = center - y * dist
+            r5 = center + z * dist
+            r6 = center - z * dist
+            if difR > 0:
+                r7 = center + y * difR
+                r8 = center - y * difR
+                r9 = center + z * difR
+                r10 = center - z * difR
+                p7 = GPlane.from_values(r7, y)
+                p8 = GPlane.from_values(r8, -y)
+                p9 = GPlane.from_values(r9, z)
+                p10 = GPlane.from_values(r10, -z)
+        elif abs(abs(axis.dot(y)) - 1) < 1e-5:
+            r1 = center + x * dist
+            r2 = center - x * dist
+            r3 = center + y * minorA
+            r4 = center - y * minorA
+            r5 = center + z * dist
+            r6 = center - z * dist
+            if difR > 0:
+                r7 = center + x * difR
+                r8 = center - x * difR
+                r9 = center + z * difR
+                r10 = center - z * difR
+                p7 = GPlane.from_values(r7, x)
+                p8 = GPlane.from_values(r8, -x)
+                p9 = GPlane.from_values(r9, z)
+                p10 = GPlane.from_values(r10, -z)
+        elif abs(abs(axis.dot(z)) - 1) < 1e-5:
+            r1 = center + x * dist
+            r2 = center - x * dist
+            r3 = center + y * dist
+            r4 = center - y * dist
+            r5 = center + z * minorA
+            r6 = center - z * minorA
+            if difR > 0:
+                r7 = center + x * difR
+                r8 = center - x * difR
+                r9 = center + y * difR
+                r10 = center - y * difR
+                p7 = GPlane.from_values(r7, x)
+                p8 = GPlane.from_values(r8, -x)
+                p9 = GPlane.from_values(r9, y)
+                p10 = GPlane.from_values(r10, -y)
 
-    if abs(abs(axis.dot(x)) - 1) < 1e-5:
-        r1 = center + x * minorA
-        r2 = center - x * minorA
-        r3 = center + y * dist
-        r4 = center - y * dist
-        r5 = center + z * dist
-        r6 = center - z * dist
+        p1 = GPlane.from_values(r1, -x)
+        p2 = GPlane.from_values(r2, x)
+        p3 = GPlane.from_values(r3, -y)
+        p4 = GPlane.from_values(r4, y)
+        p5 = GPlane.from_values(r5, -z)
+        p6 = GPlane.from_values(r6, z)
+        external_planes = (p1, p2, p3, p4, p5, p6)
         if difR > 0:
-            r7 = center + y * difR
-            r8 = center - y * difR
-            r9 = center + z * difR
-            r10 = center - z * difR
-            p7 = GPlane.from_values(r7, y)
-            p8 = GPlane.from_values(r8, -y)
-            p9 = GPlane.from_values(r9, z)
-            p10 = GPlane.from_values(r10, -z)
-    elif abs(abs(axis.dot(y)) - 1) < 1e-5:
-        r1 = center + x * dist
-        r2 = center - x * dist
-        r3 = center + y * minorA
-        r4 = center - y * minorA
-        r5 = center + z * dist
-        r6 = center - z * dist
-        if difR > 0:
-            r7 = center + x * difR
-            r8 = center - x * difR
-            r9 = center + z * difR
-            r10 = center - z * difR
-            p7 = GPlane.from_values(r7, x)
-            p8 = GPlane.from_values(r8, -x)
-            p9 = GPlane.from_values(r9, z)
-            p10 = GPlane.from_values(r10, -z)
-    elif abs(abs(axis.dot(z)) - 1) < 1e-5:
-        r1 = center + x * dist
-        r2 = center - x * dist
-        r3 = center + y * dist
-        r4 = center - y * dist
-        r5 = center + z * minorA
-        r6 = center - z * minorA
-        if difR > 0:
-            r7 = center + x * difR
-            r8 = center - x * difR
-            r9 = center + y * difR
-            r10 = center - y * difR
-            p7 = GPlane.from_values(r7, x)
-            p8 = GPlane.from_values(r8, -x)
-            p9 = GPlane.from_values(r9, y)
-            p10 = GPlane.from_values(r10, -y)
-
-    p1 = GPlane.from_values(r1, -x)
-    p2 = GPlane.from_values(r2, x)
-    p3 = GPlane.from_values(r3, -y)
-    p4 = GPlane.from_values(r4, y)
-    p5 = GPlane.from_values(r5, -z)
-    p6 = GPlane.from_values(r6, z)
-    external_planes = (p1, p2, p3, p4, p5, p6)
-    if difR > 0:
-        central_planes = (p7, p8, p9, p10)
+            central_planes = (p7, p8, p9, p10)
+        else:
+            central_planes = tuple()
+        return (external_planes, central_planes)
     else:
+        outer = degenerated > 0
+        if minorA > minorR :
+            if outer:
+                h = minorR 
+            else:    
+                df = math.sqrt(minorA*minorA-minorR*minorR)
+                h2 = minorA**2 - df**2 - majorRadius**2 *(1-(df/minorA)**2)
+                h = math.sqrt(h2) 
+        else:
+            if outer:
+                h = minorR
+            else:    
+                df = math.sqrt(minorR*minorR-minorA*minorA)
+                h2 = (minorR**2 - majorRadius**2 - df**2)/(1-(df/minorR)**2) 
+                h = math.sqrt(h2)
+
+        if pos is None:
+            h *= 0.8535533906
+            if outer:
+                dist = (majorRadius + minorA) * 0.8535533906
+            else:
+                dist = (minorA - majorRadius) * 0.8535533906
+        elif pos:
+            h *= 0.70710678
+            if outer:
+                dist = (majorRadius + minorA) * 0.70710678
+            else:
+                dist = (minorA - majorRadius) * 0.70710678
+        else:
+            if outer:
+                dist = majorRadius + minorA
+            else:
+                dist = minorA - majorRadius    
+
+        if abs(abs(axis.dot(x)) - 1) < 1e-5:
+            r1 = center + x * h
+            r2 = center - x * h
+            r3 = center + y * dist
+            r4 = center - y * dist
+            r5 = center + z * dist
+            r6 = center - z * dist
+        elif abs(abs(axis.dot(y)) - 1) < 1e-5:
+            r1 = center + x * dist
+            r2 = center - x * dist
+            r3 = center + y * h
+            r4 = center - y * h
+            r5 = center + z * dist
+            r6 = center - z * dist
+        elif abs(abs(axis.dot(z)) - 1) < 1e-5:
+            r1 = center + x * dist
+            r2 = center - x * dist
+            r3 = center + y * dist
+            r4 = center - y * dist
+            r5 = center + z * h
+            r6 = center - z * h
+ 
+        p1 = GPlane.from_values(r1, -x)
+        p2 = GPlane.from_values(r2, x)
+        p3 = GPlane.from_values(r3, -y)
+        p4 = GPlane.from_values(r4, y)
+        p5 = GPlane.from_values(r5, -z)
+        p6 = GPlane.from_values(r6, z)
+        external_planes = (p1, p2, p3, p4, p5, p6)
         central_planes = tuple()
-    return (external_planes, central_planes)
+        return (external_planes, central_planes)
 
 
 def box_to_planes(box):
