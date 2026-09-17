@@ -92,7 +92,19 @@ def BuildUniverseCells(startInfo, ContainerCell, AllUniverses, universeCut=True)
                     if NTcell.boundBox.Orientation == "Forward":
                         NTcell.externalBox = NTcell.boundBox
                     NTcell.buildShape(simplify=False)
-            except:
+            except Exception as e:
+                # bare `except:` used to swallow the real error entirely --
+                # a failed cell only ever showed up as its bare name in the
+                # final "failed cell conversion: [...]" summary, with no
+                # way to tell WHY short of re-adding temporary
+                # traceback.print_exc() instrumentation each time (done,
+                # and always reverted, several times this session). Not a
+                # fix for any specific underlying failure (e.g. the
+                # freecad-engine exotic-quadric surfaces that fail to
+                # convert at all -- see CLAUDE.md's own "Known open items"
+                # entry -- deliberately left unfixed), just makes whatever
+                # the real cause is visible without extra instrumentation.
+                print(f"Cell {NTcell.name} failed to build ({type(e).__name__}): {e}")
                 fails.append(NTcell.name)
                 continue
 

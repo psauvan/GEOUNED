@@ -1086,23 +1086,96 @@ gaps for whenever it's picked back up:
   `Gmake_torus_elliptic`'s own established round-trip convention). All
   individually verified end to end against their own analytic volumes on
   `occ`/`ocp` (matching within the tiny residual expected from
-  `convert_to_planes`'s own faceted approximation) EXCEPT the torus
-  fixtures' own complement cell, per the pending item above.
+  `convert_to_planes`'s own faceted approximation), now including the
+  degenerate torus fixtures' own inner-lobe volumes (fixed 2026-09-17,
+  see the `surface_side` entry below) -- their own complement cell
+  legitimately still doesn't resolve to a real solid, per the
+  "Complement-cell / degenerate-torus boundBox, closed out 2026-09-17"
+  entry above (not a bug, genuinely unbounded, no real modeling
+  interest).
   `GHyperboloid`'s `OneSheet` flag semantics and how `MCNP_parser`/
   `XML_parser` populate it are now confirmed self-consistent (see the
   classifier-dispatch resolution above) -- the semantic-risk flag this
   entry used to carry is closed.
   `freecad`'s own exotic-quadric implementations (`_freecad_impl.py`)
-  were deliberately left untouched throughout, and now genuinely
-  correspond 1:1 with the occ/ocp techniques for all 7 surfaces
-  (including `cylinder_hyperbolic`, now that its own flat-prism
-  technique is shared via the `Gmake_hyperbolic_prism` alias) --
-  the only remaining engine asymmetry is implementation detail (native
-  `Part.Hyperbola`/`toBSpline` vs `Geom_Hyperbola`/`BRepPrimAPI_MakePrism`),
-  not a different surface. `freecad`'s own `CAD/splitFunction.py::
+  were deliberately left untouched throughout, and were believed to
+  correspond 1:1 with the occ/ocp techniques for all 7 surfaces (the
+  only claimed asymmetry being implementation detail -- native
+  `Part.Hyperbola`/`toBSpline` vs `Geom_Hyperbola`/`BRepPrimAPI_MakePrism`
+  -- not a different surface). `freecad`'s own `CAD/splitFunction.py::
   surface_side` is the SAME file across all 3 engines (no per-engine
-  branching there), so every fix in this entire section applies equally
-  to `freecad`.
+  branching there), so every fix in this entire section (the
+  `surface_side`/`myBox` ones especially) applies equally to `freecad`.
+  **However**, running the new `test_exotic_quadric_convertion` (below)
+  under `freecad` (2026-09-17) found this "1:1" claim doesn't hold at
+  the construction level: 11 of the 14 real fixtures fail to convert at
+  all under `freecad` (`"failed cell conversion: [1, 2]"`, no traceback
+  surfaced yet) -- only `ellipsoid`, `torus_elliptic_nondegenerate`, and
+  one other passed. Not investigated further this session (the test
+  itself is `skipif(CAD_ENGINE == "freecad")`, matching
+  `test_georeverse_occ_impl.py`/`_ocp_impl.py`'s own existing occ/ocp-only
+  precedent) -- see "Known open items" -> GEOReverse's own dedicated
+  bullet below for this as a real, separate, tracked gap.
+- **`freecad`-engine exotic-quadric conversion, several real, distinct
+  bugs found 2026-09-17, deliberately not fixed (per explicit user
+  instruction -- freecad's own exotic-quadric surfaces are out of scope
+  for this project phase; only the error *reporting* was worth fixing)**:
+  `CAD/buildCAD.py::BuildUniverseCells`'s own bare `except:` used to
+  swallow the real error entirely -- a failed cell only ever showed up as
+  its bare name in the final `"failed cell conversion: [...]"` summary,
+  with no way to tell why short of re-adding temporary
+  `traceback.print_exc()` instrumentation each time (done, and always
+  reverted, several times this session). **Fixed** (this alone, nothing
+  about the underlying failures below): `except Exception as e:` now
+  prints `f"Cell {NTcell.name} failed to build ({type(e).__name__}):
+  {e}"` before continuing.
+  Running all 14 fixtures under `GEOUNED_CAD_ENGINE=freecad` with this in
+  place (2026-09-17, exact per-fixture mapping, unlike an earlier same-day
+  pass at this same list that mismatched a couple of entries) -- 7 of the
+  14 raise inside `build_universe()` itself (some of today's other fixes,
+  `parabola_to_planes` and `myBox`, apply identically under freecad since
+  `Utils/boundBox.py` has no per-engine branching, so `paraboloid.mcnp`/
+  `elliptic_cone.mcnp`, which used to fail too, now convert correctly
+  there as well):
+  - `ellipsoid.mcnp`: `RuntimeError: FreeCAD exception thrown (No shells
+    or compsolids found in shape)`.
+  - `hyperboloid_one_sheet.mcnp`, `cooling_tower.mcnp`:
+    `TypeError: Gmake_hyperbolic_cylinder() got an unexpected keyword
+    argument 'v_min'` -- `_freecad_impl.py::Gmake_hyperbolic_cylinder`'s
+    own signature was never updated to match the `v_min`/`dmax` keyword
+    arguments the occ/ocp versions gained during this project's
+    hyperboloid-onesheet-routing work.
+  - `hyperbolic_cylinder_test.mcnp`: `TypeError: Gmake_hyperbolic_cylinder()
+    takes 7 positional arguments but 8 were given` -- a related but
+    distinct arity mismatch (same underlying function, different call
+    site).
+  - `torus_elliptic_nondegenerate.mcnp`: `ValueError: math domain error`.
+  - `torus_circular_degenerate_inner.mcnp`,
+    `torus_elliptic_degenerate_inner.mcnp`: `OCCError: BRep_API: command
+    not done`.
+  The remaining 7 (`ellipse_cyl`, `elliptic_cone`, `paraboloid`,
+  `hyperboloid_two_sheet_one_branch`, `hyperboloid_two_sheet_outside`,
+  `torus_circular_degenerate_outer`, `torus_elliptic_degenerate_outer`)
+  convert without raising, but at least 3 give the WRONG volume relative
+  to occ/ocp's own, already-verified values -- not just a units/rounding
+  difference, freecad's own construction technique for these is a
+  genuinely different (and, here, also buggy) implementation:
+  `hyperboloid_two_sheet_one_branch`'s own reported volume
+  (`290,462,733,361,630.6`) differs from the correct
+  `322,152,573,550,950.4` by ~10%; `torus_circular_degenerate_outer`
+  (`7,024,639,999.999999` vs. the correct `1,537,740,327.64`) and
+  `torus_elliptic_degenerate_outer` (`5,619,712,000.000001` vs. the
+  correct `1,230,192,262.11`) are both wrong by the exact same ~4.567x
+  factor -- consistent with `_freecad_impl.py::Gmake_torus_elliptic`
+  having no outer/inner sheet support at all (already documented
+  elsewhere in this file) and building something other than the intended
+  single sheet for a degenerate torus.
+  `occ`/`ocp` are fully unaffected and verified
+  (`test_exotic_quadric_convertion` green on both, `skipif`'d under
+  freecad). Not investigated or fixed further -- freecad's own exotic-
+  quadric implementations (`_freecad_impl.py`) are explicitly out of
+  scope; this entry exists so a future session doesn't have to
+  rediscover the same errors from scratch.
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
