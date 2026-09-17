@@ -12853,3 +12853,593 @@ passed/4 skipped, `occ` 155 passed/2 skipped, `ocp` 155 passed/2 skipped
 -- zero failures anywhere, and each engine's own new test file runs its
 4 real tests while the *other* engine's file (and, under `freecad`,
 both) skip cleanly via their own `importorskip` guard.
+
+## GQ/SQ classifier fixed to relative tolerances; 6 more exotic quadric
+surfaces implemented under occ/ocp, 2026-09-13/14
+
+`MCNP_parser/MCNPinput.py::gq2params` -> `getGQAxis` -> `get_cylinder_
+parameters`/`get_cone_parameters`/`get_hyperboloid_parameters`/
+`get_ellipsoid_parameters` decides, from a raw GQ/SQ card's 10
+coefficients (via eigenvalue decomposition of the quadratic form), which
+specific surface type it is. Investigated after the user flagged that a
+*real* circular cylinder (a card whose non-axis-aligned rotation makes
+all 10 coefficients nonzero) can misclassify as an ellipsoid or
+hyperbolic cylinder once its coefficients have been rounded. Root cause:
+every "are these two eigenvalues equal"/"is this eigenvalue zero" test
+used a fixed *absolute* tolerance (`1e-5` in three places, `1e-3` in
+one, `1e-8` in one) or outright *exact* `== 0` equality -- but the GQ
+equation is invariant under multiplying all 10 coefficients by any
+nonzero scalar, which scales every eigenvalue (and the reduced constant
+`k`) by that same scalar, so no fixed absolute tolerance can work across
+differently-normalized cards representing the same surface. Confirmed
+live against the only real GQ fixture in the repo
+(`tests/csg_files/cylinder_box.mcnp`, a clean circular cylinder): its
+eigenvalues are `[-5.55e-17, 1.0, 1.0]`, and the old `e0 == 0` test
+missed that `-17`-order residual entirely, misrouting classification to
+"hyperboloid" -- it only produced the right final answer by accident,
+via an unrelated large-radius-ratio fallback deep in
+`get_hyperboloid_parameters`. Fixed: every such comparison now uses a
+*relative* tolerance instead, scaled against the eigenvalues' own
+magnitude (`max(abs(eigenvalues))`) -- two new tiers in a new
+`Tolerances` class in `GEOReverse/Modules/data_class.py`
+(`gq_eigen_zero_rel = 1e-6`, `gq_eigen_equal_rel = 1e-5`).
+
+Two further, independent bugs found while verifying this (only surfaced
+by testing a non-axis-aligned cylinder with non-unity eigenvalues, which
+no existing fixture happened to exercise): `gq2params`'s `Dinv =
+eVal[:]` was a numpy *view*, not a copy -- `Dinv[nonzero] =
+1/eVal[nonzero]` silently overwrote `eVal` itself in place, corrupting
+every downstream classification step; masked in the one real fixture
+only because that cylinder's own nonzero eigenvalues already happened to
+equal `1.0`. Fixed to `Dinv = eVal.copy()`. And the paraboloid-vs-
+cylinder `comp` check compared a linear-coefficient-scale quantity
+against the eigenvalue scale (dimensionally mismatched); fixed to
+compare against the diagonalized linear-coefficient vector's own
+magnitude instead. Verified via a new `tests/test_gq_classification.py`
+(5 tests) plus `test_csgtocad.py::test_cylbox_convertion` green on all 3
+engines. Also unified `XML_parser/XMLinput.py`'s own separate `gq2cyl`
+classifier (OpenMC-XML, cylinder/cone only) onto the same relative-
+tolerance literals (a 3-4 order-of-magnitude tightening from its own
+looser `minWTol=5e-2`/`minRTol=1e-3`).
+
+**The 7 "exotic quadric" surfaces** GEOReverse's own MCNP/OpenMC-XML
+`GQ`/`SQ` parser can produce were then implemented under `occ`/`ocp`
+(`GEOReverse/Modules/engine_dependency/_occ_impl.py`/`_ocp_impl.py`),
+one at a time, per the user's own specified construction technique
+(revolve a curve drawn in a plane around an axis in that plane):
+- `Gmake_ellipsoid` (done just before this entry's own predecessor,
+  see above) -- half-ellipse profile revolved 360 degrees, no capping.
+- `Gmake_elliptic_cylinder` -- an ellipse extruded along the cylinder
+  axis, capped with two planar faces.
+- `Gmake_torus_elliptic` -- covers both the non-degenerate case (ellipse
+  or circle revolved 360 degrees, closed on its own) and the degenerate/
+  self-intersecting case (the profile crosses the axis at 2 points,
+  splitting it into a long and a short arc; only one is kept and
+  revolved -- the long arc gives the "outer" sheet, the short arc the
+  "inner" one). Went through one real correction after an initial,
+  wrongly-labeled parameter version shipped (`(r_major_axis_offset,
+  major_radius, minor_radius)` when positions 2/3 actually needed
+  swapping, not just renaming, to `minor_radius_a`/`minor_radius_b`) --
+  caught on user review, fixed with a full call-site/test-argument-order
+  audit. `outer` defaults to `None` = derive from the sign of
+  `major_radius` (matching `GTorus.a_sign`'s own established encoding --
+  confirmed this sign trick is GEOUNED's own internal round-trip
+  convention, not a real MCNP/OpenMC/Serpent/PHITS format feature).
+  **Moved into `geo/occ/primitives.py`/`geo/ocp/primitives.py`** (right
+  next to `Gmake_torus`, not a separate file) once it became clear
+  GEOUNED's own forward pipeline needed the same degenerate-torus
+  single-sheet construction too: `GeounedSurface.build_surface()`'s
+  Torus branch used to build its degenerate-torus cutting tool via
+  plain `Gmake_torus` (the full self-intersecting double-sheet
+  primitive) regardless of `Degenerated`/`a_sign`, a real over-cutting
+  risk. Fixed (occ/ocp only) to call `Gmake_torus_elliptic(...,
+  outer=tor.Surf.a_sign > 0)` instead when `tor.Surf.Degenerated`.
+  Verified against `Solidos/test_models/Torus/2_degen_torii.stp` and its
+  non-degenerate control, identical cell count/volume/`TZ` cards on all
+  3 engines.
+- `Gmake_elliptic_cone` -- an ellipse drawn at distance `length` from the
+  apex (semi-axes scaling with distance, the MCNP GQ/SQ convention),
+  then a ruled loft (`BRepOffsetAPI_ThruSections`, `isSolid=True`) from
+  the apex vertex to that ellipse's wire.
+- `Gmake_hyperboloid`/`Gmake_hyperbolic_cylinder` -- the SAME hyperbola
+  revolved around two different axes gives two different real surfaces:
+  `Gmake_hyperboloid` revolves around `MajorAxis` (the standard two-sheet
+  hyperboloid, only the +axis branch built by default); `Gmake_
+  hyperbolic_cylinder` revolves the same hyperbola around `MinorAxis`
+  instead, always giving a single connected "hourglass". This
+  *supersedes* `_freecad_impl.py::GHyperbolicCylinder`'s own extrude-
+  based technique with a genuinely different surface.
+- `Gmake_paraboloid` -- same one-branch-revolve technique, always a
+  single sheet (a parabola has no second branch to mirror). OCCT's own
+  `Geom_Parabola` parametrization conveniently makes the far end's own
+  curve parameter *equal* to the rim's radius.
+
+**`is_inside()` independently verified for all 7**, 40 hand-computed
+ground-truth points (never reusing a class's own formula): found
+`GEllipticCylinder`/`GEllipticCone`/`GParaboloid` already correct, and 3
+real bugs, now fixed -- `GEllipsoid.is_inside` had TWO bugs (a `Center`-
+double-subtraction in both branches, and a swapped axial/radial radius
+pairing in *both* branches, not just the one `_freecad_impl.py`'s own
+docstring flagged); `GHyperboloid.is_inside` had the same `Center`-
+double-subtraction bug plus a different `OneSheet` meaning than the
+redesigned `build_shape` now uses; `GHyperbolicCylinder.is_inside` still
+tested the superseded extruded-prism definition. Fixed, per direct user
+design, by computing `GHyperboloid`'s region as the *complement* of the
+same-parameters `GHyperbolicCylinder`'s region (both come from the same
+hyperbola, revolved around opposite axes).
+
+Full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` +
+`test_georeverse_*_impl.py` (now 43 tests each) green on all 3 engines
+after all of the above (freecad 163 passed, occ 178 passed, ocp 178
+passed).
+
+## End-to-end exotic-quadric fixtures, `convert_to_planes` support, 3
+more real bugs, classifier-dispatch resolved, STEP round-trip fix,
+degenerate-torus fixes, 2026-09-14/17
+
+Real MCNP fixtures were built and round-tripped end to end (`MCNP_parser`
+-> `Objects.py` -> `Utils/boundBox.py::convert_to_planes` ->
+`CAD/buildSolidCell.py`/`splitFunction.py` -> STEP export) for the first
+time for any of the 7 exotic quadrics -- ellipsoid, elliptic cylinder,
+elliptic cone -- each verified against its own closed-form analytic
+volume. `convert_to_planes` gained 3 new branches
+(`elliptic_cylinder_to_planes`, `ellipsoid_to_planes`,
+`elliptic_cone_to_planes`), reusing the existing bounding-plane-
+approximation idea for each surface's own analytic shape.
+
+**3 more real, independent bugs found while building these fixtures**:
+(1) `get_ellipsoid_parameters`'s already-flagged axis-as-bare-int bug
+was fixed for real this time -- the final return handed back the raw
+eigenvector index (`iaxis`, an `int`) instead of the matching `GVector`;
+fixed to `eVect.T[iaxis]` via `_gvec(...)`. (2) `get_cone_parameters`'s
+elliptic-cone branch computed `Ra`/`Rmin`/`Rmaj` as `abs(1 / eVal[...])`
+-- missing a `sqrt` (eigenvalues carry units of 1/length^2, so `1/eVal`
+has units of length^2, not length) -- gave every real elliptic cone a
+cross-section scale 6.67x too small; fixed to `sqrt(abs(1 / eVal[...]))`.
+(3) `CAD/splitFunction.py::surface_side` -- a SEPARATE, parallel point-
+classification implementation from the dataclass-level `is_inside()`
+methods fixed above -- had the same bug family independently: a
+`Center`-double-subtraction in both its `hyperboloid` and `ellipsoid`
+branches, plus a `radY, radY = radii` typo in the `ellipsoid` branch
+that left `radX` undefined. All 3 fixed to match the already-verified
+`_occ_impl.py` logic.
+
+**Classifier-dispatch mismatch resolved, 2026-09-15/16**: `hyperboloid`
+and `cylinder_hyperbolic` are genuinely two different GQ stypes, per
+direct user clarification -- `hyperboloid` (all 3 eigenvalues nonzero)
+is always a revolution of the hyperbola (`onesht=False` around
+`MajorAxis` for the standard two-sheet case, `onesht=True` around
+`MinorAxis` for the connected hourglass) -- `Objects.py::
+Hyperboloid.buildShape` now branches on `onesht` to pick the axis/
+technique. `cylinder_hyperbolic` (a genuinely zero eigenvalue -- a true
+flat/straight-prism axis) is a FLAT prism, never revolved -- restored
+under occ/ocp as `Gmake_hyperbolic_prism`/`GHyperbolicPrism` (mirroring
+`_freecad_impl.py::GHyperbolicCylinder`'s own pre-existing technique
+exactly, now aliased to the same name across all 3 engines). Also fixed:
+`GHyperbolicPrism.build_shape` used to conflate the Z-extrusion distance
+and the profile's own radial reach into one `length` argument -- split
+into `extrusion_length` and `y_reach` after a real fixture
+(`hyperbolic_cylinder_test.mcnp`: a 40cm-tall prism bounded by a 500cm
+coaxial cylinder) needed the profile to reach ~500cm radially but the
+old code capped it at ~40cm. `boundBox.py` gained
+`cylinder_hyperbolic_to_planes`; `surface_side`'s own `hyperboloid`
+branch needed one more sign fix (the 2-sheet case needs the OPPOSITE
+boolean sense from the 1-sheet case for the same comparison).
+
+**STEP round-trip fix, 2026-09-15**: a `Geom_SurfaceOfRevolution` built
+from a `Geom_Hyperbola` writes to STEP as a valid-looking entity pair,
+but pythonocc-core 7.9's own `STEPControl_Reader` silently drops the
+whole root reading it back (confirmed via a minimal, GEOUNED-free OCCT
+reproduction). Not a GEOUNED bug, not fixable by changing how the
+surface is built. Fixed by converting just the revolution surface(s) to
+an equivalent `Geom_BSplineSurface` via `ShapeCustom.ConvertToBSpline`
+ONLY at export time (gated by a cheap face-type scan), never inside the
+surface constructors themselves (tried first, reverted per direct user
+request -- every other consumer, boolean cuts and volume/bbox queries,
+must keep operating on the exact analytic hyperbola).
+
+**Degenerate circular torus, 2026-09-16**: `Objects.py::
+Torus.buildShape`'s circular-vs-elliptic branch only checked `Ra > 0`,
+not degeneracy -- a degenerate CIRCULAR torus took the plain
+`Gmake_torus` branch (the full self-intersecting double-sheet torus)
+instead of the correct single sheet. Confirmed via a real fixture: a
+boolean cut against the ambiguous solid picked an interior point AT the
+origin for what should have been the "outside" piece, fusing the two
+pieces back into the uncut container box. Fixed by widening the
+degeneracy check to cover both the circular and elliptic cases.
+
+**Complement-cell / degenerate-torus boundBox, closed out 2026-09-17**:
+`torus_to_planes`'s degenerate-torus case used to fall through the SAME
+bounding-plane approximation as the non-degenerate torus -- fixed with a
+dedicated branch deriving the sheet's own tight axial half-height from
+the real degenerate geometry. This needed knowing degeneracy/inner-outer
+sense reliably everywhere, so a `degenerated` flag was threaded through
+as `Torus.params`'s 6th element, derived once at parse time from the raw
+MCNP card's own `Ra` coefficient. Separately, per direct user
+clarification, a torus fixture's own COMPLEMENT ("outside") solid not
+resolving to a tightly-bounded piece is **not a bug** -- that region is
+genuinely unbounded in these single-surface fixtures, so the universe-
+box fallback is correct, and this generalizes to every other exotic
+quadric's own complement cell too.
+
+New test fixtures added to `tests/csg_files/` for all 7 surfaces
+(`ellipsoid.mcnp`, `ellipse_cyl.mcnp`, `elliptic_cone.mcnp`,
+`paraboloid.mcnp`, `hyperboloid_one_sheet.mcnp`,
+`hyperboloid_two_sheet_one_branch.mcnp`,
+`hyperboloid_two_sheet_outside.mcnp`, `hyperbolic_cylinder_test.mcnp`,
+`cooling_tower.mcnp`, and 5 torus fixtures covering
+non-degenerate/degenerate-outer/degenerate-inner x circular/elliptic) --
+not yet wired into a real pytest test at this point (that came next).
+
+## `AdjacentMultiplanePlanes` extended from RevCC-vs-MultiPlane to
+RevCC-vs-open MultiRoundCorner; `hylife-v06.stp` dropped as bad source
+CAD, not a bug, 2026-09-17
+
+Per direct user clarification: a Reversed, *open* MultiRoundCorner (see
+`MultiRoundCornerParams.ClosedSet` below) is the same kind of local
+non-convexity as a MultiPlane -- it too can leave one of its own shared
+junction planes exposed right next to a RevCC's cylinder/cone, so a
+RevCC segment bordering one needs the exact same OR-escape treatment a
+bordering MultiPlane already gets. Implemented as a pure reuse of the
+already-verified machinery: `cell_definition.py::
+simple_solid_definition` now builds `open_multi_round_corners` (every
+`MultiRoundCorner` with `Orientation == "Reversed"` and `ClosedSet ==
+False`) and passes `multiplanes + open_multi_round_corners` into
+`get_reversed_cone_cylinder` -- `_find_adjacent_multiplane_planes`
+needed no change at all, since it only ever reads a candidate's own
+`.Surf.Planes`, the same shape for both `MultiPlane` and
+`MultiRoundCorner`.
+
+`MultiRoundCornerParams.ClosedSet` (new field): True when every shared
+junction plane connects exactly 2 neighboring corners (a closed ring),
+False when at least one is touched by only 1 corner (an open chain) --
+same per-plane-degree walk `build_roundC_params` already used to gate
+`convex_planes`'s own `closed` argument, just also stored on the result
+now.
+
+**A real, independent bug found while wiring `ClosedSet` in**:
+`build_roundC_params`'s own gate for even attempting the multi-round
+determination was `len(plane_list) > 2` (more than 2 RAW shared planes)
+-- but a corner whose own two boundary planes coincide contributes only
+1 raw entry instead of 2, so a genuine chain of 2+ corners could
+raw-collapse to as few as 1-2 total entries and get wrongly skipped
+entirely. Fixed by gating on `len(rc_list) > 1` instead (is there more
+than one real corner at all). A count-based shortcut ("closed iff corner
+count == plane count") was tried and explicitly rejected on user review
+-- true in the "closed ring" direction but not the converse.
+
+Verified: full freecad `tests/geo` + `test_cadtocsg.py` (161 passed)
+green. A 141-file differential scan across `Solidos/test_models` found 0
+new failures and exactly 1 file with a real composite-surface-count
+change -- `Decomposed/SCDR_solid19_solid26.stp`
+(`RoundC:2,MultiRoundC:4` -> `RoundC:1,MultiRoundC:5`) -- confirmed
+correct via a real d1suned MCNP stochastic volume check: tally `1.01145
++/- 0.55%` (2.1 sigma), 0 lost particles. The AdjacentMultiplanePlanes-
+for-MultiRoundCorner escape mechanism itself never fired in this corpus
+(0 hits, instrumented and confirmed via a temporary monkeypatch) -- no
+file currently has a RevCC segment bordering an open/Reversed
+MultiRoundCorner, but per the user's own review this needs no dedicated
+fixture to trust, since it's a direct reuse of an already-validated
+topological walk.
+
+**`hylife-v06.stp` dropped**: both its solid 45's slow O(n^2) same-
+surface-face-adjacency decomposition and its GEOReverse round-trip
+volume discrepancy (~1.401x reconstructed vs. ~1.119x GEOUNED's own
+d1suned tally on the same unfixed file) were, per direct user diagnosis,
+downstream symptoms of the same bad input: solid 45 in this file is
+itself an invalid/degenerate CAD solid at the source-STEP level, not a
+decomposition-algorithm or reconstruction-algorithm problem on either
+pipeline's own code. Removed from the open-items list rather than kept
+as two separate pending bugs.
+
+## 4 real, independent bugs found wiring all 14 exotic-quadric fixtures
+into a real pytest test -- including `myBox`'s arithmetic bug, likely
+the highest-impact fix of the whole GEOReverse investigation, 2026-09-17
+
+Writing `tests/test_csgtocad.py::test_exotic_quadric_convertion`
+(parametrized over all 14 fixtures listed at the end of the previous
+entry, asserting each real solid's volume against its own closed-form
+analytic formula) immediately surfaced 4 bugs, none previously caught
+because no prior verification of these surfaces went past "does it look
+roughly right":
+
+1. `Utils/boundBox.py::parabola_to_planes` -- every one of its own 32
+   tangent-plane approximations had its normal built backward (pointing
+   away from material instead of toward it), so the resulting AND-of-
+   tangent-planes had no satisfying point anywhere -- `paraboloid.mcnp`'s
+   own cell 1 never got a boundBox at all and was silently dropped.
+   **Fixed directly by the user**: negate each tangent plane's own
+   normal. Verified: cell 1 now converts to `157,079,692,133.8 mm^3` vs.
+   the closed-form `157,079,632,679.5 mm^3` (relative error `3.8e-7`).
+
+2. `CAD/splitFunction.py::surface_side`'s `"torus"` branch used the same
+   `(r - Ra)` tube-offset term regardless of `degenerated`'s sign --
+   correct for the outer sheet/non-degenerate case, wrong for the inner
+   sheet (geometrically nested inside the naive `(r-Ra)`-based region).
+   `Gsplit` itself correctly split the box into the two true pieces, but
+   `surface_side` then misclassified *both* as "inside", and fusing them
+   back together reproduced the box's own full, uncut volume almost to
+   the last digit -- a case where the final wrong answer was the
+   original box, arrived at via a fully successful split immediately
+   undone by misclassification. Fixed: `if degenerated < 0: Ra = -Ra`
+   right after unpacking `surf.params`. Verified against both degenerate-
+   inner torus fixtures matching their own Pappus-integral volumes to
+   double-precision (`~1e-10` relative error), with the outer/non-
+   degenerate cases bit-for-bit unchanged. A 141-file differential scan
+   confirmed 0 changed files (no corpus file has a degenerate-inner
+   torus).
+
+3. `GEOReverse/core.py::CsgToCad.__init__`/`Objects.py::
+   CadCell.__init__` both had a classic mutable-default-argument bug:
+   `def __init__(self, settings: BoxSettings = BoxSettings()):` --
+   evaluated ONCE at module-import time, so every call made without an
+   explicit `settings=` shared the exact same instance. Found while
+   chasing down an apparent "flaky" test result --
+   `hyperbolic_cylinder_test.mcnp` converted to a visibly different
+   volume depending on which *other* fixture had been converted earlier
+   in the same process. Fixed with the standard idiom
+   (`settings: BoxSettings = None` + `self.settings = settings if
+   settings is not None else BoxSettings()`). Confirmed the sharing
+   itself was gone, but this alone did NOT fix the actual discrepancy --
+   `BoxSettings` sharing was never the real mechanism, just a real,
+   separate bug surfaced by the same investigation.
+
+4. **The real cause, and by far the most consequential bug found this
+   session**: `Utils/boundBox.py::myBox.add()`/`.mult()` (the OR/AND
+   combinators for the Forward/Reversed bounding-box approximation used
+   to size every cell's own starting container before `Gsplit`) were
+   WRONG -- not just imprecise -- for essentially every combination
+   involving one Forward and one Reversed operand, and for one
+   Reversed+Reversed sub-case. Confirmed via a systematic empirical
+   audit (methodology specified by the user: build concrete axis-aligned
+   box pairs A/B covering 8 relative configurations -- disjoint, A
+   subset B, B subset A, partial overlap, each with `notA`/`notB` too --
+   across all 6 relevant operand-orientation combinations of `+`/`*`,
+   checking the real minimal enclosing box by direct point-membership
+   sampling, never trusting either implementation's own formulas):
+   **20 of the first 32 checks came back UNSAFE**, meaning `myBox`'s own
+   claimed material region actively EXCLUDED real material, not just
+   included extra empty space. Root cause: once both operands had a
+   real `Box`, the old code always computed `self.Box.union(box.Box)`
+   (in `add`) or `self.Box.intersected(box.Box)` (in `mult`) regardless
+   of orientation -- correct only for Forward-OR-Forward and
+   Forward-AND-Forward respectively; every mixed case needs a genuinely
+   different formula since a Reversed operand's own `Box` represents the
+   *excluded* region, not the material itself.
+
+   Fixed, each re-verified until 0 UNSAFE remained (32, then 40 once a
+   5th configuration -- two overlapping boxes whose own union still
+   leaves a gap relative to their combined bounding box -- caught one
+   more real case):
+   - `add()`, exactly one Reversed (`A + notB`): exact and safe only
+     when `A`/`B` don't overlap at all (`B \ A == B` exactly); falls back
+     to the always-safe `Box=None` ("material=universe") otherwise,
+     replacing the old `union(A,B)` (confirmed unsafe: disjoint `A`,`B`
+     wrongly excluded all of `A`).
+   - `add()`, both Reversed (`notA + notB`): De Morgan gives
+     `not(A and B)`, Box = the *intersection* of A and B -- the old code
+     was silently computing the OTHER De Morgan identity's answer
+     instead (the `mult()` case's own formula).
+   - `mult()`, exactly one Reversed (`A * notB`, i.e. `A \ B`): always a
+     subset of `A` itself, so the safe choice needs no case analysis --
+     keep the Forward operand's own Box unchanged. The old
+     `self.Box.intersected(box.Box)` here gave Forward+`None` (empty!)
+     for disjoint `A`,`B`, when the true answer is all of `A`.
+   - `mult()`, both Reversed (`notA * notB`): De Morgan gives
+     `not(A or B)`, Box = union of A and B -- *this* one really was
+     already using `union`, but a union of two boxes is only exactly one
+     box when they combine with no gap relative to their own combined
+     bounding box; otherwise the bounding box overshoots the true
+     excluded region, unsafe here specifically because a Reversed box's
+     own Box represents what's excluded. Fixed by checking the exact
+     inclusion-exclusion identity (`vol(union) == vol(A) + vol(B) -
+     vol(A∩B)`) and falling back to the larger of the two boxes alone
+     when it doesn't hold.
+
+   My own first attempt at re-deriving the Reversed+Reversed `add()`
+   formula by hand got the De Morgan identity backward (said `union`
+   when it should be `intersection`) -- caught only once the empirical
+   test harness disagreed, directly demonstrating why the user's
+   insistence on empirical verification over hand-derivation was
+   correct. A second near-miss: `mult()`'s Reversed/Reversed case was
+   initially assumed already correct ("was already correct... and is
+   unchanged") -- a user question ("what would the product of a fully-
+   included forward face and a reversed face give?") prompted a more
+   careful re-check, and a deliberately-constructed counter-example
+   (two overlapping boxes whose own union still leaves a gap) proved
+   `union(A,B)` is NOT always safe there either.
+
+   Verified: the same empirical audit script, 0 UNSAFE across 40 checks
+   (27 exact, 13 safe-but-loose); full freecad `tests/geo` +
+   `test_cadtocsg.py` + `test_csgtocad.py` (163 passed, 14 skipped);
+   `tests/test_csgtocad.py` (all 16, including all 14 exotic-quadric
+   fixtures) green on `occ`/`ocp` too; and, directly confirming this was
+   the real mechanism, `hyperbolic_cylinder_test.mcnp` now converts to
+   the identical, analytically-correct volume whether run in isolation
+   or immediately after other fixtures in the same process.
+
+All 14 fixtures verified end to end against their own analytic volumes
+on `occ`/`ocp` (matching within the faceted-approximation residual
+expected from `convert_to_planes`), except the degenerate-torus
+fixtures' own complement cell (not a bug, see the previous entry).
+
+## freecad's own exotic-quadric conversion errors surfaced (not fixed);
+`Solidos/` triage-folder duplicates archived, 2026-09-17
+
+Running all 14 fixtures under `GEOUNED_CAD_ENGINE=freecad` found 11 of
+the 14 fail to convert at all (7 raise inside `build_universe()` --
+`RuntimeError`/2 distinct `TypeError`s in `Gmake_hyperbolic_cylinder`/
+`ValueError`/`OCCError`, mapped one-to-one to specific fixtures), and 3
+more of the remaining 7 give WRONG volumes without raising
+(`hyperboloid_two_sheet_one_branch` off by ~10%; both degenerate-outer
+torus fixtures wrong by the exact same ~4.567x factor, consistent with
+`_freecad_impl.py::Gmake_torus_elliptic` having no outer/inner sheet
+support at all). Per explicit user instruction ("no vamos a arreglar el
+bug de la superficie exotica [de freecad], solo añadir mensaje de
+error"), these are NOT fixed -- only `CAD/buildCAD.py::
+BuildUniverseCells`'s own bare `except:` (which used to swallow the real
+error entirely, showing only the cell's bare name in a final "failed
+cell conversion" summary) was changed to `except Exception as e:` with a
+printed `Cell {name} failed to build ({type}): {e}`. Verified: full
+freecad regression suite (`tests/geo` + `test_cadtocsg.py` +
+`test_csgtocad.py`) still 163 passed/14 skipped -- zero regressions.
+`occ`/`ocp` are fully unaffected (the new
+`test_exotic_quadric_convertion` is `skipif`'d under freecad for this
+exact reason).
+
+Separately, a full content-hash comparison (not just filename matching)
+of every `Solidos/` triage folder against the curated `Solidos/
+test_models` regression set found exactly 12 byte-identical duplicates
+(2 in `working_solids/`, 4 in `lost_particles/`, 6 of `RevCC_corpus_
+scan/`'s 276 files) -- moved (never deleted, per standing workshop
+policy) into a new `Solidos/_archive/<origin_folder>/` tree. Everything
+else a naive filename-only pass would have flagged turned out to be
+either same-named-but-different-content (coincidental `RevCC_corpus_
+scan` piece/revcc naming) or genuinely distinct historical debugging
+dumps with no `test_models` counterpart at all -- left in place, out of
+scope for this pass.
+
+## `build_region/` vs `CAD/buildSolidCell.py`+`splitFunction.py`
+unification: `myBox`, `evaluate_three_valued`, the whole split cascade
+moved into `geo`, 2026-09-17/18
+
+The last standing transversal open item: GEOUNED's `GEOUNED/utils/
+build_region/` (builds the small CAD solid a composite meta-surface --
+RoundCorner/Can/TCone/MultiRoundCorner -- itself represents) and
+GEOReverse's `GEOReverse/Modules/CAD/buildSolidCell.py`+
+`splitFunction.py` (reconstructs an arbitrary MCNP/OpenMC cell's solid
+from its own boolean definition) had been two separate, hand-kept-in-
+sync implementations of nearly the same recursive split algorithm since
+the two pipelines diverged -- only `Gfuse_solids` had ever actually been
+shared between them.
+
+Per the user's own clarification of what each side's code is *for*:
+GEOReverse's surface-to-planes approximation (`solid_plane_box`/
+`convert_to_planes`/`myBox`) exists only because GEOReverse starts with
+nothing but a boolean surface definition, no real CAD solid yet --
+approximating each surface by planes and intersecting them gives a
+fast, tight starting bounding box before the real, expensive boolean
+cuts. GEOUNED never needs this, since it already has the real CAD solid
+and therefore its real BoundBox directly. `BuildDepth` itself serves two
+different end goals: GEOUNED uses it to *construct* a composite meta-
+surface's own small solid from its 2-4 primitive components; GEOReverse
+uses it to *reconstruct* an arbitrary cell's full solid by repeatedly
+splitting whatever pieces come out of the starting box against each of
+the cell's own real surfaces, keeping/rejecting/re-splitting per the
+boolean definition.
+
+Despite the different end goal, a side-by-side read of both
+implementations found the actual recursive algorithm --
+`BuildDepth`/`BuildSolidParts`/`filterparts`/`getPart`/`SplitBase`/
+`joinBase`/`SplitSolid`'s outer shell -- essentially line-for-line
+identical in both, and already drifted in small, silent ways (GEOUNED
+threaded an explicit `tolerances` argument throughout; GEOReverse read a
+bare `Options.splitTolerance` global deep inside `SplitSolid` instead;
+GEOUNED hand-duplicated the exact logic `evaluate_three_valued` already
+provided). Worse, `myBox`'s own box arithmetic turned out to have the
+exact same real bug in both independently-maintained copies -- GEOUNED's
+own `box_intersect`/`plane_region`-based version also returned UNSAFE in
+the same mixed-orientation cases the GEOReverse-side bug (fixed in the
+previous entry) did, except it was dead code there: its one live call
+site, `filterparts`, always constructed both operands as `Forward`, so
+the buggy branch never actually executed. That this drift went unnoticed
+until it was checked by accident is itself the argument for unifying
+rather than continuing to hand-sync two copies.
+
+Before writing any code, the empirical safety-audit methodology from the
+`myBox` fix was re-run against GEOUNED's own `box_intersect`/
+`plane_region` algorithm (reimplemented standalone in a scratchpad
+script, no GEOUNED code touched) to confirm the same-bug hypothesis
+before proposing anything -- confirmed UNSAFE in the mixed-orientation
+`mult()` cases, same as GEOReverse's pre-fix version.
+
+**What actually moved**, in 3 independently-verified steps (planned via
+`EnterPlanMode`/`ExitPlanMode`, approved by the user before any code was
+touched):
+1. `myBox` (+ its `_box_volume` helper) moved into
+   `geo/vector_geometry.py` -- GEOReverse's own, already-fixed copy
+   became the single implementation; GEOUNED's buggy `box_intersect`/
+   `plane_region`/`operate_box` (confirmed dead code in BOTH pipelines --
+   `operate_box` has zero callers anywhere besides its own recursion)
+   were deleted outright rather than ported. A `.Volume` attribute
+   (GEOUNED's own addition, read by `build_shape_functions.py::
+   build_complex_shape`) was folded into the shared class. One live
+   call site (`build_shape_functions.py`'s `myBox(gsolid.BoundBox)`,
+   built with no explicit orientation) needed a fix to pass `"Forward"`
+   explicitly, since the merged constructor's stricter "orientation
+   cannot be `None`" invariant (already GEOReverse's own) would
+   otherwise raise there.
+2. `evaluate_three_valued` moved into `boolean_utils/boolean_function.py`
+   (right next to `BoolSequence` itself); GEOReverse's own
+   `Utils/booleanFunction.py` re-exports it for its existing callers,
+   and GEOUNED's `build_region/splitFunction.py` was updated to call it
+   instead of its own hand-duplicated inline ternary.
+3. `BuildDepth`/`BuildSolidParts`/`filterparts`/`getPart`/`SplitBase`/
+   `joinBase`/`SplitSolid`/`space_decomposition` moved into
+   `geo/solid_ops.py`, generalized over exactly the two genuine
+   surviving differences: a pluggable `classify(point, surf) -> bool`
+   callable (GEOUNED passes `lambda p, s: s.is_inside(p)`; GEOReverse
+   passes its own, much richer `surface_side` unchanged -- neither
+   pipeline's own point-classification code was touched by this move),
+   and `hasattr(cell, "build_BoundBox")`/`hasattr(cell,
+   "buildSurfaceShape")` guards standing in for what used to be one
+   pipeline's own commented-out call and the other's active one
+   (GEOUNED's `CellObj` has neither method -- its single, always-Forward
+   `boundBox` is set once up front and its surfaces pre-built once,
+   before this cascade ever runs -- GEOReverse's `CadCell` has both,
+   since an arbitrary CSG cell's own subcells genuinely need their own,
+   tighter, lazily-computed box and lazily-built surface shapes).
+   `GEOUNED/utils/build_region/build_region.py` now keeps only
+   `get_cell_object`/`get_surface`; its sibling `splitFunction.py` had
+   nothing GEOUNED-specific left once `SplitBase`/`joinBase`/`SplitSolid`
+   moved out, and was deleted outright. `GEOReverse/Modules/CAD/
+   buildSolidCell.py` keeps only `BuildSolid()` (now the single place
+   that converts `Options.splitTolerance` into a real `Tolerances`
+   instance, once, instead of `SplitSolid` re-wrapping it on every
+   call); `CAD/splitFunction.py` keeps `surface_side`/`btwPPlanes`/
+   `updateSurfacesValues` untouched.
+
+   One real, deliberate behavior unification, asked of the user rather
+   than decided unilaterally (`AskUserQuestion`): `SplitSolid`'s call
+   into `Gsplit` is now wrapped in a `try`/`except` with a `print` on
+   failure (falling back to the uncut solid) in **both** pipelines --
+   GEOReverse's own copy already had this fallback, but as a fully
+   silent `except Exception: Solids = []` (the same anti-pattern already
+   fixed in `CAD/buildCAD.py::BuildUniverseCells` the previous entry);
+   GEOUNED's copy had no try/except at all (would have crashed outright
+   on a real `Gsplit` failure). The user chose "keep the fallback in
+   both, but make it visible" over the alternatives (no fallback
+   anywhere; leave the asymmetry as-is).
+
+**Verified**: full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py`
++ `test_boolean_function.py` green on all 3 engines after all 3 steps
+(freecad 179 passed/16 skipped, occ 213 passed/1 skipped, ocp 213
+passed/1 skipped -- matching each engine's own pre-existing baseline
+once the `tests/geo/test_freecad_impl.py` FreeCAD/pyOCC DLL-conflict
+collection error under occ/ocp -- a pre-existing environment quirk,
+unrelated to this change -- was excluded via `--ignore`); the empirical
+`myBox` safety audit re-run against the new shared location, 0 unsafe
+across 64 checks; `hyperbolic_cylinder_test.mcnp` converts to the
+identical volume whether run in isolation or immediately after other
+fixtures; and a 141-file differential composite-surface-count scan
+across `Solidos/test_models` (`git stash`-based before/after) found
+**0 changed files, 0 new failures, 0 escape-hit-count changes** in
+either pass -- confirming the whole move is behavior-preserving for
+GEOUNED, as intended. Committed as `7d202b0`.
+
+## Migration session closed, 2026-09-18
+
+With the `build_region`/`CAD` unification above landing, `CLAUDE.md`'s
+"Known open items" list had no remaining open, actionable entries left
+-- every item was either closed-and-documented or one of the 2 accepted
+permanent limitations (`Mixed/ConeSphere.stp` under occ/ocp; freecad's
+own exotic-quadric construction bugs). Updated the list's own intro note
+to say so explicitly (commit `0859b5d`), and pushed both commits to
+`origin/georeverse-migration` (the user's own fork,
+`psauvan/GEOUNED`) -- 8 commits total, bringing the remote branch even
+with local.
+
+Per the user's own explicit statement: `georeverse-migration` stays
+alive going forward, but only for fixing bugs that turn up in the
+already-migrated code. Any new feature/implementation work starts on a
+fresh branch instead (not yet named or created).
