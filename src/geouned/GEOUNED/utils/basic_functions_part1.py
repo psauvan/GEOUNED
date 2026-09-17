@@ -611,6 +611,18 @@ class MultiRoundCornerParams:
         self.Orientation = params[2]
         self.Planes = params[1]
         self.Corners = params[0]
+        # True if every shared junction plane (self.Planes) connects two
+        # neighboring corners in the group (a closed ring, e.g. a fillet
+        # running all the way around a hole); False if at least one is
+        # only touched by a single corner (an open chain, with loose
+        # ends -- see build_roundC_params). Only an open, Reversed
+        # MultiRoundCorner is a candidate for the same
+        # AdjacentMultiplanePlanes OR-escape mechanism a MultiPlane gets
+        # against a bordering RevCC segment -- a closed ring has no
+        # exposed junction plane for anything outside the group to
+        # actually border, and a Forward (convex) group doesn't create
+        # the local non-convexity that mechanism exists to compensate for.
+        self.ClosedSet = params[3]
 
 
 class ReversedConeCylParams:

@@ -250,12 +250,12 @@ def next_roundCorner(solid, cornerface_index):
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid)
             if rc is not None:
                 cornerface_index.update(surfindex)
-                rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)
+                rc_list, plane_list, multi_round, orientation, closed_set = build_roundC_params(rc)
                 if not multi_round:
                     for gc in rc_list:
                         yield gc
                 else:
-                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation)))
+                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation, closed_set)))
                     yield gc
     return None
 

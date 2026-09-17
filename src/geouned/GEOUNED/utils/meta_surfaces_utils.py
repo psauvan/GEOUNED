@@ -609,18 +609,23 @@ def convex_face_cyl(cyl, edge, otherface):
 
 
 def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolerances):
-    """Real MultiPlane component planes physically adjacent to this RevCC
-    segment's own cylinder/cone (`face`, possibly merged into a ShellGu of
-    several same-analytic-surface pieces via merge_same_surface_faces --
-    a boolean cut can split what's really one cylinder/cone into several
-    contiguous fragments).
+    """Real component planes, of a MultiPlane OR an open/Reversed
+    MultiRoundCorner (`multiplanes` here is really just one such group --
+    see cell_definition.py::simple_solid_definition, which passes both
+    kinds through the same list -- either dataclass exposes the same
+    `.Surf.Planes`, a list of real Plane GeounedSurfaces, so this function
+    doesn't need to know which kind it got), physically adjacent to this
+    RevCC segment's own cylinder/cone (`face`, possibly merged into a
+    ShellGu of several same-analytic-surface pieces via
+    merge_same_surface_faces -- a boolean cut can split what's really one
+    cylinder/cone into several contiguous fragments).
 
-    Needed because a MultiPlane can make the irreducible solid non-convex,
-    which is exactly the configuration where the RevCC's own additional
-    plane p -- correct only locally, near its own cylinder/cone -- must
-    not be applied as an unrestricted global cut; identifying which real
-    faces actually border this segment is the first step toward limiting
-    it there.
+    Needed because a MultiPlane, or an open/Reversed MultiRoundCorner, can
+    make the irreducible solid non-convex, which is exactly the
+    configuration where the RevCC's own additional plane p -- correct only
+    locally, near its own cylinder/cone -- must not be applied as an
+    unrestricted global cut; identifying which real faces actually border
+    this segment is the first step toward limiting it there.
 
     Search direction is inverted from an earlier version of this function
     (per direct user instruction, 2026-08-23): rather than first guessing

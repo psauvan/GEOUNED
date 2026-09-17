@@ -95,11 +95,29 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             planeset = omit_multiplane_repeated_planes(mp_region, Surfaces, solid_gu.Faces)
             omitFaces.update(planeset)
 
+        # A Reversed, open MultiRoundCorner (see MultiRoundCornerParams.ClosedSet's
+        # own docstring) is the same kind of local non-convexity as a
+        # MultiPlane -- it too can leave one of its own shared junction
+        # planes exposed right next to a RevCC's cylinder/cone, so it needs
+        # the exact same AdjacentMultiplanePlanes OR-escape treatment.
+        # _find_adjacent_multiplane_planes only ever reads `.Surf.Planes`
+        # (a list of real Plane GeounedSurfaces, the same shape for both
+        # MultiPlane and MultiRoundCorner), so it works unchanged against
+        # either kind of group -- only a Forward or closed (ClosedSet=True)
+        # MultiRoundCorner is excluded here, since neither creates the local
+        # non-convexity this mechanism compensates for, nor has an exposed
+        # plane for anything outside the group to actually border.
+        open_multi_round_corners = [
+            rc for rc in roundCorner if rc.Type == "MultiRoundCorner" and rc.Surf.Orientation == "Reversed" and not rc.Surf.ClosedSet
+        ]
+
         # `multiplanes` is threaded through as the real MultiPlane list, not
         # just a boolean gate -- get_join_cone_cyl needs it to identify
         # *which* of a RevCC's own 2 chain ends (if any) borders one of
         # these, not just whether any exist in the solid.
-        reversedCC = get_reversed_cone_cylinder(solid_gu.Faces, multiplanes, scaled_tolerances, omitFaces)
+        reversedCC = get_reversed_cone_cylinder(
+            solid_gu.Faces, multiplanes + open_multi_round_corners, scaled_tolerances, omitFaces
+        )
         for cs in reversedCC:
             cc_region = Surfaces.add_reversedCC(cs)
             component_definition.append(cc_region)

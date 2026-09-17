@@ -145,11 +145,19 @@ def get_roundCorner(solidFaces, cornerface_index=None, solid=None):
             rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid)
             if rc is not None:
                 cornerface_index.update(surfindex)
-                rc_list, plane_list, multi_round, orientation = build_roundC_params(rc)
+                rc_list, plane_list, multi_round, orientation, closed_set = build_roundC_params(rc)
                 if not multi_round:
                     corner_list.extend(rc_list)
                 else:
-                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation)))
+                    # closed_set (True/False, see build_roundC_params) is
+                    # kept on the MultiRoundCorner itself -- like a
+                    # MultiPlane, an open (closed_set=False), Reversed
+                    # MultiRoundCorner is a genuine local non-convexity in
+                    # the solid, and a RevCC segment bordering one of its
+                    # own shared junction planes needs the same
+                    # AdjacentMultiplanePlanes OR-escape treatment (see
+                    # cell_definition.py::simple_solid_definition).
+                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation, closed_set)))
                     corner_list.append(gc)
 
     if one_value_return:
@@ -247,8 +255,35 @@ def build_roundC_params(rc_list):
 
     multi_round = False
     orientation = None
-    if len(plane_list) > 2:
-        # check if closed set of RC
+    closed_set = None
+    # A group is a MultiRoundCorner candidate exactly when it chains more
+    # than one real corner (cylinder) -- not "more than 2 raw planes":
+    # a corner whose own two boundary planes coincide (p1==p2, the
+    # "aligned planes" case below) contributes only 1 entry to plane_list,
+    # so e.g. 2 chained corners can still raw-collapse to as few as 1-2
+    # total plane_list entries, and used to be wrongly skipped here.
+    if len(rc_list) > 1:
+        i = 0
+        while i < len(plane_list) - 1:
+            pi = plane_list[i]
+            n = len(plane_list) - 1
+            for j, pj in enumerate(reversed(plane_list[i + 1 :])):
+                if pi == pj:
+                    del plane_list[n - j]
+            i += 1
+
+        multi_round = True
+
+        # check if closed set of RC: a plane touched by only 1 corner is a
+        # loose/open end; a plane touched by 2 is an internal junction. A
+        # closed ring has every one of its own planes at degree 2 -- no
+        # count-based shortcut (e.g. corner count == plane count) is
+        # equivalent to this in general (several independent, non-
+        # contiguous corners bounding the same physical wall is neither a
+        # closed ring nor a simple open chain, but can still coincidentally
+        # match such a count) -- so this walks the real per-plane degree
+        # directly, same test as before this function's own gate widened
+        # to also cover small (1-2 distinct plane) groups.
         closed_set = True
         for p in rc_planes:
             count = 0
@@ -260,16 +295,6 @@ def build_roundC_params(rc_list):
             if count == 1:
                 closed_set = False
                 break
-
-        i = 0
-        multi_round = True
-        while i < len(plane_list) - 1:
-            pi = plane_list[i]
-            n = len(plane_list) - 1
-            for j, pj in enumerate(reversed(plane_list[i + 1 :])):
-                if pi == pj:
-                    del plane_list[n - j]
-            i += 1
 
         if len(plane_list) > 1:
             # convex_planes needs every plane actually bounding the group,
@@ -318,7 +343,7 @@ def build_roundC_params(rc_list):
                 # orientation, exactly like the "aligned planes" case
                 # above already does.
                 orientation = rc.Surf.Cylinder.Orientation
-    params = (roundcorner_list, plane_list, multi_round, orientation)
+    params = (roundcorner_list, plane_list, multi_round, orientation, closed_set)
     return params
 
 
@@ -333,10 +358,11 @@ def build_RCC_params(rc):
     #
     # mp_planes (from get_join_cone_cyl's _find_adjacent_multiplane_planes,
     # a real curved-edge topological-adjacency walk, not a coincident-point
-    # heuristic) lists the real MultiPlane component planes physically
+    # heuristic) lists the real component planes -- of a MultiPlane, or of
+    # an open/Reversed MultiRoundCorner, see cell_definition.py -- physically
     # bordering each segment's own cylinder/cone -- since the RevCC's
-    # cylinders/cones are all near-coaxial, the same real multiplane plane
-    # can genuinely be found adjacent to more than one segment.
+    # cylinders/cones are all near-coaxial, the same real plane can
+    # genuinely be found adjacent to more than one segment.
     # _find_adjacent_multiplane_planes always returns the same GeounedSurface
     # object reference for the same real match, so a plain identity check is
     # enough to dedupe, no geometric comparison (is_same_plane) needed here.

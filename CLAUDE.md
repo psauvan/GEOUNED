@@ -267,12 +267,76 @@ list — see that entry for the verification numbers.)
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
-- `AdjacentMultiplanePlanes` still needs the same RevCC-to-
-  MultiRoundCorner extension flagged since 2026-08-21 — see the
-  `project_mrc_adjacent_multiplane_pending` memory.
-- `hylife-v06.stp` solid 45's slow decomposition (an O(n^2) same-surface
-  face-adjacency cost on many duplicated cylinder/torus fragments) —
-  root-caused, not fixed, explicitly deprioritized by the user.
+- ~~`AdjacentMultiplanePlanes` needs the same RevCC-to-MultiRoundCorner
+  extension~~ -- **done, 2026-09-17** (closes the
+  `project_mrc_adjacent_multiplane_pending` memory). Per direct user
+  clarification: a Reversed, *open* MultiRoundCorner (see
+  `MultiRoundCornerParams.ClosedSet` below) is the same kind of local
+  non-convexity as a MultiPlane -- it too can leave one of its own
+  shared junction planes exposed right next to a RevCC's cylinder/cone,
+  so a RevCC segment bordering one needs the exact same OR-escape
+  treatment a bordering MultiPlane already gets. Implemented as a pure
+  reuse of the already-verified machinery, not a new code path:
+  `cell_definition.py::simple_solid_definition` now builds
+  `open_multi_round_corners` (every `MultiRoundCorner` with
+  `Orientation == "Reversed"` and `ClosedSet == False`) and passes
+  `multiplanes + open_multi_round_corners` into
+  `get_reversed_cone_cylinder` -- `_find_adjacent_multiplane_planes`
+  only ever reads a candidate's own `.Surf.Planes` (a list of real Plane
+  GeounedSurfaces, the same shape for both `MultiPlane` and
+  `MultiRoundCorner`), so it needed no change at all beyond its own
+  docstring. A Forward or closed (`ClosedSet == True`) MultiRoundCorner
+  is excluded -- neither creates the local non-convexity this mechanism
+  compensates for, nor has an exposed plane for anything outside the
+  group to actually border.
+  `MultiRoundCornerParams.ClosedSet` (new field, `basic_functions_part1.py`):
+  True when every one of the group's own shared junction planes connects
+  exactly 2 neighboring corners (a closed ring); False when at least one
+  is touched by only 1 corner (an open chain with a loose end) -- same
+  per-plane-degree walk `build_roundC_params` already used to gate
+  `convex_planes`'s own `closed` argument, just also stored on the
+  result now. Threaded through both places a `MultiRoundCorner`
+  `GeounedSurface` is built (`functions.py::get_roundCorner`, and the
+  separate decomposition-phase generator,
+  `decompose/generators.py::next_roundCorner`).
+  **A real, independent bug found and fixed while wiring `ClosedSet`
+  in**: `build_roundC_params`'s own gate for even attempting the
+  `multi_round`/`closed_set`/`orientation` determination was
+  `len(plane_list) > 2` (more than 2 RAW, not-yet-deduplicated shared
+  planes) -- but a corner whose own two boundary planes coincide
+  (`p1 == p2`, the pre-existing "aligned planes" case) contributes only
+  1 raw entry instead of 2, so a genuine chain of 2+ corners could
+  raw-collapse to as few as 1-2 total `plane_list` entries and get
+  wrongly skipped entirely (silently falling back to independent
+  RoundCorners instead of one MultiRoundCorner). Fixed by gating on
+  `len(rc_list) > 1` instead (is there more than one real corner in the
+  candidate group at all -- the actually-intended condition) --
+  `closed_set` itself kept its original, general per-plane-degree walk
+  (`rc_planes`/`is_same_plane`, checking whether any plane is touched by
+  only 1 corner) unconditionally for any size, rather than adding
+  special-cased formulas for small plane counts (a count-based shortcut
+  like "closed iff corner count == plane count" was tried and explicitly
+  rejected on user review -- true in the "closed ring" direction, but
+  not the converse: e.g. several independent, non-contiguous corners
+  bounding the same physical wall can coincidentally match such a count
+  without being any kind of chain at all).
+  **Verified**: full freecad `tests/geo` + `test_cadtocsg.py` (161
+  passed) green after both changes. A 141-file differential scan across
+  `Solidos/test_models` (`git stash`-based before/after, decompose +
+  build_solid_definition only) found 0 new failures and exactly 1 file
+  with a real composite-surface-count change --
+  `Decomposed/SCDR_solid19_solid26.stp` (`RoundC:2,MultiRoundC:4` ->
+  `RoundC:1,MultiRoundC:5`, the `len(rc_list) > 1` gate fix actually
+  firing) -- confirmed correct via a real d1suned MCNP stochastic volume
+  check on that exact file: tally `1.01145 +/- 0.55%` (2.1 sigma), 0 lost
+  particles. The AdjacentMultiplanePlanes-for-MultiRoundCorner escape
+  mechanism itself never fired in this corpus (0 hits, instrumented and
+  confirmed via a temporary monkeypatch during this same scan) -- no
+  file in `Solidos/test_models` currently has a RevCC segment bordering
+  an open/Reversed MultiRoundCorner, but per the user's own review, this
+  needs no dedicated fixture to trust: it's a direct reuse of
+  `_find_adjacent_multiplane_planes`'s own already-validated topological
+  walk, not a new, unexercised code path of its own.
 
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 
@@ -307,11 +371,16 @@ gaps for whenever it's picked back up:
   artifact, cross-validated wrong by `mcnp`'s logically-identical cell 2
   region independently reconstructing to the same single solid under
   both formats now. See the history log for the full investigation.
-- The `hylife-v06.stp` round-trip volume discrepancy: the reconstructed
-  CAD volume comes back ~1.401x the true solid vs. GEOUNED's own
-  d1suned tally of ~1.119x on the same unfixed file — the two don't
-  agree, and this was never chased down once the real GEOUNED-side
-  fix for that investigation was found via a different route.
+- ~~`hylife-v06.stp` solid 45's slow decomposition~~ / ~~its round-trip
+  volume discrepancy~~ -- **dropped, 2026-09-17, not a GEOUNED or
+  GEOReverse bug**: per direct user diagnosis, solid 45 in this file is
+  itself an invalid/degenerate CAD solid at the source-STEP level (not a
+  decomposition-algorithm problem) -- GEOUNED's O(n^2) same-surface
+  face-adjacency cost choking on it, and GEOReverse's own reconstructed
+  volume disagreeing with GEOUNED's own d1suned tally on this same
+  solid (~1.401x vs ~1.119x), are both downstream symptoms of the same
+  bad input, not independent bugs worth chasing on either pipeline's
+  own code.
 - **GQ/SQ surface-type classifier (`MCNP_parser/MCNPinput.py::gq2params`
   -> `getGQAxis` -> `get_cylinder_parameters`/`get_cone_parameters`/
   `get_hyperboloid_parameters`/`get_ellipsoid_parameters`), fixed
