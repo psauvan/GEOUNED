@@ -12,20 +12,15 @@ methods on the (untouched) class itself: `remove_surf` and
 `signed_surfaces` (see the 2026-09-12 `cleanUndefined` bug-fix history
 entry).
 
-`evaluate_three_valued` is a thin adapter, not a reimplementation:
-GEOUNED's own `BoolSequence.evaluate()` already substitutes known
-values and returns either a resolved bool or the residual (partially
-substituted) BoolSequence when it can't fully resolve -- every real
-caller here (`Utils/boundBox.py`'s `isInside`, `splitFunction.py`'s
-`SplitSolid`) needs a plain `None` for "undetermined" instead of a
-residual object (which would be truthy and misread as "resolved"), so
-this just downgrades a non-bool result to `None`. Confirmed by random
-testing (3000 generated expressions) to be at least as resolving as
-GEOReverse's own old hand-rolled three-valued walk -- and strictly more
-so in some cases, since `.evaluate()`'s use of `.substitute()` catches
-structural contradictions (e.g. a nested OR collapsing until an outer
-AND is left with both `+n` and `-n` of the same surface) that a single
-top-down walk over the original tree does not.
+`evaluate_three_valued` moved to `boolean_utils/boolean_function.py`
+2026-09-17 (re-exported below for this module's existing callers --
+`Utils/boundBox.py`'s `isInside`, `splitFunction.py`'s `SplitSolid`):
+it's a thin adapter, not a reimplementation, with zero dependency beyond
+`BoolSequence.evaluate()` itself, and GEOUNED's own
+`build_region/splitFunction.py::SplitSolid` used to hand-duplicate the
+exact same logic inline -- see its own docstring for the full history
+(confirmed by random testing, 3000 generated expressions, to be at
+least as resolving as GEOReverse's old hand-rolled three-valued walk).
 
 GEOReverse's own `simplify`/`factorize` (Shannon-expansion redundancy
 removal, used only by `remh.py`'s `hash_sequence` -- confirmed dead
@@ -35,7 +30,7 @@ same trivial per-surface expansion `hash_sequence`'s own default did)
 does the same job directly.
 """
 
-from ....boolean_utils.boolean_function import BoolSequence
+from ....boolean_utils.boolean_function import BoolSequence, evaluate_three_valued
 from ....boolean_utils.boolean_expression_parser import is_integer, outer_terms, redundant
 
 
@@ -71,12 +66,3 @@ def signed_surfaces(seq):
         else:
             signed.add(e)
     return signed
-
-
-def evaluate_three_valued(seq, value_set):
-    """Evaluate `seq` against `value_set` (surface number -> True/False/
-    None), returning True, False, or None (undetermined) -- never the
-    residual BoolSequence that `BoolSequence.evaluate()` itself returns
-    for an unresolved result."""
-    result = seq.evaluate(value_set)
-    return result if isinstance(result, bool) else None

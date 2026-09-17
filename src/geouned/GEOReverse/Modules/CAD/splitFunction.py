@@ -1,126 +1,14 @@
 import math
 
-from ....GEOUNED.utils.data_classes import Tolerances
-from ....geo import GSolid, Gfuse_solids, Gsplit
-from ..Utils.booleanFunction import evaluate_three_valued
-
-
-class SplitBase:
-    def __init__(self, base, knownSurf={}, orientation="Forward"):
-        self.base = base
-        self.knownSurf = knownSurf
-        self.orientation = orientation
-
-
-def joinBase(baseList):
-    shape = []
-    surf = {}
-    removedKeys = []
-    fwd = True
-    for b in baseList:
-        if b.orientation == "Reversed":
-            fwd = False
-        if b.base is not None:
-            shape.append(b.base)
-        for k, v in b.knownSurf.items():
-            if k in removedKeys:
-                continue
-            if k not in surf.keys():
-                surf[k] = v
-            else:
-                if surf[k] == v:
-                    continue
-                else:
-                    surf[k] = None
-                    removedKeys.append(k)
-
-    newbase = Gfuse_solids(shape)
-    orientation = "Forward" if fwd else "Reversed"
-    return SplitBase(newbase, surf, orientation)
-
-
-# TODO rename this function as there are two with the name name
-def SplitSolid(base, surfacesCut, cellObj, tolerance=0.01):  # 1e-2
-    # split Base (shape Object or list/tuple of shapes)
-    # with selected surfaces (list of surfaces objects) cutting the base(s) (surfacesCut)
-    # cellObj is the CAD object of the working cell to reconstruction.
-    # the function return a list of solids enclosed fully in the cell (fullPart)
-    # and a list of solids not fully enclosed in the cell (cutPart). These lasts
-    # will require more splitting with the others surfaces defining the cell.
-
-    fullPart = []
-    cutPart = []
-
-    # part if several base in input
-
-    if type(base) is list or type(base) is tuple:
-        for b in base:
-            fullList, cutList = SplitSolid(b, surfacesCut, cellObj, tolerance=tolerance)
-            fullPart.extend(fullList)
-            cutPart.extend(cutList)
-        return fullPart, cutPart
-
-    # part if base is shape object
-    # resulting cell orientation is "Reversed" only if both
-    # cells have reversed orientations
-    if cellObj.boundBox.Orientation == base.orientation:
-        orientation = cellObj.boundBox.Orientation
-    else:
-        orientation = "Forward"
-
-    if abs(base.base.Volume / base.base.Area) < 1e-2:
-        return fullPart, cutPart
-
-    # SplitSolid is always called with exactly one cutting surface
-    # (`(p,)`/`(surf,)` at every call site in buildSolidCell.py) -- the
-    # tuple form is legacy, only its first (only) element is ever used.
-    tool = surfacesCut[0].shape
-    if tool is not None:
-        try:
-            # Gsplit's own `tolerances` argument was refactored (2026-08-30)
-            # from a plain float keyword to a positional Tolerances object
-            # (GEOUNED.utils.data_classes.Tolerances). GEOReverse's own
-            # SplitSolid still called it the old way
-            # (`Gsplit(base.base, tool, tolerance=tolerance)`) -- a
-            # TypeError on every single call, silently swallowed by the
-            # `except Exception` below, so every split silently fell back
-            # to the uncut input. Fixed 2026-09-12 (found while
-            # investigating test_cylbox_convertion): build a Tolerances
-            # instance from this function's own `tolerance` float (still
-            # sourced from GEOReverse's own `Options.splitTolerance`) and
-            # pass it positionally instead.
-            Solids = [s.__native__ for s in Gsplit(base.base, tool, Tolerances(split_tolerance=tolerance)).solids]
-        except Exception:
-            Solids = []
-        if not Solids:
-            Solids = [base.base.__native__]
-        Solids = [GSolid(s) for s in Solids]
-    else:
-        Solids = [base.base]
-
-    partPositions, partSolids = space_decomposition(Solids, surfacesCut)
-
-    for pos, sol in zip(partPositions, partSolids):
-        # fullPos = updateSurfacesValues(pos,cellObj.surfaces,base.knownSurf)
-        # inSolid = cellObj.definition.evaluate(fullPos)
-
-        pos.update(base.knownSurf)
-        inSolid = evaluate_three_valued(cellObj.definition, pos)
-
-        # if solidTool :
-        #  ii += 1
-        #  print(solidTool)
-        #  print(cellObj.definition)
-        #  print(pos)
-        #  print('eval',inSolid)
-        #  name = str(cellObj.definition)
-        #  sol.exportStep('solid_{}{}.stp'.format(name,ii))
-
-        if inSolid:
-            fullPart.append(SplitBase(sol, pos, orientation))
-        elif inSolid is None:
-            cutPart.append(SplitBase(sol, pos, orientation))
-    return fullPart, cutPart
+# SplitBase, joinBase, SplitSolid, space_decomposition used to live here --
+# moved to `geo.solid_ops`, 2026-09-17/18, shared with GEOUNED's own,
+# previously near-identical copy in `build_region/build_region.py`/
+# `build_region/splitFunction.py` (now deleted). See CLAUDE.md's
+# "build_region/ vs CAD/buildSolidCell.py+splitFunction.py unification"
+# entry. `surface_side` (below) is passed into the shared `SplitSolid` as
+# its pluggable `classify` callable, unchanged -- this file's own exotic-
+# quadric-aware point classification was deliberately not touched by that
+# move.
 
 
 def updateSurfacesValues(position, surfaces, knownSurf):
@@ -132,31 +20,6 @@ def updateSurfacesValues(position, surfaces, knownSurf):
     for name in sname.difference(pname):
         fullpos[name] = None
     return fullpos
-
-
-# Get the position of subregion with respect
-# all cutting surfaces
-def space_decomposition(solids, surfaces):
-
-    component = []
-    good_solids = []
-    for c in solids:
-        if c.Volume < 1e-3:
-            if abs(c.Volume) < 1e-3:
-                continue
-            else:
-                c = c.reverse()
-                print("Negative solid Volume", c.Volume)
-        Svalues = {}
-        point = c.find_interior_point()
-        if point is None:
-            continue  # point not found in solid (solid is surface or very thin can be source of lost particules in MCNP)
-        for surf in surfaces:
-            Svalues[surf.id] = surface_side(point, surf)
-
-        component.append(Svalues)
-        good_solids.append(c)
-    return component, good_solids
 
 
 # check the position of the point with respect

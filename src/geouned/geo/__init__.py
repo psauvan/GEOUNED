@@ -38,6 +38,7 @@ from .vector_geometry import (
     GVector,
     arbitrary_perpendicular,
     arc_extent,
+    myBox,
     to_gboundbox,
     to_gmatrix,
     to_gvector,
@@ -68,7 +69,17 @@ from .solid_defects import (
     find_split_ring_faces,
     near_surface_pair,
 )
-from .solid_ops import Gfuse_solids
+from .solid_ops import (
+    BuildDepth,
+    BuildSolidParts,
+    Gfuse_solids,
+    SplitBase,
+    SplitSolid,
+    filterparts,
+    getPart,
+    joinBase,
+    space_decomposition,
+)
 
 if _engine == "occ":
     from .occ import (

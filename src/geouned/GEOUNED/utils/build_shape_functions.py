@@ -1,8 +1,9 @@
 import numpy
 
-from .build_region.build_region import BuildDepth, get_cell_object, getPart
-from .build_region.Objects import myBox, plane_polygon_from_box, cylinder_from_box, cone_from_box
+from .build_region.build_region import get_cell_object
+from .build_region.Objects import plane_polygon_from_box, cylinder_from_box, cone_from_box
 from ...geo import (
+    BuildDepth,
     GBoundBox,
     GPlane,
     GCylinder,
@@ -14,6 +15,8 @@ from ...geo import (
     Gmake_shell,
     Gmake_solid,
     Gmake_polygon_face,
+    getPart,
+    myBox,
 )
 
 
@@ -119,7 +122,7 @@ def build_complex_shape(surface, Box, tolerances, forward=False):
             rc.definition = rc.definition.get_complementary()
     for s in rc.surfaces.values():
         s.buildShape(Box)
-    celparts = BuildDepth(rc, None, tolerances)
+    celparts = BuildDepth(rc, None, tolerances, classify=lambda p, s: s.is_inside(p))
     celparts = getPart(celparts)
     if len(celparts) == 0:
         return (None, None)
@@ -129,7 +132,7 @@ def build_complex_shape(surface, Box, tolerances, forward=False):
         shapeParts.append(s.base)
 
     gsolid = Gfuse_solids(shapeParts, tolerances)
-    if rc.boundBox.sameBox(myBox(gsolid.BoundBox)) and rc.boundBox.Volume == gsolid.Volume:
+    if rc.boundBox.sameBox(myBox(gsolid.BoundBox, "Forward")) and rc.boundBox.Volume == gsolid.Volume:
         # surface shape doesn't cut box
         return (None, None)
 

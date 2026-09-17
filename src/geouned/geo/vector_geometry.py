@@ -347,6 +347,203 @@ def to_gboundbox(box) -> GBoundBox:
 
 
 # ---------------------------------------------------------------------------
+# myBox: axis-aligned box approximation of a boolean cell's material region
+# ---------------------------------------------------------------------------
+#
+# Shared 2026-09-17 between GEOUNED's `build_region/` (constructs the small
+# solid a composite meta-surface -- RoundCorner/Can/TCone/MultiRoundCorner --
+# itself represents, from its own 2-4 primitive components) and GEOReverse's
+# `CAD/buildSolidCell.py`/`Utils/boundBox.py` (reconstructs an arbitrary
+# MCNP/OpenMC cell's solid from its boolean surface definition, where
+# `solid_plane_box.build_box_depth()` walks the definition tree combining
+# per-surface myBox instances via the same AND=`.mult()`/OR=`.add()` this
+# class provides). Pure box arithmetic over `GBoundBox`, zero native-kernel
+# dependency -- previously two independently-maintained copies (one in each
+# pipeline) that had silently drifted: GEOReverse's copy had a real,
+# corpus-affecting bug (see `.add()`/`.mult()` docstrings below) that was
+# found and fixed via a systematic empirical audit; GEOUNED's own copy
+# (`box_intersect`/`plane_region`, deleted in the same move that added this
+# shared class) turned out to have the exact same bug, just never exercised
+# in practice (GEOUNED's only live call site for `.mult()`,
+# `build_region.py::filterparts`, always constructs both operands with
+# `orientation="Forward"`, the one branch that was already correct in both
+# old copies).
+
+
+def _box_volume(box: "GBoundBox") -> float:
+    return box.XLength * box.YLength * box.ZLength
+
+
+class myBox:
+    """`Orientation="Forward"` + `Box=X` means the region's material is
+    INSIDE `X`; `Orientation="Reversed"` + `Box=X` means material is
+    OUTSIDE `X` (the "hole"). `Box=None` + `Forward` = empty; `Box=None` +
+    `Reversed` = the whole universe."""
+
+    def __init__(self, boundBox=None, orientation=None):
+        self.Volume = 0
+        if type(boundBox) is myBox:
+            self.Box = boundBox.Box
+            self.Orientation = boundBox.Orientation
+            self.Volume = boundBox.Volume
+        else:
+            if boundBox is not None:
+                boundBox = to_gboundbox(boundBox)
+                if boundBox.XLength <= 1e-12 or boundBox.YLength <= 1e-12 or boundBox.ZLength <= 1e-12:
+                    self.Box = None
+                else:
+                    self.Box = boundBox
+                    self.Volume = _box_volume(boundBox)
+            else:
+                self.Box = None
+            self.Orientation = orientation
+        if self.Orientation is None:
+            raise TypeError("myBox orientation cannot be None")
+
+    def add(self, box):
+        """Non-mutating GBoundBox equivalent of FreeCAD.BoundBox's own
+        in-place `.add()` -- computes self = self OR box.
+
+        Fixed 2026-09-17 (found via a systematic empirical audit,
+        methodology and full derivation in CLAUDE.md's own "myBox.add()/
+        .mult() arithmetic" entry -- the audit found 20/32 tested
+        Forward/Reversed configurations UNSAFE, i.e. silently EXCLUDING
+        real material, not just imprecise): a `myBox` with
+        Orientation="Forward" means "material is INSIDE Box"; Orientation=
+        "Reversed" means "material is OUTSIDE Box" (Box=None + Reversed =
+        the whole universe; Box=None + Forward = empty). The previous
+        code, once both operands had a real Box, always computed
+        `self.Box.union(box.Box)` regardless of orientation -- correct
+        only for Forward OR Forward. For exactly one Reversed operand
+        (`A + notB`), the true result is `notB` restricted to `B \\ A`'s
+        own bounding box -- generally not a single box at all, so this
+        keeps only the one case that IS exact and safe (the two boxes
+        don't overlap at all, so `B \\ A == B`) and falls back to the
+        always-safe "universe" (Box=None) otherwise, rather than the old
+        `union(A,B)`, which could claim strictly LESS material than the
+        true `notB \\ A` region (confirmed empirically: e.g. A, B disjoint
+        gave Reversed+union(A,B), wrongly excluding all of A -- the old
+        formula's real safety violation, not just a looseness one). For
+        two Reversed operands (`notA + notB`), De Morgan gives
+        `not(A and B)`, i.e. Reversed with Box = the *intersection* of A
+        and B (empty when disjoint) -- the old code's plain
+        `union(A,B)` was `not(A or B)` instead, the AND case's own
+        answer, not this one's."""
+        if self.Box is None:
+            if self.Orientation == "Forward":
+                self.Box = box.Box
+                self.Orientation = box.Orientation
+                self.Volume = box.Volume
+        elif box.Box is None:
+            if box.Orientation == "Reversed":
+                self.Box = None
+                self.Orientation = "Reversed"
+                self.Volume = 0
+        else:
+            if self.Orientation == box.Orientation:
+                if self.Orientation == "Forward":
+                    self.Box = self.Box.union(box.Box)
+                else:
+                    inter = self.Box.intersected(box.Box)
+                    self.Box = inter if inter.is_valid() else None
+            else:
+                fwd_box = self.Box if self.Orientation == "Forward" else box.Box
+                rev_box = box.Box if self.Orientation == "Forward" else self.Box
+                overlap = fwd_box.intersected(rev_box)
+                self.Box = None if overlap.is_valid() else rev_box
+                self.Orientation = "Reversed"
+            self.Volume = _box_volume(self.Box) if self.Box is not None else 0
+
+    def mult(self, box):
+        """Non-mutating GBoundBox equivalent of the original's in-place
+        `.add()` in the AND branch -- computes self = self AND box.
+
+        Fixed 2026-09-17, same audit as `add()` above: for exactly one
+        Reversed operand (`A * notB`, i.e. `A \\ B`), the true result is
+        generally not a single box either, but here there's always a
+        SAFE, simple, exact-when-disjoint choice needing no case split at
+        all: `A \\ B` is always a *subset* of `A` itself, so keeping the
+        Forward operand's own Box completely unchanged (discarding the
+        Reversed operand's Box entirely) is always a safe upper bound,
+        exact whenever the two don't overlap. The old code instead
+        computed `self.Box.intersected(box.Box)` regardless of
+        orientation here -- the AND-of-two-Forward-boxes formula, wrong
+        for this case (confirmed empirically unsafe: e.g. A, B disjoint
+        gave Forward+None (empty!) for `A * notB`, when the true answer
+        is all of A).
+
+        `notA * notB` (both Reversed, De Morgan: `not(A or B)`, i.e.
+        Reversed with Box = A union B) needed its own separate fix, found
+        by the same audit: unlike an intersection of two axis-aligned
+        boxes (always itself exactly one axis-aligned box, or empty), a
+        UNION of two boxes is only exactly one box when they combine with
+        no gap relative to their own combined bounding box (e.g. two
+        boxes sharing a full common range on one axis, or one containing
+        the other) -- otherwise the bounding box of A union B is a real
+        over-approximation of the true excluded region, unsafe here
+        (a Reversed box's own Box represents what's excluded, so an
+        oversized one wrongly excludes real material -- confirmed
+        empirically: two disjoint boxes gave a bounding "union" box that
+        wrongly claimed the empty gap between them as excluded too, and
+        an L-shaped pair sharing only a corner did the same for the
+        gap in their own combined bounding box's far corner). Checked via
+        the standard inclusion-exclusion identity (no gap exists iff the
+        bounding box's own volume equals `vol(A) + vol(B) - vol(A∩B)`
+        exactly); the safe fallback otherwise is the larger of the two
+        boxes alone (always a subset of A union B, so always safe, just
+        not always tight)."""
+        if self.Orientation is None:
+            self.Box = box.Box
+            self.Orientation = box.Orientation
+            self.Volume = box.Volume
+        elif self.Box is None:
+            if self.Orientation == "Reversed":
+                self.Box = box.Box
+                self.Orientation = box.Orientation
+                self.Volume = box.Volume
+        elif box.Box is None:
+            if box.Orientation == "Forward":
+                self.Box = None
+                self.Orientation = "Forward"
+                self.Volume = 0
+        else:
+            if self.Orientation == box.Orientation:
+                if self.Orientation == "Reversed":
+                    union_box = self.Box.union(box.Box)
+                    inter = self.Box.intersected(box.Box)
+                    inter_vol = _box_volume(inter) if inter.is_valid() else 0.0
+                    self_vol = _box_volume(self.Box)
+                    box_vol = _box_volume(box.Box)
+                    union_vol = _box_volume(union_box)
+                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < 1e-6 * max(union_vol, 1.0):
+                        self.Box = union_box
+                    else:
+                        self.Box = self.Box if self_vol >= box_vol else box.Box
+                else:
+                    inter = self.Box.intersected(box.Box)
+                    self.Box = inter if inter.is_valid() else None
+            else:
+                if self.Orientation != "Forward":
+                    self.Box = box.Box
+                self.Orientation = "Forward"
+            self.Volume = _box_volume(self.Box) if self.Box is not None else 0
+
+    def sameBox(self, box):
+        if self.Box is None or box.Box is None:
+            if self.Box is None and box.Box is None:
+                return self.Orientation == box.Orientation
+            else:
+                return False
+
+        for i in range(6):
+            p1 = self.Box.get_point(i)
+            p2 = box.Box.get_point(i)
+            if (p1 - p2).length > 1e-6:
+                return False
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Angular arc utilities
 # ---------------------------------------------------------------------------
 

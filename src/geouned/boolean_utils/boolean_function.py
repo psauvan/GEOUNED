@@ -1230,3 +1230,24 @@ def substitute_integer_element(Seq, target, newElement):
                 Seq.elements[i] = newElement
         else:
             substitute_integer_element(e, target, newElement)
+
+
+def evaluate_three_valued(seq, value_set):
+    """Evaluate `seq` against `value_set` (surface number -> True/False/
+    None), returning True, False, or None (undetermined) -- never the
+    residual BoolSequence that `BoolSequence.evaluate()` itself returns
+    for an unresolved result. A thin adapter, not a reimplementation:
+    `.evaluate()` already substitutes known values and returns either a
+    resolved bool or the residual (partially substituted) BoolSequence
+    when it can't fully resolve; every caller needing three-valued logic
+    (GEOReverse's `Utils/boundBox.py::isInside`, `CAD/splitFunction.py::
+    SplitSolid`) needs a plain `None` for "undetermined" instead of a
+    residual object (which would be truthy and misread as "resolved"),
+    so this just downgrades a non-bool result to `None`. Shared here
+    2026-09-17 (moved from `GEOReverse/Modules/Utils/booleanFunction.py`,
+    which re-exports it for its existing callers) since GEOUNED's own
+    `build_region/splitFunction.py::SplitSolid` used to hand-duplicate
+    the exact same one-liner (`inSolid if type(inSolid) is bool else
+    None`) instead of sharing it."""
+    result = seq.evaluate(value_set)
+    return result if isinstance(result, bool) else None

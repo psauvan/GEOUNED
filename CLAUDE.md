@@ -128,7 +128,11 @@ Layout:
   cylinder degeneracy fallback) out of `split.py`'s own larger cascade —
   `freecad`'s `Gsplit` has no equivalent complexity.
 - `geo/vector_geometry.py` — pure math, zero native dependency:
-  `GVector`, `GMatrix`, `GBoundBox` and their `to_g*` converters.
+  `GVector`, `GMatrix`, `GBoundBox` and their `to_g*` converters, and,
+  since 2026-09-17, `myBox` (the `Forward`/`Reversed` box-arithmetic
+  approximation of a boolean cell's material region -- see "Known open
+  items" -> Shared/cross-cutting for why it moved here and the real bug
+  it carried in both its previous, independently-maintained copies).
 - `geo/surface_geometry.py` — pure, duck-typed analytic-surface
   predicates shared by all 3 engines (`is_same_*_surface`,
   `is_coaxial_cone_*_pair`, `is_inside_*`, `find_can_plane`, ...).
@@ -138,8 +142,17 @@ Layout:
   `Gsplit`'s own post-split sanity filter.
 - `geo/solid_ops.py` — `Gfuse_solids`, a shared policy helper (repair +
   fuse + compound fallback) one layer above the raw `Gfuse` kernel
-  primitive, used by both GEOUNED's `build_region/` and GEOReverse's
-  `buildSolidCell.py`/`splitFunction.py`.
+  primitive; and, since 2026-09-17/18, the full split cascade
+  (`BuildDepth`/`BuildSolidParts`/`filterparts`/`getPart`/`SplitBase`/
+  `joinBase`/`SplitSolid`/`space_decomposition`) that reconstructs a
+  cell's solid by recursively splitting a starting shape against each of
+  its own real surfaces and keeping/rejecting/re-splitting the resulting
+  pieces per its boolean definition -- used by both GEOUNED's
+  `build_region/` (to construct the small solid a composite meta-surface
+  itself represents) and GEOReverse's `CAD/buildSolidCell.py` (to
+  reconstruct an arbitrary MCNP/OpenMC cell's solid from its own boolean
+  definition). See "Known open items" -> Shared/cross-cutting for the
+  full unification history.
 - `geo/io_utils.py` — `suppress_native_stdout` (silences OCCT's own
   STEP-write console banner) and `GLabelNode` (STEP assembly/label tree).
 - `geo/constants.py` — every shared tuning threshold (sliver/degenerate
@@ -187,12 +200,15 @@ degenerate-torus single-sheet construction too --
 only, see same section for the fix and its verification), so it's a
 genuinely shared primitive, not a GEOReverse-only one.
 `GEOReverse`'s own `build_region`-equivalent
-(`CAD/buildSolidCell.py`/`CAD/splitFunction.py`/`Objects.py`) is a
-still-separate, not-yet-unified twin of GEOUNED's `build_region/` — see
-the portability analysis in the history log for what's already
-shareable (box algebra, `BuildDepth`/`SplitSolid` core) versus
-genuinely blocked (two divergent surface/cell models -- the
-`BoolSequence` split itself was closed out, see below).
+(`CAD/buildSolidCell.py`/`CAD/splitFunction.py`/`Objects.py`) shares its
+actual split cascade (`BuildDepth`/`BuildSolidParts`/`filterparts`/
+`SplitSolid`/`myBox`) with GEOUNED's `build_region/` directly via
+`geo/solid_ops.py`/`geo/vector_geometry.py` since 2026-09-17/18 -- see
+"Known open items" -> Shared/cross-cutting for the unification itself.
+Each pipeline's own surface/cell model (`CadCell`+its exotic-quadric-
+aware surface classes vs. `CellObj`+`CellSurface`) and point-
+classification code (`surface_side` vs. `CellSurface.is_inside`) remain
+genuinely distinct, by design -- see that same entry for why.
 
 `src/geouned/boolean_utils/` (`boolean_function.py`, `boolean_expression_parser.py`)
 holds the `BoolSequence` class and its MCNP-syntax parser -- moved here
@@ -1179,12 +1195,118 @@ gaps for whenever it's picked back up:
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
-- `GEOUNED`'s `build_region/` and `GEOReverse`'s parallel
-  `CAD/buildSolidCell.py`/`CAD/splitFunction.py` remain two separate
-  implementations of near-identical logic. A written portability
-  analysis exists (see the history log's "`FuseSolid` ->
-  `geo.Gfuse_solids`; `build_region` portability analysis" entry) but no
-  further code has moved beyond `Gfuse_solids` itself.
+- **`GEOUNED`'s `build_region/` vs `GEOReverse`'s `CAD/buildSolidCell.py`+
+  `CAD/splitFunction.py`, unified 2026-09-17/18** (supersedes the
+  "remain two separate implementations... no further code has moved
+  beyond `Gfuse_solids`" note this entry used to carry): per direct user
+  clarification, the two pipelines' end goals genuinely differ --
+  GEOReverse's own plane-approximation-of-surfaces step
+  (`Utils/boundBox.py`'s `solid_plane_box`/`convert_to_planes`/`myBox`)
+  exists only because it starts with nothing but a boolean surface
+  definition and no real CAD solid yet (approximating each surface by a
+  handful of planes and intersecting them gives a fast, tight starting
+  bounding box before the real, expensive boolean cuts); GEOUNED never
+  needs this, since it already has the real CAD solid from the STEP file
+  and therefore its real BoundBox directly. Similarly, `BuildDepth`
+  itself serves two different end goals: GEOUNED uses it to *construct*
+  the small solid a composite meta-surface (RoundCorner/Can/TCone/
+  MultiRoundCorner) itself represents, from its own 2-4 primitive
+  components (plane/cylinder/cone/sphere only); GEOReverse uses it to
+  *reconstruct* an arbitrary MCNP/OpenMC cell's full solid -- starting
+  from a (possibly approximate) bounding box, splitting whatever pieces
+  come out by each of the cell's own real surfaces one at a time, and
+  keeping/rejecting/re-splitting each piece per the cell's boolean
+  definition.
+  Despite the different end goal, a side-by-side read of both
+  implementations found the actual recursive algorithm --
+  `BuildDepth`/`BuildSolidParts`/`filterparts`/`getPart`/`SplitBase`/
+  `joinBase`/`SplitSolid`'s outer shell -- was essentially line-for-line
+  identical in both, and had already drifted in small, silent ways
+  (GEOUNED threaded an explicit `tolerances` argument throughout;
+  GEOReverse read a bare `Options.splitTolerance` global deep inside
+  `SplitSolid` instead; GEOUNED hand-duplicated the exact
+  `inSolid if type(inSolid) is bool else None` logic `evaluate_three_valued`
+  already provided). Worse, `myBox`'s own box arithmetic (`add`/`mult`)
+  turned out to have the exact same real bug in both independently-
+  maintained copies -- confirmed empirically (see `geo/vector_geometry.py`'s
+  own `myBox` docstring, and the exotic-quadric entry above for how the
+  GEOReverse-side bug was originally found and fixed): GEOUNED's own
+  `box_intersect`/`plane_region`-based version also returned UNSAFE
+  (excluding real material) in the same mixed-orientation cases, except
+  it was dead code there -- its one live call site, `filterparts`,
+  always constructed both operands as `Forward`, so the buggy branch
+  never actually executed. That this drift went unnoticed until it was
+  checked by accident is itself the argument for unifying rather than
+  continuing to hand-sync two copies.
+  **What actually moved**, in 3 steps, each independently verified:
+  1. `myBox` (+ its `_box_volume` helper) moved into `geo/vector_geometry.py`
+     -- GEOReverse's own, already-fixed-and-empirically-verified copy is
+     now the single implementation; GEOUNED's buggy `box_intersect`/
+     `plane_region`/`operate_box` (confirmed dead code, zero callers in
+     either pipeline besides its own recursion) were deleted outright
+     rather than ported. A `.Volume` attribute (GEOUNED's own addition,
+     read by `build_shape_functions.py::build_complex_shape`) was folded
+     into the shared class.
+  2. `evaluate_three_valued` moved into `boolean_utils/boolean_function.py`
+     (right next to `BoolSequence` itself, zero new dependency);
+     GEOReverse's own `Utils/booleanFunction.py` re-exports it for its
+     existing callers, and GEOUNED's `build_region/splitFunction.py`
+     (since deleted, see step 3) was updated to call it instead of its
+     own hand-duplicated inline version.
+  3. `BuildDepth`/`BuildSolidParts`/`filterparts`/`getPart`/`SplitBase`/
+     `joinBase`/`SplitSolid`/`space_decomposition` moved into
+     `geo/solid_ops.py`, generalized over exactly the two genuine,
+     surviving differences: a pluggable `classify(point, surf) -> bool`
+     callable (GEOUNED passes `lambda p, s: s.is_inside(p)`; GEOReverse
+     passes its own, much richer, ~15-surface-type `CAD/splitFunction.py::
+     surface_side` unchanged -- neither pipeline's own point-
+     classification code was touched by this move), and
+     `hasattr(cell, "build_BoundBox")`/`hasattr(cell, "buildSurfaceShape")`
+     guards standing in for what used to be one pipeline's own commented-
+     out call and the other's active one (GEOUNED's `CellObj` has neither
+     method -- its single, always-Forward `boundBox` is set once up front
+     and its surfaces pre-built once, before this cascade ever runs --
+     GEOReverse's `CadCell` has both, since an arbitrary CSG cell's own
+     subcells genuinely need their own, tighter, lazily-computed box and
+     lazily-built surface shapes). `GEOUNED/utils/build_region/
+     build_region.py` now keeps only `get_cell_object`/`get_surface`
+     (the genuinely GEOUNED-specific translation from a composite meta-
+     surface's own `GeounedSurface` tree into the small `CellObj`/
+     `CellSurface` this cascade operates on); its sibling
+     `build_region/splitFunction.py` had nothing GEOUNED-specific left
+     once `SplitBase`/`joinBase`/`SplitSolid` moved out, and was deleted
+     outright. `GEOReverse/Modules/CAD/buildSolidCell.py` keeps only
+     `BuildSolid()` (now the single place that converts GEOReverse's own
+     `Options.splitTolerance` float into a real `Tolerances` instance,
+     once, instead of `SplitSolid` re-wrapping it on every call);
+     `CAD/splitFunction.py` keeps `surface_side`/`btwPPlanes`/
+     `updateSurfacesValues`, its own exotic-quadric-aware point-
+     classification machinery, untouched.
+     One real, deliberate behavior unification (not a pre-existing
+     divergence, decided by direct user instruction): `SplitSolid`'s call
+     into `Gsplit` is now wrapped in a `try`/`except` with a `print` on
+     failure (falling back to the uncut solid) in **both** pipelines --
+     GEOReverse's own copy already had this fallback, but as a fully
+     silent `except Exception: Solids = []` (the same "silently swallowed
+     error" anti-pattern already fixed elsewhere this session in
+     `CAD/buildCAD.py::BuildUniverseCells`); GEOUNED's copy had no
+     try/except at all (a `Gsplit` failure there would have crashed
+     outright). Both now share the fallback *and* a visible error message.
+  **Verified**: full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py`
+  + `test_boolean_function.py` green on all 3 engines after all 3 steps
+  (freecad 179 passed/16 skipped, occ 213 passed/1 skipped, ocp 213
+  passed/1 skipped -- matching each engine's own pre-existing baseline,
+  zero regressions); the empirical `myBox` safety audit (Forward/Reversed
+  x add/mult x 8 relative box configurations) re-run against the new
+  shared location, 0 unsafe across 64 checks; `hyperbolic_cylinder_test.mcnp`
+  (GEOReverse) converts to the identical volume whether run in isolation
+  or immediately after other fixtures in the same process (confirms the
+  move didn't reintroduce any shared-state flakiness); a 141-file
+  differential composite-surface-count scan across `Solidos/test_models`
+  (GEOUNED side, `git stash`-based before/after, decompose +
+  build_solid_definition only) found **0 changed files, 0 new failures,
+  0 escape-hit-count changes** in either pass -- confirming the whole
+  move is behavior-preserving for GEOUNED, as intended.
 - `GEOUNED` and `GEOReverse` used to carry two separate `BoolSequence`
   implementations (a 3-tier `int`/`BoolVariable`/`BoolSurface` system in
   GEOUNED vs. a plain-`int`-only class in GEOReverse). The shared parser
@@ -1249,10 +1371,21 @@ gaps for whenever it's picked back up:
   Verified clean (zero new regressions) across all 3 engines, `freecad`
   also via the real `test_csgtocad.py` pipeline. Covered by
   `tests/test_boolean_function.py`.
-- `Solidos/` STEP fixture tree (the test/regression corpus used mainly
-  for GEOUNED verification) still has real, unresolved duplicates
-  across the triage folders (`Solidos/test_models` is the curated
-  regression set; older ad-hoc folders overlap with it in places).
+- `Solidos/` STEP fixture tree duplicates, closed out 2026-09-17: a full
+  content-hash comparison (not just filename matching) of every
+  `Solidos/` triage folder against the curated `Solidos/test_models`
+  regression set found exactly 12 byte-identical duplicates (2 in
+  `working_solids/`, 4 in `lost_particles/`, 6 of `RevCC_corpus_scan/`'s
+  276 files) -- moved (never deleted, per standing workshop policy) into
+  a new `Solidos/_archive/<origin_folder>/` tree, preserving their
+  origin folder in the path. Everything else flagged by a naive
+  filename-only pass turned out to be same-named-but-different-content
+  (coincidental `RevCC_corpus_scan` piece/revcc naming) or genuinely
+  distinct historical debugging dumps with no `test_models` counterpart
+  at all (`lost_particles` has 21 files, only 4 were dupes;
+  `RevCC_corpus_scan` has 276, only 6 were dupes) -- left in place, out
+  of scope for this pass (per direct user instruction: only exact
+  duplicates were to be archived, not a broader triage-folder cleanup).
 
 ## Reference docs
 
