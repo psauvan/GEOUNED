@@ -105,6 +105,10 @@ class BoxSettings:
             self.universe_radius = radius
 
 
+def _box_volume(box: "GBoundBox") -> float:
+    return box.XLength * box.YLength * box.ZLength
+
+
 class myBox:
     def __init__(self, boundBox=None, orientation=None):
 
@@ -129,7 +133,33 @@ class myBox:
 
     def add(self, box):
         """Non-mutating GBoundBox equivalent of FreeCAD.BoundBox's own
-        in-place `.add()` -- reassigns `self.Box` to the union instead."""
+        in-place `.add()` -- computes self = self OR box.
+
+        Fixed 2026-09-17 (found via a systematic empirical audit,
+        methodology and full derivation in CLAUDE.md's own "myBox.add()/
+        .mult() arithmetic" entry -- the audit found 20/32 tested
+        Forward/Reversed configurations UNSAFE, i.e. silently EXCLUDING
+        real material, not just imprecise): a `myBox` with
+        Orientation="Forward" means "material is INSIDE Box"; Orientation=
+        "Reversed" means "material is OUTSIDE Box" (Box=None + Reversed =
+        the whole universe; Box=None + Forward = empty). The previous
+        code, once both operands had a real Box, always computed
+        `self.Box.union(box.Box)` regardless of orientation -- correct
+        only for Forward OR Forward. For exactly one Reversed operand
+        (`A + notB`), the true result is `notB` restricted to `B \\ A`'s
+        own bounding box -- generally not a single box at all, so this
+        keeps only the one case that IS exact and safe (the two boxes
+        don't overlap at all, so `B \\ A == B`) and falls back to the
+        always-safe "universe" (Box=None) otherwise, rather than the old
+        `union(A,B)`, which could claim strictly LESS material than the
+        true `notB \\ A` region (confirmed empirically: e.g. A, B disjoint
+        gave Reversed+union(A,B), wrongly excluding all of A -- the old
+        formula's real safety violation, not just a looseness one). For
+        two Reversed operands (`notA + notB`), De Morgan gives
+        `not(A and B)`, i.e. Reversed with Box = the *intersection* of A
+        and B (empty when disjoint) -- the old code's plain
+        `union(A,B)` was `not(A or B)` instead, the AND case's own
+        answer, not this one's."""
         if self.Box is None:
             if self.Orientation == "Forward":
                 self.Box = box.Box
@@ -139,12 +169,57 @@ class myBox:
                 self.Box = None
                 self.Orientation = "Reversed"
         else:
-            self.Box = self.Box.union(box.Box)
-            if self.Orientation != box.Orientation:
+            if self.Orientation == box.Orientation:
+                if self.Orientation == "Forward":
+                    self.Box = self.Box.union(box.Box)
+                else:
+                    inter = self.Box.intersected(box.Box)
+                    self.Box = inter if inter.is_valid() else None
+            else:
+                fwd_box = self.Box if self.Orientation == "Forward" else box.Box
+                rev_box = box.Box if self.Orientation == "Forward" else self.Box
+                overlap = fwd_box.intersected(rev_box)
+                self.Box = None if overlap.is_valid() else rev_box
                 self.Orientation = "Reversed"
 
     def mult(self, box):
-        """Non-mutating GBoundBox equivalent of the original's in-place `.add()` in the AND branch."""
+        """Non-mutating GBoundBox equivalent of the original's in-place
+        `.add()` in the AND branch -- computes self = self AND box.
+
+        Fixed 2026-09-17, same audit as `add()` above: for exactly one
+        Reversed operand (`A * notB`, i.e. `A \\ B`), the true result is
+        generally not a single box either, but here there's always a
+        SAFE, simple, exact-when-disjoint choice needing no case split at
+        all: `A \\ B` is always a *subset* of `A` itself, so keeping the
+        Forward operand's own Box completely unchanged (discarding the
+        Reversed operand's Box entirely) is always a safe upper bound,
+        exact whenever the two don't overlap. The old code instead
+        computed `self.Box.intersected(box.Box)` regardless of
+        orientation here -- the AND-of-two-Forward-boxes formula, wrong
+        for this case (confirmed empirically unsafe: e.g. A, B disjoint
+        gave Forward+None (empty!) for `A * notB`, when the true answer
+        is all of A).
+
+        `notA * notB` (both Reversed, De Morgan: `not(A or B)`, i.e.
+        Reversed with Box = A union B) needed its own separate fix, found
+        by the same audit: unlike an intersection of two axis-aligned
+        boxes (always itself exactly one axis-aligned box, or empty), a
+        UNION of two boxes is only exactly one box when they combine with
+        no gap relative to their own combined bounding box (e.g. two
+        boxes sharing a full common range on one axis, or one containing
+        the other) -- otherwise the bounding box of A union B is a real
+        over-approximation of the true excluded region, unsafe here
+        (a Reversed box's own Box represents what's excluded, so an
+        oversized one wrongly excludes real material -- confirmed
+        empirically: two disjoint boxes gave a bounding "union" box that
+        wrongly claimed the empty gap between them as excluded too, and
+        an L-shaped pair sharing only a corner did the same for the
+        gap in their own combined bounding box's far corner). Checked via
+        the standard inclusion-exclusion identity (no gap exists iff the
+        bounding box's own volume equals `vol(A) + vol(B) - vol(A∩B)`
+        exactly); the safe fallback otherwise is the larger of the two
+        boxes alone (always a subset of A union B, so always safe, just
+        not always tight)."""
         if self.Orientation is None:
             self.Box = box.Box
             self.Orientation = box.Orientation
@@ -157,15 +232,24 @@ class myBox:
                 self.Box = None
                 self.Orientation = "Forward"
         else:
-            if self.Orientation == "Reversed" or box.Orientation == "Reversed":
-                self.Box = self.Box.union(box.Box)
-            else:
-                inter = self.Box.intersected(box.Box)
-                if inter.is_valid():
-                    self.Box = inter
+            if self.Orientation == box.Orientation:
+                if self.Orientation == "Reversed":
+                    union_box = self.Box.union(box.Box)
+                    inter = self.Box.intersected(box.Box)
+                    inter_vol = _box_volume(inter) if inter.is_valid() else 0.0
+                    self_vol = _box_volume(self.Box)
+                    box_vol = _box_volume(box.Box)
+                    union_vol = _box_volume(union_box)
+                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < 1e-6 * max(union_vol, 1.0):
+                        self.Box = union_box
+                    else:
+                        self.Box = self.Box if self_vol >= box_vol else box.Box
                 else:
-                    self.Box = None
-            if self.Orientation != box.Orientation:
+                    inter = self.Box.intersected(box.Box)
+                    self.Box = inter if inter.is_valid() else None
+            else:
+                if self.Orientation != "Forward":
+                    self.Box = box.Box
                 self.Orientation = "Forward"
 
     def sameBox(self, box):
@@ -716,10 +800,10 @@ def cylinder_hyperbolic_to_planes(cyl, pos):
             x = -x
             y = -y
 
-        xe_1 = center + a_len * x
-        xe_2 = center - a_len * x
-        cplanes[0].append(GPlane.from_values(xe_1, -x))
-        cplanes[1].append(GPlane.from_values(xe_2, x))
+    xe_1 = center + a_len * x
+    xe_2 = center - a_len * x
+    cplanes[0].append(GPlane.from_values(xe_1, -x))
+    cplanes[1].append(GPlane.from_values(xe_2, x))
 
     return cplanes
 
@@ -1132,7 +1216,7 @@ def parabola_to_planes(parabola, pos):
             xe = center + xp * rho + zi * axis
             normal = vec.cross(slope)
             normal = normal.normalized()
-            pi = GPlane.from_values(xe, normal)
+            pi = GPlane.from_values(xe, -normal)
             cplanes.append(pi)
             phi += dphi
         xp = xp / b

@@ -31,9 +31,11 @@ from .Utils.matrix_utils import matrix_multVec, matrix_rotate_vec, transform_sol
 
 
 class CadCell:
-    def __init__(self, stringCell: str = None, settings: BoxSettings = BoxSettings()):
-
-        self.settings = settings
+    def __init__(self, stringCell: str = None, settings: BoxSettings = None):
+        # same mutable-default-argument fix as CsgToCad.__init__ (see its
+        # own comment) -- never actually hit today (every real call site
+        # passes settings= explicitly), but the same antipattern.
+        self.settings = settings if settings is not None else BoxSettings()
         self.boundBox = None
 
         if not stringCell:

@@ -882,9 +882,196 @@ gaps for whenever it's picked back up:
      every OTHER exotic quadric's own complement cell too (ellipsoid,
      hyperboloid, elliptic cylinder/cone, paraboloid) -- not a
      *hidden* bug there either, on the same basis.
-  **New test fixtures, 2026-09-14/16** (all copied into
-  `tests/csg_files/`, none wired into a pytest test yet -- that's also
-  pending): `ellipsoid.mcnp`, `ellipse_cyl.mcnp`, `elliptic_cone.mcnp`,
+  **4 more real, independent bugs found and fixed while finally wiring
+  all 14 fixtures into real pytest tests, 2026-09-17** (the "not wired
+  into a pytest test yet" gap the entry below used to flag -- writing
+  the actual regression assertions against each fixture's own closed-form
+  analytic volume immediately surfaced all 4, none previously caught
+  because no prior verification of these surfaces/machinery went past
+  "does it look roughly right"):
+  1. `Utils/boundBox.py::parabola_to_planes` -- every one of its own 32
+     tangent-plane approximations (not just the vertex-plane `p0`) had
+     its normal built backward (pointing away from material instead of
+     toward it, confirmed by cross-checking against the already-working
+     `ellipsoid_to_planes`/`cone_to_planes`'s own convention: a bounding
+     plane's normal must point from the far boundary point back toward
+     the center, so a genuinely-interior point reads `dot>0`), so the
+     resulting AND-of-tangent-planes had no satisfying point anywhere --
+     `paraboloid.mcnp`'s own cell 1 never got a boundBox at all (`Box is
+     None` unconditionally), so it was silently dropped and only its
+     complement (the raw universe box) ever appeared. **Fixed directly
+     by the user**: negate each tangent plane's own normal (`GPlane.
+     from_values(xe, -normal)` instead of `xe, normal)` -- `p0` itself
+     was already correctly signed, so this alone was sufficient. Verified:
+     `paraboloid.mcnp`'s cell 1 now converts to `157,079,692,133.8 mm^3`
+     vs. the closed-form `pi*2*Focal*length^2 = 157,079,632,679.5 mm^3`
+     (relative error `3.8e-7`, the usual faceted-approximation residual).
+  2. `CAD/splitFunction.py::surface_side`'s own `"torus"` branch used the
+     same `(r - Ra)` tube-offset term regardless of `degenerated`'s own
+     sign -- correct for the outer sheet and the non-degenerate case
+     (confirmed, unaffected by this fix), but wrong for the inner sheet:
+     geometrically, a degenerate torus's own inner lobe is *nested inside*
+     the naive `(r-Ra)`-based region (both lobes' revolved arcs meet the
+     axis at `r=0` and close there like the poles of a revolved half-circle,
+     so the outer lobe's own disk-like cross-section at any height
+     strictly contains the inner lobe's own smaller one) -- so a point
+     genuinely outside the small inner-lobe solid but still radially
+     within `Rc` of the algebraic circle at `r=Ra` (e.g. `r=250` for
+     `Ra=300, Rc=500`) was still misread as "inside" by the unmodified
+     formula. Confirmed live: `Gsplit` itself correctly split the cell's
+     own tight bounding box into the two true pieces (the small
+     `Gmake_torus_elliptic(outer=False)` lobe, and the box-minus-lobe
+     remainder), but `surface_side` then misclassified *both* pieces as
+     "inside" `cell 1`'s `-1` term, and fusing them back together
+     reproduced the box's own full, uncut volume almost to the last digit
+     (`351,232,000 mm^3`, exactly `560*560*1120` -- the boundBox's own
+     20%-enlarged dimensions) -- a case where the final wrong answer was
+     the *original, unsplit* box, but arrived at via a fully successful
+     split immediately undone by misclassification, not via `Gsplit`
+     silently declining to cut at all (the earlier, different failure
+     mode this whole investigation started from). The correct region test
+     for the inner lobe turns out to be the *same* formula with `Ra`
+     negated (`(r+Ra)` in place of `(r-Ra)`) -- verified by direct
+     derivation from the lobe's own true per-height radius (`r <=
+     Rc*sqrt(1-(z/Rb)^2) - Ra`, which rearranges to exactly this) and by
+     checking the 3 points that matter (center, the lobe's own true
+     boundary, and a point just beyond it) by hand. **Fix**: `if
+     degenerated < 0: Ra = -Ra` right after unpacking `surf.params`,
+     before the existing formula (which is otherwise untouched). Verified:
+     `torus_circular_degenerate_inner.mcnp` -> `57,299,667.48 mm^3` and
+     `torus_elliptic_degenerate_inner.mcnp` -> `45,839,733.98 mm^3`, both
+     now matching their own closed-form (Pappus-integral-over-the-kept-arc)
+     volumes to double-precision (relative error `~1e-10`), and the outer/
+     non-degenerate cases (previously already correct) are bit-for-bit
+     unchanged since `degenerated >= 0` never enters the new branch.
+     Verified no corpus-wide regression: freecad `tests/geo` +
+     `test_cadtocsg.py` + `test_csgtocad.py` (163 passed), and a 141-file
+     differential composite-surface-count scan across `Solidos/
+     test_models` showing 0 changed files (expected -- this fix only
+     changes the final volume/split outcome for a degenerate-inner torus,
+     never any file's own Can/TCone/RoundC/MultiRoundC/MultiP/RevCC
+     classification counts, and no file in that corpus contains a
+     degenerate-inner torus to begin with).
+  3. `GEOReverse/core.py::CsgToCad.__init__`/`Objects.py::CadCell.__init__`
+     both had a classic Python mutable-default-argument bug:
+     `def __init__(self, settings: BoxSettings = BoxSettings()):` --
+     `BoxSettings()` is evaluated ONCE, at module-import time, so every
+     `CsgToCad()`/`CadCell()` call made without an explicit `settings=`
+     shared the exact same instance (confirmed live: `CsgToCad().settings
+     is CsgToCad().settings` was `True`). Found while chasing down an
+     apparent "flaky" test result -- `hyperbolic_cylinder_test.mcnp`
+     converted to a visibly different (both plausible-looking, neither
+     obviously wrong) volume depending on which *other* fixture had been
+     converted earlier in the same process (e.g. right after
+     `ellipse_cyl.mcnp`/`elliptic_cone.mcnp` specifically, not after
+     others) -- exactly the signature of shared mutable state. **Fixed**:
+     the standard idiom, `settings: BoxSettings = None` plus `self.settings
+     = settings if settings is not None else BoxSettings()` in the body,
+     in both classes (`CadCell`'s own version was never actually
+     triggered by any real call site -- every one already passes
+     `settings=` explicitly -- but the same antipattern, fixed
+     defensively). Confirmed the sharing itself is gone
+     (`CsgToCad().settings is CsgToCad().settings` now `False`) -- but
+     this alone did **not** fix the actual `hyperbolic_cylinder_test`
+     discrepancy (see bug 4), meaning `BoxSettings` sharing specifically
+     was never the mechanism, just a real, separate bug surfaced by the
+     same investigation.
+  4. **The real cause of that same discrepancy, and by far the most
+     consequential bug found this session**: `Utils/boundBox.py::
+     myBox.add()`/`.mult()` (the OR/AND combinators for the `Orientation=
+     "Forward"` (material inside `Box`) / `"Reversed"` (material outside
+     `Box`, `Box=None`+Reversed=the whole universe) bounding-box
+     approximation used to size every cell's own starting container
+     before `Gsplit`) were WRONG -- not just imprecise -- for essentially
+     every combination involving one Forward and one Reversed operand,
+     and for one `Reversed`+`Reversed` sub-case. Confirmed via a
+     systematic empirical audit (methodology directly specified by the
+     user: build concrete axis-aligned box pairs A/B covering 8 relative
+     configurations -- disjoint, A subset of B, B subset of A, partial
+     overlap, each also tried with `notA`/`notB` -- across all 6 relevant
+     operand-orientation combinations of `+`/`*`, and check the *real*
+     minimal enclosing box of "all the material" by direct point-
+     membership sampling, not by trusting either implementation's own
+     formulas) -- **20 of the first 32 checks came back UNSAFE**, meaning
+     `myBox`'s own claimed material region did not just include some
+     extra empty space (always allowed) but actively EXCLUDED real
+     material. Root cause: once both operands have a real `Box`, the old
+     code always computed `self.Box.union(box.Box)` (in `add`) or
+     `self.Box.intersected(box.Box)` (in `mult`) regardless of
+     orientation -- correct only for Forward-OR-Forward and
+     Forward-AND-Forward respectively; every mixed case needs a
+     genuinely different formula since a `Reversed` operand's own `Box`
+     represents the *excluded* region, not the material itself. Fixed,
+     each verified by re-running the same empirical audit until 0 UNSAFE
+     remained (32, then 40 once a targeted 5th configuration -- two
+     overlapping boxes whose own union still leaves a gap relative to its
+     combined bounding box -- caught one more real case the first pass
+     had missed):
+     - `add()`, exactly one Reversed (`A + notB`): the true result
+       (`universe \\ (B \\ A)`) is generally not expressible as one box at
+       all. Exact and safe only when `A` and `B` don't overlap at all
+       (then `B \\ A == B` exactly); falls back to the always-safe
+       `Box=None` ("material=universe") otherwise, replacing the old
+       `union(A,B)` (confirmed unsafe: e.g. disjoint `A`,`B` gave
+       Reversed+`union(A,B)`, wrongly excluding all of `A`, which
+       trivially must be material since `A subset of (A + notB)`).
+     - `add()`, both Reversed (`notA + notB`): De Morgan gives
+       `not(A and B)`, i.e. Reversed with `Box` = the *intersection* of
+       `A` and `B` (empty when disjoint) -- the old code's `union(A,B)`
+       was silently computing the *other* De Morgan identity's answer
+       (`not(A or B)`, `mult`'s own case) instead. Intersection of two
+       axis-aligned boxes is always itself exactly one box (or empty), so
+       this branch needed no further special-casing -- confirmed exact in
+       all tested configurations.
+     - `mult()`, exactly one Reversed (`A * notB`, i.e. `A \\ B`): always
+       a subset of `A` itself, so the safe choice needs no case analysis
+       at all -- keep the Forward operand's own `Box` completely
+       unchanged, discarding the Reversed operand's `Box` entirely (exact
+       whenever the two don't overlap, safe-but-loose otherwise). The old
+       code's `self.Box.intersected(box.Box)` here was the Forward-AND-
+       Forward formula misapplied -- confirmed unsafe: disjoint `A`,`B`
+       gave Forward+`None` (empty!) for `A * notB`, when the true answer
+       is all of `A`.
+     - `mult()`, both Reversed (`notA * notB`): De Morgan gives
+       `not(A or B)`, Reversed with `Box` = union of `A` and `B` --
+       *this* one really was already using `union`, but the *union of
+       two boxes* -- unlike an intersection -- is only exactly one box
+       when the two combine with no gap relative to their own combined
+       bounding box (one containing the other, or sharing a full common
+       range on one axis and overlapping/touching on another); otherwise
+       the bounding box overshoots the true excluded region, which is
+       unsafe here specifically because `Reversed`'s `Box` represents
+       what's excluded (confirmed unsafe with 2 different configurations:
+       disjoint `A`/`B`, and an L-shaped pair of boxes sharing only a
+       corner). Fixed by checking the exact inclusion-exclusion identity
+       (`vol(union) == vol(A) + vol(B) - vol(A∩B)`, true iff there's no
+       gap) and falling back to the larger of the two boxes alone
+       (always safe, `A subset of (A union B)` trivially) when it doesn't
+       hold.
+     Verified: the same empirical audit script, 0 UNSAFE across 40
+     checks (27 exact, 13 safe-but-loose); full freecad `tests/geo` +
+     `test_cadtocsg.py` + `test_csgtocad.py` (163 passed, 14 skipped);
+     `tests/test_csgtocad.py` (all 16, including all 14 exotic-quadric
+     fixtures) green on `occ` and `ocp` too; and, directly confirming this
+     was the real mechanism behind bug 3's own symptom,
+     `hyperbolic_cylinder_test.mcnp` now converts to the identical,
+     analytically-correct volume (`19,202,339,805.3 mm^3`) whether run in
+     isolation or immediately after `elliptic_cone.mcnp`/`ellipse_cyl.mcnp`
+     in the same process -- the flakiness is gone. This is likely the
+     single highest-impact fix of this whole multi-day GEOReverse
+     investigation: `myBox` sizes the starting container for every
+     `Gsplit` call in the entire CSG->CAD pipeline, so a mixed Forward/
+     Reversed cell definition silently losing real material (or, in the
+     `notA*notB` case, an oversized-but-technically-"safe" box triggering
+     an ill-conditioned cut sensitive to unrelated prior floating-point
+     state) could plausibly explain multiple previously-unexplained
+     GEOReverse oddities from earlier in this project's history, not just
+     the one this session happened to chase down.
+  **New test fixtures, 2026-09-14/16, wired into a real pytest test
+  2026-09-17** (`tests/test_csgtocad.py::test_exotic_quadric_convertion`,
+  parametrized over all 14 -- see that same session's entry below for
+  the 4 real bugs found and fixed while writing it): all copied into
+  `tests/csg_files/`: `ellipsoid.mcnp`, `ellipse_cyl.mcnp`, `elliptic_cone.mcnp`,
   `paraboloid.mcnp`, `hyperboloid_one_sheet.mcnp`,
   `hyperboloid_two_sheet_one_branch.mcnp` (kept at `1 2 -3`, the correct
   sense for the real branch), `hyperboloid_two_sheet_outside.mcnp` (the

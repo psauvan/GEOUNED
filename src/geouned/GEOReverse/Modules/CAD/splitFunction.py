@@ -293,6 +293,8 @@ def surface_side(p, surf):
 
     elif surf.type == "torus":
         P, v, Ra, Rb, Rc, degenerated = surf.params
+        if degenerated < 0:
+            Ra = -Ra
 
         d = p - P
         z = d.dot(v)

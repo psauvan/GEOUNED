@@ -21,14 +21,27 @@ class CsgToCad:
             default attributes values.
     """
 
-    def __init__(self, settings: BoxSettings = BoxSettings()):
-        self.settings = settings
+    def __init__(self, settings: BoxSettings = None):
+        # `settings: BoxSettings = BoxSettings()` (a mutable default
+        # argument) used to mean EVERY CsgToCad() call without an explicit
+        # settings shared the exact same BoxSettings instance (confirmed:
+        # `CsgToCad().settings is CsgToCad().settings` was True) -- any
+        # in-place state on it picked up by one conversion leaked into the
+        # next, confirmed live: converting `ellipse_cyl.mcnp`/
+        # `elliptic_cone.mcnp` then `hyperbolic_cylinder_test.mcnp` in the
+        # same process (e.g. a parametrized pytest run, or any batch/loop
+        # use of CsgToCad) gave a ~2% different volume for the second file
+        # than converting it alone. A real, separate leak still needs
+        # finding for exactly which piece of shared state does this, but a
+        # fresh BoxSettings() per instance (the standard fix for this
+        # antipattern) removes the sharing itself either way.
+        self.settings = settings if settings is not None else BoxSettings()
         self.cell_range_type = "all"
         self.cell_range = None
         self.mat_range_type = "all"
         self.mat_range = None
         self.buildCAD_list = []
-        self.universe_box = settings.universe_box
+        self.universe_box = self.settings.universe_box
 
     def read_csg_file(self, input_filename: str, csg_format: str):
         """Reads the geometry definition from MCNP or OpenMC XML input.
