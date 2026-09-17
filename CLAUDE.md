@@ -279,7 +279,15 @@ list is the current one. Verified against the live code/tests on
 2026-09-12 — see the history log's "Known-open-items audit" entry for
 how. `Big_complex_cell/modelcell_cut1.stp`/`modelCell_670000.stp`, the
 one item that audit found already fixed, has been dropped from this
-list — see that entry for the verification numbers.)
+list — see that entry for the verification numbers.
+
+Status as of 2026-09-18: every entry below is either closed-and-
+documented (kept for the history/rationale, not as a to-do) or an
+explicitly accepted permanent limitation (`Mixed/ConeSphere.stp` under
+occ/ocp; freecad's own exotic-quadric construction bugs, out of scope
+per direct user instruction) — there is currently no open, actionable
+item in this list. The next real task, whenever one comes up, replaces
+this note.)
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
