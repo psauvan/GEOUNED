@@ -1,7 +1,7 @@
 import numpy
 
 from .build_region.build_region import get_cell_object
-from .build_region.Objects import plane_polygon_from_box, cylinder_from_box, cone_from_box
+from .build_region.Objects import plane_polygon_from_box, cylinder_from_box, elliptic_cylinder_from_box, cone_from_box
 from ...geo import (
     BuildDepth,
     GBoundBox,
@@ -31,6 +31,26 @@ def makeCylinder(center: GVector, axis: GVector, radius: float, box: GBoundBox):
     Cylinder = gsolid.__native__
     shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GCylinder)
     return (Cylinder, shell)
+
+
+def makeEllipticCylinder(
+    center: GVector,
+    axis: GVector,
+    major_radius: float,
+    minor_radius: float,
+    major_axis: GVector,
+    minor_axis: GVector,
+    box: GBoundBox,
+):
+    """See `makeCylinder`'s own docstring pattern -- `GEllipticCylinder`
+    is imported function-locally (occ/ocp only, doesn't exist under
+    `geo/freecad/__init__.py`), added 2026-09-18."""
+    from ...geo import GEllipticCylinder
+
+    gsolid = elliptic_cylinder_from_box(center, axis, major_radius, minor_radius, major_axis, minor_axis, box)
+    native = gsolid.__native__
+    shell = next(f.__native__ for f in gsolid.Faces if type(f.Surface) is GEllipticCylinder)
+    return (native, shell)
 
 
 def makeCone(axis: GVector, apex: GVector, tan: float, box: GBoundBox):

@@ -30,6 +30,7 @@ from ..io_utils import (
 )
 from .topology import GEdge, GFace, GShape, GShell, GSolid
 from .repair import Gcheck_and_repair, Gspline_surface
+from .spline_quadrics import Gsubstitute_spline_quadrics
 from ._native_utils import _native_fix
 
 
@@ -107,6 +108,17 @@ def Gload_and_process_step(filename: str, tolerances) -> "tuple":
     solid in the same loop, with the `GSolid` built as one clear,
     unconditional step rather than deferred/optimized away.
 
+    A solid `Gspline_surface` flags now gets one more chance before
+    being counted as a `spline_indices` entry: `Gsubstitute_spline_
+    quadrics` (2026-09-18, see its own module docstring) attempts to
+    replace any BSplineSurface face that's secretly a cylinder/sphere/
+    torus with the real analytic surface. Only added to `spline_indices`
+    -- triggering the caller's existing remove/stop policy, unchanged --
+    if that substitution does NOT fully resolve the solid (a genuinely
+    unsupported surface type, a fit that doesn't match closely enough,
+    or a cone-shaped spline face, deliberately excluded -- see that
+    module's own docstring for why).
+
     Returns `(gsolids, corrupted_indices, spline_indices)`:
       - `gsolids[i]` is the (possibly repaired) `GSolid` for solid `i`,
         positionally aligned with the original solid order (never
@@ -164,7 +176,9 @@ def Gload_and_process_step(filename: str, tolerances) -> "tuple":
             gsolids.append(None)
         else:
             if Gspline_surface(gsolid.__native__):
-                spline_indices.append(index)
+                gsolid, resolved = Gsubstitute_spline_quadrics(gsolid, tolerances)
+                if not resolved:
+                    spline_indices.append(index)
             gsolids.append(gsolid)
         index += 1
         explorer.Next()

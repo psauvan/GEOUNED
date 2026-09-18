@@ -124,6 +124,54 @@ def is_same_cylinder(
     return False
 
 
+def is_same_elliptic_cylinder(
+    cyl1,
+    cyl2,
+    options=Options(),
+    tolerances=Tolerances(),
+    numeric_format=NumericFormat(),
+    fuzzy=(False, 0),
+):
+    """Mirrors `is_same_cylinder` (added 2026-09-18, see CLAUDE.md's
+    "Spline-vs-quadric identification" entry), reusing the same
+    `cyl_distance`/`cyl_angle` tolerances -- no new tolerance fields for
+    this base-surface-only first cut. `MajorAxis`/`Axis` comparisons use
+    `is_parallel`, which already accepts either sign (antiparallel counts
+    as parallel) -- a real `Geom_Ellipse` always reports `MajorRadius >=
+    MinorRadius` by OCCT's own convention, so no major/minor swap
+    tie-break is needed here (unlike a fitted/ambiguous case)."""
+    if tolerances.relativeTol:
+        maj_tol = tolerances.cyl_distance * max(cyl2.MajorRadius, cyl1.MajorRadius)
+        min_tol = tolerances.cyl_distance * max(cyl2.MinorRadius, cyl1.MinorRadius)
+    else:
+        maj_tol = tolerances.cyl_distance
+        min_tol = tolerances.cyl_distance
+
+    is_same_major, _ = is_in_tolerance(cyl2.MajorRadius - cyl1.MajorRadius, maj_tol, 0.5 * maj_tol, 2 * maj_tol)
+    is_same_minor, _ = is_in_tolerance(cyl2.MinorRadius - cyl1.MinorRadius, min_tol, 0.5 * min_tol, 2 * min_tol)
+    if not (is_same_major and is_same_minor):
+        return False
+
+    if not is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
+        return False
+    if not is_parallel(cyl1.MajorAxis, cyl2.MajorAxis, tolerances.cyl_angle):
+        return False
+
+    axis1 = cyl1.Axis
+    center1 = cyl1.Center
+    center2 = cyl2.Center
+    c12 = center1 - center2
+    d = axis1.cross(c12).length
+
+    if tolerances.relativeTol:
+        tol = tolerances.cyl_distance * max(center1.length, center2.length)
+    else:
+        tol = tolerances.cyl_distance
+
+    is_same_center, _ = is_in_tolerance(d, tol, 0.5 * tol, 2 * tol)
+    return is_same_center
+
+
 def is_same_cone(cone1, cone2, dtol=1e-6, atol=1e-6, rel_tol=True):
     if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
         if is_parallel(cone1.Axis, cone2.Axis, atol):

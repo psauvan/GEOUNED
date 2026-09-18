@@ -12,6 +12,8 @@ from .basic_functions_part1 import (
     PlaneParams,
     ConeOnlyParams,
     CylinderOnlyParams,
+    EllipticCylinderOnlyParams,
+    EllipticCylinderParams,
     SphereOnlyParams,
     TorusOnlyParams,
     ConeParams,
@@ -26,13 +28,21 @@ from .basic_functions_part1 import (
     TConeParams,
 )
 from .basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
-from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
+from .basic_functions_part2 import (
+    is_same_plane,
+    is_same_cylinder,
+    is_same_elliptic_cylinder,
+    is_same_cone,
+    is_same_sphere,
+    is_same_torus,
+)
 
 from .data_classes import NumericFormat, Options, Tolerances
 from ...boolean_utils.boolean_function import BoolSurface, BoolVariable, literal_sign
 from .build_shape_functions import (
     makePlane,
     makeCylinder,
+    makeEllipticCylinder,
     makeCone,
     makeMultiPlanes,
     makeCan,
@@ -252,6 +262,10 @@ class GeounedSurface:
             self.Type = params[0]
             self.Surf = CylinderOnlyParams(params[1])
             self.Orientation = None
+        elif params[0] == "EllipticCylinderOnly":
+            self.Type = params[0]
+            self.Surf = EllipticCylinderOnlyParams(params[1])
+            self.Orientation = None
         elif params[0] == "ConeOnly":
             self.Type = params[0]
             self.Surf = ConeOnlyParams(params[1])
@@ -267,6 +281,13 @@ class GeounedSurface:
         elif params[0] == "Cylinder":
             self.Type = params[0]
             self.Surf = CylinderParams(params[1])
+            if len(params) > 2:
+                self.Orientation = params[2]
+            else:
+                self.Orientation = None
+        elif params[0] == "EllipticCylinder":
+            self.Type = params[0]
+            self.Surf = EllipticCylinderParams(params[1])
             if len(params) > 2:
                 self.Orientation = params[2]
             else:
@@ -345,6 +366,18 @@ class GeounedSurface:
         elif self.Type == "Cylinder" or self.Type == "CylinderOnly":
             cyl = self.Surf.Cylinder if self.Type == "Cylinder" else self
             self.shape, self.shell = makeCylinder(cyl.Surf.Center, cyl.Surf.Axis, cyl.Surf.Radius, Box)
+
+        elif self.Type == "EllipticCylinder" or self.Type == "EllipticCylinderOnly":
+            ecyl = self.Surf.Cylinder if self.Type == "EllipticCylinder" else self
+            self.shape, self.shell = makeEllipticCylinder(
+                ecyl.Surf.Center,
+                ecyl.Surf.Axis,
+                ecyl.Surf.MajorRadius,
+                ecyl.Surf.MinorRadius,
+                ecyl.Surf.MajorAxis,
+                ecyl.Surf.MinorAxis,
+                Box,
+            )
 
         elif self.Type == "Cone" or self.Type == "ConeOnly":
             kne = self.Surf.Cone if self.Type == "Cone" else self
@@ -470,6 +503,7 @@ class MetaSurfacesDict(dict):
         surfname = [
             "Planes",
             "Cyl",
+            "EllCyl",
             "Cone",
             "Sph",
             "Tor",
@@ -593,6 +627,50 @@ class MetaSurfacesDict(dict):
             cylinder.components = components
             self["Cyl"].append(cylinder)
             self.__surfIndex__["Cyl"].append(cylinder.region.__int__())
+        else:
+            newregion = cyl_surf.region if boundary > 0 else -cyl_surf.region
+
+        return newregion
+
+    def add_elliptic_cylinder(self, cylinder, fuzzy=False):
+        """Mirrors `add_cylinder` exactly (added 2026-09-18, see
+        CLAUDE.md's "Spline-vs-quadric identification" entry) -- a base
+        surface, not a composite one, so the same optional-truncation-
+        plane combination logic applies unchanged."""
+        cid, exist_c = self.primitive_surfaces.add_elliptic_cylinder(cylinder.Surf.Cylinder)
+        characteristic_id = cid
+        if cylinder.Orientation == "Forward":
+            cid = -cid
+        cylinder_region = BoolSurface(0, cid)
+        components = {abs(cid): cylinder.Surf.Cylinder}
+
+        if cylinder.Surf.Plane:
+            pid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
+            if exist_p:
+                p = self.get_primitive_surface(pid)
+                if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    pid = -pid
+            cylinder_region = cylinder_region * BoolSurface(0, pid)
+            components[abs(pid)] = cylinder.Surf.Plane
+
+        validate_characteristic_sign(
+            cylinder_region.region, int(characteristic_id), cylinder.Orientation, "add_elliptic_cylinder"
+        )
+
+        add_cyl = True
+        for cyl_surf in self["EllCyl"]:
+            boundary = cylinder_region.isSameInterface(cyl_surf.region, on_conflict="ignore")
+            if abs(boundary) == 1:
+                add_cyl = False
+                break
+
+        if add_cyl:
+            self.surfaceNumber += 1
+            newregion = cylinder_region.copy(self.surfaceNumber)
+            cylinder.region = newregion
+            cylinder.components = components
+            self["EllCyl"].append(cylinder)
+            self.__surfIndex__["EllCyl"].append(cylinder.region.__int__())
         else:
             newregion = cyl_surf.region if boundary > 0 else -cyl_surf.region
 
@@ -1334,7 +1412,7 @@ class SurfacesDict(dict):
         self.tolerances = tolerances
         self.numeric_format = numeric_format
 
-        surfname = ["PX", "PY", "PZ", "P", "Cyl", "Cone", "Sph", "Tor"]
+        surfname = ["PX", "PY", "PZ", "P", "Cyl", "EllCyl", "Cone", "Sph", "Tor"]
         for name in surfname:
             self[name] = []
 
@@ -1392,6 +1470,8 @@ class SurfacesDict(dict):
                 self.add_plane(s, False)
         for s in surface["Cyl"]:
             self.add_cylinder(s, False)
+        for s in surface["EllCyl"]:
+            self.add_elliptic_cylinder(s, False)
         for s in surface["Cone"]:
             self.add_cone(s)
         for s in surface["Sph"]:
@@ -1406,6 +1486,10 @@ class SurfacesDict(dict):
             return self.add_cylinder(surface, fuzzy)
         elif surface.Type == "Cylinder":
             return self.add_cylinder(surface.Surf.Cylinder, fuzzy)
+        elif surface.Type == "EllipticCylinderOnly":
+            return self.add_elliptic_cylinder(surface, fuzzy)
+        elif surface.Type == "EllipticCylinder":
+            return self.add_elliptic_cylinder(surface.Surf.Cylinder, fuzzy)
         elif surface.Type == "ConeOnly":
             return self.add_cone(surface)
         elif surface.Type == "Cone":
@@ -1548,6 +1632,35 @@ class SurfacesDict(dict):
             self.__last_obj__ = ("Cyl", len(self["Cyl"]))
             self["Cyl"].append(cyl)
             self.__surfIndex__["Cyl"].append(cyl.bVar)
+            return cyl.bVar, False
+        else:
+            return bVar, True
+
+    def add_elliptic_cylinder(self, cyl, fuzzy=False):
+        """Mirrors `add_cylinder` exactly, added 2026-09-18 (see
+        CLAUDE.md's "Spline-vs-quadric identification" entry)."""
+        addCyl = True
+        for i, c in enumerate(self["EllCyl"]):
+            if is_same_elliptic_cylinder(
+                cyl.Surf,
+                c.Surf,
+                options=self.options,
+                tolerances=self.tolerances,
+                numeric_format=self.numeric_format,
+                fuzzy=(fuzzy, c.bVar.__int__()),
+            ):
+                addCyl = False
+                bVar = c.bVar
+                cyl.bVar = bVar
+                self.__last_obj__ = ("EllCyl", i)
+                break
+
+        if addCyl:
+            self.surfaceNumber += 1
+            cyl.bVar = BoolVariable(self.surfaceNumber + self.IndexOffset)
+            self.__last_obj__ = ("EllCyl", len(self["EllCyl"]))
+            self["EllCyl"].append(cyl)
+            self.__surfIndex__["EllCyl"].append(cyl.bVar)
             return cyl.bVar, False
         else:
             return bVar, True

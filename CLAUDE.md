@@ -281,13 +281,13 @@ how. `Big_complex_cell/modelcell_cut1.stp`/`modelCell_670000.stp`, the
 one item that audit found already fixed, has been dropped from this
 list — see that entry for the verification numbers.
 
-Status as of 2026-09-18: every entry below is either closed-and-
-documented (kept for the history/rationale, not as a to-do) or an
-explicitly accepted permanent limitation (`Mixed/ConeSphere.stp` under
-occ/ocp; freecad's own exotic-quadric construction bugs, out of scope
-per direct user instruction) — there is currently no open, actionable
-item in this list. The next real task, whenever one comes up, replaces
-this note.)
+Status as of 2026-09-18: every entry below (except the new
+"Spline-vs-quadric identification" one under "Shared / cross-cutting",
+opened this same day) is either closed-and-documented (kept for the
+history/rationale, not as a to-do) or an explicitly accepted permanent
+limitation (`Mixed/ConeSphere.stp` under occ/ocp; freecad's own
+exotic-quadric construction bugs, out of scope per direct user
+instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
@@ -1394,6 +1394,559 @@ gaps for whenever it's picked back up:
   `RevCC_corpus_scan` has 276, only 6 were dupes) -- left in place, out
   of scope for this pass (per direct user instruction: only exact
   duplicates were to be archived, not a broader triage-folder cleanup).
+- **Spline-vs-quadric identification -- new investigation opened
+  2026-09-18, branch `spline-quadric-detection` (off
+  `georeverse-migration`), unresolved, actively open**: `Gclassify_surface`
+  returns `None` for ANY `BSplineSurface` face (occ/ocp; freecad has a
+  `findPlane()`-only fallback for the plane case), causing GEOUNED to
+  drop the whole solid (`Gspline_surface`, `load_step.py`'s
+  `spline_surf`/`corrupted_solids` handling) even when the BSpline is
+  secretly, or closely enough, one of the 5 supported analytic quadrics
+  (plane/cylinder/cone/sphere/torus) -- occ/ocp's own `Gclassify_surface`
+  docstring already flags this as a known, unported gap. Motivating
+  real-world source of such faces: GEOReverse's own `_revolution_to_bspline`
+  (`_occ_impl.py`/`_ocp_impl.py`) already converts real analytic
+  revolution surfaces to BSpline before STEP export for reader
+  compatibility (see "GEOReverse" -> "STEP round-trip for
+  `Geom_Hyperbola`-based..." above) -- the same kind of "real quadric,
+  exported as a spline" case can occur from other CAD tools' STEP output
+  too. **Architecture decision (confirmed with the user)**: substitute
+  the native surface for real (physically replace the BSplineSurface in
+  the loaded solid, at the load-time repair-cascade layer next to
+  `Gcheck_and_repair`/`Gheal_topology`/`Gspline_surface` in
+  `geo/{occ,ocp}/io.py`), NOT just relabel `GFace.Surf` while leaving the
+  native face as a BSpline -- the latter (simpler, zero geometry risk)
+  was considered and rejected: `Gsplit`/`Gcut`/`Gfuse` and the coaxial-
+  cone/tangency repair cascade (`geo/surface_geometry.py`) all inspect
+  the REAL native surface type, not `GFace.Surf`, so only a real
+  substitution actually buys back the numerical boolean-robustness this
+  whole pyOCC migration exists for; relabeling alone would fix
+  classification/MCNP-OpenMC output but leave the exact tangency
+  fragility class of bug this project starts from untouched for those
+  faces.
+  **Detection: validated for all 5 types.** Sample a 15x15 (u,v) grid
+  over the face's own domain via `GeomLProp_SLProps` (point + normal),
+  fit each candidate type (plane: SVD of centered points; cylinder: axis
+  via SVD of mean-centered normals + algebraic circle fit; sphere: linear
+  algebraic fit; cone/torus: hand-rolled Levenberg-Marquardt in numpy --
+  no scipy in `ocpenv`), compare residuals. Confirmed on a real
+  `GeomConvert.SurfaceToBSplineSurface_s`-converted face (exact
+  conversion) AND after a genuine STEP write/read round-trip: true-
+  positive residuals ~1e-12 to 1e-13, vs. ~1 for a genuine non-quadric
+  freeform face (a loft between two non-coaxial circles) -- roughly 9
+  orders of magnitude of separation, enormous safety margin for any
+  reasonable detection tolerance. One real subtlety: a sphere is a
+  degenerate torus (major radius R=0), so the general torus fit also
+  converges near-perfectly on a sphere face -- a real detector needs a
+  "prefer the simpler model" tie-break (plane < sphere < cylinder < cone
+  < torus) rather than bare minimum-residual.
+  **Substitution: validated for cylinder/sphere/torus (3 of 5), cone
+  unresolved.** `BRep_Builder.UpdateFace(face, new_surf, loc, tol)`
+  alone leaves the solid `BRepCheck`-invalid
+  (`BRepCheck_UnorientableShape`) -- the face's own edges still carry
+  pcurve representations keyed to the OLD surface object. Full working
+  recipe: for each of the face's edges, get its 3D curve + parameter
+  range (`BRep_Tool.Curve_s`/`BRep_Tool.Range_s` -- note the OCP binding
+  does NOT return first/last as out-params despite the C++ signature,
+  fetch range separately via `BRep_Tool.Range_s(edge)`), project onto the
+  new surface (`GeomProjLib.Curve2d_s`), attach via
+  `BRep_Builder.UpdateEdge(edge, pcurve2d, new_surf, loc, tol)`; a
+  degenerate (pole/apex) edge has no real 3D curve to project -- build
+  its pcurve by hand instead, a `Geom2d_Line` at the vertex's own (u,v)
+  on the new surface (found via `ShapeAnalysis_Surface.ValueOfUV` point
+  inversion) spanning the surface's full U period; finally
+  `BRepLib.SameParameter_s(face, tol, True)` +
+  `ShapeFix_Face(face).Perform()`. Confirmed on cylinder/sphere/torus:
+  whole-solid `BRepCheck_Analyzer` valid, volume exact to printed
+  precision, untouched neighboring faces (e.g. a cylinder's planar caps)
+  unaffected -- shared edges just gain an additional pcurve
+  representation, nothing is removed. **Cone specifically stays
+  `BRepCheck_UnorientableShape`** even when every substituted value
+  (surface object, all pcurves including the degenerate apex edge's) is
+  the bit-identical ORIGINAL data the valid native cone already had --
+  this isolates the bug to the `UpdateFace`/`UpdateEdge` +
+  `SameParameter` + `ShapeFix_Face` MECHANISM itself misbehaving
+  specifically for a face with exactly one degenerate edge AND a real
+  (non-closed) open boundary -- sphere/torus (which work) are fully
+  closed surfaces with no independent boundary edge of their own;
+  cylinder (which works) has no degenerate edge at all; cone is the only
+  one of the 4 with both a degenerate edge and a real open boundary.
+  `ShapeFix_Face.Perform()` itself reports `ShapeExtend_OK`/`False`
+  ("nothing to fix") for BOTH cylinder and cone, yet only cylinder ends
+  up valid afterward -- contradicts the visible before/after validity
+  change for cylinder, suggesting a side effect of `ShapeFix_Face`'s own
+  `Init`/constructor (or possibly of `BRepLib.SameParameter_s`, tested
+  alone and confirmed NOT sufficient by itself for any of the 4 types)
+  not reflected in its own reported status. Not isolated further --
+  would need OCCT source-level inspection or a minimal C++ reproduction,
+  not practical from Python/pyOCC introspection alone.
+  **Alternative (boolean-based) approach tried for cone, also
+  inconclusive**: rebuild a generous analytic solid via
+  `BRepPrimAPI_Make*` and `BRepAlgoAPI_Common` against the original
+  solid, letting OCCT's own BOP reconcile topology instead of hand-
+  patching pcurves. Hit two new, separate problems: (1) needs a
+  topologically-VALID starting solid -- an in-memory
+  `GeomConvert`-converted face with no rebuilt pcurves produces an EMPTY
+  boolean result, so a real STEP round-trip is needed first to get
+  validity; (2) that STEP round-trip itself introduces a real ~0.9%
+  volume discrepancy against the analytic value (`BRepGProp` numerical-
+  quadrature error integrating over a BSpline surface vs. a true
+  analytic one, suspected but not confirmed -- contradicts the ~1e-12
+  POINTWISE residuals found during detection, since that was a local
+  check, not an integrated one); and (3) even with a valid input, a
+  "generous" tool solid that fully contains the original makes
+  `BRepAlgoAPI_Common` a no-op that keeps the ORIGINAL imprecise spline
+  face rather than adopting the tool's exact analytic surface -- which
+  of two near-coincident "same-domain" faces a boolean keeps isn't
+  something controlled from the high-level `BRepAlgoAPI_Common` API used
+  here.
+  Scripts used are throwaway, in the session's scratchpad directory (NOT
+  committed, not preserved in the repo): `spline_quadric_probe.py`
+  (detection/fitting for all 5 types + false-positive test + STEP
+  round-trip noise test), `spline_substitution_probe2.py` (topology-patch
+  substitution recipe, cylinder generalized to cone/sphere/torus, all
+  diagnostics), `spline_substitution_boolean.py` (the alternative
+  boolean-based attempt) -- this CLAUDE.md entry is the only surviving
+  record of the investigation.
+  **Implemented in production, 2026-09-18, branch `spline-quadric-
+  detection` (cylinder + torus only; sphere and cone remain open)**: per
+  direct user instruction ("vamos a implementar estos cambios en
+  geouned. Para las esferas, cilindros y toros... si la sustitución no
+  tiene éxito entonces se sigue la instrucción vigente"), wired the
+  validated Option-1 architecture (physically substitute the native
+  surface, not just relabel `GFace.Surf`) into real code:
+  `geo/{occ,ocp}/spline_quadrics.py` (new files, ~parallel implementations,
+  same structure as every other occ/ocp file-pair) provide
+  `Gsubstitute_spline_quadrics(solid, tolerances) -> (solid, resolved)`,
+  called from `Gload_and_process_step` right where `Gspline_surface`
+  already flags a solid: a solid that would previously have gone
+  straight to `spline_indices` (triggering the existing remove/stop
+  policy) now gets ONE substitution attempt first; only added to
+  `spline_indices` if that attempt does not fully resolve it -- the
+  exact "try substitution, fall back to the existing policy on failure"
+  behavior the user asked for, implemented as an all-or-nothing,
+  never-partially-corrupting operation (works on a native-shape COPY;
+  the original `GSolid` is returned completely untouched on any
+  failure). Two new `Tolerances` fields added
+  (`GEOUNED/utils/data_classes.py`): `spline_quadric_fit_rel_tol`
+  (1e-6, the detection residual gate) and `spline_quadric_volume_rel_tol`
+  (2e-2, the post-substitution volume-conservation gate -- see the real
+  bug below for why this isn't tighter). `freecad` is out of scope (not
+  touched) -- occ/ocp only, matching every other feature in this section.
+
+  Porting the already-validated scratchpad recipe into real production
+  code (called through the REAL `Gload_and_process_step` path, against a
+  REAL STEP-loaded solid -- not just an in-memory `GeomConvert`
+  conversion, which is all the original research validated) surfaced 2
+  more real, independent bugs, neither anticipated by the original
+  investigation:
+  1. **Shared seam-edge pcurve bug**: a face on a FULLY periodic surface
+     (a whole cylinder/sphere/torus) has its own seam edge appear TWICE
+     in the wire -- the SAME underlying `TopoDS_Edge` (`IsSame`), once
+     FORWARD once REVERSED -- needing TWO distinct pcurve
+     representations on the same (surface, location) via the dedicated
+     `BRep_Builder.UpdateEdge(E, C1, C2, S, L, Tol)` "closed face"
+     overload. The original recipe called the single-pcurve overload
+     once per occurrence, which just overwrites the first with the
+     second -- losing one side of the seam. This worked BY ACCIDENT for
+     an exactly-`GeomConvert`-converted face (`ShapeFix_Face`'s own
+     `FixMissingSeam` silently reconstructed the missing side, close
+     enough within its own tolerance) but broke for a face that had gone
+     through a real STEP write/read round-trip first -- confirmed live:
+     cylinder's substituted face came back `BRepCheck_UnorientableShape`
+     only in the STEP-round-tripped case, never in the original in-memory
+     test. Fixed: detect the duplicate via `IsSame` and set `C2` as `C1`
+     translated by exactly the surface's own U period (`Geom2d_Curve.
+     Translated`, guaranteed geometrically consistent with `C1` since a
+     periodic surface's own pcurve is invariant under a full-period
+     shift) -- in one `UpdateEdge` call instead of two. Also discovered:
+     a solid's own `_native_fix`/`ShapeFix_Shape` healing pass (already
+     applied at load time, before this function ever runs) sometimes
+     splits a shared seam edge into two genuinely independent
+     (non-`IsSame`) copies on its own -- the fix handles both cases
+     (falls back to a single pcurve per copy when they're no longer
+     actually shared). **pythonocc-core-specific wrinkle found while
+     porting this fix to `occ`**: `Geom2d_Curve.Translated()` is bound at
+     the `Geom2d_Geometry` (base-class) level under pythonocc-core,
+     returning that wider handle type even though the object is still
+     concretely a curve -- `BRep_Builder.UpdateEdge`'s own SWIG overload
+     resolution rejects it outright (`TypeError`) unless explicitly
+     downcast back via `Geom2d_Curve.DownCast(...)` first. OCP has no
+     such issue (a `Geom2d_Curve` comes back directly). This fixed
+     cylinder completely (exact volume, valid, even after a real STEP
+     round-trip) and made no difference either way for torus (which
+     already worked).
+  2. **Volume-tolerance false rejection**: even once (1) was fixed,
+     cylinder still failed to resolve -- traced to
+     `Gsubstitute_spline_quadrics`'s own volume-conservation safety
+     check (originally `1e-4` relative) comparing the POST-substitution
+     volume against the PRE-substitution one. The substitution itself
+     was perfect (exact analytic volume, valid solid) -- but the
+     "before" volume, computed by `BRepGProp` integrating over the
+     original, still-a-BSpline face, itself carries a real ~0.9%
+     numerical-quadrature error after a genuine STEP round-trip (a
+     `Geom_CylindricalSurface` integrates its volume exactly; a BSpline
+     approximation of the same surface does not, even though the two are
+     geometrically all but identical). The tight gate was comparing a
+     newly-exact result against an unreliable baseline and rejecting a
+     correct substitution. Fixed by widening
+     `spline_quadric_volume_rel_tol` to `2e-2` (2%) -- still far below
+     the 10-100% scale a genuinely broken substitution mechanism produces
+     (confirmed via the original investigation's false-positive testing),
+     just no longer measuring noise in the "before" number as if it were
+     substitution error. The actual correctness guarantee for a
+     substitution comes from the FIT residual check
+     (`spline_quadric_fit_rel_tol`, still tight at `1e-6`, with the
+     original ~9-orders-of-magnitude separation margin), not this volume
+     gate, which is now correctly understood as a coarse sanity net, not
+     a precision check.
+
+  **Sphere remains unresolved for a real STEP round-trip** (detection
+  succeeds cleanly -- residual ~2e-12 -- but the post-substitution face
+  still comes back `BRepCheck_UnorientableShape`), and is a DIFFERENT
+  bug from both of the above and from the cone issue: confirmed the
+  exact same "duplicate seam" fix that completely resolved cylinder does
+  NOT fix sphere (still fails identically with or without it); confirmed
+  it is NOT the degenerate-pole pcurve construction either (bit-identical
+  to what already works in the in-memory, non-round-tripped case, which
+  DOES succeed for sphere -- `BRepCheck_Analyzer` valid, exact volume).
+  One promising, NOT-yet-fixed lead found while investigating: bypassing
+  `GeomProjLib.Curve2d`'s numerical projection entirely for the seam edge
+  and constructing its pcurve directly from the sphere's own analytic
+  parametrization (v = latitude) produces a topologically VALID face --
+  but with only HALF the correct volume, meaning the direct-construction
+  formula has an unresolved sign/branch bug (which of the two meridian
+  halves, or which u-branch, isn't being picked consistently) rather
+  than being fundamentally the wrong approach. Not pursued further this
+  session given the time already spent -- picking this up should start
+  from that half-volume clue, not from scratch. Sphere still safely
+  falls through to the existing spline-solid policy (remove/stop) when
+  it fails, per the all-or-nothing design -- no corruption risk, just
+  missing the benefit for this one type until fixed.
+
+  **Verified**: `tests/geo/test_ocp_impl.py`/`test_occ_impl.py` each
+  gained 3 new tests (`test_substitute_spline_cylinder`/`_torus`/
+  `_sphere_known_limitation`, the last one deliberately asserting
+  TODAY's limitation, not the eventually-desired behavior -- update it
+  once sphere is fixed) exercising the real `Gload_and_process_step`
+  path against a genuinely STEP-round-tripped spline face; both pass (42
+  total each, up from 39). Full `tests/geo/test_ocp_impl.py`/
+  `test_occ_impl.py` (42 each) and `tests/test_cadtocsg.py` (50, both
+  engines) green with zero regressions.
+
+  **Next steps**: superseded by the master TODO list at the end of this
+  whole entry ("TODO -- generalized surface-to-quadric identification
+  & substitution, 2026-09-18"), which restates the project's own goal
+  more broadly (per direct user re-framing, same day) and organizes
+  every remaining item -- sphere/cone included -- into one place. Read
+  that list, not this paragraph, before picking anything back up.
+
+  **`GEllipticCylinder` -- a 6th BASE analytic surface type for
+  GEOUNED's own forward pipeline, implemented 2026-09-18, same session
+  and branch.** Motivated directly by a real fixture the user pointed at
+  (`Solidos/Spline/SOLID015.stp`, workshop-side): its 2 "spline" faces
+  turned out to be neither `BSplineSurface` nor genuinely ambiguous --
+  an EXACT `GeomAbs_SurfaceOfExtrusion` of a real `Geom_Ellipse`
+  (MajorRadius=73, MinorRadius=69, a straight sweep -- extrusion
+  direction exactly parallel/antiparallel to the ellipse's own plane
+  normal, confirmed via a dot product of -1.0). Per direct user
+  instruction: implement this as a genuine 6th base surface type
+  (mirroring Cylinder's own architecture end to end), deliberately NOT
+  combined into composite meta-surfaces (RoundCorner/Can/TCone/...) yet,
+  and use this as the TEMPLATE for adding the remaining exotic quadrics
+  later -- explicitly including, this same time, unifying each new
+  surface's construction between GEOUNED and GEOReverse (matching the
+  `Gmake_torus_elliptic` precedent) rather than letting the two pipelines
+  carry independent copies.
+
+  Full trace of what "mirror Cylinder end to end" meant in practice,
+  file by file:
+  - `geo/{occ,ocp}/topology.py`: new `GEllipticCylinder` class (Center/
+    Axis/MajorRadius/MinorRadius/MajorAxis/MinorAxis, field names
+    matching GEOReverse's own dataclass exactly) plus a new
+    `Gclassify_surface` branch recognizing `GeomAbs_SurfaceOfExtrusion`
+    with a `Geom_Ellipse` basis curve and a straight sweep -- an EXACT
+    recognition, no sampling/fitting involved (unlike
+    `Gsubstitute_spline_quadrics`'s BSpline detection). An OBLIQUE sweep
+    (extrusion direction not parallel to the ellipse's own normal) is
+    deliberately NOT recognized -- deriving the true elliptic-cylinder
+    axes of an oblique sweep is a harder problem, explicitly out of
+    scope for now, same pattern as leaving cone out of the spline
+    substitution above. pythonocc-core needed explicit `Geom_
+    SurfaceOfLinearExtrusion.DownCast`/`Geom_Ellipse.DownCast` calls
+    that OCP's own automatic polymorphic downcast doesn't need (same
+    binding-convention difference documented throughout this project).
+    `freecad` is untouched -- occ/ocp only.
+  - `geo/{occ,ocp}/primitives.py`: `Gmake_elliptic_cylinder` -- moved
+    (not duplicated) from `GEOReverse/Modules/engine_dependency/
+    _{occ,ocp}_impl.py`, exactly the `Gmake_torus_elliptic` precedent.
+    GEOReverse's own files still need updating to re-export this name
+    instead of keeping their own local copy (not done yet in this pass
+    -- see below).
+  - `GEOUNED/utils/basic_functions_part1.py`: `EllipticCylinderOnlyParams`
+    (bare surface) and `EllipticCylinderParams` (adds an optional
+    truncation `.Plane`, mirroring `CylinderParams` exactly -- a base
+    surface still legitimately combines with a bounding plane; that is
+    not the composite-meta-surface combination the user asked to defer).
+  - `GEOUNED/utils/geouned_classes.py`: `GeounedSurface` dispatch for
+    `"EllipticCylinderOnly"`/`"EllipticCylinder"`; `build_surface()`
+    branch calling a new `makeEllipticCylinder`
+    (`build_shape_functions.py`, mirroring `makeCylinder`); a new
+    `MetaSurfacesDict.add_elliptic_cylinder` (region-building, mirrors
+    `add_cylinder` including its optional-plane combination) and
+    `SurfacesDict.add_elliptic_cylinder` (dedup/numbering, mirrors that
+    class's own `add_cylinder`); a new `"EllCyl"` key added to BOTH
+    classes' own `surfname` lists and to `extend()`/`add_surface()`'s
+    dispatch tables (two genuinely separate lists that both needed the
+    new key -- confirmed by grep, nothing else in the codebase
+    hardcodes a third copy of either list).
+  - `GEOUNED/utils/basic_functions_part2.py`: `is_same_elliptic_cylinder`
+    (CSG-level dedup predicate, mirrors `is_same_cylinder`, reuses the
+    existing `cyl_distance`/`cyl_angle` tolerances rather than adding new
+    ones for this first cut) -- checks MajorRadius, MinorRadius, Axis
+    and MajorAxis alignment (`is_parallel`, already sign-agnostic), then
+    the perpendicular-offset-from-axis-line distance (never raw Center
+    difference, matching `is_same_cylinder`'s own documented reasoning
+    for why that would be wrong for an axis point that can slide freely).
+  - `geo/surface_geometry.py`: `is_same_elliptic_cylinder_surface`
+    (FACE-MERGE-level predicate, a different function from the previous
+    bullet -- mirrors `is_same_cylinder_surface`, fixed 1e-5 tolerances,
+    used by `geometry_gu.py`'s `_SAME_SURFACE_PREDICATE` dict so
+    `merge_same_surface_faces` can recognize two `GEllipticCylinder`
+    faces of the same real surface without a `KeyError`). Confirmed this
+    dict lookup is reached in practice: the real fixture's 2 raw
+    elliptic-cylinder faces get merged into one face BEFORE
+    `cell_definition.py`'s per-face loop even runs, verified live via
+    instrumentation (only one `gen_elliptic_cylinder` call for the whole
+    solid, despite 2 raw faces).
+  - `GEOUNED/conversion/cell_definition_functions.py`/`cell_definition.py`:
+    `gen_elliptic_cylinder` + a new `isinstance(face.Surface, GU.
+    GEllipticCylinder)` branch, mirroring the `GCylinder` branch exactly.
+  - `GEOUNED/utils/q_form.py`: new `q_form_elliptic_cyl` -- deliberately
+    NOT built by reusing `rotation_matrix(u, v)` (that helper only pins
+    the axis mapping, leaving rotation-about-axis free, which matters
+    for an ellipse's major/minor orientation but not a circle's). Built
+    directly from the symmetric matrix `M = MinorRadius^2*(MajorAxis
+    (x) MajorAxis) + MajorRadius^2*(MinorAxis (x) MinorAxis)` (M's null
+    space is exactly the cylinder axis, by construction, since MajorAxis/
+    MinorAxis/Axis are mutually orthogonal) -- confirmed both
+    numerically (residual ~1e-11 sampling real ellipse points, both
+    axis-aligned and an arbitrary 3D orientation) and by proving `M .
+    Axis = 0` exactly, which makes the whole GQ equation provably
+    invariant to sliding the input `Center` along the axis (verified
+    numerically too: identical G/H/J/K for 4 wildly different slide
+    distances) -- and reduces exactly to `q_form_cyl`'s own matrix (up
+    to an immaterial overall `rad^2` scale factor) when MajorRadius ==
+    MinorRadius, since `MajorAxis(x)MajorAxis + MinorAxis(x)MinorAxis =
+    I - Axis(x)Axis` for an orthonormal frame.
+  - `GEOUNED/write/functions.py`: a new `"EllipticCylinderOnly"` branch
+    in EACH of the 4 surface writers (`mcnp_surface`/`open_mc_surface`/
+    `serpent_surface`/`phits_surface`) -- always the general GQ/quadric
+    form, no axis-aligned shortcut of any kind, since none of these 4
+    formats has an elliptic-cylinder primitive card at all (unlike
+    Cylinder's CX/CY/CZ, and OpenMC's own additional generic
+    arbitrary-direction "Cylinder" surface -- neither exists for an
+    ellipse).
+  - `freecad` safety: confirmed via grep that every `GEllipticCylinder`/
+    `Gmake_elliptic_cylinder` reference in core GEOUNED code (outside
+    `geo/occ`/`geo/ocp` themselves) is either a function-local import
+    (matching the established `Gmake_torus_elliptic` precedent -- doesn't
+    exist under `geo/freecad/__init__.py`) or goes through
+    `geometry_gu.py`'s `GU.GEllipticCylinder`, which is a real class
+    under occ/ocp but an always-`False`-matching placeholder class under
+    freecad specifically so `isinstance(face.Surface, GU.
+    GEllipticCylinder)` checks elsewhere never raise `AttributeError`
+    regardless of engine. The live freecad test suite itself was not
+    re-run this session (interpreter path not at hand); this static
+    check is the verification on record until a real freecad run
+    confirms it.
+  - Adjacency/truncation-plane suppression in `decompose/
+    decom_utils_generator.py` (the `GCone`/`GCylinder`-pair special case
+    that skips adding a redundant plane between two adjacent curved
+    faces) was deliberately NOT extended to `GEllipticCylinder` --
+    degrades gracefully (a few extra, harmless truncation planes in the
+    decomposition, never a correctness issue), left as a known,
+    low-priority follow-up rather than in scope for this first cut.
+
+  **Verified against the real motivating fixture**: full `tests/geo/
+  test_ocp_impl.py`/`test_occ_impl.py` (42 each) and `tests/
+  test_cadtocsg.py` (50, both engines) still green with zero
+  regressions after all of the above. `SOLID015.stp` converts end to end
+  through the real `CadToCsg` pipeline (load -> decompose -> void ->
+  `export_csg` to MCNP) with no crash, previously impossible (its 2
+  elliptic-cylinder faces used to make the whole solid an unconvertible
+  "spline" solid). A real, live investigation (thought at first to be a
+  dedup bug: the exported MCNP file has 9 "GQ" surface cards total, and
+  8 of them share suspiciously similar-looking coefficients) turned out
+  to be a false alarm on close inspection, not a bug: instrumenting both
+  `q_form.q_form_cyl` and the new `q_form.q_form_elliptic_cyl` directly
+  showed exactly 8 independent `q_form_cyl` calls (8 real, small,
+  unrelated bolt-hole cylinders elsewhere in this real mechanical part,
+  radius 0.65/1.25mm, at 2 X/Y positions x 2 Z-heights -- their A-F
+  GQ coefficients coincidentally land in the same order of magnitude as
+  the elliptic cylinder's own, purely because `q_form_cyl`'s A-F terms
+  depend only on axis ORIENTATION, not radius, so same-orientation
+  round holes of any size produce visually similar-looking leading
+  coefficients) and exactly ONE `q_form_elliptic_cyl` call, confirming
+  the elliptic cylinder itself was correctly detected once, deduplicated
+  once (from its 2 raw faces), and written once. No corpus-wide/GEOReverse
+  regression check has been run yet (out of scope for this pass -- see
+  "Next steps" below).
+
+  **Not done in this pass (real, tracked gaps, not silent omissions)**:
+  (a) GEOReverse's own `_occ_impl.py`/`_ocp_impl.py` still carry their
+  OWN local `Gmake_elliptic_cylinder`/`GEllipticCylinder` definitions
+  rather than re-exporting the ones now living in `geo/{occ,ocp}/
+  primitives.py` -- the "unify calls between GEOUNED and GEOReverse"
+  instruction was satisfied for GEOUNED's own new consumption of this
+  primitive, but the actual de-duplication on GEOReverse's side (mirror
+  the exact refactor `Gmake_torus_elliptic` went through) is still
+  pending; (b) `is_same_elliptic_cylinder`/`is_same_elliptic_cylinder_surface`
+  reuse the existing `cyl_distance`/`cyl_angle` tolerances rather than
+  getting their own dedicated tolerance fields -- fine for this first
+  cut, revisit if a real corpus case needs finer control; (c) the
+  MCNP-side GQ output was checked for plausibility (residual math,
+  correct call count) but never round-tripped back through
+  `MCNP_parser/MCNPinput.py::get_cylinder_parameters` (the REVERSE-side
+  elliptic-cylinder classifier already described in "GEOReverse" above)
+  to confirm the written coefficients parse back to the exact same
+  Center/Axis/MajorRadius/MinorRadius/MajorAxis/MinorAxis -- a natural,
+  still-open verification step; (d) no d1suned MCNP stochastic-volume
+  check has been run against the real fixture yet, only structural/
+  call-count verification.
+
+  **TODO -- generalized surface-to-quadric identification &
+  substitution, 2026-09-18 (restated goal, direct user instruction,
+  supersedes every narrower "next steps" note above in this entry).**
+  The actual purpose of this whole session, per the user's own words:
+  for ANY face, regardless of what its native surface type is (NURBS/
+  BSpline, `SurfaceOfExtrusion`, `SurfaceOfRevolution`, or anything
+  else), check whether it has the characteristics of ANY quadric --
+  not just cylinder/sphere/torus, but EVERY quadric already defined
+  across GEOUNED and GEOReverse combined (sphere, cylinder, cone,
+  torus, elliptic cylinder, elliptic cone, ellipsoid, hyperboloid,
+  hyperbolic cylinder/prism, paraboloid, elliptic torus) -- and if it
+  does, substitute its definition for the real quadric's, exactly as
+  already done this session for cylinder/torus (via BSpline fitting)
+  and elliptic cylinder (via exact `SurfaceOfExtrusion` recognition).
+  Doing this for each exotic quadric requires first porting it to a
+  place shared between GEOUNED and GEOReverse (`geo/{occ,ocp}`), the
+  same move already made for `Gmake_torus_elliptic` and (this session)
+  `Gmake_elliptic_cylinder`/`GEllipticCylinder`.
+
+  **A. Close out what's already started (cylinder/sphere/torus via
+  spline substitution)**
+  - [ ] Fix sphere's post-STEP-round-trip substitution failure (the
+    half-volume clue: an exact analytic pcurve construction gives a
+    valid face at half the correct volume -- a sign/branch bug, not a
+    wrong approach). Independent bug from cone -- confirmed unrelated,
+    don't assume a shared root cause.
+  - [ ] Root-cause cone's `BRepCheck_UnorientableShape` after
+    substitution (still completely unaddressed, no production code
+    exists for it at all).
+
+  **B. Generalize detection beyond `GeomAbs_BSplineSurface`**
+  - [ ] Extend `Gsubstitute_spline_quadrics` (or a new, more general
+    mechanism) to operate on ANY unsupported native surface type, not
+    only `BSplineSurface`: `SurfaceOfExtrusion`, `SurfaceOfRevolution`,
+    and anything else `Gclassify_surface` currently returns `None` for.
+  - [ ] Widen the set of candidate quadrics the detector tries beyond
+    {cylinder, sphere, torus} to ALL of them (see block C for the full
+    list) -- including a "prefer the simplest matching model" tie-break
+    analogous to the existing sphere-vs-torus-degenerate one, now
+    across a much larger candidate set (e.g. a cylinder is also a
+    degenerate elliptic cylinder, MajorRadius==MinorRadius; a sphere is
+    also a degenerate ellipsoid; etc. -- these ambiguities need the same
+    kind of explicit priority ordering already worked out for sphere
+    vs. torus).
+  - [ ] Decide, per native surface type, whether EXACT recognition
+    (no sampling -- like `GEllipticCylinder`'s `SurfaceOfExtrusion`-of-
+    a-`Geom_Ellipse` check) is possible before falling back to sampling
+    + fit (like the current BSpline path): a `SurfaceOfExtrusion`/
+    `SurfaceOfRevolution` of a KNOWN analytic profile curve (circle,
+    ellipse, hyperbola, parabola) should always be recognized exactly,
+    the same way elliptic cylinder was -- sampling/fitting should only
+    be the fallback for a genuine `BSplineSurface` with no exact basis
+    curve to read directly.
+
+  **C. Port each exotic quadric from GEOReverse into `geo/{occ,ocp}`
+  (shared), then give it full "base surface" support in GEOUNED**
+  For each one, mirror the exact template `GEllipticCylinder` just
+  established: move `Gmake_X`/`GX` into `geo/{occ,ocp}/primitives.py`/
+  `topology.py` (+ a `Gclassify_surface` branch that recognizes its own
+  native OCCT representation exactly, where one exists); `XOnlyParams`/
+  `XParams` in `basic_functions_part1.py`; `GeounedSurface` dispatch +
+  `build_surface()` branch + a `makeX` in `build_shape_functions.py`;
+  `MetaSurfacesDict.add_X` + `SurfacesDict.add_X` (+ a new key in BOTH
+  classes' `surfname` lists and their `extend()`/`add_surface()`
+  dispatch); `is_same_X` (`basic_functions_part2.py`) + `is_same_X_
+  surface` (`geo/surface_geometry.py`) + a `geometry_gu.py`
+  `_SAME_SURFACE_PREDICATE` entry (with the occ/ocp-only placeholder-
+  class pattern for freecad); `gen_X` + a `cell_definition.py` branch;
+  `q_form_X` in `q_form.py` (derived directly from first principles the
+  way `q_form_elliptic_cyl` was -- do NOT assume `rotation_matrix(u,v)`
+  is reusable, it only pins the axis, not rotation about it, which
+  matters for anything with a second, distinguishable in-surface axis);
+  an `"XOnly"` branch in all 4 write functions (`mcnp_surface`/
+  `open_mc_surface`/`serpent_surface`/`phits_surface`).
+
+  Exotic quadrics still pending (all already exist in GEOReverse, see
+  `GEOReverse/Modules/engine_dependency/_{occ,ocp}_impl.py` and this
+  entry's own "GEOReverse" section above for each one's construction
+  technique):
+  - [ ] Ellipsoid (`GEllipsoid`/`Gmake_ellipsoid`)
+  - [ ] Elliptic cone (`GEllipticCone`/`Gmake_elliptic_cone`)
+  - [ ] Hyperboloid, one AND two sheet (`GHyperboloid`/
+    `Gmake_hyperboloid`) -- note `OneSheet` picks the axis/technique,
+    see the "classifier-dispatch" entry above for the exact semantics.
+  - [ ] Hyperbolic cylinder, the revolution-based "hourglass"
+    (`GHyperbolicCylinder`/`Gmake_hyperbolic_cylinder`)
+  - [ ] Hyperbolic prism, the flat-extrusion, zero-eigenvalue-axis case
+    (`GHyperbolicPrism`/`Gmake_hyperbolic_prism`) -- a genuinely
+    different surface from the hyperbolic cylinder above despite the
+    similar name, see the "classifier-dispatch mismatch" entry above.
+  - [ ] Paraboloid (`GParaboloid`/`Gmake_paraboloid`)
+  - [ ] Elliptic torus as a detectable BASE surface in GEOUNED --
+    `Gmake_torus_elliptic` already lives in `geo/{occ,ocp}/primitives.py`
+    and is already consumed by GEOUNED's own `GeounedSurface.
+    build_surface()` for the degenerate-torus CUTTING-TOOL case (see
+    "Now consumed by GEOUNED's own forward pipeline too" above) -- but
+    that is NOT the same as `Gclassify_surface` recognizing an
+    arbitrary face as an elliptic torus and registering it as its own
+    base surface the way `GEllipticCylinder` now does. Check whether
+    that gap is real before assuming it needs the same amount of new
+    code as the others.
+
+  **D. Unify GEOReverse's own local copies once each quadric lands in
+  `geo/{occ,ocp}`**
+  - [ ] `GEOReverse/Modules/engine_dependency/_occ_impl.py`/
+    `_ocp_impl.py` still carry their OWN local `Gmake_elliptic_cylinder`/
+    `GEllipticCylinder` -- re-export the now-shared `geo` version
+    instead (this session's own "not done in this pass" gap (a) above).
+  - [ ] Repeat for every quadric ported in block C, as each one lands.
+
+  **E. Verification still owed for elliptic cylinder (this session's
+  own work, not future scope)**
+  - [ ] Round-trip the written MCNP GQ card back through `MCNP_parser/
+    MCNPinput.py::get_cylinder_parameters` and confirm it recovers the
+    same Center/Axis/MajorRadius/MinorRadius/MajorAxis/MinorAxis.
+  - [ ] A real d1suned stochastic-volume check against `SOLID015.stp`.
+  - [ ] Run `tests/geo/test_freecad_impl.py` for real (not done this
+    session, interpreter path wasn't at hand) to confirm freecad is
+    genuinely unaffected, not just statically-argued to be safe.
+  - [ ] Extend `decom_utils_generator.py`'s `GCone`/`GCylinder`
+    adjacent-pair truncation-plane suppression to also cover
+    `GEllipticCylinder` (low priority, purely a decomposition-size
+    optimization -- current behavior is safe, just not minimal).
+
+  **F. Explicitly out of scope for now (decisions already made, not
+  gaps)**
+  - Combining any of these base surfaces into composite meta-surfaces
+    (RoundCorner/Can/TCone/MultiRoundCorner/ReversedConeCylinder) --
+    deferred by direct user instruction.
+  - An OBLIQUE extrusion/revolution sweep (profile-curve plane normal
+    not parallel to the sweep direction/axis) for any of these -- out
+    of scope, matches the already-accepted elliptic-cylinder limitation.
 
 ## Reference docs
 

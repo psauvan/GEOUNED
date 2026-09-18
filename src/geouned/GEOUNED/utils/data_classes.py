@@ -310,6 +310,33 @@ class Tolerances:
             docstring, and _try_coaxial_cone_split's identical, separately-hardcoded 1e-6 -- both trace to
             the same "never trust a topology repair blindly" discipline documented throughout this
             project's history).
+        spline_quadric_fit_rel_tol (float, optional): geo.Gsubstitute_spline_quadrics' own detection
+            tolerance -- a BSplineSurface face's sampled-point-vs-candidate-analytic-surface fit residual,
+            as a fraction of the face's own bounding-box diagonal, below which the face is trusted to
+            genuinely BE that cylinder/sphere/torus. Defaults to 1.0e-6: the investigation behind this
+            feature (see CLAUDE.md, "Spline-vs-quadric identification") found a true positive (a real
+            quadric round-tripped through a BSpline conversion, even via a real STEP write/read) residual
+            ~1e-12 to 1e-13 x face size, vs. ~1 for a genuine freeform surface -- ~9 orders of margin, so
+            this default sits with enormous room on both sides. occ/ocp only -- freecad doesn't call this
+            (see that function's own docstring for why cone is excluded from this feature entirely).
+        spline_quadric_volume_rel_tol (float, optional): geo.Gsubstitute_spline_quadrics' own whole-solid
+            volume-conservation gate -- a substitution is only accepted if the solid's own volume, before
+            vs. after every spline face is swapped for its analytic surface, agrees to within this
+            fraction. Defaults to 2.0e-2 (2%) -- deliberately much looser than this file's other post-
+            repair volume-conservation gates (compare MAX_SPLIT_RING_VOLUME_REL_CHANGE/
+            MAX_SLIVER_HEAL_VOLUME_REL_CHANGE in geo/constants.py, both ~1e-4): unlike those repairs, the
+            "before" volume here is computed by BRepGProp integrating over the ORIGINAL, still-a-BSpline
+            face -- confirmed live, 2026-09-18, real STEP round-trips carry their own ~0.9% numerical-
+            quadrature error at that step alone (a Geom_CylindricalSurface's own volume integrates exactly;
+            the BSpline approximation of the same surface does not, even though the two are geometrically
+            all but identical -- the actual fit residual, gated separately and far more tightly by
+            spline_quadric_fit_rel_tol above, is what actually certifies the substitution is correct). A
+            tight volume gate here would systematically reject GOOD substitutions on exactly the STEP-
+            round-tripped inputs this feature targets, comparing the newly-exact volume against a "before"
+            baseline that was never trustworthy to begin with. This remains a real safety net against a
+            substitution mechanism genuinely going wrong (which produces drastically larger errors --
+            10-100%, not fractions of a percent -- confirmed via the same investigation's false-positive
+            testing), just calibrated to the noise floor this specific "before" measurement actually has.
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -348,6 +375,8 @@ class Tolerances:
         min_solid_volume: float = 1.0e-3,
         fix_tolerance: float = 1.0e-6,
         volume_tolerance: float = 1.0e-6,
+        spline_quadric_fit_rel_tol: float = 1.0e-6,
+        spline_quadric_volume_rel_tol: float = 2.0e-2,
     ):
 
         self.relativeTol = relativeTol
@@ -377,6 +406,8 @@ class Tolerances:
         self.min_solid_volume = min_solid_volume
         self.fix_tolerance = fix_tolerance
         self.volume_tolerance = volume_tolerance
+        self.spline_quadric_fit_rel_tol = spline_quadric_fit_rel_tol
+        self.spline_quadric_volume_rel_tol = spline_quadric_volume_rel_tol
 
     @property
     def relativeTol(self):

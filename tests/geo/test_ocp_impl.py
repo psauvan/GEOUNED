@@ -27,6 +27,7 @@ from geouned.geo import (
     Gexport_step,
     Gfuse,
     Gin_contact,
+    Gload_and_process_step,
     Gload_step,
     Gmake_box,
     Gmake_compound,
@@ -38,8 +39,10 @@ from geouned.geo import (
     Gmake_sphere,
     Gmake_torus,
     Gmake_wire,
+    Gspline_surface,
     Gsplit,
 )
+from geouned.GEOUNED.utils.data_classes import Tolerances
 
 # ---------------------------------------------------------------------------
 # Primitives
@@ -390,3 +393,98 @@ def test_gexport_step_multi_shape(tmp_path):
     Gexport_step([box, box2], step_path)
     reloaded = Gload_step(step_path)
     assert len(reloaded) == 2
+
+
+# ---------------------------------------------------------------------------
+# Spline-vs-quadric identification (Gsubstitute_spline_quadrics, 2026-09-18)
+#
+# See CLAUDE.md's "Known open items" -> "Shared / cross-cutting" ->
+# "Spline-vs-quadric identification" entry for the full investigation.
+# These exercise the REAL Gload_and_process_step path (the only place
+# this feature is wired in), against a genuinely STEP-round-tripped
+# spline face -- not just an in-memory GeomConvert conversion -- since
+# that is what a real loaded model looks like, and is exactly the case
+# that surfaced 2 of the real bugs fixed during this investigation
+# (the shared-seam-edge pcurve bug, and the volume-tolerance-too-tight
+# false rejection).
+# ---------------------------------------------------------------------------
+
+
+def _force_bspline_and_roundtrip(gsolid, kind, tmp_path, name):
+    """Convert every face of `gsolid` whose native surface type matches
+    `kind` to an exact BSpline (GeomConvert), then write/read it through
+    a real STEP file -- the realistic starting point for this feature: a
+    loaded model whose STEP source happened to represent a real quadric
+    as a spline."""
+    from OCP.BRep import BRep_Builder, BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.BRepTools import BRepTools
+    from OCP.Geom import Geom_RectangularTrimmedSurface
+    from OCP.GeomConvert import GeomConvert
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    native = gsolid.__native__
+    builder = BRep_Builder()
+    exp = TopExp_Explorer(native, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face(exp.Current())
+        if BRepAdaptor_Surface(face, True).GetType() == kind:
+            surf = BRep_Tool.Surface_s(face)
+            u1, u2, v1, v2 = BRepTools.UVBounds_s(face)
+            trimmed = Geom_RectangularTrimmedSurface(surf, u1, u2, v1, v2)
+            bspline = GeomConvert.SurfaceToBSplineSurface_s(trimmed)
+            builder.UpdateFace(face, bspline, face.Location(), BRep_Tool.Tolerance_s(face))
+        exp.Next()
+
+    step_path = str(tmp_path / f"{name}.stp")
+    gsolid.export_step(step_path)
+    return step_path
+
+
+def test_substitute_spline_cylinder(tmp_path):
+    from OCP.GeomAbs import GeomAbs_Cylinder
+
+    solid = Gmake_cylinder(GVector(0, 0, 0), GVector(0, 0, 1), 25.0, 60.0)
+    step_path = _force_bspline_and_roundtrip(solid, GeomAbs_Cylinder, tmp_path, "spline_cylinder")
+
+    gsolids, corrupted, spline = Gload_and_process_step(step_path, Tolerances())
+    assert corrupted == []
+    assert spline == [], "the cylinder-shaped spline face should have been substituted"
+    assert not Gspline_surface(gsolids[0].__native__)
+    assert gsolids[0].Volume == pytest.approx(math.pi * 25.0**2 * 60.0, rel=1e-6)
+
+
+def test_substitute_spline_torus(tmp_path):
+    from OCP.GeomAbs import GeomAbs_Torus
+
+    solid = Gmake_torus(GVector(0, 0, 0), GVector(0, 0, 1), 50.0, 12.0)
+    step_path = _force_bspline_and_roundtrip(solid, GeomAbs_Torus, tmp_path, "spline_torus")
+
+    gsolids, corrupted, spline = Gload_and_process_step(step_path, Tolerances())
+    assert corrupted == []
+    assert spline == [], "the torus-shaped spline face should have been substituted"
+    assert not Gspline_surface(gsolids[0].__native__)
+    assert gsolids[0].Volume == pytest.approx(2.0 * math.pi**2 * 50.0 * 12.0**2, rel=1e-6)
+
+
+def test_substitute_spline_sphere_known_limitation(tmp_path):
+    """Sphere is NOT yet reliably substituted for a real, STEP-round-
+    tripped spline face -- a genuine, still-open OCCT topology issue
+    (BRepCheck_UnorientableShape after substitution, unrelated to the
+    detection/fit itself, which succeeds cleanly) documented in CLAUDE.md.
+    This test exists to track that limitation, not to require it: the
+    all-or-nothing safety checks in Gsubstitute_spline_quadrics mean this
+    fails SAFELY (falls back to the pre-existing spline-solid policy, no
+    corruption) -- update this test (to expect success) once that gap is
+    closed."""
+    from OCP.GeomAbs import GeomAbs_Sphere
+
+    solid = Gmake_sphere(GVector(5, -3, 2), 18.0)
+    step_path = _force_bspline_and_roundtrip(solid, GeomAbs_Sphere, tmp_path, "spline_sphere")
+
+    gsolids, corrupted, spline = Gload_and_process_step(step_path, Tolerances())
+    assert corrupted == []
+    assert spline == [0], "known limitation: sphere substitution not yet resolved for a real STEP round-trip"
+    assert gsolids[0] is not None  # falls back safely, never dropped or corrupted

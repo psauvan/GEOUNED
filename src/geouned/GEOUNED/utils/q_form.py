@@ -81,6 +81,57 @@ def q_form_cyl(Axis, Pos, rad):
     return (A, B, C, D, E, F, G, H, J, K)
 
 
+def q_form_elliptic_cyl(MajorAxis, MinorAxis, Pos, MajorRadius, MinorRadius):
+    """GQ coefficients for an elliptic cylinder, added 2026-09-18 (see
+    CLAUDE.md's "Spline-vs-quadric identification" entry).
+
+    Unlike `q_form_cyl`, this does NOT reuse `rotation_matrix(u, v)` --
+    that helper only pins down the rotation mapping local-X to the
+    cylinder's own axis, leaving the rotation ABOUT that axis free
+    (irrelevant for a circular cross-section, since it's rotationally
+    symmetric, but not for an ellipse, whose major/minor axis
+    orientation must be preserved exactly). Built directly instead from
+    the symmetric matrix `M = MinorRadius^2 * (MajorAxis (x) MajorAxis)
+    + MajorRadius^2 * (MinorAxis (x) MinorAxis)`, via the identity
+    `(d.MajorAxis)^2/MajorRadius^2 + (d.MinorAxis)^2/MinorRadius^2 - 1 =
+    0` for `d = P - Pos` (rearranged to clear the two radius
+    denominators, so the surface equation is `d^T M d -
+    MajorRadius^2*MinorRadius^2 = 0`) expanded in world (x,y,z), then
+    re-centered on `Pos` via `Q(P) = P^T M P - 2 Pos^T M P + Pos^T M Pos
+    - MajorRadius^2*MinorRadius^2`. Confirmed reduces exactly to
+    `q_form_cyl`'s own `(I - Axis (x) Axis) * rad^2` matrix (up to the
+    same rad^2 overall scale factor -- immaterial, any nonzero multiple
+    of a GQ equation represents the same surface) when MajorRadius ==
+    MinorRadius, since MajorAxis/MinorAxis/Axis together form an
+    orthonormal frame (`MajorAxis (x) MajorAxis + MinorAxis (x)
+    MinorAxis = I - Axis (x) Axis`)."""
+    mx, my, mz = MajorAxis.x, MajorAxis.y, MajorAxis.z
+    nx, ny, nz = MinorAxis.x, MinorAxis.y, MinorAxis.z
+    b2 = MinorRadius**2
+    a2 = MajorRadius**2
+
+    A = b2 * mx**2 + a2 * nx**2
+    B = b2 * my**2 + a2 * ny**2
+    C = b2 * mz**2 + a2 * nz**2
+    M01 = b2 * mx * my + a2 * nx * ny
+    M12 = b2 * my * mz + a2 * ny * nz
+    M02 = b2 * mx * mz + a2 * nx * nz
+    D = 2.0 * M01
+    E = 2.0 * M12
+    F = 2.0 * M02
+
+    Lx = Pos.x * A + Pos.y * M01 + Pos.z * M02
+    Ly = Pos.x * M01 + Pos.y * B + Pos.z * M12
+    Lz = Pos.x * M02 + Pos.y * M12 + Pos.z * C
+
+    G = -2.0 * Lx
+    H = -2.0 * Ly
+    J = -2.0 * Lz
+    K = Pos.x * Lx + Pos.y * Ly + Pos.z * Lz - a2 * b2
+
+    return (A, B, C, D, E, F, G, H, J, K)
+
+
 def q_form_cone(Axis, Pos, tan):
 
     R = rotation_matrix(GVector(1, 0, 0), Axis)

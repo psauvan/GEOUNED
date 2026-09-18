@@ -41,6 +41,7 @@ from OCC.Core.GeomAbs import (
     GeomAbs_Line,
     GeomAbs_Plane,
     GeomAbs_Sphere,
+    GeomAbs_SurfaceOfExtrusion,
     GeomAbs_Torus,
 )
 from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnCurve
@@ -241,6 +242,76 @@ class GCylinder:
         return GCylinder.from_values(_to_gvector(center_pnt), axis, self.Radius)
 
 
+class GEllipticCylinder:
+    """A base (non-composite) analytic surface type, added 2026-09-18 --
+    see CLAUDE.md's "Spline-vs-quadric identification" entry. Field names
+    mirror GEOReverse's own `GEllipticCylinder` dataclass
+    (`GEOReverse/Modules/engine_dependency/_occ_impl.py`) exactly, so the
+    two pipelines share the same shape for this surface -- construction
+    (`Gmake_elliptic_cylinder`) is shared code, see `primitives.py`.
+
+    Recognized directly by `Gclassify_surface` from a native
+    `GeomAbs_SurfaceOfExtrusion` face whose basis curve is a `Geom_Ellipse`
+    and whose extrusion direction is parallel (or antiparallel) to the
+    ellipse's own plane normal -- a "straight" sweep. This is always an
+    EXACT recognition (the native OCCT representation already carries an
+    exact `Geom_Ellipse`, never a fitted approximation), unlike
+    `Gsubstitute_spline_quadrics`' sampling-based detection for a
+    BSplineSurface that's secretly a cylinder/sphere/torus -- so no
+    fitting/tolerance is involved here. An OBLIQUE extrusion (direction
+    not parallel to the ellipse's own normal) is deliberately NOT
+    recognized -- deriving the true elliptic-cylinder axes/radii of an
+    oblique sweep is a materially harder problem, out of scope for now
+    (per direct user instruction, matches the pattern of leaving cone out
+    of `Gsubstitute_spline_quadrics` until it's solved)."""
+
+    def __init__(self, center, axis, major_radius, minor_radius, major_axis, minor_axis, geom_surface=None):
+        self.Center = center
+        self.Axis = axis
+        self.MajorRadius = major_radius
+        self.MinorRadius = minor_radius
+        self.MajorAxis = major_axis
+        self.MinorAxis = minor_axis
+        self.__native__ = geom_surface
+
+    @classmethod
+    def from_values(
+        cls,
+        center: GVector,
+        axis: GVector,
+        major_radius: float,
+        minor_radius: float,
+        major_axis: GVector,
+        minor_axis: GVector,
+    ) -> "GEllipticCylinder":
+        return cls(center, axis, major_radius, minor_radius, major_axis, minor_axis)
+
+    def parameter(self, point: GVector) -> tuple[float, float]:
+        return _project_point_on_surface(point, self.__native__)
+
+    def is_inside(self, point: GVector) -> bool:
+        r = point - self.Center
+        x = r.dot(self.MajorAxis)
+        y = r.dot(self.MinorAxis)
+        return (x / self.MajorRadius) ** 2 + (y / self.MinorRadius) ** 2 - 1 < 0
+
+    def transform(self, matrix: gp_Trsf) -> "GEllipticCylinder":
+        def transformed_dir(vec: GVector) -> GVector:
+            p = gp_Pnt(vec.x, vec.y, vec.z).Transformed(matrix)
+            o = gp_Pnt(0, 0, 0).Transformed(matrix)
+            return GVector(p.X() - o.X(), p.Y() - o.Y(), p.Z() - o.Z()).normalized()
+
+        center_pnt = to_native_vector(self.Center).Transformed(matrix)
+        return GEllipticCylinder.from_values(
+            _to_gvector(center_pnt),
+            transformed_dir(self.Axis),
+            self.MajorRadius,
+            self.MinorRadius,
+            transformed_dir(self.MajorAxis),
+            transformed_dir(self.MinorAxis),
+        )
+
+
 class GCone:
     def __init__(self, gp_cone, geom_surface=None):
         ax3 = gp_cone.Position()
@@ -355,7 +426,38 @@ def Gclassify_surface(native_face):
             vertex = _to_gvector(BRep_Tool.Pnt(topods.Vertex(vexp.Current())))
             torus.a_sign = torus_sheet_sign(vertex, torus)
         return torus
+    if kind == GeomAbs_SurfaceOfExtrusion:
+        return _classify_elliptic_cylinder_extrusion(native_face)
     return None
+
+
+def _classify_elliptic_cylinder_extrusion(native_face):
+    """See `GEllipticCylinder`'s own docstring: recognizes a "straight"
+    linear extrusion of an exact `Geom_Ellipse` -- returns None for any
+    other extrusion (a different basis curve, or an oblique sweep)."""
+    from OCC.Core.Geom import Geom_Ellipse, Geom_SurfaceOfLinearExtrusion
+
+    # pythonocc-core (unlike OCP's pybind11 automatic downcast) returns
+    # the base Geom_Surface handle from BRep_Tool.Surface -- needs an
+    # explicit DownCast to reach SurfaceOfLinearExtrusion-specific
+    # methods like BasisCurve()/Direction().
+    native_surf = Geom_SurfaceOfLinearExtrusion.DownCast(BRep_Tool.Surface(native_face))
+    basis = Geom_Ellipse.DownCast(native_surf.BasisCurve())
+    if basis is None:
+        return None
+    ellipse_axis = basis.Axis().Direction()
+    extrusion_dir = native_surf.Direction()
+    if abs(abs(ellipse_axis.Dot(extrusion_dir)) - 1.0) > 1e-6:
+        return None
+    return GEllipticCylinder(
+        center=_to_gvector(basis.Location()),
+        axis=_to_gvector(ellipse_axis),
+        major_radius=basis.MajorRadius(),
+        minor_radius=basis.MinorRadius(),
+        major_axis=_to_gvector(basis.XAxis().Direction()),
+        minor_axis=_to_gvector(basis.YAxis().Direction()),
+        geom_surface=native_surf,
+    )
 
 
 # ---------------------------------------------------------------------------

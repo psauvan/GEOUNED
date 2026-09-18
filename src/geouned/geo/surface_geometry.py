@@ -127,6 +127,25 @@ def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
     return perpendicular.length <= 1e-5
 
 
+def is_same_elliptic_cylinder_surface(cylinder_1, cylinder_2) -> bool:
+    """Mirrors `is_same_cylinder_surface` for `GEllipticCylinder`, added
+    2026-09-18 (see CLAUDE.md's "Spline-vs-quadric identification"
+    entry) -- same fixed 1e-5 tolerances, same axis-line (not raw
+    Center-distance) test, plus a MajorAxis alignment check (either sign)
+    an ellipse needs that a circle doesn't."""
+    if abs(cylinder_1.MajorRadius - cylinder_2.MajorRadius) > 1e-5:
+        return False
+    if abs(cylinder_1.MinorRadius - cylinder_2.MinorRadius) > 1e-5:
+        return False
+    if abs(cylinder_1.Axis.dot(cylinder_2.Axis)) < 0.99999:
+        return False
+    if abs(cylinder_1.MajorAxis.dot(cylinder_2.MajorAxis)) < 0.99999:
+        return False
+    offset = cylinder_1.Center - cylinder_2.Center
+    perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
+    return perpendicular.length <= 1e-5
+
+
 def is_same_cone_surface(cone_1, cone_2) -> bool:
     """Direct port of the former `ConeGu.isSameSurface`, same fixed tolerances."""
     if abs(cone_1.SemiAngle - cone_2.SemiAngle) > 1e-5:

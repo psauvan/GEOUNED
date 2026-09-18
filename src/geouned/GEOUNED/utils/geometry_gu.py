@@ -14,6 +14,7 @@ from .basic_functions_part2 import is_same_torus
 from .data_classes import Tolerances
 from ...geo import vector_geometry, surface_geometry
 from ...geo import (
+    CAD_ENGINE,
     GCone,
     GCylinder,
     GFace,
@@ -35,6 +36,23 @@ _SAME_SURFACE_PREDICATE = {
     GSphere: surface_geometry.is_same_sphere_surface,
     GTorus: surface_geometry.is_same_torus_surface,
 }
+if CAD_ENGINE in ("occ", "ocp"):
+    # GEllipticCylinder (2026-09-18, see CLAUDE.md's "Spline-vs-quadric
+    # identification" entry) doesn't exist under geo/freecad/__init__.py
+    # -- guarded the same way every other occ/ocp-only name in this
+    # package is (e.g. Gmake_torus_elliptic's own call sites).
+    from ...geo import GEllipticCylinder
+
+    _SAME_SURFACE_PREDICATE[GEllipticCylinder] = surface_geometry.is_same_elliptic_cylinder_surface
+else:
+
+    class GEllipticCylinder:
+        """Placeholder under freecad (which has no elliptic-cylinder
+        support at all): keeps `isinstance(face.Surface, GU.
+        GEllipticCylinder)` checks elsewhere in GEOUNED valid without an
+        AttributeError -- always False in practice, since `Gclassify_
+        surface` never produces a real instance of this stand-in under
+        freecad."""
 
 
 def is_same_surface(surface_1, surface_2):

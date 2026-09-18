@@ -18,6 +18,7 @@ from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_Sewing,
     BRepBuilderAPI_Transform,
 )
+from OCC.Core.BRepOffsetAPI import BRepOffsetAPI_ThruSections
 from OCC.Core.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
@@ -62,6 +63,77 @@ def Gmake_cylinder(point: GVector, axis: GVector, radius: float, height: float) 
     ax2 = gp_Ax2(to_native_vector(point), gp_Dir(axis.x, axis.y, axis.z))
     native = BRepPrimAPI_MakeCylinder(ax2, radius, height).Shape()
     return GSolid(native)
+
+
+def _make_ellipse_wire(center: "gp_Pnt", axis_dir: "gp_Dir", xdir: "gp_Dir", major_r: float, minor_r: float):
+    ax2 = gp_Ax2(center, axis_dir, xdir)
+    ellipse = Geom_Ellipse(ax2, major_r, minor_r)
+    edge = BRepBuilderAPI_MakeEdge(ellipse).Edge()
+    return BRepBuilderAPI_MakeWire(edge).Wire()
+
+
+def Gmake_elliptic_cylinder(
+    center: GVector,
+    axis: GVector,
+    major_radius: float,
+    minor_radius: float,
+    major_axis: GVector,
+    minor_axis: GVector,
+    height: float,
+) -> GSolid:
+    """Moved here from `GEOReverse/Modules/engine_dependency/_occ_impl.py`
+    2026-09-18 (see CLAUDE.md's "Spline-vs-quadric identification" entry
+    -- the first of GEOReverse's own "exotic quadric" primitives GEOUNED's
+    own forward pipeline now needs too, matching the earlier
+    `Gmake_torus_elliptic` precedent, same reasoning), now the single
+    shared implementation for both pipelines -- GEOReverse's own
+    `_occ_impl.py` re-exports this name rather than duplicating it.
+
+    Construction technique (per direct user instruction, 2026-09-13,
+    ported as-is): an elliptic profile in a plane whose normal is the
+    cylinder's own axis, the axis passing through the ellipse's center;
+    the cylinder is built by displacing this profile along the axis
+    (ruled loft between the two identical, axis-translated ellipses --
+    every generator line is straight and parallel to the axis, exactly
+    the analytic lateral surface of a right elliptic cylinder), then
+    closing the two open ends with planar caps. `center` is the
+    extrusion's own START point, not its true geometric midpoint -- the
+    two ellipse profiles sit at `center` and `center + axis*height`,
+    matching `_freecad_impl.py`'s own `build_shape` convention (both real
+    call sites, GEOReverse's `Objects.py::EllipticCylinder.buildShape`
+    and GEOUNED's own `build_shape_functions.py::makeEllipticCylinder`,
+    already compute it this way)."""
+    axis_dir = gp_Dir(axis.x, axis.y, axis.z)
+    xdir = gp_Dir(major_axis.x, major_axis.y, major_axis.z)
+    p1 = to_native_vector(center)
+    p2 = to_native_vector(center + axis * height)
+
+    wire1 = _make_ellipse_wire(p1, axis_dir, xdir, major_radius, minor_radius)
+    wire2 = _make_ellipse_wire(p2, axis_dir, xdir, major_radius, minor_radius)
+
+    lofter = BRepOffsetAPI_ThruSections(False, True)  # isSolid=False, ruled=True
+    lofter.AddWire(wire1)
+    lofter.AddWire(wire2)
+    lofter.Build()
+    lateral = lofter.Shape()
+
+    cap1 = BRepBuilderAPI_MakeFace(wire1).Face()
+    cap2 = BRepBuilderAPI_MakeFace(wire2).Face()
+
+    sewer = BRepBuilderAPI_Sewing(1e-6)
+    exp = TopExp_Explorer(lateral, TopAbs_FACE)
+    while exp.More():
+        sewer.Add(topods.Face(exp.Current()))
+        exp.Next()
+    sewer.Add(cap1)
+    sewer.Add(cap2)
+    sewer.Perform()
+    sewn = sewer.SewedShape()
+
+    solid = GSolid(BRepBuilderAPI_MakeSolid(topods.Shell(sewn)).Solid())
+    if solid.Volume < 0:
+        solid = solid.reverse()
+    return solid
 
 
 def Gmake_cone(apex: GVector, axis: GVector, half_angle: float, height: float) -> GSolid:

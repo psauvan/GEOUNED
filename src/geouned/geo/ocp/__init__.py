@@ -16,6 +16,20 @@ topology.py<->io.py) broken with function-local (lazy) imports.
 `GEOReverse` (CsgToCad) is out of scope for this whole package entirely
 -- it keeps importing FreeCAD/Part directly, unconditionally, regardless
 of GEOUNED_CAD_ENGINE (see geouned/__init__.py).
+
+`spline_quadrics.py`'s `Gsubstitute_spline_quadrics` (2026-09-18) lets a
+BSplineSurface face that's secretly a cylinder/sphere/torus be recovered
+instead of dropping the whole solid -- called from `Gload_and_process_
+step`, not part of `Gclassify_surface` itself. Cone is deliberately
+excluded (see that module's own docstring and CLAUDE.md's "Spline-vs-
+quadric identification" entry for why).
+
+`GEllipticCylinder` (2026-09-18, same entry) is a 6th BASE analytic
+surface type, recognized directly by `Gclassify_surface` from an exact
+(never fitted) `GeomAbs_SurfaceOfExtrusion` of a `Geom_Ellipse` -- the
+first of GEOReverse's own "exotic quadric" surfaces GEOUNED's forward
+pipeline now supports too, per direct user instruction (deliberately
+NOT combined into composite meta-surfaces like RoundCorner/Can yet).
 """
 
 from __future__ import annotations
@@ -28,6 +42,7 @@ from .topology import (
     GCylinder,
     GEdge,
     GEllipse,
+    GEllipticCylinder,
     GFace,
     GLine,
     GPlane,
@@ -54,6 +69,7 @@ from .repair import (
     Gspline_surface,
 )
 from .io import Gexport_step, Gfirst_shell, Gload_and_process_step, Gload_step, Gload_step_labels
+from .spline_quadrics import Gsubstitute_spline_quadrics
 from .primitives import (
     Gmake_box,
     Gmake_compound,
@@ -61,6 +77,7 @@ from .primitives import (
     Gmake_cone_double_sheet,
     Gmake_cone_frustum,
     Gmake_cylinder,
+    Gmake_elliptic_cylinder,
     Gmake_half_space,
     Gmake_polygon_face,
     Gmake_shell,

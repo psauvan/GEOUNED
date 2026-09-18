@@ -140,6 +140,41 @@ def cylinder_from_box(center: GVector, axis: GVector, radius: float, box: GBound
     return Gmake_cylinder(point, axis, radius, height)
 
 
+def elliptic_cylinder_from_box(
+    center: GVector,
+    axis: GVector,
+    major_radius: float,
+    minor_radius: float,
+    major_axis: GVector,
+    minor_axis: GVector,
+    box: GBoundBox,
+):
+    """Same technique as `cylinder_from_box` -- a solid long enough to
+    fully cover `box` along `axis`, 10% margin on each end -- for a
+    `GEllipticCylinder` (added 2026-09-18, see CLAUDE.md's "Spline-vs-
+    quadric identification" entry). `Gmake_elliptic_cylinder` is imported
+    function-locally, not at module level, since it doesn't exist under
+    `geo/freecad/__init__.py` (elliptic-cylinder recognition is occ/ocp
+    only -- matches the exact same precedent already used for
+    `Gmake_torus_elliptic` in `geouned_classes.py`'s Torus branch)."""
+    from ....geo import Gmake_elliptic_cylinder
+
+    dmin = axis.dot(box.get_point(0) - center)
+    dmax = dmin
+    for i in range(1, 8):
+        d = axis.dot(box.get_point(i) - center)
+        dmin = min(d, dmin)
+        dmax = max(d, dmax)
+
+    height = dmax - dmin
+    dmin -= 0.1 * height
+    dmax += 0.1 * height
+    height = dmax - dmin
+
+    point = center + dmin * axis
+    return Gmake_elliptic_cylinder(point, axis, major_radius, minor_radius, major_axis, minor_axis, height)
+
+
 def cone_from_box(apex: GVector, axis: GVector, tan: float, box: GBoundBox):
     """
     Build a cone solid extending from `apex` along `axis` (or `-axis`, if

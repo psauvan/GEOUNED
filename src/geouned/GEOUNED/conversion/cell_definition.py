@@ -21,6 +21,7 @@ from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
     gen_plane,
     gen_cylinder,
+    gen_elliptic_cylinder,
     gen_cone,
     gen_sphere,
     gen_torus,
@@ -176,6 +177,16 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             cylinder = GeounedSurface(("Cylinder", (cylinderOnly, None), face.Orientation))
             cylinder_region = Surfaces.add_cylinder(cylinder)
             component_definition.append(cylinder_region)
+
+        elif isinstance(face.Surface, GU.GEllipticCylinder):
+            # base surface only, no composite-meta-surface combination
+            # yet (2026-09-18, see CLAUDE.md's "Spline-vs-quadric
+            # identification" entry) -- mirrors the GCylinder branch
+            # above exactly.
+            ellipticCylinderOnly = gen_elliptic_cylinder(face)
+            ellipticCylinder = GeounedSurface(("EllipticCylinder", (ellipticCylinderOnly, None), face.Orientation))
+            elliptic_cylinder_region = Surfaces.add_elliptic_cylinder(ellipticCylinder)
+            component_definition.append(elliptic_cylinder_region)
 
         elif isinstance(face.Surface, GU.GCone):
             # this branch doesn't need additional plane for

@@ -319,6 +319,28 @@ def mcnp_surface(id, Type, surf, options, tolerances, numeric_format):
         #    rad=surf.Radius/10.0
         #    mcnp_def='%i  RCC  %13.7E %13.7E %13.7E %13.7E\n       %13.7E %13.7E %13.7E' %(id,Vx,Vy,Vz,Hx,Hy,Hz,rad)
 
+    elif Type == "EllipticCylinderOnly":
+        # No axis-aligned shortcut exists for an elliptic cylinder --
+        # unlike CylinderOnly's CX/CY/CZ, MCNP has no elliptic-cylinder
+        # primitive card at all, so this always writes a general GQ card
+        # (added 2026-09-18, see CLAUDE.md's "Spline-vs-quadric
+        # identification" entry).
+        Pos = surf.Center * 0.1
+        majorRad = surf.MajorRadius * 0.1
+        minorRad = surf.MinorRadius * 0.1
+        Q = q_form.q_form_elliptic_cyl(surf.MajorAxis, surf.MinorAxis, Pos, majorRad, minorRad)
+        mcnp_def = """\
+{:<6d} GQ  {v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}}
+          {v[3]:{aTof}} {v[4]:{aTof}} {v[5]:{aTof}}
+          {v[6]:{gToi}} {v[7]:{gToi}} {v[8]:{gToi}}
+          {v[9]:{j}} """.format(
+            id,
+            v=Q,
+            aTof=numeric_format.GQ_1to6,
+            gToi=numeric_format.GQ_7to9,
+            j=numeric_format.GQ_10,
+        )
+
     elif Type == "ConeOnly":
         Apex = surf.Apex * 0.1
         Dir = surf.Axis * 0.1
@@ -579,6 +601,30 @@ def open_mc_surface(Type, surf, tolerances, numeric_format, out_xml=True, quadri
                     omc_surf = "Cylinder"
                     coeffs = "x0={},y0={},z0={},r={},dx={},dy={},dz={}".format(pos.x, pos.y, pos.z, Rad, Dir.x, Dir.y, Dir.z)
 
+    elif Type == "EllipticCylinderOnly":
+        # No axis-aligned OR general-direction-cylinder shortcut exists
+        # for an elliptic cylinder (unlike CylinderOnly's x/y/z-cylinder
+        # and its own generic "Cylinder" surface for an arbitrary axis
+        # direction) -- OpenMC has no elliptic-cylinder primitive at all,
+        # so this always writes the generic quadric surface (added
+        # 2026-09-18, see CLAUDE.md's "Spline-vs-quadric identification"
+        # entry).
+        pos = surf.Center * 0.1
+        majorRad = surf.MajorRadius * 0.1
+        minorRad = surf.MinorRadius * 0.1
+        Q = q_form.q_form_elliptic_cyl(surf.MajorAxis, surf.MinorAxis, pos, majorRad, minorRad)
+        if out_xml:
+            omc_surf = "quadric"
+            coeffs = "{v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}} {v[3]:{aTof}} {v[4]:{aTof}} {v[5]:{aTof}} {v[6]:{gToi}} {v[7]:{gToi}} {v[8]:{gToi}} {v[9]:{j}}".format(
+                v=Q,
+                aTof=numeric_format.GQ_1to6,
+                gToi=numeric_format.GQ_7to9,
+                j=numeric_format.GQ_10,
+            )
+        else:
+            omc_surf = "Quadric"
+            coeffs = "a={v[0]},b={v[1]},c={v[2]},d={v[3]},e={v[4]},f={v[5]},g={v[6]},h={v[7]},j={v[8]},k={v[9]}".format(v=Q)
+
     elif Type == "ConeOnly":
         Apex = surf.Apex * 0.1
         Dir = surf.Axis.normalized()
@@ -767,6 +813,23 @@ surf quadratic  {v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}}
                 j=numeric_format.GQ_10,
             )
 
+    elif Type == "EllipticCylinderOnly":
+        Pos = surf.Center * 0.1
+        majorRad = surf.MajorRadius * 0.1
+        minorRad = surf.MinorRadius * 0.1
+        Q = q_form.q_form_elliptic_cyl(surf.MajorAxis, surf.MinorAxis, Pos, majorRad, minorRad)
+        serpent_def = """\
+surf quadratic  {v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}}
+          {v[3]:{aTof}} {v[4]:{aTof}} {v[5]:{aTof}}
+          {v[6]:{gToi}} {v[7]:{gToi}} {v[8]:{gToi}}
+          {v[9]:{j}} """.format(
+            id,
+            v=Q,
+            aTof=numeric_format.GQ_1to6,
+            gToi=numeric_format.GQ_7to9,
+            j=numeric_format.GQ_10,
+        )
+
     elif Type == "ConeOnly":
         Apex = surf.Apex * 0.1
         Dir = surf.Axis * 0.1
@@ -940,6 +1003,23 @@ def phits_surface(id, Type, surf, options, tolerance, numeric_format):
         #    Hz= dir.z/10.0
         #    rad=surf.Radius/10.0
         #    mcnp_def='%i  RCC  %13.7E %13.7E %13.7E %13.7E\n       %13.7E %13.7E %13.7E' %(id,Vx,Vy,Vz,Hx,Hy,Hz,rad)
+
+    elif Type == "EllipticCylinderOnly":
+        Pos = surf.Center * 0.1
+        majorRad = surf.MajorRadius * 0.1
+        minorRad = surf.MinorRadius * 0.1
+        Q = q_form.q_form_elliptic_cyl(surf.MajorAxis, surf.MinorAxis, Pos, majorRad, minorRad)
+        phits_def = """\
+{:<6d} GQ  {v[0]:{aTof}} {v[1]:{aTof}} {v[2]:{aTof}}
+          {v[3]:{aTof}} {v[4]:{aTof}} {v[5]:{aTof}}
+          {v[6]:{gToi}} {v[7]:{gToi}} {v[8]:{gToi}}
+          {v[9]:{j}} """.format(
+            id,
+            v=Q,
+            aTof=numeric_format.GQ_1to6,
+            gToi=numeric_format.GQ_7to9,
+            j=numeric_format.GQ_10,
+        )
 
     elif Type == "ConeOnly":
         Apex = surf.Apex * 0.1

@@ -31,6 +31,18 @@ def gen_cylinder(face):
     return GeounedSurface(("CylinderOnly", (Center, Axis, Radius, 1)))
 
 
+def gen_elliptic_cylinder(face):
+    """Mirrors `gen_cylinder`, added 2026-09-18 (see CLAUDE.md's
+    "Spline-vs-quadric identification" entry)."""
+    Axis = face.Surface.Axis
+    Center = face.Surface.Center
+    MajorRadius = face.Surface.MajorRadius
+    MinorRadius = face.Surface.MinorRadius
+    MajorAxis = face.Surface.MajorAxis
+    MinorAxis = face.Surface.MinorAxis
+    return GeounedSurface(("EllipticCylinderOnly", (Center, Axis, MajorRadius, MinorRadius, MajorAxis, MinorAxis)))
+
+
 def gen_cone(face):
     Axis = face.Surface.Axis
     Apex = face.Surface.Apex

@@ -504,6 +504,33 @@ class CylinderOnlyParams:
         return outstr
 
 
+class EllipticCylinderOnlyParams:
+    """Base (non-composite) surface -- see geo's `GEllipticCylinder` for
+    the CAD-detection side, added 2026-09-18 (CLAUDE.md's "Spline-vs-
+    quadric identification" entry). Field order mirrors
+    `CylinderOnlyParams` (Center/Axis first), then MajorRadius/MinorRadius
+    (matching GEOReverse's own `GEllipticCylinder` dataclass field order
+    -- major before minor), then MajorAxis/MinorAxis."""
+
+    def __init__(self, params):
+        self.Center = params[0]
+        self.Axis = params[1]
+        self.MajorRadius = params[2]
+        self.MinorRadius = params[3]
+        self.MajorAxis = params[4]
+        self.MinorAxis = params[5]
+
+    def __str__(self):
+        outstr = f"""EllipticCylinder :
+    Axis        : {self.Axis.x}  {self.Axis.y}  {self.Axis.z}
+    Center      : {self.Center.x}  {self.Center.y}  {self.Center.z}
+    MajorRadius : {self.MajorRadius}
+    MinorRadius : {self.MinorRadius}
+    MajorAxis   : {self.MajorAxis.x}  {self.MajorAxis.y}  {self.MajorAxis.z}
+    MinorAxis   : {self.MinorAxis.x}  {self.MinorAxis.y}  {self.MinorAxis.z}  """
+        return outstr
+
+
 class ConeOnlyParams:
     def __init__(self, params):
         self.Apex = params[0]
@@ -662,6 +689,19 @@ class CylinderParams:
 
     def __str__(self):
         outstr = f"""Cylinder :\n"""
+        outstr += f"{self.Cylinder.__str__()} \n"
+        if self.Plane:
+            outstr += f"{self.Plane.__str__()} \n"
+        return outstr
+
+
+class EllipticCylinderParams:
+    def __init__(self, params):
+        self.Cylinder = params[0]
+        self.Plane = params[1]
+
+    def __str__(self):
+        outstr = f"""EllipticCylinder :\n"""
         outstr += f"{self.Cylinder.__str__()} \n"
         if self.Plane:
             outstr += f"{self.Plane.__str__()} \n"
