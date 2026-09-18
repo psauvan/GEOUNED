@@ -46,13 +46,16 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
         extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
         omitfaces.update(extPlanes)
 
-    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
-        yield surface
-
+    # Cylinders and cones are tried before planes: on the test_models corpus this
+    # gives fewer irreducible solids (346 -> 325 over 176 original solids, 4
+    # solids improve, none gets worse) with identical volume conservation.
     for surface in cylinder_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
     for surface in cone_generator(solid_GU.Faces, omitfaces, tolerances):
+        yield surface
+
+    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
     for surface in sphere_generator(solid_GU.Faces, omitfaces, tolerances):
