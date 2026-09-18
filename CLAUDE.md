@@ -380,8 +380,12 @@ this note.)
   unchanged, 4 improve (`Mixed/ring` 32 -> 20, `Mixed/sleeve` 28 -> 21,
   `Cans/RevTcan` 6 -> 5, `Cans/Tcan` 3 -> 2), none gets worse. 4 files do
   not decompose under either order: `SCDR_90_piece2`,
-  `modelcell_cut1_v2_piece66`, `SCDR_90_hollow` (`SystemExit` at load --
-  the `spline_surfaces`/`corrupted_solids` "stop" policy) and
+  `modelcell_cut1_v2_piece66`, `SCDR_90_hollow` (`SystemExit` at load:
+  `corrupted_solids="stop"` -- `check_solid_defects` reports
+  "degenerate/sliver geometry", a face with `CharacteristicWidth` below
+  `min_face_width` on a pathologically short edge; topology is valid, the
+  faces are plane/cylinder/cone only and `Gspline_surface` is False, so
+  neither splines nor unsupported surfaces are involved) and
   `ConeSphere` (the native crash). The permanent order was checked to
   reproduce the experiment exactly (325, 0 per-solid differences).
   **A real, independent bug surfaced by the new order**:
