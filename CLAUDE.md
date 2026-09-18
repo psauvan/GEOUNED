@@ -361,6 +361,78 @@ this note.)
   needs no dedicated fixture to trust: it's a direct reuse of
   `_find_adjacent_multiplane_planes`'s own already-validated topological
   walk, not a new, unexercised code path of its own.
+- **`get_surfaces` now tries cylinder and cone cutting surfaces before
+  planes, and `arc_extent`'s wrap-nesting bug fixed, 2026-09-18**
+  (commits `0b8e2e1` and `54eefa5`). Per direct user request, the order
+  of the loops in `decompose/generators.py::get_surfaces` (previously
+  planes -> cylinders -> cones) was compared against
+  cylinders -> cones -> planes by counting *irreducible solids* -- the
+  leaves of `generic_split`'s recursive decomposition, i.e. fragments no
+  candidate surface can split any further -- per ORIGINAL solid (a
+  wrapper around `decom_one_generators.split_surfaces` records one entry
+  per solid `main_split` hands it, so a STEP with N solids counts each
+  separately). All 143 non-`Big_*` files of `Solidos/test_models`, `ocp`,
+  one fresh subprocess per file (isolates the known native crash of
+  `Mixed/ConeSphere.stp`), files of the same folder sequential and
+  folders in parallel, plus a repeat of the baseline as a determinism
+  control (0 differences). Result over the 176 original solids that
+  decompose: **346 -> 325 irreducible solids (-6.1%)**; 172 solids
+  unchanged, 4 improve (`Mixed/ring` 32 -> 20, `Mixed/sleeve` 28 -> 21,
+  `Cans/RevTcan` 6 -> 5, `Cans/Tcan` 3 -> 2), none gets worse. 4 files do
+  not decompose under either order: `SCDR_90_piece2`,
+  `modelcell_cut1_v2_piece66`, `SCDR_90_hollow` (`SystemExit` at load --
+  the `spline_surfaces`/`corrupted_solids` "stop" policy) and
+  `ConeSphere` (the native crash). The permanent order was checked to
+  reproduce the experiment exactly (325, 0 per-solid differences).
+  **A real, independent bug surfaced by the new order**:
+  `Mixed/sleeve.stp` raised `ValueError: arc_extent: pairs split into 3
+  disconnected groups, not a single arc` under it (from `next_Can` ->
+  `closed_cylinder_cone` -> `merge_same_surface_faces` -> `ShellFaceGu.
+  _U_parameter_faces`, an exception `generic_split` does not catch, so
+  the whole solid's decomposition aborted). `geo/vector_geometry.py::
+  arc_extent` sweeps the U intervals in a frame cut at 0/2*pi but never
+  compared a pair running ACROSS that cut with the pairs lying under its
+  wrapped tail: here 7 faces of one R=115 cylinder in two axial bands,
+  one face starting exactly on the cut, whose wrapped tail covers
+  everything else -- extra groups, hence the raise. It also had a
+  SILENT failure mode: with a single nested group the arc was returned
+  truncated at that group's end (about 1 in 20 random single-arc
+  configurations returned a wrong endpoint, about 1 in 8 raised; never
+  observed in the real corpus, where the order-A results are unchanged).
+  Fixed by keeping the sweep exactly as it was and absorbing, in order,
+  every group that starts inside the wrapped tail (each may extend it
+  further); within `tol` the group's own end wins, so the returned
+  values AND face indices (consumed literally as `Faces[ifacemin]`/
+  `Faces[ifacemax]` by `extreme_edge`/`get_shell_UV_nodes`) are
+  identical to the previous ones wherever those were correct: 0
+  differences over 900,000 random single-arc configurations, and the
+  order-A decomposition of the whole corpus unchanged (176 solids, 0
+  count changes, 0 status changes). Where the previous code raised or
+  was wrong, the new one matches ground truth up to `tol` (1e-5).
+  `tests/geo/test_vector_geometry.py` gained 7 tests (the real `sleeve`
+  pairs, the silent-truncation case, real gaps still raising, a seeded
+  randomized check against ground truth); the three targeted ones fail
+  against the previous implementation.
+  **Verified**: d1suned (NPS 1e6, the pipeline's standard) on the 4
+  changed solids under both orders: all 8 tallies within 2 sigma of 1.0,
+  0 lost particles, no "fatal error", SD4 = true CAD volume. The 0.38%
+  gap between orders in `sleeve` (1.00261 vs 0.99877) is purely
+  statistical (1.0 sigma of the difference of two independent estimates,
+  0.27%*sqrt(2); MCNP's random-number consumption depends on how cells
+  are subdivided, so identical histories cannot be assumed across
+  decompositions -- an initial reading of it as a geometric difference
+  was wrong, corrected by the user). Exact CAD-side check, no MCNP: the
+  irreducible pieces' volumes sum to the original solid's volume within
+  1.4e-9 relative in all 8 cases. Full suites green on all 3 engines
+  after each commit (freecad 186 passed/16 skipped, occ 220 passed/1
+  skipped, ocp 220 passed/1 skipped).
+  **Not verified**: a full-corpus d1suned run with the new order -- the
+  172 solids whose irreducible COUNT is unchanged could still have
+  decomposed differently. Also note: `RevTcan` under the new order has a
+  12.6 mm^3 piece, smaller than any piece of the old order (its d1suned
+  tally is identical to the old one's). The counting/verification
+  scripts were throwaway (session scratchpad), not preserved in the
+  repo.
 
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 
