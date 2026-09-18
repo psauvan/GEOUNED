@@ -1,9 +1,10 @@
 import math
+import random
 
 import pytest
 
 from geouned.geo import GBoundBox, GCylinder, GPlane, GVector
-from geouned.geo.vector_geometry import arbitrary_perpendicular, to_gboundbox
+from geouned.geo.vector_geometry import arbitrary_perpendicular, arc_extent, to_gboundbox
 from geouned.geo.surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
@@ -212,3 +213,111 @@ def test_arbitrary_perpendicular(axis):
     perp = arbitrary_perpendicular(axis)
     assert abs(perp.dot(axis)) < 1e-9
     assert abs(perp.length - 1.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# arc_extent
+# ---------------------------------------------------------------------------
+
+_TWO_PI = 2.0 * math.pi
+
+
+def _ang_diff(a, b):
+    d = (a - b) % _TWO_PI
+    return min(d, _TWO_PI - d)
+
+
+def test_arc_extent_single_pair():
+    assert arc_extent([(1.0, 2.5)]) == (1.0, 0, 2.5, 0)
+
+
+def test_arc_extent_chained_overlap():
+    umin, imin, umax, imax = arc_extent([(2.0, 3.0), (0.5, 2.2)])
+    assert (umin, imin, umax, imax) == (0.5, 1, 3.0, 0)
+
+
+def test_arc_extent_stitches_across_the_boundary():
+    # one arc from 6.0 rad through 0/2*pi to 0.3 rad, in two pieces
+    umin, imin, umax, imax = arc_extent([(6.0, _TWO_PI), (0.0, 0.3)])
+    assert (umin, imin) == (6.0, 0)
+    assert (umax, imax) == (0.3, 1)
+
+
+def test_arc_extent_real_gap_still_raises():
+    with pytest.raises(ValueError):
+        arc_extent([(0.5, 1.0), (2.0, 2.5)])
+    with pytest.raises(ValueError):
+        arc_extent([(0.5, 1.0), (2.0, 2.5), (4.0, 4.5)])
+
+
+def test_arc_extent_nested_under_wrapped_tail_ends_at_the_tail():
+    # The wrapping pair (6.0 -> 6.5 == 0.2168 after the wrap) covers the
+    # nested pair (0.05, 0.2); the arc really ends at the wrapped tail, not
+    # at the nested pair's end (the previous algorithm returned 0.2 here,
+    # silently truncating the arc).
+    umin, imin, umax, imax = arc_extent([(6.0, 6.5), (0.05, 0.2)])
+    assert (umin, imin) == (6.0, 0)
+    assert (umax, imax) == (6.5, 0)
+
+
+def test_arc_extent_sleeve_cylinder_seven_faces():
+    # Real data: the 7 faces of one R=115 cylinder in Mixed/sleeve.stp (two
+    # axial bands whose U intervals nest under a face that starts exactly on
+    # the 0/2*pi cut). The previous algorithm split them into 3 "disconnected"
+    # groups and raised ValueError, aborting the decomposition of the solid.
+    pairs = [
+        (2.0173770178394963, 2.171413186947318),
+        (2.0943951023934235, 3.085498235515562),
+        (6.283185307179581, 8.377580409573),
+        (0.991103133121801, 1.1032919692720564),
+        (6.283185307179581, 6.360203391733817),
+        (6.279270721607444, 6.283185307179587),
+        (6.279270721607446, 6.283185307179604),
+    ]
+    assert arc_extent(pairs) == (6.279270721607444, 5, 3.085498235515562, 1)
+
+
+def _random_single_arc(rng):
+    """A random set of pairs whose union is exactly one arc [s, s+L), L < 2*pi:
+    contiguous or chain-overlapping tiles, extra pairs nested inside the arc,
+    and sometimes a pair starting exactly on a multiple of 2*pi."""
+    s = rng.uniform(-4 * math.pi, 4 * math.pi)
+    length = rng.uniform(0.05, 5.9)
+    cuts = sorted(rng.uniform(0, length) for _ in range(rng.randint(0, 4)))
+    edges = [0.0] + cuts + [length]
+    pairs = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b - a < 1e-6:
+            continue
+        pad = rng.choice([0.0, 0.0, rng.uniform(0, 0.3)])
+        pairs.append((s + max(0.0, a - pad), s + min(length, b + pad)))
+    if not pairs:
+        pairs = [(s, s + length)]
+    for _ in range(rng.randint(0, 4)):
+        a = rng.uniform(0, length)
+        b = rng.uniform(a, length)
+        if b - a > 1e-6:
+            pairs.append((s + a, s + b))
+    if rng.random() < 0.4:
+        cut = math.ceil(s / _TWO_PI) * _TWO_PI - s
+        if 0 < cut < length:
+            eps = rng.choice([0.0, -5e-15, 5e-15])
+            pairs.append((s + cut + eps, min(s + length, s + cut + rng.uniform(0.01, length))))
+    pairs = [(a + _TWO_PI * m, b + _TWO_PI * m) for (a, b) in pairs for m in [rng.choice([0, 0, 0, -1, 1, 2])]]
+    rng.shuffle(pairs)
+    return s, length, pairs
+
+
+def test_arc_extent_random_single_arcs_match_ground_truth():
+    # The endpoints must match the true arc to within arc_extent's own 1e-5
+    # tolerance for every configuration -- including arcs crossing 0/2*pi with
+    # pairs nested under a wrapped tail (about 1 in 8 of these configurations
+    # made the previous algorithm raise, and about 1 in 20 return a silently
+    # wrong endpoint).
+    rng = random.Random(20260918)
+    for _ in range(20000):
+        s, length, pairs = _random_single_arc(rng)
+        umin, imin, umax, imax = arc_extent(pairs)
+        assert _ang_diff(umin, s) < 1e-5
+        assert _ang_diff(umax, s + length) < 1e-5
+        assert umin == pairs[imin][0] and umax == pairs[imax][1]
