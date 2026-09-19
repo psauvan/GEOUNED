@@ -16,6 +16,7 @@ import BOPTools.SplitAPI
 
 from .topology import GShape, GSolid
 from ..solid_defects import valid_solid
+from ..constants import DEFAULT_SPLIT_SCALE, KERNEL_TOL_E13, SPLIT_TOL_MAX, SPLIT_TOL_MIN, VOLUME_MIN_E3
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ def Gsplit(
     tolerances,
 ) -> SplitResult:
 
-    scale = 0.1
+    scale = DEFAULT_SPLIT_SCALE
     split_tolerance = tolerances.split_tolerance
     scale_up_floor = tolerances.scale_up_floor
     scale = tolerances.scale
@@ -61,7 +62,7 @@ def recursive_freecad_Gsplit(
     base: GSolid,
     tool: GShape,
     tolerance: float,
-    scale: float = 0.1,
+    scale: float = DEFAULT_SPLIT_SCALE,
     scale_up_floor: float | None = None,
 ) -> SplitResult:
     """
@@ -82,11 +83,11 @@ def recursive_freecad_Gsplit(
     """
     tools = [tool.__native__]
 
-    if tolerance >= 0.1:
+    if tolerance >= SPLIT_TOL_MAX:
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
-    elif tolerance < 1e-12:
+    elif tolerance < SPLIT_TOL_MIN:
         if scale_up_floor is not None:
-            floor = 1e-13 if scale_up_floor == 0 else scale_up_floor
+            floor = KERNEL_TOL_E13 if scale_up_floor == 0 else scale_up_floor
             return recursive_freecad_Gsplit(base, tool, floor / scale, scale=1.0 / scale, scale_up_floor=scale_up_floor)
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
     else:
@@ -116,7 +117,7 @@ def check_out_solids(original, split_solids):
             notes="tool did not intersect solid; returning it unchanged",
         )
 
-    if sum(s.Volume for s in split_solids) < 1e-3:
+    if sum(s.Volume for s in split_solids) < VOLUME_MIN_E3:
         return SplitResult(
             solids=[original],
             degenerate_case_handled=True,

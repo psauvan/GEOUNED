@@ -12,6 +12,7 @@ from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
 from ...geo import GPlane, GSphere, GBoundBox, GVector, Gmake_wire
+from ...geo.constants import LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
 
 logger = logging.getLogger("general_logger")
 
@@ -91,15 +92,15 @@ def check_torus_bounds(shell):
         params.sort()
         V0 = params[0][0]
         V1 = params[-1][1]
-        if arcLength >= two_pi * (1.0 - 1e-5):
+        if arcLength >= two_pi * (1.0 - LENGTH_TOL_E5):
             mergedParams = (True, (V0, V0 + two_pi))
         else:
-            if is_same_value(V0, 0.0, 1e-5) and is_same_value(V1, two_pi, 1e-5):
+            if is_same_value(V0, 0.0, PARAM_ANGLE_TOL_E5) and is_same_value(V1, two_pi, PARAM_ANGLE_TOL_E5):
                 for i in range(len(params) - 1):
                     if not is_same_value(
                         params[i][1],
                         params[i + 1][0],
-                        1e-5,
+                        PARAM_ANGLE_TOL_E5,
                     ):
                         break
                 v_min = params[i + 1][0] - two_pi
@@ -600,7 +601,7 @@ def gen_plane_sphere(shell):
     else:
         dmin = tmp_plane.distance_to(shell)
 
-    if dmin > 1e-6:
+    if dmin > LENGTH_TOL_E6:
         new_center = center + 0.95 * dmin * normal
         plane = GeounedSurface(("Plane", (new_center, normal, 1, 1)))
         return plane

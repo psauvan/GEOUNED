@@ -47,6 +47,7 @@ from ..vector_geometry import GVector, arbitrary_perpendicular
 from .topology import GEdge, GFace, GPlane, GShell, GSolid, GWire
 from ._native_utils import to_native_vector
 from .boolean import Gfuse
+from ..constants import KERNEL_TOL_E6
 
 # ---------------------------------------------------------------------------
 # Primitive construction
@@ -258,7 +259,7 @@ def Gmake_polygon_face(points: list[GVector]) -> GFace:
 
 
 def Gmake_shell(faces: list[GFace]) -> GShell:
-    sewer = BRepBuilderAPI_Sewing(1e-6)
+    sewer = BRepBuilderAPI_Sewing(KERNEL_TOL_E6)
     for face in faces:
         sewer.Add(face.__native__)
     sewer.Perform()

@@ -3,13 +3,13 @@
 #
 import logging
 import math
+from ...geo.constants import DIR_TOL_E5, ZERO_TOL_E8
 
 logger = logging.getLogger("general_logger")
 
 from ...boolean_utils.boolean_function import BoolVariable
 from .geometry_gu import ShellFaceGu
 from .geouned_classes import GeounedSurface
-from .data_classes import NumericFormat, Options, Tolerances
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
 from .meta_surfaces_utils import (
     commonEdge,
@@ -60,7 +60,7 @@ def get_multiplanes(solidFaces, omit_faces_set=None, tolerances=None):
         mplanes = multiplane(p, planes, mp_plane_index, tolerances)
         if len(mplanes) != 1:
             if no_convex(mplanes):
-                mp_params = build_multip_params(mplanes)
+                mp_params = build_multip_params(mplanes, tolerances=tolerances)
                 mp = GeounedSurface(("MultiPlane", mp_params))
                 if mp.Surf.PlaneNumber < 2:
                     continue
@@ -75,7 +75,7 @@ def get_multiplanes(solidFaces, omit_faces_set=None, tolerances=None):
         return multiplane_objects, omit_faces_set
 
 
-def get_Can(solidFaces, canface_index=None):
+def get_Can(solidFaces, canface_index=None, *, tolerances):
     """identify and return all can type in the solid."""
 
     if canface_index is None:
@@ -89,9 +89,9 @@ def get_Can(solidFaces, canface_index=None):
         if isinstance(f.Surface, GCylinder):
             if f.Index in canface_index:
                 continue
-            cs, surfindex = get_can_surfaces(f, solidFaces)
+            cs, surfindex = get_can_surfaces(f, solidFaces, tolerances=tolerances)
             if cs is not None:
-                params = build_can_params(cs)
+                params = build_can_params(cs, tolerances=tolerances)
                 if params is not None:
                     gc = GeounedSurface(("Can", params, f.Orientation))
                     can_list.append(gc)
@@ -103,7 +103,7 @@ def get_Can(solidFaces, canface_index=None):
         return can_list, canface_index
 
 
-def get_TCone(solidFaces, Tconeface_index=None):
+def get_TCone(solidFaces, Tconeface_index=None, *, tolerances):
     """identify and return all can type in the solid."""
 
     if Tconeface_index is None:
@@ -117,7 +117,7 @@ def get_TCone(solidFaces, Tconeface_index=None):
         if isinstance(f.Surface, GCone):
             if f.Index in Tconeface_index:
                 continue
-            cs, surfindex = get_tcone_surfaces(f, solidFaces)
+            cs, surfindex = get_tcone_surfaces(f, solidFaces, tolerances=tolerances)
             if cs is not None:
                 gc = GeounedSurface(("TCone", build_tcone_params(cs), f.Orientation))
                 tcone_list.append(gc)
@@ -129,7 +129,7 @@ def get_TCone(solidFaces, Tconeface_index=None):
         return tcone_list, Tconeface_index
 
 
-def get_roundCorner(solidFaces, cornerface_index=None, solid=None):
+def get_roundCorner(solidFaces, cornerface_index=None, solid=None, *, tolerances):
     """identify and return all roundcorner type in the solid."""
     if cornerface_index is None:
         cornerface_index = set()
@@ -142,10 +142,10 @@ def get_roundCorner(solidFaces, cornerface_index=None, solid=None):
         if isinstance(f.Surface, GCylinder):
             if f.Index in cornerface_index:
                 continue
-            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid)
+            rc, surfindex = get_roundcorner_surfaces(f, solidFaces, {f.Index}, solid=solid, tolerances=tolerances)
             if rc is not None:
                 cornerface_index.update(surfindex)
-                rc_list, plane_list, multi_round, orientation, closed_set = build_roundC_params(rc)
+                rc_list, plane_list, multi_round, orientation, closed_set = build_roundC_params(rc, tolerances=tolerances)
                 if not multi_round:
                     corner_list.extend(rc_list)
                 else:
@@ -179,7 +179,7 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
             continue
         if isinstance(f.Surface, (GCylinder, GCone)):
             if f.Orientation == "Reversed":
-                revcc_shell = merge_same_surface_faces(f, solidFaces)
+                revcc_shell = merge_same_surface_faces(f, solidFaces, tolerances=tolerances)
                 if is_closed_cylinder_cone(revcc_shell):
                     continue
                 rcc, closed_set = get_revConeCyl_surfaces(revcc_shell, solidFaces, multiplanes, conecylface_index, tolerances)
@@ -193,7 +193,7 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
         return conecyl_list, conecylface_index
 
 
-def build_roundC_params(rc_list):
+def build_roundC_params(rc_list, *, tolerances):
 
     roundcorner_list = []
     plane_list = []
@@ -288,7 +288,7 @@ def build_roundC_params(rc_list):
         for p in rc_planes:
             count = 0
             for cyl, p1, p2, _, _ in rc_list:
-                if is_same_plane(p1.Surface, p.Surface) or is_same_plane(p2.Surface, p.Surface):
+                if is_same_plane(p1.Surface, p.Surface, tolerances=tolerances) or is_same_plane(p2.Surface, p.Surface, tolerances=tolerances):
                     count += 1
                     if count == 2:
                         break
@@ -326,7 +326,7 @@ def build_roundC_params(rc_list):
                     center = center + p.Surf.Position
                 center = center / len(plane_list)
                 dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
-                if abs(dotvalue) < 1e-5:  # aligned planes
+                if abs(dotvalue) < DIR_TOL_E5:  # aligned planes
                     orientation = rc.Surf.Cylinder.Orientation
                 else:
                     orientation = "Reversed" if dotvalue > 0 else "Forward"
@@ -415,7 +415,7 @@ def _closing_plane(cyl, edges, kind, secondary):
     return GeounedSurface(("Plane", (position, normal, 1.0, 1.0)))
 
 
-def build_can_params(cs):
+def build_can_params(cs, *, tolerances):
     cyl_in, sr1, sr2 = cs
     shell = type(cyl_in) is ShellFaceGu
     if not shell:
@@ -487,13 +487,13 @@ def build_can_params(cs):
             a = cyl.Surface.Axis
             alpha = cp.dot(a)
             sqr = cp.dot(cp) - alpha * alpha
-            if abs(sqr) < 1e-8:
+            if abs(sqr) < ZERO_TOL_E8:
                 adist = 0
             else:
                 adist = math.sqrt(sqr)
 
             if adist < cyl.Surface.Radius:
-                apexPlane = cone_apex_plane(s, Tolerances())
+                apexPlane = cone_apex_plane(s, tolerances)
                 if apexPlane is not None:
                     sid += 1
                     apexPlane.bVar = BoolVariable(sid)
@@ -574,7 +574,7 @@ def build_tcone_params(ks):
     return (gcone, bsurf[0], bsurf[1])
 
 
-def build_multip_params(plane_list):
+def build_multip_params(plane_list, *, tolerances):
 
     planeparams = []
     edges = []
@@ -587,7 +587,7 @@ def build_multip_params(plane_list):
         gp = GeounedSurface(("Plane", (p.Surface.Position, normal, 1.0, 1.0)))
         same = False
         for pp in planeparams:
-            if is_same_plane(pp.Surf, gp.Surf, Options(), Tolerances(), NumericFormat()):
+            if is_same_plane(pp.Surf, gp.Surf, tolerances=tolerances):
                 same = True
                 break
         if not same:

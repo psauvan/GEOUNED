@@ -102,6 +102,18 @@ from ._native_utils import (
     _volume_props,
     to_native_vector,
 )
+from ..constants import (
+    ANGLE_TOL_5E2,
+    KERNEL_TOL_E6,
+    KERNEL_TOL_E7,
+    LENGTH_TOL_E6,
+    MESH_DEFLECTION,
+    REL_TOL_E6,
+    VOLUME_MIN_E8,
+    ZERO_TOL_E10,
+    ZERO_TOL_E12,
+    ZERO_TOL_E9,
+)
 
 
 class GPlane:
@@ -153,15 +165,15 @@ class GPlane:
         n1, n2 = self.Axis, other.Axis
         d = n1.cross(n2)
         dl = d.length
-        if dl < 1e-10:
+        if dl < ZERO_TOL_E10:
             return None
 
-        if dl < 0.05:
+        if dl < ANGLE_TOL_5E2:
             if self.__native__ is None or other.__native__ is None:
                 return None
             from OCP.GeomAPI import GeomAPI_IntSS
 
-            intersector = GeomAPI_IntSS(self.__native__, other.__native__, 1e-7)
+            intersector = GeomAPI_IntSS(self.__native__, other.__native__, KERNEL_TOL_E7)
             if not intersector.IsDone() or intersector.NbLines() == 0:
                 return None
             line_curve = intersector.Line(1)
@@ -190,7 +202,7 @@ class GPlane:
     def intersect_line(self, line: "GLine") -> GVector | None:
         """See _freecad_impl.py's own docstring -- pure GVector math, no native fallback needed."""
         denom = self.Axis.dot(line.Direction)
-        if abs(denom) < 1e-12:
+        if abs(denom) < ZERO_TOL_E12:
             return None
         t = self.Axis.dot(self.Position - line.Position) / denom
         return line.Position + line.Direction * t
@@ -376,13 +388,13 @@ class GLine:
         d1, d2 = self.Direction, other.Direction
         cr = d1.cross(d2)
         crl = cr.length
-        if crl < 1e-10:
+        if crl < ZERO_TOL_E10:
             return None
 
         w = other.Position - self.Position
         scale_ref = max(self.Position.length, other.Position.length, 1.0)
 
-        if crl < 0.05:
+        if crl < ANGLE_TOL_5E2:
             if self.__native__ is None or other.__native__ is None:
                 return None
             proj = GeomAPI_ProjectPointOnCurve(to_native_vector(self.Position), other.__native__)
@@ -390,7 +402,7 @@ class GLine:
                 return None
             return _to_gvector(proj.NearestPoint())
 
-        if abs(w.dot(cr)) / crl > 1e-6 * scale_ref:
+        if abs(w.dot(cr)) / crl > REL_TOL_E6 * scale_ref:
             return None
 
         t = (w.cross(d2)).dot(cr) / (crl * crl)
@@ -531,7 +543,7 @@ class GEdge:
         """Curvature of the edge's curve at parametric coordinate `u`
         (0 for a straight line)."""
         curve_and_range = _edge_curve_and_range(self.__native__)
-        props = GeomLProp_CLProps(curve_and_range[0], u, 2, 1e-6)
+        props = GeomLProp_CLProps(curve_and_range[0], u, 2, KERNEL_TOL_E6)
         return props.Curvature()
 
     def knots(self) -> list[float]:
@@ -576,9 +588,9 @@ class GEdge:
         box1 = _bnd_box(shape1)
         box2 = _bnd_box(shape2)
         intersect = (
-            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -1e-6
-            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -1e-6
-            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -1e-6
+            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -LENGTH_TOL_E6
+            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -LENGTH_TOL_E6
+            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -LENGTH_TOL_E6
         )
         if intersect:
             return self.distance_to(other)
@@ -691,7 +703,7 @@ class GFace:
         # closest pair.
         principal = props.PrincipalProperties()
         rg_max = max(principal.RadiusOfGyration())
-        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > 1e-9 else float("inf")
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > ZERO_TOL_E9 else float("inf")
         # The face's own true short physical dimension ("width"), derived
         # from the same RG_max: for a rectangle of length L and width W,
         # RG_max == L/sqrt(12) exactly, so W == Area/(RG_max*sqrt(12)) --
@@ -710,7 +722,7 @@ class GFace:
         # own docstring for the full corpus-wide verification: every real
         # face in a 109-file/1733-face scan has width >=0.19mm, every
         # known sliver <=0.055mm).
-        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > 1e-9 else 0.0
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > ZERO_TOL_E9 else 0.0
 
         self.index: int | None = None
         self.__wires__: "list[GWire] | None" = None
@@ -741,18 +753,18 @@ class GFace:
 
     def value_at(self, u: float, v: float) -> GVector:
         surf = BRep_Tool.Surface_s(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, 1e-6)
+        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
         return _to_gvector(props.Value())
 
     def normal_at(self, u: float, v: float) -> GVector:
         surf = BRep_Tool.Surface_s(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, 1e-6)
+        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
         n = _to_gvector(props.Normal())
         return -n if self.__native__.Orientation() == 1 else n
 
     def tangent_at(self, u: float, v: float) -> tuple[GVector, GVector]:
         surf = BRep_Tool.Surface_s(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, 1e-6)
+        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
         return _to_gvector(props.D1U()), _to_gvector(props.D1V())
 
     def parameter(self, point: GVector) -> tuple[float, float]:
@@ -760,7 +772,7 @@ class GFace:
         return _project_point_on_surface(point, surf)
 
     def is_part_of_domain(self, u: float, v: float) -> bool:
-        classifier = BRepTopAdaptor_FClass2d(self.__native__, 1e-7)
+        classifier = BRepTopAdaptor_FClass2d(self.__native__, KERNEL_TOL_E7)
         return classifier.Perform(gp_Pnt2d(u, v)) != 1  # != TopAbs_OUT
 
     def tessellate(self, tolerance: float, reset: bool = False) -> list[GVector]:
@@ -779,7 +791,7 @@ class GFace:
         return points
 
     def getUVNodes(self):
-        BRepMesh_IncrementalMesh(self.__native__, 0.1)
+        BRepMesh_IncrementalMesh(self.__native__, MESH_DEFLECTION)
         loc = TopLoc_Location()
         triangulation = BRep_Tool.Triangulation_s(self.__native__, loc)
         if triangulation is None or not triangulation.HasUVNodes():
@@ -792,9 +804,9 @@ class GFace:
         v = (vmin + vmax) / 2.0
         point = self.value_at(u, v)
         normal = self.normal_at(u, v)
-        probe = point + normal * 1e-6
+        probe = point + normal * LENGTH_TOL_E6
         classifier = BRepClass3d_SolidClassifier(solid.__native__)
-        classifier.Perform(to_native_vector(probe), 1e-7)
+        classifier.Perform(to_native_vector(probe), KERNEL_TOL_E7)
         return classifier.State() != TopAbs_IN
 
     def export_step(self, filename: str) -> None:
@@ -819,9 +831,9 @@ class GFace:
         box1 = _bnd_box(shape1)
         box2 = _bnd_box(shape2)
         intersect = (
-            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -1e-6
-            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -1e-6
-            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -1e-6
+            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -LENGTH_TOL_E6
+            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -LENGTH_TOL_E6
+            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -LENGTH_TOL_E6
         )
         if intersect:
             try:
@@ -829,7 +841,7 @@ class GFace:
                 has_content = not common.IsNull()
                 if has_content:
                     props = _volume_props(common)
-                    has_content = abs(props.Mass()) > 1e-8
+                    has_content = abs(props.Mass()) > VOLUME_MIN_E8
                     if not has_content:
                         exp = TopExp_Explorer(common, TopAbs_FACE)
                         has_content = exp.More()
@@ -936,7 +948,7 @@ class GSolid:
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         classifier = BRepClass3d_SolidClassifier(self.__native__)
-        classifier.Perform(to_native_vector(point), tolerance if tolerance > 0 else 1e-7)
+        classifier.Perform(to_native_vector(point), tolerance if tolerance > 0 else KERNEL_TOL_E7)
         return classifier.State() == TopAbs_IN
 
     def optimal_bounding_box(self, use_triangulation: bool = True) -> GBoundBox:
@@ -960,7 +972,7 @@ class GSolid:
         first_shape = self.__shapes__[0]
         point = _volume_props(first_shape).CentreOfMass()
         classifier = BRepClass3d_SolidClassifier(native)
-        classifier.Perform(point, 1e-7)
+        classifier.Perform(point, KERNEL_TOL_E7)
         if classifier.State() == TopAbs_IN:
             return _to_gvector(point)
 
@@ -972,10 +984,10 @@ class GSolid:
             umin, umax, vmin, vmax = BRepTools.UVBounds_s(face)
             u = 0.5 * (umin + umax)
             v = 0.5 * (vmin + vmax)
-            classifier2d = BRepTopAdaptor_FClass2d(face, 1e-7)
+            classifier2d = BRepTopAdaptor_FClass2d(face, KERNEL_TOL_E7)
             if classifier2d.Perform(gp_Pnt2d(u, v)) != 1:  # inside the trimmed domain
                 surf = BRep_Tool.Surface_s(face)
-                props = GeomLProp_SLProps(surf, u, v, 1, 1e-6)
+                props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
                 pos = props.Value()
                 normal = props.Normal()
                 if face.Orientation() == 1:
@@ -985,7 +997,7 @@ class GSolid:
                 for _ in range(12):
                     d = d * 0.5
                     probe = gp_Pnt(pos.X() + d * normal.X(), pos.Y() + d * normal.Y(), pos.Z() + d * normal.Z())
-                    classifier.Perform(probe, 1e-7)
+                    classifier.Perform(probe, KERNEL_TOL_E7)
                     if classifier.State() == TopAbs_IN:
                         return _to_gvector(probe)
             fexp.Next()
@@ -1025,7 +1037,7 @@ class GSolid:
     def reverse(self) -> "GSolid":
         return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape().Reversed())
 
-    def refine(self, rel_tol: float = 1e-6) -> "GSolid":
+    def refine(self, rel_tol: float = REL_TOL_E6) -> "GSolid":
         """See the freecad engine's GSolid.refine docstring -- same
         volume-invariance guard (`rel_tol`, default 1e-6), using
         ShapeUpgrade_UnifySameDomain as the removeSplitter() equivalent.

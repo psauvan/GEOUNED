@@ -11,7 +11,6 @@ import math
 from .data_constants import twoPi
 from .basic_functions_part1 import is_same_value, twoPimod
 from .basic_functions_part2 import is_same_torus
-from .data_classes import Tolerances
 from ...geo import vector_geometry, surface_geometry
 from ...geo import (
     GCone,
@@ -25,6 +24,7 @@ from ...geo import (
     Gmake_shell,
     pick_outer_wire,
 )
+from ...geo.constants import PARAM_ANGLE_TOL_E5
 
 logger = logging.getLogger("general_logger")
 
@@ -271,7 +271,7 @@ class ShellFaceGu:
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
 
-        if abs(Umin - Umax) < 1e-5:
+        if abs(Umin - Umax) < PARAM_ANGLE_TOL_E5:
             return 0, twoPi, 0, 0
         else:
             return Umin, Umax, ifacemin, ifacemax
@@ -327,7 +327,7 @@ def define_surface(face, surface=None):
 
 
 def other_face_edge(
-    current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _min_face_width=None, _visited=None
+    current_edge, current_face, Faces, outer_only=False, skip_slivers=False, *, tolerances=None, _visited=None
 ):
     # skip_slivers=False preserves the original behavior for every existing
     # caller: returns just the found face. A caller that's walking adjacency
@@ -370,8 +370,10 @@ def other_face_edge(
             if current_edge.is_same(edge):
                 if not skip_slivers:
                     return face
-                area_threshold = _min_area if _min_area is not None else Tolerances().min_area
-                width_threshold = _min_face_width if _min_face_width is not None else Tolerances().min_face_width
+                if tolerances is None:
+                    raise ValueError("other_face_edge(skip_slivers=True) needs the run's tolerances")
+                area_threshold = tolerances.min_area
+                width_threshold = tolerances.min_face_width
                 width = getattr(face, "CharacteristicWidth", float("inf"))
                 if face.Area >= area_threshold and width >= width_threshold:
                     return current_edge, current_face, face
@@ -383,7 +385,7 @@ def other_face_edge(
                 for e2 in face.OuterWire.Edges if outer_only else face.Edges:
                     if e2.is_same(current_edge):
                         continue
-                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, area_threshold, width_threshold, visited)
+                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, tolerances=tolerances, _visited=visited)
                     if found is not None:
                         return found
                 return None
@@ -441,12 +443,12 @@ def sort_range(Urange):
 
 
 def join_range(U0, U1):
-    if (U0[0] - U1[0] < 1e-5) and (-1e-5 < U0[1] - U1[0]):
+    if (U0[0] - U1[0] < PARAM_ANGLE_TOL_E5) and (-PARAM_ANGLE_TOL_E5 < U0[1] - U1[0]):
         if U1[1] > U0[1]:
             return (U0[0], U1[1])
         else:
             return U0
-    elif (U0[0] - U1[1] < 1e-5) and (-1e-5 < U0[1] - U1[1]):
+    elif (U0[0] - U1[1] < PARAM_ANGLE_TOL_E5) and (-PARAM_ANGLE_TOL_E5 < U0[1] - U1[1]):
         if U1[0] < U0[0]:
             return (U1[0], U0[1])
         else:
@@ -465,10 +467,10 @@ def adjust_range(U0, U1):
     V0 = [twoPimod(x) for x in U0]
     V1 = [twoPimod(x) for x in U1]
 
-    if abs(V0[0] - V1[1]) < 1e-5:
+    if abs(V0[0] - V1[1]) < PARAM_ANGLE_TOL_E5:
         imin = 1  # U1[0]
         imax = 0  # U0[1]
-    elif abs(V1[0] - V0[1]) < 1e-5:
+    elif abs(V1[0] - V0[1]) < PARAM_ANGLE_TOL_E5:
         imin = 0  # U0[0]
         imax = 1  # U1[1]
     elif V1[1] < V0[0]:

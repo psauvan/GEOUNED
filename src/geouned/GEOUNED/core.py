@@ -54,13 +54,13 @@ class CadToCsg:
     def __init__(
         self,
         options: Options = Options(),
-        tolerances: Tolerances = Tolerances(),
+        tolerances: Tolerances = None,
         numeric_format: NumericFormat = NumericFormat(),
         settings: Settings = Settings(),
     ):
 
         self.options = options
-        self.tolerances = tolerances
+        self.tolerances = tolerances if tolerances is not None else Tolerances()
         self.numeric_format = numeric_format
         self.settings = settings
 

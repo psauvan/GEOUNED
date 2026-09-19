@@ -1,6 +1,5 @@
 from ..data_class import Options
-from ....GEOUNED.utils.data_classes import Tolerances
-from ....geo import BuildDepth, getPart
+from ....geo import BuildDepth, GeoTolerances, getPart
 from .splitFunction import surface_side
 
 
@@ -13,14 +12,14 @@ def BuildSolid(cell):
     # now deleted). See CLAUDE.md's "build_region/ vs
     # CAD/buildSolidCell.py+splitFunction.py unification" entry. `Options.
     # splitTolerance` (a bare float, GEOReverse's own global tuning knob)
-    # is converted into a real `Tolerances` instance once, here, at this
+    # is converted into a real `GeoTolerances` instance once, here, at this
     # pipeline's own single entry point into the shared cascade -- it used
     # to be re-read and re-wrapped on every call, deep inside `SplitSolid`
     # itself. `surface_side` (this module's own, exotic-quadric-aware
     # point classification, unchanged) is passed through as the shared
     # cascade's pluggable `classify` callable.
     cell.cleanUndefined()
-    tolerances = Tolerances(split_tolerance=Options.splitTolerance)
+    tolerances = GeoTolerances(split_tolerance=Options.splitTolerance)
     celParts = BuildDepth(cell, base=None, tolerances=tolerances, classify=surface_side)
     celParts = getPart(celParts)
     shapeParts = []

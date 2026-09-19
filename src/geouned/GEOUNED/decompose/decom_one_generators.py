@@ -13,6 +13,7 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
 )
+from ...geo.constants import KERNEL_TOL_E3, REL_TOL_E4, VOLUME_MIN_E3
 
 logger = logging.getLogger("general_logger")
 
@@ -23,7 +24,7 @@ def split_surfaces(solid, options, tolerances):
     comp = Gmake_compound(solid_components)
 
     volratio = (comp.Volume - solid.Volume) / solid.Volume
-    if volratio > 0.001:
+    if volratio > VOLUME_MIN_E3:
         logger.warning(f"Lost {volratio * 100:6.2f}% of the original volume")
 
     # A fragment Gsplit accepted as "sane" (BRepCheck-valid + a real
@@ -146,7 +147,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
             # the split at all.
             piece_sum = sum(abs(p.Volume) for p in comsolid_solids)
             orig_vol = abs(solid.Volume)
-            if orig_vol > 0 and abs(piece_sum - orig_vol) > max(1.0e-4 * orig_vol, tolerances.min_solid_volume):
+            if orig_vol > 0 and abs(piece_sum - orig_vol) > max(REL_TOL_E4 * orig_vol, tolerances.min_solid_volume):
                 logger.warning(
                     f"Gsplit with a {surf.Type} surface produced {len(comsolid_solids)} piece(s) summing to "
                     f"{piece_sum:.2f}, but the base fragment's own volume is {orig_vol:.2f} -- a likely "
@@ -173,7 +174,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # RevCC_regression/Big_one_cell__modelCell_670000__solid0_piece52: a
     # 5406 mm^3 fused wedge -> [816.5, 4590.0].
     if not new_split and not healed:
-        tol_floor = max(50.0 * tolerances.split_tolerance, 1.0e-3)
+        tol_floor = max(50.0 * tolerances.split_tolerance, KERNEL_TOL_E3)
         if Gsolid_max_tolerance(solid) > tol_floor and Gsolid_nonmanifold_edge_count(solid) >= 1:
             rebuilt = Gheal_topology(solid)
             if rebuilt is not None:

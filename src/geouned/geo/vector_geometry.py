@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from .constants import BOX_TOL_E6, LENGTH_TOL_E12, PARAM_ANGLE_TOL_E5, POINT_POINT_TOL, REL_TOL_E6
 
 # ---------------------------------------------------------------------------
 # Neutral vector type
@@ -88,7 +89,7 @@ class GVector:
         length = self.length
         return GVector(self.x / length, self.y / length, self.z / length)
 
-    def is_equal(self, other: "GVector", tolerance: float = 1e-6) -> bool:
+    def is_equal(self, other: "GVector", tolerance: float = POINT_POINT_TOL) -> bool:
         return (self - other).length < tolerance
 
     def angle_to(self, other: "GVector") -> float:
@@ -389,7 +390,7 @@ class myBox:
         else:
             if boundBox is not None:
                 boundBox = to_gboundbox(boundBox)
-                if boundBox.XLength <= 1e-12 or boundBox.YLength <= 1e-12 or boundBox.ZLength <= 1e-12:
+                if boundBox.XLength <= LENGTH_TOL_E12 or boundBox.YLength <= LENGTH_TOL_E12 or boundBox.ZLength <= LENGTH_TOL_E12:
                     self.Box = None
                 else:
                     self.Box = boundBox
@@ -515,7 +516,7 @@ class myBox:
                     self_vol = _box_volume(self.Box)
                     box_vol = _box_volume(box.Box)
                     union_vol = _box_volume(union_box)
-                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < 1e-6 * max(union_vol, 1.0):
+                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < REL_TOL_E6 * max(union_vol, 1.0):
                         self.Box = union_box
                     else:
                         self.Box = self.Box if self_vol >= box_vol else box.Box
@@ -538,7 +539,7 @@ class myBox:
         for i in range(6):
             p1 = self.Box.get_point(i)
             p2 = box.Box.get_point(i)
-            if (p1 - p2).length > 1e-6:
+            if (p1 - p2).length > BOX_TOL_E6:
                 return False
         return True
 
@@ -548,7 +549,7 @@ class myBox:
 # ---------------------------------------------------------------------------
 
 
-def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[float, int, float, int]:
+def arc_extent(pairs: list[tuple[float, float]], tol: float = PARAM_ANGLE_TOL_E5) -> tuple[float, int, float, int]:
     """
     Given a list of (a0, a1) angle pairs (a0 < a1, radians) that together
     trace exactly one open circular arc (total angular extent < 2*pi),

@@ -69,6 +69,7 @@ from .solid_defects import (
     find_split_ring_faces,
     near_surface_pair,
 )
+from .tolerances import GeoTolerances
 from .solid_ops import (
     BuildDepth,
     BuildSolidParts,

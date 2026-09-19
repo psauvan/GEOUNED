@@ -5,6 +5,7 @@ import logging
 import math
 
 from geouned.geo import surface_geometry
+from ...geo.constants import LENGTH_TOL_E6, ZERO_TOL_E10
 
 logger = logging.getLogger("general_logger")
 
@@ -176,7 +177,7 @@ class GeounedSolid:
         if self.Rho is not None:
             self.Density = self.Rho * dilution
 
-    def check_intersection(self, solid, dtolerance=1.0e-6, vtolerance=1e-10):
+    def check_intersection(self, solid, dtolerance=LENGTH_TOL_E6, vtolerance=ZERO_TOL_E10):
         """Check if solid intersect with current solid.
         return : -2 solid fully embedded in self.CADSolid ;
                  -1 self.CADSolid fully embedded in solid ;
@@ -458,10 +459,12 @@ class MetaSurfacesDict(dict):
         self,
         offset: int = 0,
         options: Options = Options(),
-        tolerances: Tolerances = Tolerances(),
+        tolerances: Tolerances = None,
         numeric_format: NumericFormat = NumericFormat(),
     ):
 
+        if tolerances is None:
+            raise TypeError("tolerances is required: a default instance would silently ignore the user's values")
         self.IndexOffset = offset
         self.options = options
         self.tolerances = tolerances
@@ -1325,10 +1328,12 @@ class SurfacesDict(dict):
         self,
         offset: int = 0,
         options: Options = Options(),
-        tolerances: Tolerances = Tolerances(),
+        tolerances: Tolerances = None,
         numeric_format: NumericFormat = NumericFormat(),
     ):
 
+        if tolerances is None:
+            raise TypeError("tolerances is required: a default instance would silently ignore the user's values")
         self.IndexOffset = offset
         self.options = options
         self.tolerances = tolerances

@@ -8,6 +8,7 @@ from ...boolean_utils.boolean_function import BoolSequence, BoolVariable, BoolSu
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from ...geo import GBoundBox, GSolid, GVector, Gcommon, Gdistance, Gmake_box, to_gboundbox
+from ...geo.constants import KERNEL_TOL_E13
 
 logger = logging.getLogger("general_logger")
 
@@ -117,7 +118,7 @@ class VoidBox:
 
         return VoidBoxTuple
 
-    def piece_enclosure_split(self, Box, Tolerance=1.0e-13):
+    def piece_enclosure_split(self, Box, Tolerance=KERNEL_TOL_E13):
         """This function creates a box-shaped solid with the new limits of given bounding box and
         it is intersected with the piece of nested enclosure to create the new void cell.
         If the limited region does not intersect with the piece, no void cell is created.

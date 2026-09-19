@@ -26,6 +26,7 @@ from ..io_utils import (
 from .topology import GEdge, GFace, GShape, GShell, GSolid
 from .repair import Gcheck_and_repair, Gspline_surface
 from ._native_utils import _native_fix
+from ..constants import KERNEL_TOL_E6
 
 
 def _export_shapes_step(native_shapes: list, filename: str) -> None:
@@ -97,7 +98,7 @@ def Gload_step(filename: str) -> list[GSolid]:
     solids = []
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     while explorer.More():
-        solids.append(GSolid(_native_fix(TopoDS.Solid(explorer.Current()), 1e-6)))
+        solids.append(GSolid(_native_fix(TopoDS.Solid(explorer.Current()), KERNEL_TOL_E6)))
         explorer.Next()
     return solids
 
@@ -160,7 +161,7 @@ def Gload_and_process_step(filename: str, tolerances) -> "tuple[list[GSolid | No
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     index = 0
     while explorer.More():
-        native_solid = _native_fix(TopoDS.Solid(explorer.Current()), 1e-6)
+        native_solid = _native_fix(TopoDS.Solid(explorer.Current()), KERNEL_TOL_E6)
         gsolid = GSolid(native_solid)
         gsolid, ok = Gcheck_and_repair(gsolid, tolerances)
         if not ok:

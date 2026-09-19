@@ -79,18 +79,25 @@ from ..solid_defects import (
     near_surface_pair,
 )
 from ..constants import (
+    DEFAULT_MIN_FACE_WIDTH,
+    FINITE_DIFF_STEP,
+    KERNEL_TOL_E6,
     MAX_DEFEATURE_VOLUME_REL_CHANGE,
     MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE,
     MAX_SLIVER_HEAL_VOLUME_REL_CHANGE,
     MAX_SPLIT_RING_VOLUME_REL_CHANGE,
     MIN_SLIVER_EDGE_LENGTH,
     OCCT_FIX_TOLERANCE,
+    POINT_POINT_TOL,
+    REL_TOL_E6,
+    ZERO_TOL_E6,
 )
 from ..io_utils import suppress_native_stdout
 from ..surface_geometry import is_same_plane_surface
 from .topology import GFace, GPlane, GSolid, Gclassify_surface
 from .boolean import _exploded_solids
 from ._native_utils import _volume_props
+from ..constants import DEFAULT_MIN_FACE_WIDTH, LENGTH_TOL_E7, REL_TOL_E6, ZERO_TOL_E6
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "GSolid | None":
@@ -156,7 +163,7 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "G
     return healed
 
 
-def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
     """Repair a "split boundary ring" / duplicated micro-trim defect.
 
     A single trimming surface (plane or cylinder) appears twice at a
@@ -337,18 +344,18 @@ def _retrim_freed_quadrics(reduced_shape, drop_plane, keep_plane, tol):
 
         z1, z2 = z_at(v1), z_at(v2)
         if abs(z1 - drop_offset) <= abs(z2 - drop_offset):
-            slope = (z_at(v1 + 1e-3) - z1) / 1e-3
-            if abs(slope) < 1e-6:
+            slope = (z_at(v1 + FINITE_DIFF_STEP) - z1) / FINITE_DIFF_STEP
+            if abs(slope) < ZERO_TOL_E6:
                 continue
             v1 = v1 + (keep_offset - z1) / slope
         else:
-            slope = (z_at(v2 + 1e-3) - z2) / 1e-3
-            if abs(slope) < 1e-6:
+            slope = (z_at(v2 + FINITE_DIFF_STEP) - z2) / FINITE_DIFF_STEP
+            if abs(slope) < ZERO_TOL_E6:
                 continue
             v2 = v2 + (keep_offset - z2) / slope
         if v1 >= v2:
             continue
-        new_face = BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, 1e-6)
+        new_face = BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, KERNEL_TOL_E6)
         if not new_face.IsDone():
             continue
         reshaper.Replace(face, new_face.Face())
@@ -387,7 +394,7 @@ def _snapped_planar_cap(reduced_shape, keep_plane):
         if len(pts) != 2:
             return None
         a, b = snap(pts[0]), snap(pts[1])
-        if a.Distance(b) < 1e-7:
+        if a.Distance(b) < POINT_POINT_TOL:
             continue  # connector edge (the sliver's axial extent) -> gone
         if curve_type == GeomAbs_Circle:
             circ = adaptor.Circle()
@@ -818,7 +825,7 @@ def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
 
     if not BRepCheck_Analyzer(result.__native__).IsValid():
         return solid
-    if abs(result.Volume - solid.Volume) > 1e-6 * max(abs(solid.Volume), 1.0):
+    if abs(result.Volume - solid.Volume) > REL_TOL_E6 * max(abs(solid.Volume), 1.0):
         return solid
     return result
 

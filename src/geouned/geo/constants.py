@@ -17,6 +17,8 @@ like `vector_geometry.py`/`surface_geometry.py`/`solid_defects.py`.
 
 from __future__ import annotations
 
+import math
+
 MIN_SLIVER_EDGE_LENGTH = 1.0e-3
 """Absolute floor (mm) for find_short_edges' own threshold -- per direct
 user instruction: the effective threshold must never drop below this,
@@ -172,3 +174,108 @@ sliver, not a real piece -- a 16 mm^3 solid spread over 1.4e6 mm^2 of
 surface is not a fragment the decomposition should keep. Companion of
 `DEGENERATE_SOLID_VOLUME_FLOOR`; both from the historical
 `decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""
+
+SAME_SURFACE_AXIS_ANGLE_TOL = math.acos(0.99999)
+"""Maximum angle (rad, ~4.47e-3 = 0.256 degrees) between two axes (or two
+plane normals) for `surface_geometry`'s `is_same_*_surface` predicates to
+treat them as the same direction, either way round.
+
+This is the historical `abs(axis_1.dot(axis_2)) >= 0.99999` threshold
+written as the angle it really is. The dot-product form hides its own
+size: `1 - cos(theta)` is quadratic in `theta`, so a "1e-5" dot tolerance
+is an angle ~45x larger than `Tolerances.pln_angle`/`cyl_angle`'s own
+1e-4 rad default, i.e. ~4 mm of deviation per metre of extent. The
+value is deliberately UNCHANGED (behavior-preserving refactor); tightening
+it is a separate decision that needs a corpus-wide differential scan."""
+
+
+# ===========================================================================
+# Tolerance constants, one per (role, historical value).
+#
+# Every hard-coded tolerance literal that used to live inline in GEOUNED/ and geo/ is
+# named here by ROLE plus the exponent of the value it had (LENGTH_TOL_E5 == 1e-5 mm).
+# The suffix is deliberately visible: unifying a role's values is then a one-line change
+# per constant (point every LENGTH_TOL_E* at the same number) that can be bisected on its
+# own. These are the future fields of Tolerances.
+# ===========================================================================
+
+# Absolute length tolerance (mm): two points/edges/vertices coincide, a length is negligible.
+LENGTH_TOL_E12 = 1.0e-12
+LENGTH_TOL_E3 = 1.0e-3
+LENGTH_TOL_E5 = 1.0e-5
+LENGTH_TOL_E6 = 1.0e-6
+LENGTH_TOL_E7 = 1.0e-7
+LENGTH_TOL_E8 = 1.0e-8
+LENGTH_TOL_E9 = 1.0e-9
+
+# Angle tolerance (rad) between two directions (also used for the sine of it: |unit x unit|).
+ANGLE_TOL_5E2 = 5.0e-2
+ANGLE_TOL_E4 = 1.0e-4
+ANGLE_TOL_E3 = 1.0e-3
+ANGLE_TOL_E5 = 1.0e-5
+ANGLE_TOL_E6 = 1.0e-6
+WINDING_ANGLE_TOL = 2.0e-3
+
+# Dimensionless deviation of a unit-vector dot product from 0 or 1 (|cos| test). Quadratic in the
+# angle near parallel (~theta^2/2), linear near perpendicular.
+DIR_TOL_E4 = 1.0e-4
+DIR_TOL_E5 = 1.0e-5
+DIR_TOL_E6 = 1.0e-6
+
+# Minimum |cos| between two axes to call them the same line (cosine form of an angle tolerance).
+AXIS_COS_MIN_E5 = 0.99999
+AXIS_COS_MIN_E6 = 0.999999
+
+# Tolerance (rad) on surface (U, V) parameters and arc angles.
+PARAM_ANGLE_TOL_E4 = 1.0e-4
+PARAM_ANGLE_TOL_E5 = 1.0e-5
+
+# Numerical-zero floor of an intermediate quantity (denominator, slope, curvature, ...): guards a
+# division or a degenerate branch, not a geometric tolerance.
+ZERO_TOL_E10 = 1.0e-10
+ZERO_TOL_E12 = 1.0e-12
+ZERO_TOL_E6 = 1.0e-6
+ZERO_TOL_E8 = 1.0e-8
+ZERO_TOL_E9 = 1.0e-9
+
+# Dimensionless relative tolerance (fraction of a model/solid scale or of a volume).
+REL_TOL_E2 = 1.0e-2
+REL_TOL_E3 = 1.0e-3
+REL_TOL_E4 = 1.0e-4
+REL_TOL_E5 = 1.0e-5
+REL_TOL_E6 = 1.0e-6
+
+# Absolute volume floor (mm^3) below which a piece is discarded as empty.
+VOLUME_MIN_E3 = 1.0e-3
+VOLUME_MIN_E8 = 1.0e-8
+
+# Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
+KERNEL_TOL_E13 = 1.0e-13
+KERNEL_TOL_E3 = 1.0e-3
+KERNEL_TOL_E6 = 1.0e-6
+KERNEL_TOL_E7 = 1.0e-7
+KERNEL_TOL_E8 = 1.0e-8
+SPLIT_TOL_MAX = 0.1
+SPLIT_TOL_MIN = 1.0e-12
+
+# Algorithmic decision thresholds (not tolerances) that used to be inline literals.
+DEFAULT_SPLIT_SCALE = 0.1
+FINITE_DIFF_STEP = 0.001
+MESH_DEFLECTION = 0.1
+NOT_PERPENDICULAR_COS_MIN = 0.1
+SIDE_FRACTION_GAP_MIN = 0.15
+
+# Default of Tolerances.min_face_width, duplicated as a bare default in several signatures.
+DEFAULT_MIN_FACE_WIDTH = 0.1
+
+
+# Absolute distance (mm) below which two points (vertices, apexes, edge endpoints, centres of mass) are the
+# same point. Measured on the test_models corpus (143 files): real coincidences are exactly 0 or < 1e-9 mm and
+# distinct points are >= 1e-2 mm, so any value in [1e-8, 1e-5] behaves identically there; 1e-5 keeps a 10x
+# margin over the rounding of a STEP written with 6 decimals and stays 10x below Tolerances' surface tolerances.
+POINT_POINT_TOL = 1.0e-5
+
+# Corner-to-corner tolerance (mm) when two bounding boxes are compared. Deliberately NOT POINT_POINT_TOL:
+# OCCT bounding boxes carry a few 1e-6 mm of slop (55 of 386 corpus comparisons fall in 1e-6..1e-5), so this
+# value decides real outcomes and stays at its historical 1e-6.
+BOX_TOL_E6 = 1.0e-6

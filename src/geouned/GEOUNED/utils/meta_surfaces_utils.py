@@ -4,7 +4,6 @@ from collections import OrderedDict
 
 from .geometry_gu import ShellFaceGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
-from .data_classes import Tolerances
 from .basic_functions_part1 import twoPimod
 from .basic_functions_part2 import is_same_plane
 from .data_constants import twoPi, mask
@@ -27,7 +26,28 @@ from ...geo import (
     surface_geometry,
     vector_geometry,
 )
-from ...geo.constants import MIN_SLIVER_EDGE_LENGTH
+from ...geo.constants import (
+    ANGLE_TOL_E3,
+    ANGLE_TOL_E4,
+    AXIS_COS_MIN_E6,
+    DIR_TOL_E4,
+    DIR_TOL_E5,
+    DIR_TOL_E6,
+    LENGTH_TOL_E3,
+    LENGTH_TOL_E5,
+    LENGTH_TOL_E6,
+    MESH_DEFLECTION,
+    MIN_SLIVER_EDGE_LENGTH,
+    NOT_PERPENDICULAR_COS_MIN,
+    PARAM_ANGLE_TOL_E4,
+    PARAM_ANGLE_TOL_E5,
+    POINT_POINT_TOL,
+    REL_TOL_E3,
+    SIDE_FRACTION_GAP_MIN,
+    WINDING_ANGLE_TOL,
+    ZERO_TOL_E6,
+    ZERO_TOL_E9,
+)
 
 
 class reversedCCP:
@@ -71,7 +91,7 @@ def remove_twice_parallel(mplanes):
                 dmin = d
                 pmin = p
 
-        if dmax - dmin < 1e-5:
+        if dmax - dmin < LENGTH_TOL_E5:
             continue
 
         for p in reversed(parallel):
@@ -107,7 +127,7 @@ def convex_wire(p):
     return Edges
 
 
-def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
+def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None, *, tolerances):
     """Find the planar faces adjacent to a cylinder/cone `cyl` (a `FaceGu`,
     or a `ShellFaceGu` of several contiguous same-surface pieces).
 
@@ -141,7 +161,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
             planes = []
             seen_index = set()
             for f in cyl.Faces:
-                for item in get_adjacent_cylplane(f, Faces, True, axial_bounds):
+                for item in get_adjacent_cylplane(f, Faces, True, axial_bounds, tolerances=tolerances):
                     if item[3].Index in seen_index:
                         continue
                     seen_index.add(item[3].Index)
@@ -152,13 +172,13 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
         for e in cyl.OuterWire.Edges:
             if type(Gclassify_curve(e)) is not GLine:
                 continue
-            result = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True)
+            result = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True, tolerances=tolerances)
             if result is None:
                 continue
             touching_edge, near_face, otherface = result
             if not isinstance(otherface.Surface, GPlane):
                 continue
-            if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < 1.0e-4:
+            if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < DIR_TOL_E4:
                 planes.append((cyl, touching_edge, near_face, otherface))
 
         # If both of the cylinder's own corner edges close against the
@@ -192,7 +212,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
         planes = []
         seen_index = set()
         for f in cyl.Faces:
-            for p in get_adjacent_cylplane(f, Faces, False, axial_bounds):
+            for p in get_adjacent_cylplane(f, Faces, False, axial_bounds, tolerances=tolerances):
                 if p.Index in seen_index:
                     continue
                 seen_index.add(p.Index)
@@ -217,10 +237,10 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
             pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
             _, v = cyl.parameter(pnt)
             vmin, vmax = axial_bounds
-            tol = 1e-3 * max(abs(vmax - vmin), 1.0)
+            tol = REL_TOL_E3 * max(abs(vmax - vmin), 1.0)
             if abs(v - vmin) > tol and abs(v - vmax) > tol:
                 continue
-        result = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True)
+        result = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True, tolerances=tolerances)
         if result is None:
             continue
         _, _, otherface = result
@@ -238,13 +258,13 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None):
     return planes
 
 
-def get_adjacent_cylknesurf(cylkne, Faces):
+def get_adjacent_cylknesurf(cylkne, Faces, *, tolerances):
     if type(cylkne) is ShellFaceGu:
         adjacent = []
         adjIndexes = set()
         surface = cylkne.Faces[0].Surface
         for f in cylkne.Faces:
-            adj = get_adjacent_cylknesurfFace(f, Faces)
+            adj = get_adjacent_cylknesurfFace(f, Faces, tolerances=tolerances)
             for af in adj:
                 if is_same_surface(af.Surface, surface):
                     continue
@@ -257,19 +277,19 @@ def get_adjacent_cylknesurf(cylkne, Faces):
         return adjacent
 
     else:
-        return get_adjacent_cylknesurfFace(cylkne, Faces)
+        return get_adjacent_cylknesurfFace(cylkne, Faces, tolerances=tolerances)
 
 
-def get_adjacent_cylknesurfFace(cylkne, Faces):
+def get_adjacent_cylknesurfFace(cylkne, Faces, *, tolerances):
     adjfaces = []
 
     other_index = set()
     for e in cylkne.OuterWire.Edges:
-        if e.Length < 1e-6:
+        if e.Length < LENGTH_TOL_E6:
             continue
         if type(Gclassify_curve(e)) is GLine:
             continue
-        result = other_face_edge(e, cylkne, Faces, outer_only=False, skip_slivers=True)
+        result = other_face_edge(e, cylkne, Faces, outer_only=False, skip_slivers=True, tolerances=tolerances)
         if result is None:
             continue
         _, _, otherface = result
@@ -295,7 +315,6 @@ def get_adjacent_cylknesurfFace(cylkne, Faces):
 
 
 _WINDING_N_SAMPLES = 16
-_WINDING_ANGLE_TOL = 2e-3  # rad
 
 
 def _oriented_angle_sweep(angle_of, edge, v_from, v_to):
@@ -322,7 +341,7 @@ def _oriented_angle_sweep(angle_of, edge, v_from, v_to):
 
 def _closes_full_turn(total_angle):
     k = round(total_angle / twoPi)
-    return k != 0 and abs(total_angle - k * twoPi) <= _WINDING_ANGLE_TOL
+    return k != 0 and abs(total_angle - k * twoPi) <= WINDING_ANGLE_TOL
 
 
 def _perpendicular_axis(axis):
@@ -400,15 +419,15 @@ def _assemble_boundary_loops(edges):
         v_start = e0.Vertexes[0]
         current = e0.Vertexes[-1]
         loop = [(e0, v_start, current)]
-        while (current - v_start).length > 1e-6 and remaining:
+        while (current - v_start).length > POINT_POINT_TOL and remaining:
             for i, e in enumerate(remaining):
                 v0, v1 = e.Vertexes[0], e.Vertexes[-1]
-                if (v0 - current).length < 1e-6:
+                if (v0 - current).length < POINT_POINT_TOL:
                     loop.append((e, v0, v1))
                     current = v1
                     remaining.pop(i)
                     break
-                elif (v1 - current).length < 1e-6:
+                elif (v1 - current).length < POINT_POINT_TOL:
                     loop.append((e, v1, v0))
                     current = v0
                     remaining.pop(i)
@@ -461,8 +480,8 @@ def _loop_closes_full_turn(angle_of, oriented_edges):
     # end vertex) and genuinely sweeps a full turn on its own proves the
     # loop wraps the axis completely, regardless of anything else in it.
     if any(
-        (e.Vertexes[0] - e.Vertexes[-1]).length < 1e-6
-        and e.Length > 1e-3
+        (e.Vertexes[0] - e.Vertexes[-1]).length < POINT_POINT_TOL
+        and e.Length > LENGTH_TOL_E3
         and _closes_full_turn(_oriented_angle_sweep(angle_of, e, v_from, v_to))
         for e, v_from, v_to in oriented_edges
     ):
@@ -483,7 +502,7 @@ def _loop_closes_full_turn(angle_of, oriented_edges):
             d += twoPi
         deltas.append(d)
 
-    nonzero = [d for d in deltas if abs(d) >= 1e-4]
+    nonzero = [d for d in deltas if abs(d) >= PARAM_ANGLE_TOL_E4]
     if not nonzero:
         return False
 
@@ -537,7 +556,7 @@ def is_closed_cylinder_cone(shape):
 
     if type(shape) is not ShellFaceGu:
         umin, umax, vmin, vmax = shape.ParameterRange
-        return umax - umin > twoPi - 1e-5
+        return umax - umin > twoPi - PARAM_ANGLE_TOL_E5
 
     Urange = []
     for f in shape.Faces:
@@ -559,14 +578,14 @@ def is_closed_cylinder_cone(shape):
     for umin, umax in Urange[1:]:
         if umax <= Umax:
             continue
-        elif umin - Umax < 1e-5:
+        elif umin - Umax < PARAM_ANGLE_TOL_E5:
             angle += umax - Umax
             Umax = umax
-            if angle > twoPi - 1e-5:
+            if angle > twoPi - PARAM_ANGLE_TOL_E5:
                 return True
         else:
             return False
-    return angle > twoPi - 1e-5
+    return angle > twoPi - PARAM_ANGLE_TOL_E5
 
 
 def get_side_edges(cylinder_faces):
@@ -663,8 +682,7 @@ def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolera
                 GUFaces,
                 outer_only=False,
                 skip_slivers=True,
-                _min_area=tolerances.min_area,
-                _min_face_width=tolerances.min_face_width,
+                tolerances=tolerances,
             )
             if result is None:
                 continue
@@ -681,7 +699,7 @@ def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolera
     return found
 
 
-def _valid_chain_junction(shared_edge, faceA, faceB, tol=1e-6):
+def _valid_chain_junction(shared_edge, faceA, faceB, tol=LENGTH_TOL_E6):
     """True if `shared_edge` (already known to be the boundary between
     faceA and faceB) represents a genuine near-parallel RevCC chain
     junction rather than a spurious/incidental edge-sharing between two
@@ -760,8 +778,8 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     # (confirmed live, Solidos/Big_one_cell/modelcell_cut1.stp piece 66) must
     # not be treated as the real adjacent plane itself -- same class of fix
     # already applied to multiplane()/eligible_plane().
-    result1 = other_face_edge(emin, facemin, GUFaces, skip_slivers=True)
-    result2 = other_face_edge(emax, facemax, GUFaces, skip_slivers=True)
+    result1 = other_face_edge(emin, facemin, GUFaces, skip_slivers=True, tolerances=tolerances)
+    result2 = other_face_edge(emax, facemax, GUFaces, skip_slivers=True, tolerances=tolerances)
     adjacent1 = result1[2] if result1 is not None else None
     adjacent2 = result2[2] if result2 is not None else None
 
@@ -784,10 +802,10 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                 # member. 0.1 is a permissive floor (rejects only the
                 # ~last 6deg approaching exactly perpendicular), not a
                 # tight "must be small angle" bound.
-                and abs(face_or_shell.Surface.Axis.dot(adjacent1.Surface.Axis)) > 0.1
+                and abs(face_or_shell.Surface.Axis.dot(adjacent1.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
                 and _valid_chain_junction(result1[0], result1[1], adjacent1)
             ):
-                adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces)
+                adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces, tolerances=tolerances)
                 new_adjacent1, arc1 = get_join_cone_cyl(adjacent1_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
 
     if adjacent2 is not None:
@@ -795,10 +813,10 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
             if (
                 adjacent2.Index not in omitFaces
                 and adjacent2.Orientation == "Reversed"
-                and abs(face_or_shell.Surface.Axis.dot(adjacent2.Surface.Axis)) > 0.1
+                and abs(face_or_shell.Surface.Axis.dot(adjacent2.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
                 and _valid_chain_junction(result2[0], result2[1], adjacent2)
             ):
-                adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces)
+                adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces, tolerances=tolerances)
                 new_adjacent2, arc2 = get_join_cone_cyl(adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
 
     mp_list = []
@@ -817,7 +835,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
 
     else:
         coneOnly = gen_cone(face_or_shell)
-        apexPlane = cone_apex_plane(face_or_shell, Tolerances())
+        apexPlane = cone_apex_plane(face_or_shell, tolerances)
         cylcone_plane = gen_plane_cone(face_or_shell)
 
         facein = reversedCCP("Cone", (coneOnly, apexPlane, cylcone_plane, mp_list))
@@ -869,7 +887,7 @@ def gen_plane_cylinder(face_or_shell):
     axis = Faces[ifacemin].Surface.Axis
     cross = (V2 - V1).cross(axis)
     vmid = (V1 + V2) * 0.5
-    if cross.length < 1e-9:
+    if cross.length < ZERO_TOL_E9:
         # V1 == V2 (or V2-V1 happens to lie exactly along axis) -- the
         # closest-UV-node search picked the same point for both ends, a
         # real degenerate case confirmed live (2026-08-23,
@@ -942,12 +960,12 @@ def gen_plane_cone(face_or_shell):
     # whatever a non-degenerate node at that U would have given -- fixed
     # by re-evaluating at a small positive V nudge instead of the
     # apex-coincident one, rather than trusting the tessellated V as-is.
-    if (V1 - apex).length < 1e-7:
+    if (V1 - apex).length < POINT_POINT_TOL:
         _, _, _, vmax1 = Faces[ifacemin].ParameterRange
-        V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], 1e-3 * vmax1)
-    if (V2 - apex).length < 1e-7:
+        V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], REL_TOL_E3 * vmax1)
+    if (V2 - apex).length < POINT_POINT_TOL:
         _, _, _, vmax2 = Faces[ifacemax].ParameterRange
-        V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], 1e-3 * vmax2)
+        V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], REL_TOL_E3 * vmax2)
 
     dir1 = (V1 - apex).normalized()
     dir2 = (V2 - apex).normalized()
@@ -1055,7 +1073,7 @@ def closed_circle_edge(planes):
     for p in planes:
         umin, umax = p.edge.ParameterRange
         angle += umax - umin
-    return abs(angle - 2 * math.pi) < 1e-5
+    return abs(angle - 2 * math.pi) < PARAM_ANGLE_TOL_E5
 
 
 def most_outer_faces(cyl, faces):
@@ -1081,18 +1099,8 @@ def most_outer_faces(cyl, faces):
     return (face1, face2), remove_surf
 
 
-def eligible_plane(plane, tolerances=None):
+def eligible_plane(plane, tolerances):
     """An eligible master plane is a plane where the adjacent concave planes make a convex shape"""
-    # `tolerances=None` (rather than a `Tolerances()` default argument)
-    # deliberately keeps every existing call site working unchanged, but
-    # note that a bare default previously meant this ALWAYS silently used
-    # a fresh Tolerances() instance -- ignoring whatever min_area the
-    # caller had actually configured via CadToCsg(tolerances=...). Fixed,
-    # 2026-08-23: callers now thread their own real tolerances object
-    # through; only truly tolerances-agnostic call sites (if any remain)
-    # fall back to the class default here.
-    if tolerances is None:
-        tolerances = Tolerances()
     if plane.Area < tolerances.min_area:
         # A residual near-zero-area sliver face (left over from a boolean
         # cut that grazed tangentially, same class of artifact
@@ -1152,9 +1160,9 @@ def eligible_plane(plane, tolerances=None):
     real_edges = [e for e in Edges if e.Length >= sliver_length]
     if len(real_edges) >= 3:
         Edges = real_edges
-        vertex_tol = max(1e-6, sliver_length)
+        vertex_tol = max(POINT_POINT_TOL, sliver_length)
     else:
-        vertex_tol = 1e-6
+        vertex_tol = POINT_POINT_TOL
 
     Vertexes = []
     for e in Edges:
@@ -1210,12 +1218,12 @@ def eligible_plane(plane, tolerances=None):
             # vector would divide by zero. Leave it un-merged (append as
             # its own entry, matching the pre-merge behavior) rather than
             # crash or silently absorb a real degeneracy into a longer run.
-            if prev_vec.length < 1e-9 or cur_vec.length < 1e-9:
+            if prev_vec.length < ZERO_TOL_E9 or cur_vec.length < ZERO_TOL_E9:
                 merged.append((e1, e2))
                 continue
             prev_dir = prev_vec.normalized()
             cur_dir = cur_vec.normalized()
-            if abs(prev_dir.dot(cur_dir) - 1.0) < 1e-6:
+            if abs(prev_dir.dot(cur_dir) - 1.0) < DIR_TOL_E6:
                 merged[-1] = (prev_start, e2)
             else:
                 merged.append((e1, e2))
@@ -1375,7 +1383,7 @@ def _and_or_by_material_sampling(
 
     frac_true = true_material / true_total
     frac_false = false_material / false_total
-    return (frac_true - frac_false) > 0.15
+    return (frac_true - frac_false) > SIDE_FRACTION_GAP_MIN
 
 
 def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
@@ -1431,7 +1439,7 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     cross2 = cyl_normal2.cross(p2_axis)
 
     fwd_cyl = cylinder.Orientation == "Forward"
-    if cross1.length < 1e-3:
+    if cross1.length < ANGLE_TOL_E3:
         upmin, upmax, vpmin, vpmax = p1.ParameterRange
         up = 0.5 * (upmin + upmax)
         vp = 0.5 * (vpmin + vpmax)
@@ -1446,7 +1454,7 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
         base = z1.dot(cross1) > 0
     AND_p1_cyl = base
 
-    if cross2.length < 1e-3:
+    if cross2.length < ANGLE_TOL_E3:
         upmin, upmax, vpmin, vpmax = p2.ParameterRange
         up = 0.5 * (upmin + upmax)
         vp = 0.5 * (vpmin + vpmax)
@@ -1492,8 +1500,8 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     AND_p2_pd = base if fwd_cyl else not base
 
     OR_p12_bracket = z1.dot(p1_axis.cross(p2_axis)) < 0  # si no funciona asi es que es el valor negativo
-    same_p1_pd = (p1_axis.dot(normal_cyl_plane)) > 0.999999
-    same_p2_pd = (p2_axis.dot(normal_cyl_plane)) > 0.999999
+    same_p1_pd = (p1_axis.dot(normal_cyl_plane)) > AXIS_COS_MIN_E6
+    same_p2_pd = (p2_axis.dot(normal_cyl_plane)) > AXIS_COS_MIN_E6
 
     configuration = fwd_cyl * mask.fwd_cyl
     configuration += AND_p1_cyl * mask.p1_cyl
@@ -1559,7 +1567,7 @@ def region_sign(s1_in, s2, outAngle=False):
 
     dprod = vect.dot(normal2)
 
-    if abs(dprod) < 1e-4:
+    if abs(dprod) < DIR_TOL_E4:
         if type(s2.Surface) is GSphere:
             operator = "AND" if s2.Orientation == "Forward" else "OR"
         elif type(s1.Surface) is GSphere:
@@ -1602,7 +1610,7 @@ def angle(v1, v2, operator):
         return twoPi - a
 
 
-def merge_same_surface_faces(face_in, solidFaces):
+def merge_same_surface_faces(face_in, solidFaces, *, tolerances):
     """A boolean cut that splits a single analytic cylinder/cone into
     several contiguous face pieces (e.g. a residual-cut artifact, or a
     genuine multi-piece split) shouldn't be treated as several unrelated
@@ -1614,7 +1622,7 @@ def merge_same_surface_faces(face_in, solidFaces):
     (Can/TCone closure) and get_roundcorner_surfaces (RoundCorner corner-plane
     search).
 
-    Residual sliver faces (area below Tolerances().min_area -- the same
+    Residual sliver faces (area below the run's tolerances.min_area -- the same
     degenerate, near-zero-area boolean-cut artifact `other_face_edge`'s
     `skip_slivers` mode treats as transparent noise, not a real feature)
     are excluded from the same-surface group entirely before the O(n^2)
@@ -1627,7 +1635,7 @@ def merge_same_surface_faces(face_in, solidFaces):
     negligible area means dropping it from the merged group doesn't
     change the group's real geometry (closure angle, corner-plane
     adjacency) in any way that matters."""
-    min_area = Tolerances().min_area
+    min_area = tolerances.min_area
     same_surface = [face_in]
     for current_face in solidFaces:
         if current_face.Index == face_in.Index:
@@ -1639,7 +1647,7 @@ def merge_same_surface_faces(face_in, solidFaces):
 
     if len(same_surface) > 1:
         sameIndex = same_faces(
-            same_surface, Tolerances()
+            same_surface, tolerances
         )  # return all face connected (direct or indirectly ) to first face (cylinder)
         sameIndex.insert(0, 0)
         connected_faces = [same_surface[i] for i in sameIndex]
@@ -1649,8 +1657,8 @@ def merge_same_surface_faces(face_in, solidFaces):
     return face_in
 
 
-def closed_cylinder_cone(cylkne, solidFaces):
-    ck_shell = merge_same_surface_faces(cylkne, solidFaces)
+def closed_cylinder_cone(cylkne, solidFaces, *, tolerances):
+    ck_shell = merge_same_surface_faces(cylkne, solidFaces, tolerances=tolerances)
     ck_index = ck_shell.Indexes if type(ck_shell) is ShellFaceGu else {cylkne.Index}
     return ck_shell, ck_index, is_closed_cylinder_cone(ck_shell)
 
@@ -1664,12 +1672,12 @@ def _edge_is_planar(edge):
     tangent is degenerate, in which case it's effectively a straight
     segment); any other/unsupported curve type (e.g. Hyperbola/
     Parabola) is treated as not confirmed planar."""
-    if edge.Length < 1e-5:
+    if edge.Length < LENGTH_TOL_E5:
         return False
     curve = edge.Curve
     if type(curve) is GBSpline:
         d0 = edge.derivative1_at(0)
-        if d0.length < 1e-5:
+        if d0.length < LENGTH_TOL_E5:
             return True
         return spline_2D(edge)
     if type(curve) in (GCircle, GEllipse):
@@ -1695,7 +1703,7 @@ def planar_edges(edges):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < 1e-5:
+    if e0.Length < LENGTH_TOL_E5:
         return False
     # e0.Curve is already the classified curve (GLine/GCircle/GEllipse/
     # GBSpline/None), set once by GEdge.__init__ -- re-running
@@ -1704,7 +1712,7 @@ def planar_edges(edges):
     curve0 = e0.Curve
     if type(curve0) is GBSpline:
         d0 = e0.derivative1_at(0)
-        if d0.length < 1e-5:
+        if d0.length < LENGTH_TOL_E5:
             dir0 = (e0.Vertexes[1] - e0.Vertexes[0]).normalized()
             center0 = 0.5 * (e0.Vertexes[1] + e0.Vertexes[0])
         elif spline_2D(e0):
@@ -1733,7 +1741,7 @@ def planar_edges(edges):
         curve_i = ei.Curve
         if type(curve_i) is GBSpline:
             di = ei.derivative1_at(0)
-            if di.length < 1e-5:
+            if di.length < LENGTH_TOL_E5:
                 dir = (ei.Vertexes[1] - ei.Vertexes[0]).normalized()
                 center = 0.5 * (ei.Vertexes[1] + ei.Vertexes[0])
             elif spline_2D(ei):
@@ -1750,9 +1758,9 @@ def planar_edges(edges):
             dir = curve_i.Direction
             center = curve_i.Position
 
-        if not is_parallel(dir0, dir, Tolerances().angle):
+        if not is_parallel(dir0, dir, ANGLE_TOL_E4):
             return False
-        if abs(dir0.dot(center - center0)) > 1e-5:
+        if abs(dir0.dot(center - center0)) > DIR_TOL_E5:
             return False
 
         if not edge_1D(ei):
@@ -1776,7 +1784,7 @@ def same_curve(edges):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < 1e-5:
+    if e0.Length < LENGTH_TOL_E5:
         return False
     curve0 = e0.Curve
     if curve0 is None:  # unsupported curve type (e.g. Hyperbola/Parabola)
@@ -1789,9 +1797,9 @@ def same_curve(edges):
             curve_i = ei.Curve
             if type(curve_i) is not GLine:
                 return False
-            if not is_parallel(curve0.Direction, curve_i.Direction, Tolerances().angle):
+            if not is_parallel(curve0.Direction, curve_i.Direction, ANGLE_TOL_E4):
                 return False
-            if curve0.Direction.cross(curve_i.Position - curve0.Position).length > 1e-5:
+            if curve0.Direction.cross(curve_i.Position - curve0.Position).length > LENGTH_TOL_E5:
                 return False
         return True
 
@@ -1800,17 +1808,17 @@ def same_curve(edges):
             curve_i = ei.Curve
             if type(curve_i) is not type(curve0):
                 return False
-            if not is_parallel(curve0.Axis, curve_i.Axis, Tolerances().angle):
+            if not is_parallel(curve0.Axis, curve_i.Axis, ANGLE_TOL_E4):
                 return False
-            if (curve_i.Center - curve0.Center).length > 1e-5:
+            if (curve_i.Center - curve0.Center).length > LENGTH_TOL_E5:
                 return False
             if type(curve0) is GCircle:
-                if abs(curve_i.Radius - curve0.Radius) > 1e-5:
+                if abs(curve_i.Radius - curve0.Radius) > LENGTH_TOL_E5:
                     return False
             else:
-                if abs(curve_i.MajorRadius - curve0.MajorRadius) > 1e-5:
+                if abs(curve_i.MajorRadius - curve0.MajorRadius) > LENGTH_TOL_E5:
                     return False
-                if abs(curve_i.MinorRadius - curve0.MinorRadius) > 1e-5:
+                if abs(curve_i.MinorRadius - curve0.MinorRadius) > LENGTH_TOL_E5:
                     return False
         return True
 
@@ -1827,7 +1835,7 @@ def same_curve(edges):
         while remaining:
             tail = chain[-1].Vertexes[-1]
             for i, ei in enumerate(remaining):
-                if (ei.Vertexes[0] - tail).length < 1e-5 or (ei.Vertexes[-1] - tail).length < 1e-5:
+                if (ei.Vertexes[0] - tail).length < POINT_POINT_TOL or (ei.Vertexes[-1] - tail).length < POINT_POINT_TOL:
                     chain.append(remaining.pop(i))
                     break
             else:
@@ -1836,9 +1844,9 @@ def same_curve(edges):
         for i in range(len(chain) - 1):
             t1 = chain[i].derivative1_at(chain[i].ParameterRange[1])
             t2 = chain[i + 1].derivative1_at(chain[i + 1].ParameterRange[0])
-            if t1.length < 1e-5 or t2.length < 1e-5:
+            if t1.length < LENGTH_TOL_E5 or t2.length < LENGTH_TOL_E5:
                 continue
-            if not is_parallel(t1.normalized(), t2.normalized(), Tolerances().angle):
+            if not is_parallel(t1.normalized(), t2.normalized(), ANGLE_TOL_E4):
                 return False
         return True
 
@@ -1846,21 +1854,21 @@ def same_curve(edges):
 
 
 def edge_1D(edge):
-    if edge.Length < 1e-5:
+    if edge.Length < LENGTH_TOL_E5:
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
-    return edge.curvature(pe) < 1e-6
+    return edge.curvature(pe) < ZERO_TOL_E6
 
 
 def spline_2D(edge):
     knots = edge.knots()
 
-    if edge.curvature(knots[0]) < 1e-6:
+    if edge.curvature(knots[0]) < ZERO_TOL_E6:
         return False  # straight line
 
     d0 = edge.derivative1_at(knots[0])
-    if d0.length < 1e-5:
+    if d0.length < LENGTH_TOL_E5:
         return False
 
     norm_0 = d0.cross(edge.normal_at(knots[0])).normalized()
@@ -1869,7 +1877,7 @@ def spline_2D(edge):
         # check if derivative orthogonal to curve normal vector
         dk = edge.derivative1_at(k)
         normal_k = dk.cross(edge.normal_at(k)).normalized()
-        if abs(1.0 - abs(normal_k.dot(norm_0))) > Tolerances().value:
+        if abs(1.0 - abs(normal_k.dot(norm_0))) > DIR_TOL_E6:
             return False
     return True
 
@@ -1915,7 +1923,7 @@ def get_shell_UV_nodes(face_or_shell):
 
 def tessellate_face(face):
     try:
-        face.tessellate(0.1)
+        face.tessellate(MESH_DEFLECTION)
         UVNode = face.getUVNodes()
     except RuntimeError:
         UVNode = ()

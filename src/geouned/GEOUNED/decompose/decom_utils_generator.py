@@ -31,6 +31,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
+from ...geo.constants import ANGLE_TOL_E6, DIR_TOL_E5, LENGTH_TOL_E3, REL_TOL_E2
 
 logger = logging.getLogger("general_logger")
 
@@ -113,14 +114,14 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
 
                 # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
                 cross = axis1.cross(axis2)
-                if cross.length > 1e-6:
+                if cross.length > ANGLE_TOL_E6:
                     dist = abs(cross.dot(p1 - p2)) / cross.length
-                    if dist > 1e-3:
+                    if dist > LENGTH_TOL_E3:
                         continue  # doesn't create plane if the axes are not close enough
                 else:
                     # if the axes are parallel, check the distance between the two points
                     dist = (p1 - p2).length
-                    if dist > 1e-3:
+                    if dist > LENGTH_TOL_E3:
                         continue  # doesn't create plane if the axes are not close enough
 
             plane = cks_edge_plane(face, [e])
@@ -217,7 +218,7 @@ def spline_wires(edges, face, pc=None):
                 point = rmax
             else:
                 point = rmin
-            d = 0.01 * abs(majoraxis.dot(rmax - rmin))
+            d = REL_TOL_E2 * abs(majoraxis.dot(rmax - rmin))
         else:
             point = 0.5 * (rmin + rmax)
             d = 0.51 * abs(majoraxis.dot(rmax - rmin))
@@ -373,7 +374,7 @@ def omit_isolated_planes(Faces, omitfaces):
             if adjacent_face is None:
                 continue
             if type(adjacent_face.Surface) is GPlane:
-                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < 1e-5:
+                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < DIR_TOL_E5:
                     if adjacent_face.Index not in omitfaces:
                         omitfaces.add(f.Index)
                         break

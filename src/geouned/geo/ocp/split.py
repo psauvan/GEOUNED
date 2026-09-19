@@ -26,6 +26,7 @@ from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
 from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes, Gclose_open_solid
+from ..constants import POINT_POINT_TOL, REL_TOL_E5
 
 
 @dataclass(frozen=True)
@@ -160,15 +161,15 @@ def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
     base_volume = _volume_props(base_native).Mass()
     in_volume = base_volume + tool_volume
     out_volume = sum(_volume_props(x).Mass() for x in raw_solids)
-    if abs(out_volume - in_volume) < 1e-5 * in_volume and abs(tool_volume) > 1e-5:
+    if abs(out_volume - in_volume) < REL_TOL_E5 * in_volume and abs(tool_volume) > REL_TOL_E5:
         base_components = []
         tool_CM = _volume_props(tool_native).CentreOfMass()
         for s in raw_solids:
             s_volume = _volume_props(s).Mass()
-            if abs(s_volume - tool_volume) < 1e-5 * abs(s_volume):
+            if abs(s_volume - tool_volume) < REL_TOL_E5 * abs(s_volume):
                 sol_CM = _volume_props(s).CentreOfMass()
                 d2 = tool_CM.SquareDistance(sol_CM)
-                if math.sqrt(d2) < 1e-6:
+                if math.sqrt(d2) < POINT_POINT_TOL:
                     continue
             else:
                 base_components.append(s)

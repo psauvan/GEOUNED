@@ -16,6 +16,7 @@ from ....geo import (
     Gmake_sphere,
     to_gboundbox,
 )
+from ....geo.constants import LENGTH_TOL_E6
 
 
 class CellObj:
@@ -36,7 +37,7 @@ class CellObj:
 
     def makeBox(self):
         boundBox = self.boundBox.Box
-        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+        if boundBox.XLength < LENGTH_TOL_E6 or boundBox.YLength < LENGTH_TOL_E6 or boundBox.ZLength < LENGTH_TOL_E6:
             return None
         else:
             return Gmake_box(

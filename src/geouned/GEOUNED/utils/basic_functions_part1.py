@@ -8,29 +8,30 @@ from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
+from ...geo.constants import ANGLE_TOL_E3, DIR_TOL_E6, LENGTH_TOL_E6, LENGTH_TOL_E7, PARAM_ANGLE_TOL_E5
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
 # expected to already pass GVector.
 
 
-def is_same_value(v1, v2, tolerance=1e-6):
+def is_same_value(v1, v2, tolerance=LENGTH_TOL_E6):
     return surface_geometry.is_same_value(v1, v2, tolerance)
 
 
-def is_opposite(vector_1, vector_2, tolerance=1e-3):
+def is_opposite(vector_1, vector_2, tolerance=ANGLE_TOL_E3):
     return surface_geometry.is_opposite(vector_1, vector_2, tolerance)
 
 
-def is_parallel(vector_1, vector_2, tolerance=1e-3):
+def is_parallel(vector_1, vector_2, tolerance=ANGLE_TOL_E3):
     return surface_geometry.is_parallel(vector_1, vector_2, tolerance)
 
 
-def is_in_line(point, dir, pnt_line, tolerance=1e-6):
+def is_in_line(point, dir, pnt_line, tolerance=LENGTH_TOL_E6):
     return surface_geometry.is_in_line(point, dir, pnt_line, tolerance)
 
 
-def is_in_plane(point, plane, d_tolerance=1e-7):
+def is_in_plane(point, plane, d_tolerance=LENGTH_TOL_E7):
     plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
     return surface_geometry.is_in_plane(point, plane_params, d_tolerance)
 
@@ -51,7 +52,7 @@ def sign_plane(point, plane):
     return surface_geometry.sign_plane(point, plane_params)
 
 
-def shapes_in_contact(shape1, shape2, tolerance=1e-6):
+def shapes_in_contact(shape1, shape2, tolerance=LENGTH_TOL_E6):
     if shape1 is shape2:
         return True
     return Gin_contact(
@@ -63,9 +64,9 @@ def shapes_in_contact(shape1, shape2, tolerance=1e-6):
 
 def twoPimod(x):
     x = x % twoPi
-    if x < 1e-5:
+    if x < PARAM_ANGLE_TOL_E5:
         return 0.0
-    elif twoPi - x < 1e-5:
+    elif twoPi - x < PARAM_ANGLE_TOL_E5:
         return 0.0
     else:
         return x
@@ -476,11 +477,11 @@ class PlaneParams:
         if type(p2) is not PlaneParams:
             return False
         r = self.Position - p2.Position
-        if abs(r.dot(self.Axis)) > 1e-6:
+        if abs(r.dot(self.Axis)) > DIR_TOL_E6:
             return False
 
         d = self.Axis.dot(p2.Axis)
-        return abs(d - 1) < 1e-6
+        return abs(d - 1) < DIR_TOL_E6
 
     def __str__(self):
         pos = self.Axis.dot(self.Position)

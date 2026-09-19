@@ -16,6 +16,7 @@ import Part
 from .topology import GFace, GSolid, Gclassify_surface
 from ..solid_defects import find_short_edges
 from ..constants import MAX_DEFEATURE_VOLUME_REL_CHANGE
+from ..constants import DEFAULT_MIN_FACE_WIDTH
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
@@ -60,7 +61,7 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     return healed
 
 
-def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
     """Repair a "split boundary ring" / duplicated micro-trim defect --
     a single trimming surface duplicated at a sub-tolerance offset, with
     parasitic "riser" faces bridging the thin slab and every curved face
@@ -76,7 +77,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     return None
 
 
-def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+def Gsliver_heal(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
     """`sliver_healing` (version 0) -- the fuller form of
     `Gcollapse_split_rings` (remove sliver faces, resolve a
     near-coincident surface pair by dropping the smaller face + capping

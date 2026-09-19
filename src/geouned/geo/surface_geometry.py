@@ -23,32 +23,57 @@ from __future__ import annotations
 
 import math
 
+from .constants import (
+    ANGLE_TOL_E3,
+    ANGLE_TOL_E5,
+    ANGLE_TOL_E6,
+    DIR_TOL_E5,
+    LENGTH_TOL_E5,
+    LENGTH_TOL_E6,
+    LENGTH_TOL_E7,
+    LENGTH_TOL_E8,
+    REL_TOL_E2,
+    REL_TOL_E3,
+    SAME_SURFACE_AXIS_ANGLE_TOL,
+    ZERO_TOL_E9,
+)
 from .vector_geometry import GVector
+from .constants import (
+    ANGLE_TOL_E3,
+    ANGLE_TOL_E5,
+    DIR_TOL_E5,
+    LENGTH_TOL_E5,
+    LENGTH_TOL_E6,
+    LENGTH_TOL_E7,
+    LENGTH_TOL_E8,
+    LENGTH_TOL_E9,
+    ZERO_TOL_E9,
+)
 
 # ---------------------------------------------------------------------------
 # Basic geometric predicates on GVector
 # ---------------------------------------------------------------------------
 
 
-def is_same_value(v1: float, v2: float, tolerance: float = 1e-6) -> bool:
+def is_same_value(v1: float, v2: float, tolerance: float = LENGTH_TOL_E6) -> bool:
     return abs(v1 - v2) < tolerance
 
 
-def is_opposite(vector_1: GVector, vector_2: GVector, tolerance: float = 1e-3) -> bool:
+def is_opposite(vector_1: GVector, vector_2: GVector, tolerance: float = ANGLE_TOL_E3) -> bool:
     return vector_1.angle_to(-vector_2) < tolerance
 
 
-def is_parallel(vector_1: GVector, vector_2: GVector, tolerance: float = 1e-3) -> bool:
+def is_parallel(vector_1: GVector, vector_2: GVector, tolerance: float = ANGLE_TOL_E3) -> bool:
     angle = vector_1.angle_to(vector_2)
     return angle < tolerance or is_same_value(angle, math.pi, tolerance)
 
 
-def is_in_line(point: GVector, direction: GVector, point_on_line: GVector, tolerance: float = 1e-6) -> bool:
+def is_in_line(point: GVector, direction: GVector, point_on_line: GVector, tolerance: float = LENGTH_TOL_E6) -> bool:
     to_point = point - point_on_line
     return is_parallel(direction, to_point) or to_point.length < tolerance
 
 
-def is_in_plane(point: GVector, plane, tolerance: float = 1e-7) -> bool:
+def is_in_plane(point: GVector, plane, tolerance: float = LENGTH_TOL_E7) -> bool:
     return abs(plane.Axis.dot(point - plane.Position)) < tolerance
 
 
@@ -59,6 +84,14 @@ def sign_plane(point: GVector, plane) -> int:
 # ---------------------------------------------------------------------------
 # "Is this the same underlying analytic surface" predicates
 # ---------------------------------------------------------------------------
+
+_SAME_AXIS_MIN_ABS_DOT = math.cos(SAME_SURFACE_AXIS_ANGLE_TOL)
+
+
+def _same_axis_line(axis_1: GVector, axis_2: GVector) -> bool:
+    """True if two unit axes lie along the same line, direction ignored,
+    to within `SAME_SURFACE_AXIS_ANGLE_TOL`."""
+    return abs(axis_1.dot(axis_2)) >= _SAME_AXIS_MIN_ABS_DOT
 
 
 def is_same_plane_surface(plane_1, plane_2) -> bool:
@@ -86,19 +119,19 @@ def is_same_plane_surface(plane_1, plane_2) -> bool:
     real additional/closing plane entirely).
     """
     axis_dot = plane_1.Axis.dot(plane_2.Axis)
-    if abs(axis_dot) < 0.99999:
+    if not _same_axis_line(plane_1.Axis, plane_2.Axis):
         return False
     d1 = plane_1.Axis.dot(plane_1.Position)
     d2 = plane_2.Axis.dot(plane_2.Position)
     if axis_dot > 0:
-        return abs(d1 - d2) <= 1e-5
+        return abs(d1 - d2) <= LENGTH_TOL_E5
     else:
-        return abs(d1 + d2) <= 1e-5
+        return abs(d1 + d2) <= LENGTH_TOL_E5
 
 
 def is_parallel_plane_surface(plane_1, plane_2) -> bool:
     """Direct port of the former `PlaneGu.isParallel`, same fixed tolerance."""
-    return abs(plane_1.Axis.dot(plane_2.Axis)) > 0.99999
+    return _same_axis_line(plane_1.Axis, plane_2.Axis)
 
 
 def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
@@ -117,27 +150,28 @@ def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
     (perpendicular distance ~2e-12) were wrongly judged different
     surfaces, so `Gsliver_heal` could not recognise the malformed
     duplicate cylinder face it needed to drop. Was a direct port of the
-    former `CylinderGu.isSameSurface`; same fixed 1e-5 tolerances."""
-    if abs(cylinder_1.Radius - cylinder_2.Radius) > 1e-5:
+    former `CylinderGu.isSameSurface`; same fixed 1e-5 distance tolerances,
+    axis within `SAME_SURFACE_AXIS_ANGLE_TOL`."""
+    if abs(cylinder_1.Radius - cylinder_2.Radius) > LENGTH_TOL_E5:
         return False
-    if abs(cylinder_1.Axis.dot(cylinder_2.Axis)) < 0.99999:
+    if not _same_axis_line(cylinder_1.Axis, cylinder_2.Axis):
         return False
     offset = cylinder_1.Center - cylinder_2.Center
     perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
-    return perpendicular.length <= 1e-5
+    return perpendicular.length <= LENGTH_TOL_E5
 
 
 def is_same_cone_surface(cone_1, cone_2) -> bool:
     """Direct port of the former `ConeGu.isSameSurface`, same fixed tolerances."""
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > 1e-5:
+    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > ANGLE_TOL_E5:
         return False
-    if (cone_1.Apex - cone_2.Apex).length > 1e-5:
+    if (cone_1.Apex - cone_2.Apex).length > LENGTH_TOL_E5:
         return False
-    return abs(cone_1.Axis.dot(cone_2.Axis)) >= 0.99999
+    return _same_axis_line(cone_1.Axis, cone_2.Axis)
 
 
 def is_coaxial_cone_pair(
-    cone_1, cone_2, angle_tol: float = 1e-6, axis_dot_tol: float = 1e-5, apex_line_tol: float = 1e-5
+    cone_1, cone_2, angle_tol: float = ANGLE_TOL_E6, axis_dot_tol: float = DIR_TOL_E5, apex_line_tol: float = LENGTH_TOL_E5
 ) -> bool:
     """True when two cones share the same axis *line* (their axis vectors
     may be parallel or anti-parallel -- direction is not constrained) and
@@ -166,7 +200,7 @@ def is_coaxial_cone_pair(
     return radial < apex_line_tol
 
 
-def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semiangle_min: float = 1e-6) -> bool:
+def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = LENGTH_TOL_E5, semiangle_min: float = ANGLE_TOL_E6) -> bool:
     """True when `cone` and `cylinder` share the same axis *line* (either
     axis direction) and `cone`'s SemiAngle is non-degenerate (not exactly
     0 or 90 degrees), so the cone genuinely reaches `cylinder.Radius` at
@@ -185,7 +219,7 @@ def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semi
     """
     if abs(math.tan(cone.SemiAngle)) < semiangle_min:
         return False
-    if abs(cone.Axis.dot(cylinder.Axis)) < 1.0 - 1e-5:
+    if abs(cone.Axis.dot(cylinder.Axis)) < 1.0 - DIR_TOL_E5:
         return False
     offset = cylinder.Center - cone.Apex
     along = offset.dot(cone.Axis)
@@ -195,20 +229,20 @@ def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semi
 
 def is_same_sphere_surface(sphere_1, sphere_2) -> bool:
     """Direct port of the former `SphereGu.isSameSurface`, same fixed tolerance."""
-    if abs(sphere_1.Radius - sphere_2.Radius) > 1e-5:
+    if abs(sphere_1.Radius - sphere_2.Radius) > LENGTH_TOL_E5:
         return False
-    return (sphere_1.Center - sphere_2.Center).length <= 1e-5
+    return (sphere_1.Center - sphere_2.Center).length <= LENGTH_TOL_E5
 
 
 def is_same_torus_surface(torus_1, torus_2) -> bool:
     """Direct port of the former `TorusGu.isSameSurface`, same fixed tolerances."""
-    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > 1e-5:
+    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > LENGTH_TOL_E5:
         return False
-    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > 1e-5:
+    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > LENGTH_TOL_E5:
         return False
-    if (torus_1.Center - torus_2.Center).length > 1e-5:
+    if (torus_1.Center - torus_2.Center).length > LENGTH_TOL_E5:
         return False
-    return abs(torus_1.Axis.dot(torus_2.Axis)) >= 0.99999
+    return _same_axis_line(torus_1.Axis, torus_2.Axis)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +291,7 @@ def is_inside_torus(point: GVector, torus) -> bool:
     return rp > torus.MinorRadius
 
 
-def torus_sheet_sign(vertex: GVector, torus, tol: float = 1e-8) -> int:
+def torus_sheet_sign(vertex: GVector, torus, tol: float = LENGTH_TOL_E8) -> int:
     """For a self-intersecting (degenerate: MinorRadius > MajorRadius)
     torus, +1 if `vertex` lies on the ordinary outer sheet, -1 if on the
     pinched, self-intersecting inner sheet -- these are two genuinely
@@ -351,7 +385,7 @@ def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None
     None if there are 0 real roots, or if the equation degenerates to
     non-quadratic (a ~ 0) -- the caller needs a genuine entry/exit pair,
     not a single crossing."""
-    if abs(a) < 1e-9:
+    if abs(a) < ZERO_TOL_E9:
         return None
     disc = b * b - 4.0 * a * c
     if disc < 0.0:
@@ -410,7 +444,7 @@ def find_can_plane(
     """
     A = main_axis.normalized()
     e2 = A.cross(GVector(1.0, 0.0, 0.0))
-    if e2.length < 1e-6:
+    if e2.length < LENGTH_TOL_E6:
         e2 = A.cross(GVector(0.0, 1.0, 0.0))
     e2 = e2.normalized()
     e1 = A.cross(e2).normalized()
@@ -471,7 +505,7 @@ def find_can_plane(
         normal = A
     else:
         n_common = A.cross(secondary_axis)
-        if n_common.length < 1e-9:
+        if n_common.length < ZERO_TOL_E9:
             normal = A  # axes (near-)parallel -- common plane undefined
         else:
             normal = secondary_axis.cross(n_common.normalized()).normalized()
@@ -505,13 +539,13 @@ def find_can_plane(
         return None
 
     if narrow_wide_threshold is None:
-        narrow_wide_threshold = 0.01 * main_radius
+        narrow_wide_threshold = REL_TOL_E2 * main_radius
 
     half_width = 0.5 * (proj_far - proj_near)
     if half_width <= narrow_wide_threshold:
         offset_amount = half_width
     else:
-        offset_amount = min(0.001 * half_width, narrow_wide_threshold)
+        offset_amount = min(REL_TOL_E3 * half_width, narrow_wide_threshold)
 
     position = point_near + normal * offset_amount
     return position, normal

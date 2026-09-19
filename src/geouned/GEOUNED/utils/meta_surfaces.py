@@ -19,6 +19,7 @@ from .meta_surfaces_utils import (
     eligible_plane,
     get_additional_corner_plane,
 )
+from ...geo.constants import DIR_TOL_E5, LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
 
 
 def multiplane_loop(adjacents, multi_list, planes):
@@ -56,7 +57,7 @@ def multiplane(master_plane, planes, plane_index, tolerances=None):
         # real adjacent plane itself: walk across it to the real face
         # beyond, matching get_adjacent_cylplane/get_adjacent_cylknesurfFace's
         # own established use of this same parameter.
-        result = other_face_edge(e, master_plane, planes, outer_only=True, skip_slivers=True)
+        result = other_face_edge(e, master_plane, planes, outer_only=True, skip_slivers=True, tolerances=tolerances)
         if result is not None:
             _, _, adjacent_plane = result
             if adjacent_plane.Index in plane_index:
@@ -92,8 +93,8 @@ def multiplane_old(p, planes):
     return addplane
 
 
-def get_fwdcan_surfaces(cylinder, solidFaces):
-    adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False)
+def get_fwdcan_surfaces(cylinder, solidFaces, *, tolerances):
+    adjacent_planes = get_adjacent_cylplane(cylinder, solidFaces, cornerPlanes=False, tolerances=tolerances)
 
     # for p in adjacent_planes:
     #    r = region_sign(p, cylinder)
@@ -107,18 +108,18 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         axis = adjacent_planes[0].Surface.Axis
         for p in adjacent_planes[1:]:
             d = p.Surface.Position - r1
-            if d.length < 1e-5:
+            if d.length < LENGTH_TOL_E5:
                 p1s.append(p)
             else:
                 d = d.normalized()
-                if abs(axis.dot(d)) < 1e-5:
+                if abs(axis.dot(d)) < DIR_TOL_E5:
                     p1s.append(p)
                 else:
                     p2s.append(p)
 
         umin, umax, vmin, vmax = cylinder.ParameterRange
         angle = umax - umin
-        if abs(angle - twoPi) < 1e-5:
+        if abs(angle - twoPi) < PARAM_ANGLE_TOL_E5:
             if p2s:
                 return (p1s, p2s), cylinder
             else:
@@ -129,12 +130,12 @@ def get_fwdcan_surfaces(cylinder, solidFaces):
         return [], None
 
 
-def get_can_surfaces(cylinder, solidFaces):
-    cylinder_shell, faceindex, closed = closed_cylinder_cone(cylinder, solidFaces)
+def get_can_surfaces(cylinder, solidFaces, *, tolerances):
+    cylinder_shell, faceindex, closed = closed_cylinder_cone(cylinder, solidFaces, tolerances=tolerances)
     if not closed:
         return None, None
 
-    ext_faces = get_adjacent_cylknesurf(cylinder_shell, solidFaces)
+    ext_faces = get_adjacent_cylknesurf(cylinder_shell, solidFaces, tolerances=tolerances)
     surfaces = [cylinder_shell]
     cyl_value = 1 if cylinder_shell.Orientation == "Reversed" else -1
     # commonEdge's own ShellGu branch returns (edges, matching_face)
@@ -146,7 +147,7 @@ def get_can_surfaces(cylinder, solidFaces):
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
-            if abs(s.Surface.Radius - cylinder.Surface.Radius) < 1e-6:
+            if abs(s.Surface.Radius - cylinder.Surface.Radius) < LENGTH_TOL_E6:
                 # Same-radius adjacent cylinder -- deliberately NOT also
                 # requiring is_parallel(s.Axis, cylinder.Axis) here: any s
                 # reaching this point already passed get_adjacent_cylknesurf's
@@ -256,12 +257,12 @@ def get_can_surfaces(cylinder, solidFaces):
     return surfaces, faceindex
 
 
-def get_tcone_surfaces(cone, solidFaces):
-    cone_shell, faceindex, closed = closed_cylinder_cone(cone, solidFaces)
+def get_tcone_surfaces(cone, solidFaces, *, tolerances):
+    cone_shell, faceindex, closed = closed_cylinder_cone(cone, solidFaces, tolerances=tolerances)
     if not closed:
         return None, None
 
-    ext_faces = get_adjacent_cylknesurf(cone_shell, solidFaces)
+    ext_faces = get_adjacent_cylknesurf(cone_shell, solidFaces, tolerances=tolerances)
     if len(ext_faces) == 1:
         return None, None
     surfaces = [cone_shell]
@@ -292,7 +293,7 @@ def get_tcone_surfaces(cone, solidFaces):
         return surfaces, faceindex
 
 
-def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None):
+def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None, *, tolerances):
 
     rc_list = []
     face_index = set()
@@ -304,7 +305,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     # contiguous pieces into one ShellGu first (mirrors closed_cylinder_cone's
     # treatment of Can/TCone) so the corner-plane search sees the whole
     # feature's boundary, not just whichever piece `cylinder` happens to be.
-    cyl_shell = merge_same_surface_faces(cylinder, Faces)
+    cyl_shell = merge_same_surface_faces(cylinder, Faces, tolerances=tolerances)
     if type(cyl_shell) is ShellFaceGu:
         umin, umax, _, _ = cyl_shell.U_parameter_range
     else:
@@ -313,7 +314,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     if closed:
         return None, None
 
-    adjacent_planes = get_adjacent_cylplane(cyl_shell, Faces, cornerPlanes=True)
+    adjacent_planes = get_adjacent_cylplane(cyl_shell, Faces, cornerPlanes=True, tolerances=tolerances)
     if len(adjacent_planes) != 2:
         return None, None
 
@@ -373,7 +374,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
             # the corner-plane search above) -- walk through it instead of
             # stopping there and silently failing to chain into a
             # MultiRoundCorner.
-            result = other_face_edge(edge, newplane, Faces, skip_slivers=True)
+            result = other_face_edge(edge, newplane, Faces, skip_slivers=True, tolerances=tolerances)
             if result is None:
                 continue
             _, _, f = result
@@ -385,10 +386,10 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
                 continue
 
             cylinders_set.add(f.Index)
-            if is_same_cylinder(f.Surface, cylinder.Surface):
+            if is_same_cylinder(f.Surface, cylinder.Surface, tolerances=tolerances):
                 continue
 
-            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set, level + 1, solid=solid)
+            rc, newindex = get_roundcorner_surfaces(f, Faces, cylinders_set, level + 1, solid=solid, tolerances=tolerances)
             if rc is None:
                 cylinders_set.remove(f.Index)
                 continue

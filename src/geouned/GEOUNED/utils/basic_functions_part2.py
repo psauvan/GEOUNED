@@ -5,14 +5,28 @@ import logging
 import math
 
 
-from .data_classes import Options, NumericFormat, Tolerances
+from .data_classes import Options, NumericFormat
 from .basic_functions_part1 import (
     is_in_tolerance,
     is_opposite,
     is_parallel,
     is_same_value,
 )
+from .data_constants import RELATIVE_TOL_ABS_FLOOR
 from ..write.functions import mcnp_surface
+from ...geo.constants import ANGLE_TOL_E6, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
+
+
+def _relative_tol(rel, scale):
+    """`rel * scale`, never below RELATIVE_TOL_ABS_FLOOR (see its definition:
+    `scale` is 0 for a surface at the origin)."""
+    return max(rel * scale, RELATIVE_TOL_ABS_FLOOR)
+
+
+def _require(tolerances, caller):
+    if tolerances is None:
+        raise TypeError(f"{caller}() needs the run's Tolerances (tolerances=...): a default instance would silently ignore the user's values")
+    return tolerances
 
 
 def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_format):
@@ -43,8 +57,9 @@ def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_for
 
 
 def is_same_plane(
-    p1, p2, options=Options(), tolerances=Tolerances(), numeric_format=NumericFormat(), fuzzy=(False, 0), stdtol=True
+    p1, p2, options=Options(), tolerances=None, numeric_format=NumericFormat(), fuzzy=(False, 0), stdtol=True
 ):
+    tolerances = _require(tolerances, "is_same_plane")
     pln_angle = tolerances.pln_angle if stdtol else tolerances.add_pln_angle
     pln_distance = tolerances.pln_distance if stdtol else tolerances.add_pln_distance
 
@@ -55,7 +70,7 @@ def is_same_plane(
             d2 = -d2
         d = abs(d1 - d2)
         if tolerances.relativeTol:
-            tol = pln_distance * max(abs(d1), abs(d2))
+            tol = _relative_tol(pln_distance, max(abs(d1), abs(d2)))
         else:
             tol = pln_distance
 
@@ -70,10 +85,11 @@ def is_same_cylinder(
     cyl1,
     cyl2,
     options=Options(),
-    tolerances=Tolerances(),
+    tolerances=None,
     numeric_format=NumericFormat(),
     fuzzy=(False, 0),
 ):
+    tolerances = _require(tolerances, "is_same_cylinder")
     if tolerances.relativeTol:
         rtol = tolerances.cyl_distance * max(cyl2.Radius, cyl1.Radius)
     else:
@@ -102,7 +118,7 @@ def is_same_cylinder(
             d = axis1.cross(c12).length
 
             if tolerances.relativeTol:
-                tol = tolerances.cyl_distance * max(center1.length, center2.length)
+                tol = _relative_tol(tolerances.cyl_distance, max(center1.length, center2.length))
             else:
                 tol = tolerances.cyl_distance
 
@@ -124,20 +140,20 @@ def is_same_cylinder(
     return False
 
 
-def is_same_cone(cone1, cone2, dtol=1e-6, atol=1e-6, rel_tol=True):
+def is_same_cone(cone1, cone2, dtol=LENGTH_TOL_E6, atol=ANGLE_TOL_E6, rel_tol=True):
     if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
         if is_parallel(cone1.Axis, cone2.Axis, atol):
             apex1 = cone1.Apex
             apex2 = cone2.Apex
             if rel_tol:
-                tol = dtol * max(apex1.length, apex2.length)
+                tol = _relative_tol(dtol, max(apex1.length, apex2.length))
             else:
                 tol = dtol
             return apex1.is_equal(apex2, tol)
     return False
 
 
-def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
+def is_same_sphere(sph1, sph2, tolerance=LENGTH_TOL_E6, rel_tol=True):
     if rel_tol:
         rtol = tolerance * max(sph2.Radius, sph1.Radius)
     else:
@@ -146,7 +162,7 @@ def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
         center1 = sph1.Center
         center2 = sph2.Center
         if rel_tol:
-            ctol = tolerance * max(center1.length, center2.length)
+            ctol = _relative_tol(tolerance, max(center1.length, center2.length))
         else:
             ctol = tolerance
         return center1.is_equal(center2, ctol)
@@ -154,7 +170,7 @@ def is_same_sphere(sph1, sph2, tolerance=1e-6, rel_tol=True):
     return False
 
 
-def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True, check_a_sign=False):
+def is_same_torus(tor1, tor2, dtol=LENGTH_TOL_E6, atol=ANGLE_TOL_E6, rel_tol=True, check_a_sign=False):
     if is_parallel(tor1.Axis, tor2.Axis, atol):
         if tor1.Axis.dot(tor2.Axis) < 0:
             return False  # Assume same cone with oposite axis as different
@@ -182,7 +198,7 @@ def is_same_torus(tor1, tor2, dtol=1e-6, atol=1e-6, rel_tol=True, check_a_sign=F
             center1 = tor1.Center
             center2 = tor2.Center
             if rel_tol:
-                ctol = dtol * max(center1.length, center2.length)
+                ctol = _relative_tol(dtol, max(center1.length, center2.length))
             else:
                 ctol = dtol
             return center1.is_equal(center2, ctol)
@@ -197,13 +213,13 @@ def is_duplicate_in_list(num_str1, i, lista):
         num_str3 = f"{elem2 + 2.0 * math.pi:11.4E}"
         num_str4 = f"{elem2 - 2.0 * math.pi:11.4E}"
 
-        if abs(float(num_str2)) < 1.0e-5:
+        if abs(float(num_str2)) < PARAM_ANGLE_TOL_E5:
             num_str2 = "%11.4E" % 0.0
 
-        if abs(float(num_str3)) < 1.0e-5:
+        if abs(float(num_str3)) < PARAM_ANGLE_TOL_E5:
             num_str3 = "%11.4E" % 0.0
 
-        if abs(float(num_str4)) < 1.0e-5:
+        if abs(float(num_str4)) < PARAM_ANGLE_TOL_E5:
             num_str4 = "%11.4E" % 0.0
 
         if num_str1 == num_str2 or num_str1 == num_str3 or num_str1 == num_str4:

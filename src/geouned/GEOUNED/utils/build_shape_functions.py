@@ -18,6 +18,7 @@ from ...geo import (
     getPart,
     myBox,
 )
+from ...geo.constants import DIR_TOL_E6, KERNEL_TOL_E8, LENGTH_TOL_E8
 
 
 def makePlane(normal: GVector, position: GVector, box: GBoundBox):
@@ -185,12 +186,12 @@ def cut_face(gface: GFace, plane: GPlane):
     if gline is not None:
         for e in gface.Edges:
             edge_line = e.Curve  # edges here are always straight (built by makeBoxFaces)
-            if abs(abs(gline.Direction.dot(edge_line.Direction)) - 1) < 1e-6:
+            if abs(abs(gline.Direction.dot(edge_line.Direction)) - 1) < DIR_TOL_E6:
                 point = None  # if e and line are parallel: no point or infinity
             else:
                 point = gline.intersect_line(edge_line)
 
-            if point is not None and e.is_inside(point, 1e-8):
+            if point is not None and e.is_inside(point, KERNEL_TOL_E8):
                 inter.append(point)
 
     newpoints = inter[:]
@@ -251,7 +252,7 @@ def sort_points(point_list: list, normal: GVector):
 
 def remove_box_faces(point_face_list: list, faces: list, boxlim: list):
     """Remove the remaing initial BoundBox faces from the multplane faces produced"""
-    tol = 1e-8
+    tol = LENGTH_TOL_E8
     plane_points = []
     for i, gface in enumerate(faces):
         axis = gface.Surface.Axis
@@ -277,7 +278,7 @@ def fix_same_points(points_inplane: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = 1e-8
+    tol = LENGTH_TOL_E8
     remove = []
     for i, p1 in enumerate(points_inplane):
         if i in remove:
@@ -295,7 +296,7 @@ def fix_points(point_plane_list: list, vertex_list: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = 1e-8
+    tol = LENGTH_TOL_E8
     for i, current_plane in enumerate(point_plane_list):
         for point in current_plane:
             for planepts in point_plane_list[i + 1 :]:

@@ -16,6 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
+from .constants import DEGENERATE_SOLID_VOL_AREA_RATIO, KERNEL_TOL_E6, LENGTH_TOL_E6, REL_TOL_E4, VOLUME_MIN_E3
 
 
 def Gfuse_solids(parts, tolerances=None):
@@ -87,7 +88,7 @@ def Gfuse_solids(parts, tolerances=None):
             gsolid = fused
         else:
             try:
-                fixed = fused.fix(1e-6)
+                fixed = fused.fix(KERNEL_TOL_E6)
             except Exception:
                 fixed = None
 
@@ -100,7 +101,7 @@ def Gfuse_solids(parts, tolerances=None):
 
     if len(gsolid.Solids) == 1 and gsolid.is_valid():
         try:
-            refined = gsolid.refine(rel_tol=1e-4)
+            refined = gsolid.refine(rel_tol=REL_TOL_E4)
             if refined.is_valid():
                 gsolid = refined
         except Exception:
@@ -211,8 +212,8 @@ def space_decomposition(solids, surfaces, classify):
     component = []
     good_solids = []
     for c in solids:
-        if c.Volume < 1e-3:
-            if abs(c.Volume) < 1e-3:
+        if c.Volume < VOLUME_MIN_E3:
+            if abs(c.Volume) < VOLUME_MIN_E3:
                 continue
             else:
                 c = c.reverse()
@@ -260,7 +261,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerances, classify):
     else:
         orientation = "Forward"
 
-    if abs(base.base.Volume / base.base.Area) < 1e-2:
+    if abs(base.base.Volume / base.base.Area) < DEGENERATE_SOLID_VOL_AREA_RATIO:
         return fullPart, cutPart
 
     tool = surfacesCut[0].shape
@@ -352,7 +353,7 @@ def BuildSolidParts(cell, base, tolerances, classify):
 
     if base:
         boundBox = base.base.BoundBox
-        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+        if boundBox.XLength < LENGTH_TOL_E6 or boundBox.YLength < LENGTH_TOL_E6 or boundBox.ZLength < LENGTH_TOL_E6:
             return [], []
     else:
         # GEOUNED's CellObj has no build_BoundBox at all (its single,
