@@ -5,7 +5,6 @@ from collections import OrderedDict
 from .geometry_gu import ShellFaceGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .basic_functions_part1 import twoPimod
-from .basic_functions_part2 import is_same_plane
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import is_parallel, shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
@@ -27,18 +26,13 @@ from ...geo import (
     vector_geometry,
 )
 from ...geo.constants import (
-    ANGLE_TOL_E3,
-    ANGLE_TOL_E4,
-    AXIS_COS_MIN_E6,
-    DIR_TOL_E4,
-    DIR_TOL_E5,
-    DIR_TOL_E6,
     LENGTH_TOL_E3,
     LENGTH_TOL_E5,
     LENGTH_TOL_E6,
     MESH_DEFLECTION,
     MIN_SLIVER_EDGE_LENGTH,
     NOT_PERPENDICULAR_COS_MIN,
+    NUMERIC_TOL,
     PARAM_ANGLE_TOL_E4,
     PARAM_ANGLE_TOL_E5,
     POINT_POINT_TOL,
@@ -48,6 +42,7 @@ from ...geo.constants import (
     ZERO_TOL_E6,
     ZERO_TOL_E9,
 )
+from ...geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction
 
 
 class reversedCCP:
@@ -68,7 +63,7 @@ def remove_twice_parallel(mplanes, *, tolerances):
         for p2 in mplanes[i + 1 :]:
             if p2.Index in omit:
                 continue
-            if surface_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface, tolerances=tolerances):
+            if surface_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface, tolerances):
                 parallel.append(p2)
                 omit.add(p2.Index)
         if len(parallel) > 1:
@@ -95,9 +90,9 @@ def remove_twice_parallel(mplanes, *, tolerances):
             continue
 
         for p in reversed(parallel):
-            if surface_geometry.is_same_plane_surface(p.Surface, pmin.Surface, tolerances=tolerances):
+            if surface_geometry.is_same_plane_surface(p.Surface, pmin.Surface, tolerances):
                 parallel.remove(p)
-            elif surface_geometry.is_same_plane_surface(p.Surface, pmax.Surface, tolerances=tolerances):
+            elif surface_geometry.is_same_plane_surface(p.Surface, pmax.Surface, tolerances):
                 parallel.remove(p)
 
         for p in parallel:
@@ -178,7 +173,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None, *, t
             touching_edge, near_face, otherface = result
             if not isinstance(otherface.Surface, GPlane):
                 continue
-            if abs(otherface.Surface.Axis.dot(cyl.Surface.Axis)) < DIR_TOL_E4:
+            if axes_perpendicular(otherface.Surface.Axis, cyl.Surface.Axis, tolerances.angle):
                 planes.append((cyl, touching_edge, near_face, otherface))
 
         # If both of the cylinder's own corner edges close against the
@@ -692,7 +687,7 @@ def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolera
             for mpp in candidates:
                 if id(mpp) in seen_planes:
                     continue
-                if is_same_plane(otherface.Surface, mpp.Surf, tolerances=tolerances):
+                if surface_geometry.is_same_plane_surface(otherface.Surface, mpp.Surf, tolerances):
                     found.append(mpp)
                     seen_planes.add(id(mpp))
                     break
@@ -998,7 +993,7 @@ def extreme_edge(U, face):
 
 
 #   Check if to faces are joint
-def contiguous_face(face1, face2, tolerances):
+def contiguous_face(face1, face2):
     """True if face1 and face2 touch, tested via their boundary edges
     rather than a full face-to-face distance/boolean query.
 
@@ -1020,12 +1015,12 @@ def contiguous_face(face1, face2, tolerances):
     curve-curve query between their -- typically few -- boundary edges)."""
     for e1 in face1.Edges:
         for e2 in face2.Edges:
-            if e1.my_distToshape(e2) < tolerances.distance:
+            if e1.my_distToshape(e2) < NUMERIC_TOL:
                 return True
     return False
 
 
-def same_faces(Faces, tolerances):
+def same_faces(Faces):
     """Every face index connected, directly or through a chain of other
     contiguous faces, to Faces[0] -- 0 itself is never included in the
     result (the caller, merge_same_surface_faces, re-inserts it).
@@ -1046,7 +1041,7 @@ def same_faces(Faces, tolerances):
     for i, face1 in enumerate(Faces):
         Couples = []
         for j, face2 in enumerate(Faces[i + 1 :], start=i + 1):
-            if contiguous_face(face1, face2, tolerances):
+            if contiguous_face(face1, face2):
                 Couples.append(j)
         Connection[i] = Couples
 
@@ -1223,7 +1218,7 @@ def eligible_plane(plane, tolerances):
                 continue
             prev_dir = prev_vec.normalized()
             cur_dir = cur_vec.normalized()
-            if abs(prev_dir.dot(cur_dir) - 1.0) < DIR_TOL_E6:
+            if axes_same_direction(prev_dir, cur_dir, tolerances.angle):
                 merged[-1] = (prev_start, e2)
             else:
                 merged.append((e1, e2))
@@ -1243,7 +1238,7 @@ def eligible_plane(plane, tolerances):
     return convex
 
 
-def no_convex(mplane_list):
+def no_convex(mplane_list, *, tolerances):
     """keep part of no complex plane set"""
     planes = mplane_list[:]
     while len(planes) > 1:
@@ -1254,7 +1249,7 @@ def no_convex(mplane_list):
                 continue
             adjacent_plane = other_face_edge(e, p, planes, outer_only=True)
             if adjacent_plane is not None:
-                sign = region_sign(p, adjacent_plane)
+                sign = region_sign(p, adjacent_plane, tolerances=tolerances)
                 if sign == "AND":
                     return False
     return True
@@ -1264,7 +1259,7 @@ def commonVertex(e1, e2):
     """Returns the GVector point(s) (not native Vertex objects -- nothing
     downstream needs vertex identity, only the coordinate) shared by e1
     and e2."""
-    if not shapes_in_contact(e1.__native__, e2.__native__):
+    if not shapes_in_contact(e1.__native__, e2.__native__, NUMERIC_TOL):
         return []
 
     common = []
@@ -1294,7 +1289,7 @@ def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
-    if face1.distToShape(face2)[0] > 0:
+    if face1.distToShape(face2)[0] > NUMERIC_TOL:
         return None
 
     edges = []
@@ -1386,7 +1381,7 @@ def _and_or_by_material_sampling(
     return (frac_true - frac_false) > SIDE_FRACTION_GAP_MIN
 
 
-def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
+def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None, *, tolerances):
 
     # ep1[0]/ep2[0] (cyl1/cyl2) are each end's own real adjacent cylinder
     # piece -- normally the same object as `cylinder` (the seed), but when
@@ -1439,7 +1434,7 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     cross2 = cyl_normal2.cross(p2_axis)
 
     fwd_cyl = cylinder.Orientation == "Forward"
-    if cross1.length < ANGLE_TOL_E3:
+    if axes_parallel(cyl_normal1, p1_axis, tolerances.angle):
         upmin, upmax, vpmin, vpmax = p1.ParameterRange
         up = 0.5 * (upmin + upmax)
         vp = 0.5 * (vpmin + vpmax)
@@ -1454,7 +1449,7 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
         base = z1.dot(cross1) > 0
     AND_p1_cyl = base
 
-    if cross2.length < ANGLE_TOL_E3:
+    if axes_parallel(cyl_normal2, p2_axis, tolerances.angle):
         upmin, upmax, vpmin, vpmax = p2.ParameterRange
         up = 0.5 * (upmin + upmax)
         vp = 0.5 * (vpmin + vpmax)
@@ -1500,8 +1495,8 @@ def cyl_plane_region_conf(cylinder, ep1, ep2, solid=None):
     AND_p2_pd = base if fwd_cyl else not base
 
     OR_p12_bracket = z1.dot(p1_axis.cross(p2_axis)) < 0  # si no funciona asi es que es el valor negativo
-    same_p1_pd = (p1_axis.dot(normal_cyl_plane)) > AXIS_COS_MIN_E6
-    same_p2_pd = (p2_axis.dot(normal_cyl_plane)) > AXIS_COS_MIN_E6
+    same_p1_pd = axes_same_direction(p1_axis, normal_cyl_plane, tolerances.angle)
+    same_p2_pd = axes_same_direction(p2_axis, normal_cyl_plane, tolerances.angle)
 
     configuration = fwd_cyl * mask.fwd_cyl
     configuration += AND_p1_cyl * mask.p1_cyl
@@ -1528,7 +1523,7 @@ def material_direction(pos: GVector, face: GFace | FaceGu, edge: GEdge):
     return matvec, normalf
 
 
-def region_sign(s1_in, s2, outAngle=False):
+def region_sign(s1_in, s2, outAngle=False, *, tolerances):
     if type(s1_in) is ShellFaceGu:
         Edges, s1 = commonEdge(s1_in, s2, outer1_only=False, outer2_only=False)
     else:
@@ -1567,7 +1562,7 @@ def region_sign(s1_in, s2, outAngle=False):
 
     dprod = vect.dot(normal2)
 
-    if abs(dprod) < DIR_TOL_E4:
+    if axes_perpendicular(vect, normal2, tolerances.angle):
         if type(s2.Surface) is GSphere:
             operator = "AND" if s2.Orientation == "Forward" else "OR"
         elif type(s1.Surface) is GSphere:
@@ -1646,9 +1641,7 @@ def merge_same_surface_faces(face_in, solidFaces, *, tolerances):
             same_surface.append(current_face)
 
     if len(same_surface) > 1:
-        sameIndex = same_faces(
-            same_surface, tolerances
-        )  # return all face connected (direct or indirectly ) to first face (cylinder)
+        sameIndex = same_faces(same_surface)  # return all face connected (direct or indirectly ) to first face (cylinder)
         sameIndex.insert(0, 0)
         connected_faces = [same_surface[i] for i in sameIndex]
         if len(connected_faces) > 1:
@@ -1699,7 +1692,7 @@ def edges_individually_planar(edges):
     return all(_edge_is_planar(e) for e in edges)
 
 
-def planar_edges(edges):
+def planar_edges(edges, *, tolerances):
     if len(edges) == 0:
         return False
     e0 = edges[0]
@@ -1758,9 +1751,9 @@ def planar_edges(edges):
             dir = curve_i.Direction
             center = curve_i.Position
 
-        if not is_parallel(dir0, dir, ANGLE_TOL_E4):
+        if not axes_parallel(dir0, dir, tolerances.angle):
             return False
-        if abs(dir0.dot(center - center0)) > DIR_TOL_E5:
+        if abs(dir0.dot(center - center0)) > LENGTH_TOL_E5:
             return False
 
         if not edge_1D(ei):
@@ -1772,7 +1765,7 @@ def planar_edges(edges):
         return True
 
 
-def same_curve(edges):
+def same_curve(edges, *, tolerances):
     """
     True if every edge in `edges` lies on the SAME single underlying
     curve -- unlike planar_edges, this does not require the curve to be
@@ -1797,7 +1790,7 @@ def same_curve(edges):
             curve_i = ei.Curve
             if type(curve_i) is not GLine:
                 return False
-            if not is_parallel(curve0.Direction, curve_i.Direction, ANGLE_TOL_E4):
+            if not axes_parallel(curve0.Direction, curve_i.Direction, tolerances.angle):
                 return False
             if curve0.Direction.cross(curve_i.Position - curve0.Position).length > LENGTH_TOL_E5:
                 return False
@@ -1808,7 +1801,7 @@ def same_curve(edges):
             curve_i = ei.Curve
             if type(curve_i) is not type(curve0):
                 return False
-            if not is_parallel(curve0.Axis, curve_i.Axis, ANGLE_TOL_E4):
+            if not axes_parallel(curve0.Axis, curve_i.Axis, tolerances.angle):
                 return False
             if (curve_i.Center - curve0.Center).length > LENGTH_TOL_E5:
                 return False
@@ -1846,7 +1839,7 @@ def same_curve(edges):
             t2 = chain[i + 1].derivative1_at(chain[i + 1].ParameterRange[0])
             if t1.length < LENGTH_TOL_E5 or t2.length < LENGTH_TOL_E5:
                 continue
-            if not is_parallel(t1.normalized(), t2.normalized(), ANGLE_TOL_E4):
+            if not axes_parallel(t1, t2, tolerances.angle):
                 return False
         return True
 
@@ -1877,7 +1870,7 @@ def spline_2D(edge):
         # check if derivative orthogonal to curve normal vector
         dk = edge.derivative1_at(k)
         normal_k = dk.cross(edge.normal_at(k)).normalized()
-        if abs(1.0 - abs(normal_k.dot(norm_0))) > DIR_TOL_E6:
+        if not is_parallel(normal_k, norm_0):
             return False
     return True
 

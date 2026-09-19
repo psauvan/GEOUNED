@@ -2,13 +2,12 @@
 # Set of useful functions used in different parts of the code
 #
 import math
-from turtle import distance
 
 from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
 from ...geo import GPlane, GSolid, GVector, Gin_contact
-from ...geo.constants import ANGLE_TOL_E3, DIR_TOL_E6, LENGTH_TOL_E6, LENGTH_TOL_E7, PARAM_ANGLE_TOL_E5
+from ...geo.constants import ANGLE_TOL_E3, LENGTH_TOL_E6, LENGTH_TOL_E7, PARAM_ANGLE_TOL_E5
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
@@ -17,10 +16,6 @@ from ...geo.constants import ANGLE_TOL_E3, DIR_TOL_E6, LENGTH_TOL_E6, LENGTH_TOL
 
 def is_same_value(v1, v2, tolerance=LENGTH_TOL_E6):
     return surface_geometry.is_same_value(v1, v2, tolerance)
-
-
-def is_opposite(vector_1, vector_2, tolerance=ANGLE_TOL_E3):
-    return surface_geometry.is_opposite(vector_1, vector_2, tolerance)
 
 
 def is_parallel(vector_1, vector_2, tolerance=ANGLE_TOL_E3):
@@ -473,16 +468,6 @@ class PlaneParams:
             self.real = True
         self.pointDef = False
 
-    def __eq__(self, p2):
-        if type(p2) is not PlaneParams:
-            return False
-        r = self.Position - p2.Position
-        if abs(r.dot(self.Axis)) > DIR_TOL_E6:
-            return False
-
-        d = self.Axis.dot(p2.Axis)
-        return abs(d - 1) < DIR_TOL_E6
-
     def __str__(self):
         pos = self.Axis.dot(self.Position)
         outstr = f"""Plane :
@@ -563,17 +548,6 @@ class MultiPlanesParams:
         self.Edges = params[1]
         self.Vertexes = params[2]
         self.Planes = params[0][:]
-
-    def __eq__(self, mp):
-        if self.PlaneNumber != mp.PlaneNumber:
-            return False
-        eq_count = 0
-        for p1 in self.Planes:
-            for p2 in mp.Planes:
-                if p1 == p2:
-                    eq_count += 1
-                    break
-        return eq_count == self.PlaneNumber
 
     def __str__(self):
         outstr = f"""Multiplane :\n"""

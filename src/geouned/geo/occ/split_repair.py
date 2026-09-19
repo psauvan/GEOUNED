@@ -30,9 +30,9 @@ from OCC.Core.TopoDS import (
     topods,
 )
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
-from ..constants import MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE
+from ..constants import KERNEL_TOL_E6, MAX_REPAIR_VOLUME_REL_CHANGE
 from ._native_utils import _volume_props
-from ..constants import KERNEL_TOL_E6
+from ..volume_utils import volume_within
 
 
 def _edge_face_map(native_solid) -> TopTools_IndexedDataMapOfShapeListOfShape:
@@ -270,6 +270,6 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
         return None
     original_volume = abs(_volume_props(native_solid).Mass())
     summed_volume = sum(abs(_volume_props(p).Mass()) for p in pieces)
-    if abs(summed_volume - original_volume) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(original_volume, 1.0):
+    if not volume_within(summed_volume, original_volume, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     return pieces

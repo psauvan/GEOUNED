@@ -37,13 +37,13 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
         for rdc in next_roundCorner(solid_GU, omitfaces, tolerances=tolerances):
             yield rdc
 
-        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+        extPlanes = exclude_no_cutting_planes(solid_GU.Faces, tolerances=tolerances)
         omitfaces.update(extPlanes)
 
         for multiplane in next_multiplanes(solid_GU.Faces, omitfaces, tolerances):
             yield multiplane
     else:
-        extPlanes = exclude_no_cutting_planes(solid_GU.Faces)
+        extPlanes = exclude_no_cutting_planes(solid_GU.Faces, tolerances=tolerances)
         omitfaces.update(extPlanes)
 
     # Cylinders and cones are tried before planes: on the test_models corpus this
@@ -70,8 +70,8 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
 
 
 def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
-    omit_isolated_planes(GUFaces, omitfaces)
-    cutting_plane_face = order_plane_face(GUFaces, omitfaces, tolerances.min_area, tolerances.min_face_width)
+    omit_isolated_planes(GUFaces, omitfaces, tolerances=tolerances)
+    cutting_plane_face = order_plane_face(GUFaces, omitfaces, tolerances.min_area, tolerances.min_face_width, tolerances=tolerances)
     for p in cutting_plane_face:
         omitfaces.add(p.Index)
         normal = p.Surface.Axis
@@ -101,7 +101,7 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
                 yield p
 
         elif surf_type is GTorus:
-            for p in torus_bound_planes(GUFaces, face, tolerances):
+            for p in torus_bound_planes(GUFaces, face, tolerances=tolerances):
                 yield p
 
 
@@ -192,7 +192,7 @@ def next_multiplanes(solidFaces, plane_index_set, tolerances=None):
         mplanes = multiplane(p, planes, mp_plane_index, tolerances)
         used_plane.update(mp_plane_index)
         if len(mplanes) != 1:
-            if no_convex(mplanes):
+            if no_convex(mplanes, tolerances=tolerances):
                 remove_twice_parallel(mplanes, tolerances=tolerances)
                 mp_params = build_multip_params(mplanes, tolerances=tolerances)
                 mp = GeounedSurface(("MultiPlane", mp_params))

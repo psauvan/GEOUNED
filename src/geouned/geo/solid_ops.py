@@ -16,7 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
-from .constants import DEGENERATE_SOLID_VOL_AREA_RATIO, KERNEL_TOL_E6, LENGTH_TOL_E6, REL_TOL_E4, VOLUME_MIN_E3
+from .constants import DEGENERATE_SOLID_VOL_AREA_RATIO, KERNEL_TOL_E6, LENGTH_TOL_E6, REL_TOL_E4
 
 
 def Gfuse_solids(parts, tolerances=None):
@@ -204,7 +204,7 @@ def getPart(slist):
     return sol
 
 
-def space_decomposition(solids, surfaces, classify):
+def space_decomposition(solids, surfaces, classify, min_volume):
     """Get the position of each subregion of `solids` with respect to all
     of `surfaces`, via the caller-supplied `classify(point, surf) -> bool`
     point-classification callable (see this section's own module-level
@@ -212,8 +212,8 @@ def space_decomposition(solids, surfaces, classify):
     component = []
     good_solids = []
     for c in solids:
-        if c.Volume < VOLUME_MIN_E3:
-            if abs(c.Volume) < VOLUME_MIN_E3:
+        if c.Volume < min_volume:
+            if abs(c.Volume) < min_volume:
                 continue
             else:
                 c = c.reverse()
@@ -290,7 +290,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerances, classify):
     else:
         Solids = [base.base]
 
-    partPositions, partSolids = space_decomposition(Solids, surfacesCut, classify)
+    partPositions, partSolids = space_decomposition(Solids, surfacesCut, classify, tolerances.min_solid_volume)
 
     for pos, sol in zip(partPositions, partSolids):
         pos.update(base.knownSurf)

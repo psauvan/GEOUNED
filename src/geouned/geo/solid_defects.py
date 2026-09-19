@@ -21,27 +21,24 @@ across all 3 engines, exactly like `vector_geometry.py`/
 
 from __future__ import annotations
 
+from .surface_geometry import axes_parallel
 from .constants import (
+    DEFAULT_MIN_FACE_WIDTH,
+    DEFECT_AXIS_ANGLE,
     DEGENERATE_EDGE_LENGTH_FLOOR,
     DEGENERATE_SOLID_VOL_AREA_RATIO,
-    DEGENERATE_SOLID_VOLUME_FLOOR,
-    MIN_SLIVER_EDGE_LENGTH,
-)
-from .constants import (
-    AXIS_COS_MIN_E5,
-    DEFAULT_MIN_FACE_WIDTH,
-    DIR_TOL_E4,
     LENGTH_TOL_E5,
+    MIN_SLIVER_EDGE_LENGTH,
     REL_TOL_E3,
     REL_TOL_E4,
 )
 
 
-def valid_solid(solid) -> bool:
+def valid_solid(solid, min_volume: float) -> bool:
     """True if `solid` is a BOPAlgo split fragment worth keeping as a
     real, independent solid: positive volume, not a thin sliver
     (``Volume / Area >= DEGENERATE_SOLID_VOL_AREA_RATIO``), above the
-    absolute degeneracy floor (``|Volume| >= DEGENERATE_SOLID_VOLUME_FLOOR``).
+    minimum volume `min_volume` (``|Volume| >= min_volume``, `Tolerances.min_solid_volume`).
 
     Duck-typed on ``.Volume`` / ``.Area`` -- works on a `GSolid` or any
     thin wrapper exposing those. This is the canonical copy of the check
@@ -61,7 +58,7 @@ def valid_solid(solid) -> bool:
         return False
     if area == 0 or abs(vol / area) < DEGENERATE_SOLID_VOL_AREA_RATIO:
         return False
-    if abs(vol) < DEGENERATE_SOLID_VOLUME_FLOOR:
+    if abs(vol) < min_volume:
         return False
     return True
 
@@ -252,7 +249,7 @@ def count_split_ring_pairs(solid, rel_tol: float = REL_TOL_E3) -> int:
         for i in range(len(circles)):
             for j in range(i + 1, len(circles)):
                 c1, c2 = circles[i], circles[j]
-                if abs(abs(c1.Axis.dot(c2.Axis)) - 1.0) > DIR_TOL_E4:
+                if not axes_parallel(c1.Axis, c2.Axis, DEFECT_AXIS_ANGLE):
                     continue
                 max_r = max(c1.Radius, c2.Radius)
                 if abs(c1.Radius - c2.Radius) / max_r >= rel_tol:
@@ -292,14 +289,14 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
 
     if ta == "GPlane":
         axis_dot = surf_a.Axis.dot(surf_b.Axis)
-        if abs(axis_dot) < AXIS_COS_MIN_E5:
+        if not axes_parallel(surf_a.Axis, surf_b.Axis, DEFECT_AXIS_ANGLE):
             return None
         d_a = surf_a.Axis.dot(surf_a.Position)
         d_b = surf_b.Axis.dot(surf_b.Position)
         return _near(abs(d_a - d_b) if axis_dot > 0 else abs(d_a + d_b))
 
     if ta == "GCylinder":
-        if abs(surf_a.Axis.dot(surf_b.Axis)) < AXIS_COS_MIN_E5:
+        if not axes_parallel(surf_a.Axis, surf_b.Axis, DEFECT_AXIS_ANGLE):
             return None
         offset = surf_b.Center - surf_a.Center
         along = offset.dot(surf_a.Axis)

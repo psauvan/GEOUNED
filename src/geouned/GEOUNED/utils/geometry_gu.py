@@ -25,6 +25,7 @@ from ...geo import (
     pick_outer_wire,
 )
 from ...geo.constants import PARAM_ANGLE_TOL_E5
+from ...geo.constants import NUMERIC_TOL
 
 logger = logging.getLogger("general_logger")
 
@@ -42,6 +43,55 @@ def is_same_surface(surface_1, surface_2, tolerances):
     if type(surface_1) is not type(surface_2):
         return False
     return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2, tolerances)
+
+
+def merge_periodic_uv(parameter, faces):
+    """Merged parameter range, along "U" or "V", of `faces` (pieces of ONE periodic surface).
+
+    Returns `(closed, (v_min, v_max))`: `closed` is True when the pieces add up to a full turn (2*pi), in which case
+    the range is `(V0, V0 + 2*pi)`. "Adds up to a full turn" and "starts at 0 / ends at 2*pi / touches its neighbour"
+    are decided with NUMERIC_TOL: the parameters come from the same solid's own faces, so they carry the same numbers."""
+    two_pi = 2.0 * math.pi
+    if parameter == "U":
+        i1, i2 = 0, 2
+    elif parameter == "V":
+        i1, i2 = 2, 4
+    else:
+        raise ValueError(f"parameter must be 'U' or 'V', not {parameter!r}")
+
+    params = []
+    arcLength = 0.0
+    for face in faces:
+        V0, V1 = face.ParameterRange[i1:i2]
+        arcLength += V1 - V0
+        params.append((V0, V1))
+
+    params.sort()
+    V0 = params[0][0]
+    V1 = params[-1][1]
+    if arcLength >= two_pi * (1.0 - NUMERIC_TOL):
+        mergedParams = (True, (V0, V0 + two_pi))
+    else:
+        if is_same_value(V0, 0.0, NUMERIC_TOL) and is_same_value(V1, two_pi, NUMERIC_TOL):
+            for i in range(len(params) - 1):
+                if not is_same_value(params[i][1], params[i + 1][0], NUMERIC_TOL):
+                    break
+            v_min = params[i + 1][0] - two_pi
+            v_max = params[i][1]
+        else:
+            # params is sorted by V0 ascending, so params[0][0] is always
+            # the true minimum V0 -- but sorting by V0 does not imply
+            # sorted V1, so params[-1][1] is only the true maximum V1
+            # when the pieces form a simple, non-nested chain. When one
+            # piece's own range is fully nested inside another's (e.g. a
+            # tiny residual sliver piece sitting within a larger piece's
+            # own V-span), params[-1][1] can under-report the real
+            # merged extent -- take the max explicitly instead.
+            v_min = params[0][0]
+            v_max = max(v1 for _, v1 in params)
+        mergedParams = (False, (v_min, v_max))
+
+    return mergedParams
 
 
 class face_index:
@@ -98,9 +148,7 @@ class SolidGu(GSolid):
                 if is_same_torus(
                     self.Faces[i].Surface,
                     self.Faces[j].Surface,
-                    dtol=self.tolerances.tor_distance,
-                    atol=self.tolerances.tor_angle,
-                    rel_tol=self.tolerances.relativeTol,
+                    self.tolerances,
                     check_a_sign=True,  # never merge a self-intersecting torus's two distinct sheets into one face group
                 ):
                     current.append(j)
@@ -121,7 +169,7 @@ class SolidGu(GSolid):
                 removeList = [temp[0]]
                 while len(temp) > 0 and i < len(current):
                     for tindex in temp:
-                        if self.Faces[current[i]].distToShape(self.Faces[tindex])[0] < self.tolerances.distance:
+                        if self.Faces[current[i]].distToShape(self.Faces[tindex])[0] < NUMERIC_TOL:
                             if tindex not in current:
                                 current.append(tindex)
                                 removeList.append(tindex)
@@ -134,53 +182,7 @@ class SolidGu(GSolid):
         return sameSurfaces
 
     def merge_periodic_uv(self, parameter, faceList):
-        two_pi = 2.0 * math.pi
-        if parameter == "U":
-            i1 = 0
-            i2 = 2
-        elif parameter == "V":
-            i1 = 2
-            i2 = 4
-
-        params = []
-        arcLength = 0.0
-        for face in faceList:
-            V0, V1 = self.Faces[face].ParameterRange[i1:i2]
-            arcLength += V1 - V0
-            params.append((V0, V1))
-
-        params.sort()
-        V0 = params[0][0]
-        V1 = params[-1][1]
-        if arcLength >= two_pi * (1.0 - self.tolerances.relativePrecision):
-            mergedParams = (True, (V0, V0 + two_pi))
-        else:
-            if is_same_value(V0, 0.0, self.tolerances.relativePrecision) and is_same_value(
-                V1, two_pi, self.tolerances.relativePrecision
-            ):
-                for i in range(len(params) - 1):
-                    if not is_same_value(
-                        params[i][1],
-                        params[i + 1][0],
-                        self.tolerances.relativePrecision,
-                    ):
-                        break
-                v_min = params[i + 1][0] - two_pi
-                v_max = params[i][1]
-            else:
-                # params is sorted by V0 ascending, so params[0][0] is always
-                # the true minimum V0 -- but sorting by V0 does not imply
-                # sorted V1, so params[-1][1] is only the true maximum V1
-                # when the pieces form a simple, non-nested chain. When one
-                # piece's own range is fully nested inside another's (e.g. a
-                # tiny residual sliver piece sitting within a larger piece's
-                # own V-span), params[-1][1] can under-report the real
-                # merged extent -- take the max explicitly instead.
-                v_min = params[0][0]
-                v_max = max(v1 for _, v1 in params)
-            mergedParams = (False, (v_min, v_max))
-
-        return mergedParams
+        return merge_periodic_uv(parameter, [self.Faces[face] for face in faceList])
 
 
 # FACES

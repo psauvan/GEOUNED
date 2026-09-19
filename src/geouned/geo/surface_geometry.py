@@ -26,8 +26,6 @@ import math
 from .constants import (
     ANGLE_TOL_E3,
     ANGLE_TOL_E6,
-    DIR_TOL_E5,
-    LENGTH_TOL_E5,
     LENGTH_TOL_E6,
     LENGTH_TOL_E7,
     LENGTH_TOL_E8,
@@ -36,17 +34,6 @@ from .constants import (
     ZERO_TOL_E9,
 )
 from .vector_geometry import GVector
-from .constants import (
-    ANGLE_TOL_E3,
-    ANGLE_TOL_E5,
-    DIR_TOL_E5,
-    LENGTH_TOL_E5,
-    LENGTH_TOL_E6,
-    LENGTH_TOL_E7,
-    LENGTH_TOL_E8,
-    LENGTH_TOL_E9,
-    ZERO_TOL_E9,
-)
 
 # ---------------------------------------------------------------------------
 # Basic geometric predicates on GVector
@@ -83,10 +70,34 @@ def sign_plane(point: GVector, plane) -> int:
 # "Is this the same underlying analytic surface" predicates
 # ---------------------------------------------------------------------------
 
-def _same_axis_line(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
-    """True if two unit axes lie along the same line, direction ignored, to within `angle_tol` radians."""
+def axes_parallel(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors lie along the same line, either direction (angle 0 or pi), to within `angle_tol` radians."""
     angle = axis_1.angle_to(axis_2)
     return min(angle, math.pi - angle) <= angle_tol
+
+
+def axes_same_direction(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors point the same way (angle 0), to within `angle_tol` radians."""
+    return axis_1.angle_to(axis_2) <= angle_tol
+
+
+def axes_perpendicular(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors are perpendicular, to within `angle_tol` radians -- the same tolerance as `axes_parallel`.
+
+    Perpendicular means alpha = +-pi/2 (both give cos(alpha) = 0), hence `abs(pi/2 - abs(alpha))`. `angle_to` is
+    unsigned, in [0, pi], so both orientations arrive as +pi/2 and the inner `abs` only matters for an oriented angle."""
+    alpha = axis_1.angle_to(axis_2)
+    return abs(math.pi / 2.0 - abs(alpha)) <= angle_tol
+
+
+def opposite_sense(axis_1: GVector, axis_2: GVector) -> bool:
+    """True if two axes that are ALREADY known to lie along the same line point in opposite senses.
+
+    A sign, not a tolerance: once two surfaces are recognised as the same one, whether their axes point the same way
+    or the opposite way is the sign of the dot product. Deciding it with an angle tolerance can disagree with the
+    tolerance that recognised them as parallel (a plane matched with `add_pln_angle`, 1e-2, whose sense is then
+    checked with `pln_angle`, 1e-4, could come out with the wrong sign)."""
+    return axis_1.dot(axis_2) < 0.0
 
 
 def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
@@ -112,7 +123,7 @@ def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
     own 2 distinct bounding planes as a single coincident one, losing its
     real additional/closing plane entirely).
     """
-    if not _same_axis_line(plane_1.Axis, plane_2.Axis, tolerances.pln_angle):
+    if not axes_parallel(plane_1.Axis, plane_2.Axis, tolerances.pln_angle):
         return False
     d1 = plane_1.Axis.dot(plane_1.Position)
     d2 = plane_2.Axis.dot(plane_2.Position)
@@ -120,9 +131,17 @@ def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
     return offset <= tolerances.pln_distance
 
 
+def is_same_oriented_plane_surface(plane_1, plane_2, tolerances) -> bool:
+    """True if two planes are the same infinite plane AND face the same way (`opposite_sense` is False).
+
+    What `PlaneParams.__eq__` used to mean (removed: it had no access to the run's tolerances and was used implicitly by
+    `in`, `.index`, `!=`), now explicit and with the user's `pln_distance` / `pln_angle`."""
+    return is_same_plane_surface(plane_1, plane_2, tolerances) and not opposite_sense(plane_1.Axis, plane_2.Axis)
+
+
 def is_parallel_plane_surface(plane_1, plane_2, tolerances) -> bool:
     """True if two planes have the same normal line (either way), to within `tolerances.pln_angle`."""
-    return _same_axis_line(plane_1.Axis, plane_2.Axis, tolerances.pln_angle)
+    return axes_parallel(plane_1.Axis, plane_2.Axis, tolerances.pln_angle)
 
 
 def is_same_cylinder_surface(cylinder_1, cylinder_2, tolerances) -> bool:
@@ -146,7 +165,7 @@ def is_same_cylinder_surface(cylinder_1, cylinder_2, tolerances) -> bool:
     the axis direction with `tolerances.cyl_angle`."""
     if abs(cylinder_1.Radius - cylinder_2.Radius) > tolerances.cyl_distance:
         return False
-    if not _same_axis_line(cylinder_1.Axis, cylinder_2.Axis, tolerances.cyl_angle):
+    if not axes_parallel(cylinder_1.Axis, cylinder_2.Axis, tolerances.cyl_angle):
         return False
     offset = cylinder_1.Center - cylinder_2.Center
     perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
@@ -160,12 +179,10 @@ def is_same_cone_surface(cone_1, cone_2, tolerances) -> bool:
         return False
     if (cone_1.Apex - cone_2.Apex).length > tolerances.kne_distance:
         return False
-    return _same_axis_line(cone_1.Axis, cone_2.Axis, tolerances.kne_angle)
+    return axes_parallel(cone_1.Axis, cone_2.Axis, tolerances.kne_angle)
 
 
-def is_coaxial_cone_pair(
-    cone_1, cone_2, angle_tol: float = ANGLE_TOL_E6, axis_dot_tol: float = DIR_TOL_E5, apex_line_tol: float = LENGTH_TOL_E5
-) -> bool:
+def is_coaxial_cone_pair(cone_1, cone_2, tolerances) -> bool:
     """True when two cones share the same axis *line* (their axis vectors
     may be parallel or anti-parallel -- direction is not constrained) and
     the same `SemiAngle`, but sit at *different* apexes along that line.
@@ -181,19 +198,19 @@ def is_coaxial_cone_pair(
     infinite cone): this predicate explicitly requires the apex to differ
     and tolerates either axis direction along the shared line.
     """
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > angle_tol:
+    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > tolerances.kne_angle:
         return False
-    if abs(cone_1.Axis.dot(cone_2.Axis)) < 1.0 - axis_dot_tol:
+    if not axes_parallel(cone_1.Axis, cone_2.Axis, tolerances.kne_angle):
         return False
     apex_offset = cone_2.Apex - cone_1.Apex
-    if apex_offset.length < apex_line_tol:
+    if apex_offset.length < tolerances.kne_distance:
         return False  # same apex -> the same cone entirely, not a pair
     along = apex_offset.dot(cone_1.Axis)
     radial = (apex_offset - cone_1.Axis * along).length
-    return radial < apex_line_tol
+    return radial < tolerances.kne_distance
 
 
-def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = LENGTH_TOL_E5, semiangle_min: float = ANGLE_TOL_E6) -> bool:
+def is_coaxial_cone_cylinder_pair(cone, cylinder, tolerances, semiangle_min: float = ANGLE_TOL_E6) -> bool:
     """True when `cone` and `cylinder` share the same axis *line* (either
     axis direction) and `cone`'s SemiAngle is non-degenerate (not exactly
     0 or 90 degrees), so the cone genuinely reaches `cylinder.Radius` at
@@ -212,12 +229,12 @@ def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = LENGTH_TOL
     """
     if abs(math.tan(cone.SemiAngle)) < semiangle_min:
         return False
-    if abs(cone.Axis.dot(cylinder.Axis)) < 1.0 - DIR_TOL_E5:
+    if not axes_parallel(cone.Axis, cylinder.Axis, tolerances.kne_angle):
         return False
     offset = cylinder.Center - cone.Apex
     along = offset.dot(cone.Axis)
     radial = (offset - cone.Axis * along).length
-    return radial < radial_tol
+    return radial < tolerances.kne_distance
 
 
 def is_same_sphere_surface(sphere_1, sphere_2, tolerances) -> bool:
@@ -236,7 +253,7 @@ def is_same_torus_surface(torus_1, torus_2, tolerances) -> bool:
         return False
     if (torus_1.Center - torus_2.Center).length > tolerances.tor_distance:
         return False
-    return _same_axis_line(torus_1.Axis, torus_2.Axis, tolerances.tor_angle)
+    return axes_parallel(torus_1.Axis, torus_2.Axis, tolerances.tor_angle)
 
 
 # ---------------------------------------------------------------------------

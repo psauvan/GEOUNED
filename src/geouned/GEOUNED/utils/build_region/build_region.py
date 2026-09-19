@@ -1,6 +1,7 @@
 from .Objects import CellObj, CellSurface
 from ..basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
 from ....geo import GCone, GCylinder, GPlane, GSphere
+from ....geo.surface_geometry import is_same_oriented_plane_surface
 
 # The split-cascade functions that used to live here (BuildDepth,
 # BuildSolidParts, filterparts, getPart, plus SplitBase/joinBase/SplitSolid
@@ -15,14 +16,14 @@ from ....geo import GCone, GCylinder, GPlane, GSphere
 # small CellObj/CellSurface the shared cascade operates on) and stay here.
 
 
-def get_cell_object(geoObj):
+def get_cell_object(geoObj, tolerances):
 
     cell = CellObj()
 
     if geoObj.Type == "RoundCorner":
         cid = geoObj.Surf.Cylinder.Surf.Cylinder.bVar
         plane1, plane2 = geoObj.Surf.Planes
-        if plane1 == plane2:
+        if is_same_oriented_plane_surface(plane1.Surf, plane2.Surf, tolerances):
             p1id = plane1.bVar
             cell.surfaces[abs(p1id)] = get_surface(abs(p1id), plane1)
             cell.surfaces[abs(cid)] = get_surface(abs(cid), geoObj.Surf.Cylinder.Surf.Cylinder)

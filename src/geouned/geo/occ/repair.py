@@ -84,12 +84,8 @@ from ..solid_defects import (
     near_surface_pair,
 )
 from ..constants import (
-    DEFAULT_MIN_FACE_WIDTH,
     FINITE_DIFF_STEP,
-    MAX_DEFEATURE_VOLUME_REL_CHANGE,
-    MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE,
-    MAX_SLIVER_HEAL_VOLUME_REL_CHANGE,
-    MAX_SPLIT_RING_VOLUME_REL_CHANGE,
+    MAX_REPAIR_VOLUME_REL_CHANGE,
     MIN_SLIVER_EDGE_LENGTH,
     OCCT_FIX_TOLERANCE,
     POINT_POINT_TOL,
@@ -101,7 +97,6 @@ from ..surface_geometry import is_same_plane_surface
 from .topology import GFace, GPlane, GSolid, Gclassify_surface
 from .boolean import _exploded_solids
 from ._native_utils import _volume_props
-from ..constants import DEFAULT_MIN_FACE_WIDTH, LENGTH_TOL_E7, REL_TOL_E6, ZERO_TOL_E6
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "GSolid | None":
@@ -125,7 +120,7 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "G
     Returns None whenever defeaturing doesn't complete, the healed
     result isn't topologically valid, find_short_edges() still finds a
     short edge in it, or its own Volume has drifted from the input by
-    more than MAX_DEFEATURE_VOLUME_REL_CHANGE -- never raises."""
+    more than MAX_REPAIR_VOLUME_REL_CHANGE -- never raises."""
     if not faces:
         return None
     defeat = BRepAlgoAPI_Defeaturing()
@@ -146,12 +141,12 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "G
     healed = GSolid(healed_native)
     if find_short_edges(healed, sliver_edge_rel_tol):
         return None
-    if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+    if not volume_within(healed.Volume, solid.Volume, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     return healed
 
 
-def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
+def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
     """Repair a "split boundary ring" / duplicated micro-trim defect.
 
     A single trimming surface (plane or cylinder) appears twice at a
@@ -175,7 +170,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_F
     ACCEPTANCE (all three required -- valid + volume alone are NOT enough,
     same lesson as `Gdefeature`'s own false-pass history):
       - ``result.is_valid()``;
-      - ``|dV| / max(|V|, 1) < MAX_SPLIT_RING_VOLUME_REL_CHANGE`` (3e-4) --
+      - ``|dV| / max(|V|, 1) < MAX_REPAIR_VOLUME_REL_CHANGE`` (3e-4) --
         a real collapse only removes sliver-volume risers (barrel
         bottom.stp: 6.4e-5); a larger drift means the sew moved a real
         adjacent surface (LR.stp: valid, dV 7e-4, CSG-broken -- d1suned
@@ -202,6 +197,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_F
     ocp/occ only -- ``ShapeBuild_ReShape`` + ``BRepBuilderAPI_Sewing`` is
     the pipeline used; the freecad backend's `Gcollapse_split_rings` is a
     None-returning stub. Never raises."""
+    min_face_width = tolerances.min_face_width
     risers = find_split_ring_faces(solid, min_face_width)
     if not risers:
         return None
@@ -250,7 +246,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_F
 
     if not result.is_valid():
         return None
-    if abs(result.Volume - solid.Volume) > MAX_SPLIT_RING_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+    if not volume_within(result.Volume, solid.Volume, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     if count_split_ring_pairs(result) >= pairs_before:
         return None
@@ -536,7 +532,7 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
 
     if not result.is_valid():
         return None
-    if abs(result.Volume - solid.Volume) > MAX_SLIVER_HEAL_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+    if not volume_within(result.Volume, solid.Volume, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     return result
 
@@ -764,7 +760,7 @@ def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
 
     if not BRepCheck_Analyzer(result.__native__).IsValid():
         return solid
-    if abs(result.Volume - solid.Volume) > REL_TOL_E6 * max(abs(solid.Volume), 1.0):
+    if not volume_within(result.Volume, solid.Volume, REL_TOL_E6):
         return solid
     return result
 
@@ -811,7 +807,7 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     if not check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
         return solid, True
 
-    collapsed = Gcollapse_split_rings(solid, tolerances.min_face_width)
+    collapsed = Gcollapse_split_rings(solid, tolerances)
     if collapsed is not None:
         return collapsed, True
 
@@ -897,10 +893,8 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     wrong.
 
     Returns a fresh `GSolid` when the rebuilt solid is `BRepCheck`-valid
-    and its volume matches the input to `MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE`
-    (1e-3 relative -- the failed split can inflate the input volume and the
-    rebuild corrects it, so this is deliberately looser than the other
-    heal gates); `None` otherwise (the caller in `remove_solids` then
+    and its volume matches the input to `MAX_REPAIR_VOLUME_REL_CHANGE`
+    (3e-4 relative, the shared healing gate -- a failed split can inflate the input volume and the rebuild corrects it, but measured rebuilds conserve volume to <= 2e-5); `None` otherwise (the caller in `remove_solids` then
     keeps the original invalid fragment unchanged). Never raises.
 
     ocp/occ only; the freecad backend's `Gheal_topology` is a
@@ -936,7 +930,7 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
         if not BRepCheck_Analyzer(healed).IsValid():
             return None
         healed_volume = abs(_volume_props(healed).Mass())
-        if abs(healed_volume - original_volume) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(original_volume, 1.0):
+        if not volume_within(healed_volume, original_volume, MAX_REPAIR_VOLUME_REL_CHANGE):
             return None
         return GSolid(healed)
     except Exception:
@@ -944,6 +938,7 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
 
 
 from .open_solid_repair import _diagnose_open_solid as _diagnose_open, _repair_open_solid as _repair_open
+from ..volume_utils import volume_within
 
 
 def Gdiagnose_open_solid(solid: "GSolid", tolerances) -> "str | None":

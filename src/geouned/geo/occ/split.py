@@ -26,6 +26,7 @@ from .split_repair import _separate_edge_joined_components, _repair_non_manifold
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
 from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes, Gclose_open_solid
 from ..constants import POINT_POINT_TOL, REL_TOL_E5
+from ..volume_utils import volume_within
 
 
 @dataclass(frozen=True)
@@ -118,9 +119,8 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
         # BOPAlgo split leaves behind (ShapeFix_Shape / UnifySameDomain do
         # not). Self-gated: Gheal_topology accepts its own result only if
         # it is BRepCheck-valid and volume-conserving to
-        # MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE (deliberately looser than the
-        # other heal gates -- a failed split inflates the fragment's volume
-        # and the rebuild corrects it), else returns None -> keep the
+        # MAX_REPAIR_VOLUME_REL_CHANGE (the shared healing gate; a failed split
+        # can inflate the fragment's volume and the rebuild corrects it), else returns None -> keep the
         # fragment as-is. Gated on `not IsValid()` AND a volume that could
         # plausibly be a real piece (Step 1's valid_solid drops a
         # near-zero fragment anyway -- no point paying a STEP round-trip
@@ -194,7 +194,7 @@ def check_changed_ok(original, repaired, volume_tolerance):
         if all_valid:
             original_volume = abs(_volume_props(original).Mass())
             repaired_volume = sum(abs(_volume_props(r).Mass()) for r in repaired)
-            volume_ok = abs(repaired_volume - original_volume) <= volume_tolerance * max(original_volume, 1.0)
+            volume_ok = volume_within(repaired_volume, original_volume, volume_tolerance)
         else:
             volume_ok = False
         change_ok = all_valid and volume_ok
@@ -257,7 +257,7 @@ def _resolve_solid_candidate(g: GSolid, tolerances) -> "GSolid | None":
     if not BRepCheck_Analyzer(solid).IsValid():
         return None
     result = GSolid(solid)
-    if abs(result.Volume - g.Volume) > tolerances.volume_tolerance * max(abs(g.Volume), 1.0):
+    if not volume_within(result.Volume, g.Volume, tolerances.volume_tolerance):
         return None
     return result
 
@@ -297,7 +297,7 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
         else:
             resolved.append(r)
 
-    sane = [g for g in resolved if g.is_valid() and valid_solid(g) and abs(g.Volume) > tolerances.min_solid_volume]
+    sane = [g for g in resolved if g.is_valid() and valid_solid(g, tolerances.min_solid_volume)]
 
     extra_notes = []
     if unresolved_volumes:

@@ -70,6 +70,7 @@ from .solid_defects import (
     near_surface_pair,
 )
 from .tolerances import GeoTolerances
+from .volume_utils import volume_within
 from .solid_ops import (
     BuildDepth,
     BuildSolidParts,

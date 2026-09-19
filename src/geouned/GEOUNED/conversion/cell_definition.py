@@ -67,7 +67,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 cs_region = Surfaces.add_forwardCan(cs)
             component_definition.append(cs_region)
-        omit_isolated_planes(solid_gu.Faces, omitFaces)
+        omit_isolated_planes(solid_gu.Faces, omitFaces, tolerances=scaled_tolerances)
 
         RFTCone = get_TCone(solid_gu.Faces, omitFaces, tolerances=scaled_tolerances)
         for cs in RFTCone:
@@ -76,7 +76,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             else:
                 cs_region = Surfaces.add_forwardTCone(cs)
             component_definition.append(cs_region)
-        omit_isolated_planes(solid_gu.Faces, omitFaces)
+        omit_isolated_planes(solid_gu.Faces, omitFaces, tolerances=scaled_tolerances)
 
         roundCorner = get_roundCorner(solid_gu.Faces, omitFaces, solid=solid_gu, tolerances=scaled_tolerances)
         for rc in roundCorner:
@@ -124,7 +124,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
     else:
         omitFaces = set()
-        omit_isolated_planes(solid_gu.Faces, omitFaces)
+        omit_isolated_planes(solid_gu.Faces, omitFaces, tolerances=scaled_tolerances)
 
     last_torus = -1
     for iface, face in enumerate(solid_gu.Faces):

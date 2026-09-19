@@ -8,13 +8,13 @@ import math
 from .data_classes import Options, NumericFormat
 from .basic_functions_part1 import (
     is_in_tolerance,
-    is_opposite,
     is_parallel,
     is_same_value,
 )
 from .data_constants import RELATIVE_TOL_ABS_FLOOR
 from ..write.functions import mcnp_surface
-from ...geo.constants import ANGLE_TOL_E6, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
+from ...geo.constants import PARAM_ANGLE_TOL_E5
+from ...geo.surface_geometry import opposite_sense
 
 
 def _relative_tol(rel, scale):
@@ -66,7 +66,7 @@ def is_same_plane(
     if is_parallel(p1.Axis, p2.Axis, pln_angle):
         d1 = p1.Axis.dot(p1.Position)
         d2 = p2.Axis.dot(p2.Position)
-        if is_opposite(p1.Axis, p2.Axis, pln_angle):
+        if opposite_sense(p1.Axis, p2.Axis):
             d2 = -d2
         d = abs(d1 - d2)
         if tolerances.relativeTol:
@@ -140,12 +140,15 @@ def is_same_cylinder(
     return False
 
 
-def is_same_cone(cone1, cone2, dtol=LENGTH_TOL_E6, atol=ANGLE_TOL_E6, rel_tol=True):
+def is_same_cone(cone1, cone2, tolerances):
+    tolerances = _require(tolerances, "is_same_cone")
+    dtol = tolerances.kne_distance
+    atol = tolerances.kne_angle
     if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
         if is_parallel(cone1.Axis, cone2.Axis, atol):
             apex1 = cone1.Apex
             apex2 = cone2.Apex
-            if rel_tol:
+            if tolerances.relativeTol:
                 tol = _relative_tol(dtol, max(apex1.length, apex2.length))
             else:
                 tol = dtol
@@ -153,15 +156,17 @@ def is_same_cone(cone1, cone2, dtol=LENGTH_TOL_E6, atol=ANGLE_TOL_E6, rel_tol=Tr
     return False
 
 
-def is_same_sphere(sph1, sph2, tolerance=LENGTH_TOL_E6, rel_tol=True):
-    if rel_tol:
+def is_same_sphere(sph1, sph2, tolerances):
+    tolerances = _require(tolerances, "is_same_sphere")
+    tolerance = tolerances.sph_distance
+    if tolerances.relativeTol:
         rtol = tolerance * max(sph2.Radius, sph1.Radius)
     else:
         rtol = tolerance
     if is_same_value(sph1.Radius, sph2.Radius, rtol):
         center1 = sph1.Center
         center2 = sph2.Center
-        if rel_tol:
+        if tolerances.relativeTol:
             ctol = _relative_tol(tolerance, max(center1.length, center2.length))
         else:
             ctol = tolerance
@@ -170,7 +175,11 @@ def is_same_sphere(sph1, sph2, tolerance=LENGTH_TOL_E6, rel_tol=True):
     return False
 
 
-def is_same_torus(tor1, tor2, dtol=LENGTH_TOL_E6, atol=ANGLE_TOL_E6, rel_tol=True, check_a_sign=False):
+def is_same_torus(tor1, tor2, tolerances, check_a_sign=False):
+    tolerances = _require(tolerances, "is_same_torus")
+    dtol = tolerances.tor_distance
+    atol = tolerances.tor_angle
+    rel_tol = tolerances.relativeTol
     if is_parallel(tor1.Axis, tor2.Axis, atol):
         if tor1.Axis.dot(tor2.Axis) < 0:
             return False  # Assume same cone with oposite axis as different

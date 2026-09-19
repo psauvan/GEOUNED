@@ -13,7 +13,8 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
 )
-from ...geo.constants import KERNEL_TOL_E3, REL_TOL_E4, VOLUME_MIN_E3
+from ...geo.constants import KERNEL_TOL_E3, REL_TOL_E3, REL_TOL_E4
+from ...geo.volume_utils import volume_within
 
 logger = logging.getLogger("general_logger")
 
@@ -24,7 +25,7 @@ def split_surfaces(solid, options, tolerances):
     comp = Gmake_compound(solid_components)
 
     volratio = (comp.Volume - solid.Volume) / solid.Volume
-    if volratio > VOLUME_MIN_E3:
+    if volratio > REL_TOL_E3:
         logger.warning(f"Lost {volratio * 100:6.2f}% of the original volume")
 
     # A fragment Gsplit accepted as "sane" (BRepCheck-valid + a real
@@ -147,7 +148,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
             # the split at all.
             piece_sum = sum(abs(p.Volume) for p in comsolid_solids)
             orig_vol = abs(solid.Volume)
-            if orig_vol > 0 and abs(piece_sum - orig_vol) > max(REL_TOL_E4 * orig_vol, tolerances.min_solid_volume):
+            if orig_vol > 0 and not volume_within(piece_sum, orig_vol, REL_TOL_E4):
                 logger.warning(
                     f"Gsplit with a {surf.Type} surface produced {len(comsolid_solids)} piece(s) summing to "
                     f"{piece_sum:.2f}, but the base fragment's own volume is {orig_vol:.2f} -- a likely "

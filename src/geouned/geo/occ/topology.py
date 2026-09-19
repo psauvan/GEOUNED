@@ -114,6 +114,7 @@ from ..constants import (
     ZERO_TOL_E12,
     ZERO_TOL_E9,
 )
+from ..volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's classified surface, not
@@ -1088,7 +1089,7 @@ class GSolid:
             refined_volume = _volume_props(refined).Mass()
         except RuntimeError:
             return GSolid(native)
-        if abs(refined_volume - original_volume) > rel_tol * max(abs(original_volume), 1.0):
+        if not volume_within(refined_volume, original_volume, rel_tol):
             return GSolid(native)
         return GSolid(refined)
 

@@ -247,8 +247,11 @@ class Tolerances(GeoTolerances):
 
     Args:
         relativeTol (bool, optional): _description_. Defaults to False.
-        relativePrecision (float, optional): relative precision. Defaults to 1.0e-6.
-        value (float, optional): Tolerance in single value comparison. Defaults to 1.0e-6.
+        relativePrecision (float, optional): relative precision. Defaults to 1.0e-6. Not read by the code at the moment
+            (the full-turn test of a periodic parameter uses the intrinsic geo.constants.NUMERIC_TOL); kept for the
+            planned absolute/relative precision.
+        value (float, optional): Tolerance in single value comparison. Defaults to 1.0e-6. Not read by the code at the
+            moment (see relativePrecision); kept for the same reason.
         distance (float, optional): General Distance Tolerance. Defaults to 1.0e-4.
         angle (float, optional): General Angle Tolerance. Defaults to 1.0e-4.
         pln_distance (float, optional): distance between planes equal planes if distance between parallel planes < 1e-4 cm. Defaults to 1.0e-4.
@@ -293,13 +296,13 @@ class Tolerances(GeoTolerances):
             split_tolerance above. Defaults to None (no floor), matching the prior default.
         scale (float, optional): geo.Gsplit's own per-retry tolerance scale-up factor. Defaults to 0.1,
             matching the prior hardcoded default on Gsplit's own (now-retired) `scale` parameter.
-        min_solid_volume (float, optional): geo.Gsplit's own minimum-volume filter -- a split-result
-            fragment whose |Volume| falls at or below this is discarded rather than returned as a real
-            solid. A NEW filter (no prior equivalent existed before this same 2026-08-30 refactor) --
-            PROVISIONAL default of 1.0e-6 (mm^3), picked only to filter genuinely near-zero-volume
-            numerical-noise fragments, not real slivers (see min_face_width/sliver_edge_rel_tol above for
-            those) -- not yet independently verified against a real corpus the way this file's other
-            defaults are.
+        min_solid_volume (float, optional): the smallest volume (mm^3) of a piece worth keeping -- ONE value for
+            every place that discards a piece as too small (geo.valid_solid, Gsplit's fragment filter, the
+            reconstructed fragments of a repaired split and space_decomposition's subregions). Depends on the
+            scale of the model: the smallest legitimate piece seen in the test corpus is 0.072 mm^3. Not to be
+            confused with geo.constants.VOLUME_REF, the (intrinsic) reference volume of the relative volume
+            comparisons. Defaults to 1.0e-2, which measured on test_models + working_solids changes no decision
+            with respect to the former mixture of 1e-2 and 1e-3.
         fix_tolerance (float, optional): geo._repair_non_manifold_solid's own BRepBuilderAPI_Sewing
             tolerance when reconstructing a non-manifold solid's real connected components. Defaults to
             1.0e-6, matching that function's own prior hardcoded value exactly (this is a pure
@@ -346,7 +349,7 @@ class Tolerances(GeoTolerances):
         split_tolerance: typing.Optional[float] = 1.0e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = 0.1,
-        min_solid_volume: float = 1.0e-3,
+        min_solid_volume: float = 1.0e-2,
         fix_tolerance: float = 1.0e-6,
         volume_tolerance: float = 1.0e-6,
     ):

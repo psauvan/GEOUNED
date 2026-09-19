@@ -37,19 +37,14 @@ from ..vector_geometry import GVector
 from ..surface_geometry import (
     is_coaxial_cone_cylinder_pair,
     is_coaxial_cone_pair,
+    is_same_cone_surface,
+    is_same_cylinder_surface,
 )
 from .topology import GCone, GCylinder, GFace, GSolid
 from ._native_utils import to_native_vector
 from .primitives import Gmake_shell, Gmake_solid
-from ..constants import (
-    ANGLE_TOL_E6,
-    DIR_TOL_E5,
-    KERNEL_TOL_E6,
-    LENGTH_TOL_E5,
-    REL_TOL_E3,
-    REL_TOL_E6,
-    ZERO_TOL_E9,
-)
+from ..constants import KERNEL_TOL_E6, REL_TOL_E3, REL_TOL_E6, ZERO_TOL_E9
+from ..volume_utils import volume_within
 
 
 def _find_cone_face(shape) -> "GFace | None":
@@ -69,7 +64,7 @@ def _find_cone_face(shape) -> "GFace | None":
     return None
 
 
-def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
+def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone", tolerances) -> "list[list[GFace]]":
     """Groups of `base_faces` whose own cone surface is coaxial with, and
     shares the same |SemiAngle| as, `tool_cone` (see
     surface_geometry.is_coaxial_cone_pair) -- each group sharing one exact
@@ -81,15 +76,11 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
         s = f.Surface
         if not isinstance(s, GCone):
             continue
-        if not is_coaxial_cone_pair(tool_cone, s):
+        if not is_coaxial_cone_pair(tool_cone, s, tolerances):
             continue
         for group in groups:
             gs = group[0].Surface
-            if (
-                abs(gs.SemiAngle - s.SemiAngle) < ANGLE_TOL_E6
-                and abs(gs.Axis.dot(s.Axis)) > 1.0 - DIR_TOL_E5
-                and (gs.Apex - s.Apex).length < LENGTH_TOL_E5
-            ):
+            if is_same_cone_surface(gs, s, tolerances):
                 group.append(f)
                 break
         else:
@@ -97,7 +88,7 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
     return groups
 
 
-def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
+def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone", tolerances) -> "list[list[GFace]]":
     """Cylinder counterpart of `_group_coaxial_cone_faces`: groups of
     `base_faces` whose own cylinder surface is coaxial with `tool_cone`
     (see surface_geometry.is_coaxial_cone_cylinder_pair) -- each group
@@ -108,11 +99,11 @@ def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone")
         s = f.Surface
         if not isinstance(s, GCylinder):
             continue
-        if not is_coaxial_cone_cylinder_pair(tool_cone, s):
+        if not is_coaxial_cone_cylinder_pair(tool_cone, s, tolerances):
             continue
         for group in groups:
             gs = group[0].Surface
-            if abs(gs.Radius - s.Radius) < DIR_TOL_E5 and abs(gs.Axis.dot(s.Axis)) > 1.0 - DIR_TOL_E5:
+            if is_same_cylinder_surface(gs, s, tolerances):
                 group.append(f)
                 break
         else:
@@ -266,13 +257,13 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
     tool_cone = tool_cone_face.Surface
 
     candidates: list[tuple["GFace", GVector, float]] = []
-    for group in _group_coaxial_cone_faces(base.Faces, tool_cone):
+    for group in _group_coaxial_cone_faces(base.Faces, tool_cone, tolerances):
         for other_face in group:
             other_cone = other_face.Surface
             mid_point = (tool_cone.Apex + other_cone.Apex) * 0.5
             radius = (tool_cone.Apex - other_cone.Apex).length / 2.0
             candidates.append((other_face, mid_point, radius))
-    for group in _group_coaxial_cylinder_faces(base.Faces, tool_cone):
+    for group in _group_coaxial_cylinder_faces(base.Faces, tool_cone, tolerances):
         for other_face in group:
             cylinder = other_face.Surface
             tan_semi = math.tan(tool_cone.SemiAngle)
@@ -345,7 +336,7 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
             retry_solids = [GSolid(s) for s in retry_native_solids]
             total_volume = sum(s.Volume for s in retry_solids)
             volume_rel_tol = REL_TOL_E6 if retry_tolerance == 0.0 else REL_TOL_E3
-            if abs(total_volume - base.Volume) > volume_rel_tol * max(abs(base.Volume), 1.0):
+            if not volume_within(total_volume, base.Volume, volume_rel_tol):
                 continue
             if not all(s.is_valid() for s in retry_solids):
                 continue

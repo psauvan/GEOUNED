@@ -1,18 +1,18 @@
 import math
 import logging
 
-from geouned.GEOUNED.utils.geometry_gu import ShellFaceGu
+from geouned.GEOUNED.utils.geometry_gu import ShellFaceGu, merge_periodic_uv
 
 from ..utils.basic_functions_part1 import (
     twoPimod,
-    is_parallel,
     is_same_value,
 )
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
 from ...geo import GPlane, GSphere, GBoundBox, GVector, Gmake_wire
-from ...geo.constants import LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
+from ...geo.constants import LENGTH_TOL_E6, NUMERIC_TOL
+from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
 
@@ -51,9 +51,9 @@ def gen_torus(face, tolerances):
     MajorRadius = face.Surface.MajorRadius
     MinorRadius = face.Surface.MinorRadius
     if (
-        is_parallel(Axis, GVector(1, 0, 0), tolerances.angle)
-        or is_parallel(Axis, GVector(0, 1, 0), tolerances.angle)
-        or is_parallel(Axis, GVector(0, 0, 1), tolerances.angle)
+        axes_parallel(Axis, GVector(1, 0, 0), tolerances.tor_angle)
+        or axes_parallel(Axis, GVector(0, 1, 0), tolerances.tor_angle)
+        or axes_parallel(Axis, GVector(0, 0, 1), tolerances.tor_angle)
     ):
         return GeounedSurface(("TorusOnly", (Center, Axis, MajorRadius, MinorRadius, face.Surface.a_sign)))
     else:
@@ -62,9 +62,9 @@ def gen_torus(face, tolerances):
 
 def cone_apex_plane(cone, tolerances):
     if (
-        is_parallel(cone.Surface.Axis, GVector(1, 0, 0), tolerances.angle)
-        or is_parallel(cone.Surface.Axis, GVector(0, 1, 0), tolerances.angle)
-        or is_parallel(cone.Surface.Axis, GVector(0, 0, 1), tolerances.angle)
+        axes_parallel(cone.Surface.Axis, GVector(1, 0, 0), tolerances.kne_angle)
+        or axes_parallel(cone.Surface.Axis, GVector(0, 1, 0), tolerances.kne_angle)
+        or axes_parallel(cone.Surface.Axis, GVector(0, 0, 1), tolerances.kne_angle)
     ):
         return None
 
@@ -72,54 +72,6 @@ def cone_apex_plane(cone, tolerances):
 
 
 def check_torus_bounds(shell):
-
-    def merge_periodic_uv(parameter, faceList):
-        two_pi = 2.0 * math.pi
-        if parameter == "U":
-            i1 = 0
-            i2 = 2
-        elif parameter == "V":
-            i1 = 2
-            i2 = 4
-
-        params = []
-        arcLength = 0.0
-        for face in faceList:
-            V0, V1 = face.ParameterRange[i1:i2]
-            arcLength += V1 - V0
-            params.append((V0, V1))
-
-        params.sort()
-        V0 = params[0][0]
-        V1 = params[-1][1]
-        if arcLength >= two_pi * (1.0 - PARAM_ANGLE_TOL_E5):
-            mergedParams = (True, (V0, V0 + two_pi))
-        else:
-            if is_same_value(V0, 0.0, PARAM_ANGLE_TOL_E5) and is_same_value(V1, two_pi, PARAM_ANGLE_TOL_E5):
-                for i in range(len(params) - 1):
-                    if not is_same_value(
-                        params[i][1],
-                        params[i + 1][0],
-                        PARAM_ANGLE_TOL_E5,
-                    ):
-                        break
-                v_min = params[i + 1][0] - two_pi
-                v_max = params[i][1]
-            else:
-                # params is sorted by V0 ascending, so params[0][0] is always
-                # the true minimum V0 -- but sorting by V0 does not imply
-                # sorted V1, so params[-1][1] is only the true maximum V1
-                # when the pieces form a simple, non-nested chain. When one
-                # piece's own range is fully nested inside another's (e.g. a
-                # tiny residual sliver piece sitting within a larger piece's
-                # own V-span), params[-1][1] can under-report the real
-                # merged extent -- take the max explicitly instead.
-                v_min = params[0][0]
-                v_max = max(v1 for _, v1 in params)
-            mergedParams = (False, (v_min, v_max))
-
-        return mergedParams
-
     if type(shell) is ShellFaceGu:
         tFaces = shell.Faces
     else:
@@ -132,11 +84,11 @@ def check_torus_bounds(shell):
 
 
 def V_torus_surface(face, v_params, Surfaces):
-    if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
+    if axes_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(1, 0, 0)
-    elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
+    elif axes_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(0, 1, 0)
-    elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
+    elif axes_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
         axis = GVector(0, 0, 1)
 
     torus_center = face.Surface.Center
@@ -217,11 +169,11 @@ def V_torus_surface(face, v_params, Surfaces):
 
 
 def U_torus_planes(face, UParams, Surfaces):
-    if is_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
+    if axes_parallel(face.Surface.Axis, GVector(1, 0, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(1, 0, 0)
-    elif is_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
+    elif axes_parallel(face.Surface.Axis, GVector(0, 1, 0), Surfaces.tolerances.tor_angle):
         axis = GVector(0, 1, 0)
-    elif is_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
+    elif axes_parallel(face.Surface.Axis, GVector(0, 0, 1), Surfaces.tolerances.tor_angle):
         axis = GVector(0, 0, 1)
 
     umin, umax = UParams
@@ -238,7 +190,7 @@ def U_torus_planes(face, UParams, Surfaces):
     center = face.Surface.Center
 
     angle = twoPimod(abs(umax - umin))
-    if angle < math.pi + Surfaces.tolerances.value:
+    if angle < math.pi + NUMERIC_TOL:
         d = axis.cross(p2 - p1).normalized()
         if d.dot(pmid - center) < 0:
             d = -d

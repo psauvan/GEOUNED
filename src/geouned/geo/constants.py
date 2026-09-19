@@ -17,6 +17,8 @@ like `vector_geometry.py`/`surface_geometry.py`/`solid_defects.py`.
 
 from __future__ import annotations
 
+import math
+
 MIN_SLIVER_EDGE_LENGTH = 1.0e-3
 """Absolute floor (mm) for find_short_edges' own threshold -- per direct
 user instruction: the effective threshold must never drop below this,
@@ -45,55 +47,25 @@ comfortably above the ~1e-15 floating-point noise floor -- 1e-9 keeps
 6 orders of magnitude of margin on the noise side and 5 on the real-
 defect side."""
 
-MAX_DEFEATURE_VOLUME_REL_CHANGE = 0.01
-"""Gdefeature's own volume-conservation safety net -- reject a healed
-result whose Volume differs from the input by more than 1% relative.
-Added after a real, dangerous false-pass was found live (2026-08-27,
-"beltline left.stp" at the default rel_tol=1e-4): find_short_edges'
-own short-edge signature can, on a "half" model with a mirror-symmetry
-cut, flag a real symmetry-cut plane alongside a genuine sliver (both
-touch the same short edge) -- BRepAlgoAPI_Defeaturing then "successfully"
-removed both, IsDone()==True, the result topologically valid AND with
-zero remaining short edges (passing every check that existed before this
-one) -- while silently DOUBLING the solid's own volume. Every previously-
-confirmed *legitimate* repair on this same fixture changed volume by at
-most ~0.11%, several orders of magnitude below this bound -- 1% is a
-generous, safe margin for a real defect repair (which, by definition,
-targets near-zero-volume slivers) while reliably catching a runaway case
-like this one. Used by all 3 backends (`freecad`'s own `Gdefeature` is a
-real, non-stub implementation -- `Part.Shape.defeaturing()` -- unlike
-most of its sibling repair functions)."""
+MAX_REPAIR_VOLUME_REL_CHANGE = 3.0e-4
+"""Volume-conservation gate shared by every HEALING repair -- `Gdefeature`, `Gcollapse_split_rings`, `Gsliver_heal`,
+`Gheal_topology`, `_close_open_solid` and `_repair_non_manifold_solid`'s separate-components pass: a repaired solid is only
+trusted if `|dV| / max(|V|, 1) <= 3e-4`. Valid topology alone is NOT enough (a repair can come back BRepCheck-valid and
+still lose or invent material, or distort a real neighbouring surface).
 
-MAX_SPLIT_RING_VOLUME_REL_CHANGE = 3.0e-4
-"""Gcollapse_split_rings' own (tighter) volume-conservation net. Unlike
-Gdefeature -- whose target slivers can carry a real fraction of a "half"
-model's volume, hence its generous 1% -- a split-ring collapse removes
-only micron-scale riser bands, so a genuine repair conserves volume to
-~1e-4 or better (barrel bottom.stp: 6.4e-5). A larger drift means the
-re-sew moved a real adjacent surface: LR.stp (a cylindrical
-collapsed-step) comes back valid, dV 7e-4, and CSG-broken (d1suned tally
-0.0, 24 lost particles) -- caught by this bound, not by is_valid()."""
+One value since 2026-09-19 (it used to be 1e-2, 3e-4, 5e-4 and 1e-3, one per repair). Measured over the 143 test_models files
+plus the 30 working_solids fixtures, the relative volume change of every repair each gate evaluated:
+  - Gcollapse_split_rings: accepted 6.4e-5 (barrel bottom) .. ~1e-4; rejected 7.0e-4 (LR.stp, TVA_red: valid but CSG-broken,
+    d1suned tally 0.0 and 24 lost particles);
+  - Gsliver_heal: accepted <= 2.0e-4; rejected >= 5.18e-4 (part2), then 7.7e-4 .. 1.8e-3, 0.17, 0.33 and 1.0;
+  - Gdefeature: the 3 measured cases lose ALL the volume (1.0) and are rejected. No legitimate case was observed: the
+    historical ones (~1.1e-3, beltline left.step) stop at load and never reach the gate, so their fate at 3e-4 is unknown;
+  - Gheal_topology, open-solid repair, non-manifold reconstruction: <= 2e-5, more than 10x below the gate.
+Any value in (2.0e-4, 5.18e-4) keeps every measured decision. Caveats: "accepted"/"rejected" is what the previous gates
+decided, not ground truth, and the high side of that window is narrow (part2 sits 3.5% above the old 5e-4).
 
-MAX_SLIVER_HEAL_VOLUME_REL_CHANGE = 5.0e-4
-"""Gsliver_heal's volume-conservation net -- the sole numeric gate (no
-`count_split_ring_pairs` check: this repair's own planar cap is a thin
-annulus whose two coplanar rims that metric would false-count). With the
-`_retrim_freed_quadrics` step, a correct heal conserves volume to ~1e-6
-(LR.stp: healed dV 8.6e-7, d1suned tally 0.9985 +/- 0.28%, 0 lost
-particles -- the input's own translation was tally 0.0 / 24 lost). A
-genuinely wrong fabricated-cap result is ~1e-2, so 5e-4 has ~3 orders of
-margin on the good side and ~1.5 on the bad side."""
-
-MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE = 1.0e-3
-"""Gheal_topology's volume-conservation gate. Looser than the sliver/
-split-ring gates: a failed BOP split can leave the fragment's volume
-slightly *inflated* (spurious overlap), and the STEP serialize->deserialize
-rebuild that heals it *corrects* that inflation -- so the healed volume
-legitimately differs from the (already-wrong) input by more than float
-noise. Confirmed on L4_body.stp's Gsplit-#24 fragment: input vol
-142946.158 (inflated), healed vol 142946.121 (the true base), dV ~2.6e-7
--- still 3+ orders inside this bound. A genuinely lossy heal (STEP
-dropping a real face) would be percent-scale and is rejected."""
+Deliberately NOT applied to `Gmerge_coplanar_planes` (1e-6) nor to Gsplit's `volume_tolerance` (1e-6): those confirm an
+(almost) exact operation and stay tight."""
 
 OCCT_FIX_TOLERANCE = 1.0e-6
 """Fixed (never model-scaled) tolerance for native repair/unify calls
@@ -154,23 +126,26 @@ paired long free edges' own length to be trusted as a slot (a thin
 strip) rather than a genuinely missing full face. See
 `OPEN_STRIP_GAP_ABS`."""
 
-DEGENERATE_SOLID_VOLUME_FLOOR = 1.0e-2
-"""Absolute (mm^3) floor below which a BOPAlgo split fragment is treated
-as a degenerate artifact of the cut rather than a real, independent
-solid worth decomposing further. Used by `solid_defects.valid_solid`,
-the canonical copy of the check `decom_utils_generator.py` carried
-(`Vol_tol = 1e-2`) until it was deleted in ef0077c; the `freecad`
-backend's own local `valid_solid` copy is replaced by an import of that
-one. Restores the pre-ef0077c behaviour whose loss let a near-tangent
-cut on `esfera/Barrel_bottom.stp` split off a 16 mm^3 / Volume/Area
-~1e-5 sliver, propagate a non-volume-conserving decomposition, and lose
-10 MCNP particles."""
+DEFAULT_MIN_SOLID_VOLUME = 1.0e-2
+"""Default of `Tolerances.min_solid_volume` (mm^3): the smallest volume of a piece worth keeping. ONE value for every place that
+discards a piece as too small -- `solid_defects.valid_solid`, `Gsplit`'s fragment filter, `_raw_bop_split`'s reconstructed
+fragment and `space_decomposition`'s subregions (they used to be 1e-2, 1e-3, 1e-3 and 1e-3, and `Gsplit` applied two of them in
+sequence, so 1e-2 was the one that actually decided). It is a THRESHOLD on one solid; contrast `VOLUME_REF`, the scale of the
+relative volume comparisons.
+
+Measured 2026-09-19 on test_models + working_solids: no piece reaches those checks with a volume between 1e-3 and 0.1 mm^3 (21
+fragments below 1e-3 are rejected either way; the smallest real pieces are ~0.1 mm^3), so unifying at 1e-2 changes no decision
+there. The smallest legitimate piece known is 0.072 mm^3 (Decomposed/modelcell_cut1_v2_piece66.stp), 7x above this value.
+
+History of the check `valid_solid` carries (`Vol_tol = 1e-2` in `decom_utils_generator.py` until ef0077c): its loss let a
+near-tangent cut on `esfera/Barrel_bottom.stp` split off a 16 mm^3 / Volume/Area ~1e-5 sliver, propagate a non-volume-conserving
+decomposition, and lose 10 MCNP particles -- the Volume/Area check (`DEGENERATE_SOLID_VOL_AREA_RATIO`) is the one that catches it."""
 
 DEGENERATE_SOLID_VOL_AREA_RATIO = 1.0e-3
 """Volume/Area ratio (mm) below which a BOPAlgo split fragment is a thin
 sliver, not a real piece -- a 16 mm^3 solid spread over 1.4e6 mm^2 of
 surface is not a fragment the decomposition should keep. Companion of
-`DEGENERATE_SOLID_VOLUME_FLOOR`; both from the historical
+`DEFAULT_MIN_SOLID_VOLUME`; both from the historical
 `decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""
 
 
@@ -191,25 +166,13 @@ LENGTH_TOL_E5 = 1.0e-5
 LENGTH_TOL_E6 = 1.0e-6
 LENGTH_TOL_E7 = 1.0e-7
 LENGTH_TOL_E8 = 1.0e-8
-LENGTH_TOL_E9 = 1.0e-9
 
 # Angle tolerance (rad) between two directions (also used for the sine of it: |unit x unit|).
 ANGLE_TOL_5E2 = 5.0e-2
 ANGLE_TOL_E4 = 1.0e-4
 ANGLE_TOL_E3 = 1.0e-3
-ANGLE_TOL_E5 = 1.0e-5
 ANGLE_TOL_E6 = 1.0e-6
 WINDING_ANGLE_TOL = 2.0e-3
-
-# Dimensionless deviation of a unit-vector dot product from 0 or 1 (|cos| test). Quadratic in the
-# angle near parallel (~theta^2/2), linear near perpendicular.
-DIR_TOL_E4 = 1.0e-4
-DIR_TOL_E5 = 1.0e-5
-DIR_TOL_E6 = 1.0e-6
-
-# Minimum |cos| between two axes to call them the same line (cosine form of an angle tolerance).
-AXIS_COS_MIN_E5 = 0.99999
-AXIS_COS_MIN_E6 = 0.999999
 
 # Tolerance (rad) on surface (U, V) parameters and arc angles.
 PARAM_ANGLE_TOL_E4 = 1.0e-4
@@ -230,8 +193,7 @@ REL_TOL_E4 = 1.0e-4
 REL_TOL_E5 = 1.0e-5
 REL_TOL_E6 = 1.0e-6
 
-# Absolute volume floor (mm^3) below which a piece is discarded as empty.
-VOLUME_MIN_E3 = 1.0e-3
+# Kernel zero (mm^3): a boolean Common of two shapes has content only above this.
 VOLUME_MIN_E8 = 1.0e-8
 
 # Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
@@ -266,3 +228,25 @@ POINT_POINT_TOL = 1.0e-5
 # with 1e-5 the test_models corpus (143 files) is identical in pieces, volumes, primitive surfaces and composite
 # counts, so the two are unified.
 BOX_TOL = POINT_POINT_TOL
+
+# Axis tilt (rad, acos(1 - 1e-5) ~ 4.5e-3) under which the load-time DEFECT detectors (`near_surface_pair`,
+# `count_split_ring_pairs`) still call two axes parallel. Deliberately looser than the surface-identity angles
+# (Tolerances.*_angle, NUMERIC_TOL): they look for surfaces/circles that are NEARLY coincident but not identical (a
+# duplicated micro-trim), so they must reach beyond what identity accepts (57 corpus comparisons fall between 0.26 and
+# 2.5 degrees). One value for both detectors.
+DEFECT_AXIS_ANGLE = math.acos(1.0 - 1.0e-5)
+
+# Numeric precision (mm and rad) of a solid's OWN data. Two faces of the same solid that lie on the same surface were built
+# from the same numbers, so their surfaces agree to floating-point noise: measured on test_models (2026-09-19), 3685 of 3687
+# such pairs are exactly equal or within 1e-10, none between 1e-8 and 1e-3. 1e-7 sits inside that empty gap and equals OCCT's
+# Precision::Confusion. Used ONLY to compare surfaces that come from the same solid; comparisons across solids or against a
+# cutting tool use the user's Tolerances (their data may not have been built from the same numbers).
+NUMERIC_TOL = 1.0e-7
+
+# Reference volume (mm^3) of every RELATIVE volume comparison: `abs(a - b) <= tol * max(|reference|, VOLUME_REF)`. Below it a
+# relative test is meaningless, so the tolerance becomes the absolute `tol * VOLUME_REF`. It is a characteristic SCALE, not a
+# threshold (contrast Tolerances.min_solid_volume, which decides whether a piece is worth keeping) and it must not be tied to
+# it: a legitimate repair of a small solid changes its volume by absolute amounts (5e-5 and 8e-5 mm^3 on rev_pipe.stp) that a
+# much smaller floor would reject. Measured window for the 3e-4 repair gate: it must accept |dV| = 8.0e-5 and reject the
+# 0.17 and 0.20 mm^3 failures (ring.stp, rc17.stp), so VOLUME_REF in (0.27, ~570); 1.0 sits inside (only 4 small-solid cases).
+VOLUME_REF = 1.0

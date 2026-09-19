@@ -15,8 +15,8 @@ import Part
 
 from .topology import GFace, GSolid, Gclassify_surface
 from ..solid_defects import find_short_edges
-from ..constants import MAX_DEFEATURE_VOLUME_REL_CHANGE
-from ..constants import DEFAULT_MIN_FACE_WIDTH
+from ..constants import DEFAULT_MIN_FACE_WIDTH, MAX_REPAIR_VOLUME_REL_CHANGE
+from ..volume_utils import volume_within
 
 
 def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
@@ -43,7 +43,7 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     Returns None whenever defeaturing raises, the healed result isn't
     valid, find_short_edges() still finds a short edge in it, or its own
     Volume has drifted from the input by more than
-    MAX_DEFEATURE_VOLUME_REL_CHANGE."""
+    MAX_REPAIR_VOLUME_REL_CHANGE."""
     if not faces:
         return None
     native_faces = [f.__native__ for f in faces]
@@ -56,12 +56,12 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
     healed = GSolid(healed_native)
     if find_short_edges(healed):
         return None
-    if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
+    if not volume_within(healed.Volume, solid.Volume, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     return healed
 
 
-def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
+def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
     """Repair a "split boundary ring" / duplicated micro-trim defect --
     a single trimming surface duplicated at a sub-tolerance offset, with
     parasitic "riser" faces bridging the thin slab and every curved face
@@ -100,7 +100,7 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     return None
 
 
-def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
+def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
     """Merge every group of adjacent, co-planar planar faces of `solid`
     into a single planar face -- a hand-rolled, planes-only alternative to
     ``GSolid.refine()``.

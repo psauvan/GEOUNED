@@ -3,7 +3,7 @@
 #
 import logging
 import math
-from ...geo.constants import DIR_TOL_E5, ZERO_TOL_E8
+from ...geo.constants import LENGTH_TOL_E5, ZERO_TOL_E8
 
 logger = logging.getLogger("general_logger")
 
@@ -23,7 +23,6 @@ from .meta_surfaces_utils import (
 )
 from ..decompose.decom_utils_generator import cks_edge_plane
 from ..conversion.cell_definition_functions import cone_apex_plane
-from .basic_functions_part2 import is_same_plane
 from ...geo import GPlane, GCylinder, GCone, GSphere, Gmake_box, surface_geometry
 from .basic_functions_part1 import shapes_in_contact
 
@@ -59,7 +58,7 @@ def get_multiplanes(solidFaces, omit_faces_set=None, tolerances=None):
         mp_plane_index = set()
         mplanes = multiplane(p, planes, mp_plane_index, tolerances)
         if len(mplanes) != 1:
-            if no_convex(mplanes):
+            if no_convex(mplanes, tolerances=tolerances):
                 mp_params = build_multip_params(mplanes, tolerances=tolerances)
                 mp = GeounedSurface(("MultiPlane", mp_params))
                 if mp.Surf.PlaneNumber < 2:
@@ -193,6 +192,14 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
         return conecyl_list, conecylface_index
 
 
+def _index_of_plane(plane_list, plane, tolerances):
+    """Index of the first GeounedSurface plane of `plane_list` that is the same oriented plane as `plane`, else None."""
+    for i, other in enumerate(plane_list):
+        if surface_geometry.is_same_oriented_plane_surface(other.Surf, plane.Surf, tolerances):
+            return i
+    return None
+
+
 def build_roundC_params(rc_list, *, tolerances):
 
     roundcorner_list = []
@@ -208,8 +215,8 @@ def build_roundC_params(rc_list, *, tolerances):
         cylOnly.bVar = BoolVariable(var_id)
 
         if gpa is not None:
-            if gpa in plane_list:
-                index = plane_list.index(gpa)
+            index = _index_of_plane(plane_list, gpa, tolerances)
+            if index is not None:
                 gpa.bVar = plane_list[index].bVar
             else:
                 var_id += 1
@@ -227,17 +234,17 @@ def build_roundC_params(rc_list, *, tolerances):
         gp1 = GeounedSurface(("Plane", (p1.CenterOfMass, p1Axis, 1.0, 1.0)))
         gp2 = GeounedSurface(("Plane", (p2.CenterOfMass, p2Axis, 1.0, 1.0)))
 
-        if gp1 in plane_list:
-            index = plane_list.index(gp1)
+        index = _index_of_plane(plane_list, gp1, tolerances)
+        if index is not None:
             gp1.bVar = plane_list[index].bVar
         else:
             var_id += 1
             gp1.bVar = BoolVariable(var_id)
             rc_planes.append(p1)
 
-        if gp1 != gp2:
-            if gp2 in plane_list:
-                index = plane_list.index(gp2)
+        if not surface_geometry.is_same_oriented_plane_surface(gp1.Surf, gp2.Surf, tolerances):
+            index = _index_of_plane(plane_list, gp2, tolerances)
+            if index is not None:
                 gp2.bVar = plane_list[index].bVar
             else:
                 var_id += 1
@@ -268,7 +275,7 @@ def build_roundC_params(rc_list, *, tolerances):
             pi = plane_list[i]
             n = len(plane_list) - 1
             for j, pj in enumerate(reversed(plane_list[i + 1 :])):
-                if pi == pj:
+                if surface_geometry.is_same_oriented_plane_surface(pi.Surf, pj.Surf, tolerances):
                     del plane_list[n - j]
             i += 1
 
@@ -288,7 +295,7 @@ def build_roundC_params(rc_list, *, tolerances):
         for p in rc_planes:
             count = 0
             for cyl, p1, p2, _, _ in rc_list:
-                if is_same_plane(p1.Surface, p.Surface, tolerances=tolerances) or is_same_plane(p2.Surface, p.Surface, tolerances=tolerances):
+                if surface_geometry.is_same_plane_surface(p1.Surface, p.Surface, tolerances) or surface_geometry.is_same_plane_surface(p2.Surface, p.Surface, tolerances):
                     count += 1
                     if count == 2:
                         break
@@ -311,7 +318,7 @@ def build_roundC_params(rc_list, *, tolerances):
             # convexity/orientation *test* sees the richer set.
             convexity_planes = list(plane_list)
             for p in extra_planes:
-                if not any(p == q for q in convexity_planes):
+                if _index_of_plane(convexity_planes, p, tolerances) is None:
                     convexity_planes.append(p)
             multi_round, orientation = surface_geometry.convex_planes(convexity_planes, cyl.Surface.Axis, closed_set)
 
@@ -326,7 +333,7 @@ def build_roundC_params(rc_list, *, tolerances):
                     center = center + p.Surf.Position
                 center = center / len(plane_list)
                 dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
-                if abs(dotvalue) < DIR_TOL_E5:  # aligned planes
+                if abs(dotvalue) < LENGTH_TOL_E5:  # aligned planes (point-to-plane distance)
                     orientation = rc.Surf.Cylinder.Orientation
                 else:
                     orientation = "Reversed" if dotvalue > 0 else "Forward"
@@ -380,7 +387,7 @@ def build_RCC_params(rc):
     return cylcones, mp_planes
 
 
-def _closing_plane(cyl, edges, kind, secondary):
+def _closing_plane(cyl, edges, kind, secondary, *, tolerances):
     """The plane closing a Can/RoundCorner-style secondary surface off
     against cyl's own boundary. A real circular/elliptical tangency
     (planar_edges) already has an exact plane through its curve's own
@@ -392,7 +399,7 @@ def _closing_plane(cyl, edges, kind, secondary):
     computation finds the main cylinder isn't actually split into two
     disjoint pieces by the secondary surface -- the caller must treat
     that as "this isn't a valid Can", not fall back to a guess."""
-    if planar_edges(edges):
+    if planar_edges(edges, tolerances=tolerances):
         return cks_edge_plane(cyl, edges)
     result = surface_geometry.find_can_plane(cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, kind, secondary)
     if result is None:
@@ -455,7 +462,7 @@ def build_can_params(cs, *, tolerances):
                 gs = GeounedSurface(("Plane", (pa.Surf.Position, pa.Surf.Axis, 1.0, 1.0)))
                 gs.bVar = pa.bVar
             else:
-                pa = _closing_plane(cyl, edges, "cylinder", s.Surface)
+                pa = _closing_plane(cyl, edges, "cylinder", s.Surface, tolerances=tolerances)
                 if pa is None:
                     return None
                 sid += 1
@@ -500,7 +507,7 @@ def build_can_params(cs, *, tolerances):
                 pa = None
             else:
                 apexPlane = None
-                pa = _closing_plane(cyl, edges, "cone", s.Surface)
+                pa = _closing_plane(cyl, edges, "cone", s.Surface, tolerances=tolerances)
                 if pa is None:
                     return None
                 sid += 1
@@ -524,7 +531,7 @@ def build_can_params(cs, *, tolerances):
             sid += 1
             sphOnly.bVar = BoolVariable(sid)
 
-            pa = _closing_plane(cyl, edges, "sphere", s.Surface)
+            pa = _closing_plane(cyl, edges, "sphere", s.Surface, tolerances=tolerances)
             if pa is None:
                 return None
             sid += 1
@@ -587,7 +594,7 @@ def build_multip_params(plane_list, *, tolerances):
         gp = GeounedSurface(("Plane", (p.Surface.Position, normal, 1.0, 1.0)))
         same = False
         for pp in planeparams:
-            if is_same_plane(pp.Surf, gp.Surf, tolerances=tolerances):
+            if surface_geometry.is_same_plane_surface(pp.Surf, gp.Surf, tolerances):
                 same = True
                 break
         if not same:

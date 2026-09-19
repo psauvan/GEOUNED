@@ -52,6 +52,7 @@ from ..constants import (
     ZERO_TOL_E12,
     ZERO_TOL_E9,
 )
+from ..volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's Surface geometry, not
@@ -1091,7 +1092,7 @@ class GSolid:
         except Exception:
             refined = native
 
-        if abs(refined.Volume - original_volume) > rel_tol * max(abs(original_volume), 1.0):
+        if not volume_within(refined.Volume, original_volume, rel_tol):
             return GSolid(native)
         return GSolid(refined)
 

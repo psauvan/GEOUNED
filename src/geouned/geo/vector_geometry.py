@@ -32,6 +32,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from .constants import BOX_TOL, LENGTH_TOL_E12, PARAM_ANGLE_TOL_E5, POINT_POINT_TOL, REL_TOL_E6
+from .volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
 # Neutral vector type
@@ -516,7 +517,7 @@ class myBox:
                     self_vol = _box_volume(self.Box)
                     box_vol = _box_volume(box.Box)
                     union_vol = _box_volume(union_box)
-                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < REL_TOL_E6 * max(union_vol, 1.0):
+                    if volume_within(union_vol, self_vol + box_vol - inter_vol, REL_TOL_E6, union_vol):
                         self.Box = union_box
                     else:
                         self.Box = self.Box if self_vol >= box_vol else box.Box
