@@ -1483,7 +1483,7 @@ gaps for whenever it's picked back up:
 
 - **Tolerances: intrinsic vs user-modifiable, one notion of "same
   surface", 2026-09-19** (branch `same-surface-tolerances`, commits
-  `6d2c9a9`, `b760fa6`). Started as an analysis of why "identical
+  `6d2c9a9`, `b760fa6`, and the measurement/box follow-up). Started as an analysis of why "identical
   surface" had three different criteria: `geo`'s `is_same_*_surface`
   (fixed 1e-5 mm and `dot >= 0.99999`, which is a 4.5e-3 rad angle, 45x
   looser than `Tolerances.pln_angle`), the output-stage `is_same_plane`/...
@@ -1517,9 +1517,17 @@ gaps for whenever it's picked back up:
      samples in between), so any value in [1e-8, 1e-5] behaves identically
      there. 1e-5 leaves a 10x margin over the rounding of a STEP written
      with 6 decimals and stays 10x below the surface tolerances.
-     `sameBox` is NOT point-to-point: OCCT bounding boxes carry a few 1e-6
-     of slop (55 of 386 comparisons fall in 1e-6..1e-5), so it keeps its
-     own `BOX_TOL_E6 = 1e-6`.
+     Box comparisons (`sameBox`, and the 6 overlap-slack sites in
+     `geo/*/topology.py`) are NOT point-to-point: OCCT bounding boxes carry
+     a few 1e-6 of slop (55 of 386 `sameBox` comparisons and ~15 thousand
+     overlap comparisons fall in 1e-6..1e-5), so they first kept their own
+     `BOX_TOL_E6 = 1e-6`. Experiment (2026-09-19): with 1e-5 the corpus is
+     identical in pieces, volumes, primitive surfaces and composite counts
+     and the 3 suites are unchanged, so they now share the value
+     (`BOX_TOL = POINT_POINT_TOL`, kept as its own name because box slop
+     and point coincidence are different physics and can diverge again).
+     Note that this DOES flip decisions (the 55 `sameBox` cases), it just
+     does not change any final result on this corpus.
   3. `GeoTolerances` (in `geo/`, so `geo` can import it) holds the fields
      `geo` reads; `geouned.Tolerances` inherits it and keeps its flat
      constructor, so a user always builds ONE object
@@ -1560,15 +1568,48 @@ gaps for whenever it's picked back up:
   same"; fixed with a 1e-9 mm floor, `RELATIVE_TOL_ABS_FLOOR`), and the
   `VOLAREA_RATIO` sliver threshold had two values for one concept (1e-2 in
   `solid_ops`, 1e-3 in `constants`; now the 1e-3 one).
-  **Still open** (remaining legacy-valued constants, none of them surface
-  identity or point-to-point): lengths of edges/vectors, radius/centre
-  differences of *curves* (`same_curve`), shape-to-shape distances,
-  parallel/perpendicular tests. Method for each: instrument the compared
-  value, measure the gap over the corpus, put the tolerance inside it
-  (never by eye). Known limitation of that method: it measures the
-  corpus, whose STEP files are high-precision (coincident points are
-  exactly equal or < 1e-9); a low-precision STEP would sit closer to the
-  thresholds, which is why the chosen values keep a margin.
+  **Measurement of the remaining roles (2026-09-19)**: a throwaway AST
+  instrumenter (kept out of the repo, scratchpad) rewrote every single
+  `Compare` that mentions a tolerance constant (177 comparisons) so it
+  records the value actually compared and its ratio to the threshold; for
+  cosine-form thresholds (`|dot| < 1 - tol`) it records the deviation
+  `1 - |cos|`. Run over the 143-file corpus (results identical to the
+  uninstrumented code). Of 116 comparisons that matter for `ocp`, 86 run
+  in the corpus and 30 never do (13 `PARAM_ANGLE_TOL_E5`, 5
+  `LENGTH_TOL_E5`, volume floors...): no evidence exists for those.
+  - Clean gap (no sample within 10x of the threshold), so any value in the
+    gap is equivalent on this corpus: every `ZERO_TOL_*` (373 thousand
+    comparisons in `E9` alone; they guard different quantities, so they are
+    NOT to be merged), `POINT_POINT_TOL` (26 186 comparisons),
+    `LENGTH_TOL_E12`, `VOLUME_MIN_*`, `PARAM_ANGLE_TOL_E5`, and the
+    parallel-axes tests in `decom_utils_generator:377`,
+    `meta_surfaces_utils:1503/1504`, `functions:329` and
+    `geo/surface_geometry:215` (deviations are 0 or < 1e-11, or >= 1e-3).
+  - Sensitive (real samples right at the threshold): the direction tests
+    have real data from 4.5e-5 to 1.2e-2 rad (`meta_surfaces_utils:1570`
+    perpendicularity, |dprod| = 4.5e-5 vs 1e-4; `decom_utils_generator:117`
+    sin = 4.8e-6 vs 1e-6; `meta_surfaces_utils:1880` deviation 1.4e-6 vs
+    1e-6; `meta_surfaces_utils:1442` sin = 1.2e-2 vs 1e-3), so **a single
+    `DIRECTION_ANGLE_TOL` cannot reproduce the current behaviour at both
+    `1570` and `117`**: unifying directions changes those branches and is
+    an explicit decision, not a refactor. `PARAM_ANGLE_TOL_E4`
+    (`meta_surfaces_utils:505`, angular step filter: 2346 of 116 thousand
+    near) is algorithmic and stays intrinsic; the volume gates
+    (`REL_TOL_E5/E6`) are tied to the user's `volume_tolerance`;
+    `AXIS_COS_MIN_E5` in `near_surface_pair` (57 comparisons between 0.26
+    and 2.5 degrees) is a near-coincident-surface detector, deliberately
+    looser than identity.
+  - Relabelled with the same value: `cell_definition_functions:95`
+    (`two_pi * (1 - tol)` is a relative angle, now `PARAM_ANGLE_TOL_E5`).
+  **Still open**: unify the direction tests (see above, needs a decision
+  and a corpus + d1suned check), and unify the remaining lengths that are
+  neither surface identity nor point-to-point (`LENGTH_TOL_E7/E8` towards
+  `POINT_POINT_TOL`: edge/vector lengths, shape-to-shape distances,
+  *curve* centre/radius differences in `same_curve`). Known limitation of
+  the method: it measures the corpus, whose STEP files are high-precision
+  (coincident points are exactly equal or < 1e-9); a low-precision STEP
+  would sit closer to the thresholds, which is why the chosen values keep
+  a margin.
 
 ## Reference docs
 

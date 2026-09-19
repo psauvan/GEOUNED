@@ -12,7 +12,7 @@ from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
 from ...geo import GPlane, GSphere, GBoundBox, GVector, Gmake_wire
-from ...geo.constants import LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
+from ...geo.constants import LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
 
 logger = logging.getLogger("general_logger")
 
@@ -92,7 +92,7 @@ def check_torus_bounds(shell):
         params.sort()
         V0 = params[0][0]
         V1 = params[-1][1]
-        if arcLength >= two_pi * (1.0 - LENGTH_TOL_E5):
+        if arcLength >= two_pi * (1.0 - PARAM_ANGLE_TOL_E5):
             mergedParams = (True, (V0, V0 + two_pi))
         else:
             if is_same_value(V0, 0.0, PARAM_ANGLE_TOL_E5) and is_same_value(V1, two_pi, PARAM_ANGLE_TOL_E5):

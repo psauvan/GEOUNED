@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from .constants import BOX_TOL_E6, LENGTH_TOL_E12, PARAM_ANGLE_TOL_E5, POINT_POINT_TOL, REL_TOL_E6
+from .constants import BOX_TOL, LENGTH_TOL_E12, PARAM_ANGLE_TOL_E5, POINT_POINT_TOL, REL_TOL_E6
 
 # ---------------------------------------------------------------------------
 # Neutral vector type
@@ -539,7 +539,7 @@ class myBox:
         for i in range(6):
             p1 = self.Box.get_point(i)
             p2 = box.Box.get_point(i)
-            if (p1 - p2).length > BOX_TOL_E6:
+            if (p1 - p2).length > BOX_TOL:
                 return False
         return True
 

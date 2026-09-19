@@ -43,6 +43,7 @@ from ._native_utils import to_native_vector
 from ..io_utils import suppress_native_stdout
 from ..constants import (
     ANGLE_TOL_5E2,
+    BOX_TOL,
     LENGTH_TOL_E6,
     LENGTH_TOL_E7,
     REL_TOL_E6,
@@ -645,7 +646,7 @@ class GEdge:
         shape1 = self.__native__
         shape2 = other.__native__
         Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
-        intersect = Boxinter.XLength > -LENGTH_TOL_E6 and Boxinter.YLength > -LENGTH_TOL_E6 and Boxinter.ZLength > -LENGTH_TOL_E6
+        intersect = Boxinter.XLength > -BOX_TOL and Boxinter.YLength > -BOX_TOL and Boxinter.ZLength > -BOX_TOL
         if intersect:
             return self.distance_to(other)
         c1 = shape1.BoundBox.Center
@@ -832,7 +833,7 @@ class GFace:
             return 0.0
         else:
             Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
-            intersect = Boxinter.XLength > -LENGTH_TOL_E6 and Boxinter.YLength > -LENGTH_TOL_E6 and Boxinter.ZLength > -LENGTH_TOL_E6
+            intersect = Boxinter.XLength > -BOX_TOL and Boxinter.YLength > -BOX_TOL and Boxinter.ZLength > -BOX_TOL
             if intersect:
                 try:
                     inter = shape1.common(shape2)

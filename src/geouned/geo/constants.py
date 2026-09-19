@@ -260,7 +260,9 @@ DEFAULT_MIN_FACE_WIDTH = 0.1
 # margin over the rounding of a STEP written with 6 decimals and stays 10x below Tolerances' surface tolerances.
 POINT_POINT_TOL = 1.0e-5
 
-# Corner-to-corner tolerance (mm) when two bounding boxes are compared. Deliberately NOT POINT_POINT_TOL:
-# OCCT bounding boxes carry a few 1e-6 mm of slop (55 of 386 corpus comparisons fall in 1e-6..1e-5), so this
-# value decides real outcomes and stays at its historical 1e-6.
-BOX_TOL_E6 = 1.0e-6
+# Corner-to-corner tolerance (mm) when two bounding boxes are compared. Same value as POINT_POINT_TOL, kept as its
+# own name because box slop and point coincidence are different physics: OCCT bounding boxes carry a few 1e-6 mm of
+# slop (55 of 386 corpus comparisons fall in 1e-6..1e-5) and the old 1e-6 split those cases. Measured 2026-09-19:
+# with 1e-5 the test_models corpus (143 files) is identical in pieces, volumes, primitive surfaces and composite
+# counts, so the two are unified.
+BOX_TOL = POINT_POINT_TOL

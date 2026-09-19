@@ -104,6 +104,7 @@ from ._native_utils import (
 )
 from ..constants import (
     ANGLE_TOL_5E2,
+    BOX_TOL,
     KERNEL_TOL_E6,
     KERNEL_TOL_E7,
     LENGTH_TOL_E6,
@@ -588,9 +589,9 @@ class GEdge:
         box1 = _bnd_box(shape1)
         box2 = _bnd_box(shape2)
         intersect = (
-            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -LENGTH_TOL_E6
-            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -LENGTH_TOL_E6
-            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -LENGTH_TOL_E6
+            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -BOX_TOL
+            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -BOX_TOL
+            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -BOX_TOL
         )
         if intersect:
             return self.distance_to(other)
@@ -831,9 +832,9 @@ class GFace:
         box1 = _bnd_box(shape1)
         box2 = _bnd_box(shape2)
         intersect = (
-            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -LENGTH_TOL_E6
-            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -LENGTH_TOL_E6
-            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -LENGTH_TOL_E6
+            min(box1.XMax, box2.XMax) - max(box1.XMin, box2.XMin) > -BOX_TOL
+            and min(box1.YMax, box2.YMax) - max(box1.YMin, box2.YMin) > -BOX_TOL
+            and min(box1.ZMax, box2.ZMax) - max(box1.ZMin, box2.ZMin) > -BOX_TOL
         )
         if intersect:
             try:
