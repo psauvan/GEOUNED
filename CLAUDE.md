@@ -155,9 +155,19 @@ Layout:
   full unification history.
 - `geo/io_utils.py` — `suppress_native_stdout` (silences OCCT's own
   STEP-write console banner) and `GLabelNode` (STEP assembly/label tree).
-- `geo/constants.py` — every shared tuning threshold (sliver/degenerate
-  edge floors, volume-conservation tolerances for each repair step), so
-  no engine carries its own duplicate copy of a literal.
+- `geo/constants.py` — every intrinsic tuning threshold: the repair
+  cascade's volume-conservation gates and, since 2026-09-19, every
+  tolerance literal that used to be inline in `GEOUNED/`/`geo/`, named by
+  ROLE plus the exponent of its historical value (`LENGTH_TOL_E5`,
+  `DIR_TOL_E6`, `ZERO_TOL_E9`, `KERNEL_TOL_E7`, `POINT_POINT_TOL`, ...),
+  so no engine carries its own duplicate copy of a literal. See "Known
+  open items" -> Shared/cross-cutting -> "Tolerances" for the rule that
+  decides what lives here and what is a user-facing `Tolerances` field.
+- `geo/tolerances.py` — `GeoTolerances`, the tolerances `geo` itself reads
+  (surface identity `pln/cyl/sph/kne/tor_distance`+`_angle`, sliver/kernel
+  fields). `geouned.Tolerances` extends it with what only CadToCsg uses;
+  GEOReverse uses the base directly (it has no tolerance a user should
+  change, decided 2026-09-19).
 - `geo/__init__.py` — the single import point for the rest of GEOUNED:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
@@ -1470,6 +1480,95 @@ gaps for whenever it's picked back up:
   `RevCC_corpus_scan` has 276, only 6 were dupes) -- left in place, out
   of scope for this pass (per direct user instruction: only exact
   duplicates were to be archived, not a broader triage-folder cleanup).
+
+- **Tolerances: intrinsic vs user-modifiable, one notion of "same
+  surface", 2026-09-19** (branch `same-surface-tolerances`, commits
+  `6d2c9a9`, `b760fa6`). Started as an analysis of why "identical
+  surface" had three different criteria: `geo`'s `is_same_*_surface`
+  (fixed 1e-5 mm and `dot >= 0.99999`, which is a 4.5e-3 rad angle, 45x
+  looser than `Tolerances.pln_angle`), the output-stage `is_same_plane`/...
+  driven by `Tolerances` (1e-4, optionally relative), and call sites that
+  built a fresh `Tolerances()` and ignored the user's values.
+  **The rule (user's, 2026-09-19)**: a value the USER may legitimately
+  change (it depends on their model or the output they want) is a field of
+  `Tolerances`/`GeoTolerances`; a value intrinsic to the code
+  (floating-point floors, kernel query tolerances, algorithm thresholds)
+  is a constant in `geo/constants.py` and is never exposed.
+  **What was done, in order** (each step verified: `tests/geo` +
+  `test_cadtocsg` + `test_csgtocad` + `test_boolean_function` +
+  `test_gq_classification` green on all 3 engines, 243/243/214 passed; and
+  a differential scan of `Solidos/test_models`, 143 files minus `Big_*`,
+  `ocp`, decompose + build_solid_definition, against the pre-change code
+  -- pieces, total volume, primitive surfaces, composite counts):
+  1. ~320 inline literals became constants named by role+historical value
+     (values unchanged, 0 corpus differences). Classification is by an AST
+     scan (`Compare` operands, `*tol*` keyword/default arguments,
+     positional arguments of native kernel calls such as
+     `GeomLProp_SLProps(..., 1e-6)`); factors that are not tolerances
+     (mm->cm `* 0.1`, box enlargement `0.2`, `0.95 * dmin`, density
+     `< 1e-2`) were deliberately left inline. Several literals had been
+     mislabelled as lengths: `cross.length < 1e-3` on unit axes is
+     `|sin|` (an angle), `norm < 1e-9` a numerical zero.
+  2. `POINT_POINT_TOL = 1e-5` replaces the 1e-5/1e-6/1e-7 point-to-point
+     coincidence checks (vertices, apexes, edge endpoints, centres of
+     mass). **Measured, not guessed**: a probe recorded the distance
+     actually compared at each site over the corpus; real coincidences are
+     exactly 0 or < 1e-9 mm and distinct points >= 1e-2 mm (essentially no
+     samples in between), so any value in [1e-8, 1e-5] behaves identically
+     there. 1e-5 leaves a 10x margin over the rounding of a STEP written
+     with 6 decimals and stays 10x below the surface tolerances.
+     `sameBox` is NOT point-to-point: OCCT bounding boxes carry a few 1e-6
+     of slop (55 of 386 comparisons fall in 1e-6..1e-5), so it keeps its
+     own `BOX_TOL_E6 = 1e-6`.
+  3. `GeoTolerances` (in `geo/`, so `geo` can import it) holds the fields
+     `geo` reads; `geouned.Tolerances` inherits it and keeps its flat
+     constructor, so a user always builds ONE object
+     (`config["Tolerances"]` unchanged). GEOUNED-only fields (`min_area`,
+     `relativeTol`, `add_pln_*`, `distance`/`angle`/`value`) stay in
+     `Tolerances`. `tests/geo/test_tolerances_split.py` pins the shared
+     defaults so the two classes cannot drift.
+  4. The 19 places that built a fresh `Tolerances()` (ignoring
+     `CadToCsg(tolerances=...)`) are gone: `tolerances` is threaded as a
+     REQUIRED keyword-only parameter through the meta-surface detection
+     chain (18 functions: `get_Can`/`get_TCone`/`get_roundCorner`,
+     `merge_same_surface_faces`, `other_face_edge(skip_slivers=True)`,
+     ...), so a forgotten call site is a `TypeError`, not a silent
+     default. `simple_solid_definition` passes the per-solid
+     `scaled_tolerances` (as it already did for `get_multiplanes`), which
+     changes results only for small pieces under non-default tolerances.
+     Direction tests that used `Tolerances().angle`/`.value` are intrinsic
+     constants now. `tests/geo/test_no_fresh_tolerances.py` (AST) fails if a
+     bare `Tolerances()` reappears in the pipeline (only `core.py`'s public
+     constructor and `load_step.py`'s standalone default are allowed).
+     The public constructors also no longer share one default
+     `Tolerances()` created at import time (same mutable-default bug found
+     earlier in `BoxSettings`; `Options()`/`NumericFormat()`/`Settings()`
+     defaults of `CadToCsg.__init__` still have it -- not touched).
+  5. `is_same_{plane,cylinder,cone,sphere,torus}_surface` (and
+     `is_parallel_plane_surface`, `Gmerge_coplanar_planes` on all 3
+     engines) take `tolerances` and compare against
+     `pln/cyl/kne/sph/tor_distance`+`_angle`; axes are compared as a real
+     angle (`atan2`), not `dot >= 0.99999`. The values moved from 1e-5 mm /
+     4.5e-3 rad to 1e-4 / 1e-4, with 0 differences on the corpus. In the
+     corpus the identity components are bimodal (0 or < 1e-9 vs >= 0.1)
+     for cone/cylinder/sphere/torus; only planes have samples in between
+     (2 pairs at 1e-5..1e-3 offset, and tilts of 1e-2 rad that the old
+     4.5e-3 rad threshold missed by less than a factor 2).
+  **Two real bugs fixed on the way**: `Tolerances.relativeTol=True` made
+  surfaces at the origin compare as different from themselves (a relative
+  tolerance `rel * 0` is 0 and `is_in_tolerance(0, 0, ...)` answers "not
+  same"; fixed with a 1e-9 mm floor, `RELATIVE_TOL_ABS_FLOOR`), and the
+  `VOLAREA_RATIO` sliver threshold had two values for one concept (1e-2 in
+  `solid_ops`, 1e-3 in `constants`; now the 1e-3 one).
+  **Still open** (remaining legacy-valued constants, none of them surface
+  identity or point-to-point): lengths of edges/vectors, radius/centre
+  differences of *curves* (`same_curve`), shape-to-shape distances,
+  parallel/perpendicular tests. Method for each: instrument the compared
+  value, measure the gap over the corpus, put the tolerance inside it
+  (never by eye). Known limitation of that method: it measures the
+  corpus, whose STEP files are high-precision (coincident points are
+  exactly equal or < 1e-9); a low-precision STEP would sit closer to the
+  thresholds, which is why the chosen values keep a margin.
 
 ## Reference docs
 
