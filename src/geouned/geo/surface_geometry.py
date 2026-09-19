@@ -25,7 +25,6 @@ import math
 
 from .constants import (
     ANGLE_TOL_E3,
-    ANGLE_TOL_E5,
     ANGLE_TOL_E6,
     DIR_TOL_E5,
     LENGTH_TOL_E5,
@@ -34,7 +33,6 @@ from .constants import (
     LENGTH_TOL_E8,
     REL_TOL_E2,
     REL_TOL_E3,
-    SAME_SURFACE_AXIS_ANGLE_TOL,
     ZERO_TOL_E9,
 )
 from .vector_geometry import GVector
@@ -85,25 +83,21 @@ def sign_plane(point: GVector, plane) -> int:
 # "Is this the same underlying analytic surface" predicates
 # ---------------------------------------------------------------------------
 
-_SAME_AXIS_MIN_ABS_DOT = math.cos(SAME_SURFACE_AXIS_ANGLE_TOL)
+def _same_axis_line(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two unit axes lie along the same line, direction ignored, to within `angle_tol` radians."""
+    angle = axis_1.angle_to(axis_2)
+    return min(angle, math.pi - angle) <= angle_tol
 
 
-def _same_axis_line(axis_1: GVector, axis_2: GVector) -> bool:
-    """True if two unit axes lie along the same line, direction ignored,
-    to within `SAME_SURFACE_AXIS_ANGLE_TOL`."""
-    return abs(axis_1.dot(axis_2)) >= _SAME_AXIS_MIN_ABS_DOT
-
-
-def is_same_plane_surface(plane_1, plane_2) -> bool:
+def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
     """
     True if two planes are the same infinite analytic plane (same axis
-    direction -- either way -- and same offset from the origin). Direct
-    port of the former `PlaneGu.isSameSurface`, kept at the same fixed
-    tolerances: this is a decomposition-time "is this literally the same
-    underlying surface" check, distinct from `is_same_plane` in
-    `basic_functions_part2.py`, which compares already-built output
-    surfaces with user-configurable tolerances for a different purpose
-    (surface-list deduplication).
+    direction -- either way -- and same offset from the origin), to within
+    `tolerances.pln_angle` / `tolerances.pln_distance`.
+
+    `tolerances` is a `GeoTolerances` (the user's own values): the
+    decomposition and the output stage share one notion of "same surface",
+    instead of this check keeping a fixed, private threshold.
 
     Each plane's own offset (`Axis.dot(Position)`) is measured along its
     *own* axis -- when the two axes are antiparallel (opposite direction,
@@ -118,23 +112,20 @@ def is_same_plane_surface(plane_1, plane_2) -> bool:
     own 2 distinct bounding planes as a single coincident one, losing its
     real additional/closing plane entirely).
     """
-    axis_dot = plane_1.Axis.dot(plane_2.Axis)
-    if not _same_axis_line(plane_1.Axis, plane_2.Axis):
+    if not _same_axis_line(plane_1.Axis, plane_2.Axis, tolerances.pln_angle):
         return False
     d1 = plane_1.Axis.dot(plane_1.Position)
     d2 = plane_2.Axis.dot(plane_2.Position)
-    if axis_dot > 0:
-        return abs(d1 - d2) <= LENGTH_TOL_E5
-    else:
-        return abs(d1 + d2) <= LENGTH_TOL_E5
+    offset = abs(d1 - d2) if plane_1.Axis.dot(plane_2.Axis) > 0 else abs(d1 + d2)
+    return offset <= tolerances.pln_distance
 
 
-def is_parallel_plane_surface(plane_1, plane_2) -> bool:
-    """Direct port of the former `PlaneGu.isParallel`, same fixed tolerance."""
-    return _same_axis_line(plane_1.Axis, plane_2.Axis)
+def is_parallel_plane_surface(plane_1, plane_2, tolerances) -> bool:
+    """True if two planes have the same normal line (either way), to within `tolerances.pln_angle`."""
+    return _same_axis_line(plane_1.Axis, plane_2.Axis, tolerances.pln_angle)
 
 
-def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
+def is_same_cylinder_surface(cylinder_1, cylinder_2, tolerances) -> bool:
     """True if two cylinders are the same infinite analytic cylinder (same
     radius, same axis line -- direction either way).
 
@@ -149,25 +140,27 @@ def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
     R=7 cylinder whose `Center`s were 29.97 units apart *along the axis*
     (perpendicular distance ~2e-12) were wrongly judged different
     surfaces, so `Gsliver_heal` could not recognise the malformed
-    duplicate cylinder face it needed to drop. Was a direct port of the
-    former `CylinderGu.isSameSurface`; same fixed 1e-5 distance tolerances,
-    axis within `SAME_SURFACE_AXIS_ANGLE_TOL`."""
-    if abs(cylinder_1.Radius - cylinder_2.Radius) > LENGTH_TOL_E5:
+    duplicate cylinder face it needed to drop.
+
+    Radius and axis-line distance are compared with `tolerances.cyl_distance`,
+    the axis direction with `tolerances.cyl_angle`."""
+    if abs(cylinder_1.Radius - cylinder_2.Radius) > tolerances.cyl_distance:
         return False
-    if not _same_axis_line(cylinder_1.Axis, cylinder_2.Axis):
+    if not _same_axis_line(cylinder_1.Axis, cylinder_2.Axis, tolerances.cyl_angle):
         return False
     offset = cylinder_1.Center - cylinder_2.Center
     perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
-    return perpendicular.length <= LENGTH_TOL_E5
+    return perpendicular.length <= tolerances.cyl_distance
 
 
-def is_same_cone_surface(cone_1, cone_2) -> bool:
-    """Direct port of the former `ConeGu.isSameSurface`, same fixed tolerances."""
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > ANGLE_TOL_E5:
+def is_same_cone_surface(cone_1, cone_2, tolerances) -> bool:
+    """True if two cones are the same infinite cone: `SemiAngle` and axis line within `tolerances.kne_angle`,
+    apex within `tolerances.kne_distance`."""
+    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > tolerances.kne_angle:
         return False
-    if (cone_1.Apex - cone_2.Apex).length > LENGTH_TOL_E5:
+    if (cone_1.Apex - cone_2.Apex).length > tolerances.kne_distance:
         return False
-    return _same_axis_line(cone_1.Axis, cone_2.Axis)
+    return _same_axis_line(cone_1.Axis, cone_2.Axis, tolerances.kne_angle)
 
 
 def is_coaxial_cone_pair(
@@ -227,22 +220,23 @@ def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = LENGTH_TOL
     return radial < radial_tol
 
 
-def is_same_sphere_surface(sphere_1, sphere_2) -> bool:
-    """Direct port of the former `SphereGu.isSameSurface`, same fixed tolerance."""
-    if abs(sphere_1.Radius - sphere_2.Radius) > LENGTH_TOL_E5:
+def is_same_sphere_surface(sphere_1, sphere_2, tolerances) -> bool:
+    """True if two spheres coincide: radius and centre within `tolerances.sph_distance`."""
+    if abs(sphere_1.Radius - sphere_2.Radius) > tolerances.sph_distance:
         return False
-    return (sphere_1.Center - sphere_2.Center).length <= LENGTH_TOL_E5
+    return (sphere_1.Center - sphere_2.Center).length <= tolerances.sph_distance
 
 
-def is_same_torus_surface(torus_1, torus_2) -> bool:
-    """Direct port of the former `TorusGu.isSameSurface`, same fixed tolerances."""
-    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > LENGTH_TOL_E5:
+def is_same_torus_surface(torus_1, torus_2, tolerances) -> bool:
+    """True if two tori coincide: both radii and the centre within `tolerances.tor_distance`, the axis line within
+    `tolerances.tor_angle`."""
+    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > tolerances.tor_distance:
         return False
-    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > LENGTH_TOL_E5:
+    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > tolerances.tor_distance:
         return False
-    if (torus_1.Center - torus_2.Center).length > LENGTH_TOL_E5:
+    if (torus_1.Center - torus_2.Center).length > tolerances.tor_distance:
         return False
-    return _same_axis_line(torus_1.Axis, torus_2.Axis)
+    return _same_axis_line(torus_1.Axis, torus_2.Axis, tolerances.tor_angle)
 
 
 # ---------------------------------------------------------------------------

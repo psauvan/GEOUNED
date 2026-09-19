@@ -58,7 +58,7 @@ class reversedCCP:
         self.Index = None
 
 
-def remove_twice_parallel(mplanes):
+def remove_twice_parallel(mplanes, *, tolerances):
     plane_list = []
     omit = set()
     for i, p1 in enumerate(mplanes):
@@ -68,7 +68,7 @@ def remove_twice_parallel(mplanes):
         for p2 in mplanes[i + 1 :]:
             if p2.Index in omit:
                 continue
-            if surface_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface):
+            if surface_geometry.is_parallel_plane_surface(p1.Surface, p2.Surface, tolerances=tolerances):
                 parallel.append(p2)
                 omit.add(p2.Index)
         if len(parallel) > 1:
@@ -95,9 +95,9 @@ def remove_twice_parallel(mplanes):
             continue
 
         for p in reversed(parallel):
-            if surface_geometry.is_same_plane_surface(p.Surface, pmin.Surface):
+            if surface_geometry.is_same_plane_surface(p.Surface, pmin.Surface, tolerances=tolerances):
                 parallel.remove(p)
-            elif surface_geometry.is_same_plane_surface(p.Surface, pmax.Surface):
+            elif surface_geometry.is_same_plane_surface(p.Surface, pmax.Surface, tolerances=tolerances):
                 parallel.remove(p)
 
         for p in parallel:
@@ -266,14 +266,14 @@ def get_adjacent_cylknesurf(cylkne, Faces, *, tolerances):
         for f in cylkne.Faces:
             adj = get_adjacent_cylknesurfFace(f, Faces, tolerances=tolerances)
             for af in adj:
-                if is_same_surface(af.Surface, surface):
+                if is_same_surface(af.Surface, surface, tolerances=tolerances):
                     continue
                 if af.Index not in adjIndexes:
                     adjIndexes.add(af.Index)
                     adjacent.append(af)
 
         if len(adjacent) > 2:
-            adjacent, dummy = most_outer_faces(cylkne, adjacent)
+            adjacent, dummy = most_outer_faces(cylkne, adjacent, tolerances=tolerances)
         return adjacent
 
     else:
@@ -1076,7 +1076,7 @@ def closed_circle_edge(planes):
     return abs(angle - 2 * math.pi) < PARAM_ANGLE_TOL_E5
 
 
-def most_outer_faces(cyl, faces):
+def most_outer_faces(cyl, faces, *, tolerances):
 
     if type(cyl) is ShellFaceGu:
         cylSurf = cyl.Faces[0].Surface
@@ -1093,7 +1093,7 @@ def most_outer_faces(cyl, faces):
     remove_surf = set()
 
     for f in faces:
-        if not is_same_surface(f.Surface, face1.Surface) and not is_same_surface(f.Surface, face2.Surface):
+        if not is_same_surface(f.Surface, face1.Surface, tolerances=tolerances) and not is_same_surface(f.Surface, face2.Surface, tolerances=tolerances):
             remove_surf.add(f.Index)
 
     return (face1, face2), remove_surf
@@ -1642,7 +1642,7 @@ def merge_same_surface_faces(face_in, solidFaces, *, tolerances):
             continue
         if current_face.Area < min_area:
             continue
-        if is_same_surface(face_in.Surface, current_face.Surface):
+        if is_same_surface(face_in.Surface, current_face.Surface, tolerances=tolerances):
             same_surface.append(current_face)
 
     if len(same_surface) > 1:

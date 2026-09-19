@@ -37,11 +37,11 @@ _SAME_SURFACE_PREDICATE = {
 }
 
 
-def is_same_surface(surface_1, surface_2):
+def is_same_surface(surface_1, surface_2, tolerances):
     """Dispatches to the neutral-type predicate for the 5 analytic surface types."""
     if type(surface_1) is not type(surface_2):
         return False
-    return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2)
+    return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2, tolerances)
 
 
 class face_index:

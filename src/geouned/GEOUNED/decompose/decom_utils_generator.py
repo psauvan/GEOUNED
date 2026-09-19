@@ -49,7 +49,7 @@ def torus_bound_planes(solidFaces, face, tolerances):
 
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
-            if is_same_surface(face.Surface, adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
                 continue  # doesn't create plane if other face has same surface
 
         if type(curve) is GCircle:
@@ -78,7 +78,7 @@ def torus_bound_planes(solidFaces, face, tolerances):
     return planes
 
 
-def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
+def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
 
     if Edges is None:
         Edges = face.OuterWire.Edges
@@ -93,7 +93,7 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
                 continue
             if type(adjacent_face.Surface) is GTorus:
                 continue  # doesn't create plane if other face is a torus
-            if is_same_surface(face.Surface, adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
                 continue  # doesn't create plane if other face has same surface
             if (type(face.Surface) is GCone or type(face.Surface) is GCylinder) and (
                 type(adjacent_face.Surface) is GCone or type(adjacent_face.Surface) is GCylinder

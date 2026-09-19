@@ -288,7 +288,7 @@ def _finalize_split(candidates, base: GSolid, tolerances, repaired_any: bool, no
     own `len <= 1 -> [base_native]` fallback and the freecad
     `check_out_solids` convention already work this way."""
 
-    candidates = [Gmerge_coplanar_planes(s) for s in candidates]
+    candidates = [Gmerge_coplanar_planes(s, tolerances) for s in candidates]
 
     resolved = []
     unresolved_volumes = []

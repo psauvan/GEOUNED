@@ -644,7 +644,7 @@ def _merge_coplanar_group(group_faces: list, plane_desc):
     return new_face
 
 
-def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
+def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
     """Merge every group of adjacent, co-planar planar faces of `solid`
     into a single planar face, removing the edges those faces shared
     with each other -- a hand-rolled, planes-only alternative to
@@ -710,7 +710,7 @@ def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
             b = face_index(pair[1])
             if a is None or b is None or planes[a] is None or planes[b] is None:
                 continue
-            if is_same_plane_surface(planes[a], planes[b]):
+            if is_same_plane_surface(planes[a], planes[b], tolerances):
                 union(a, b)
 
         groups: dict[int, list] = {}

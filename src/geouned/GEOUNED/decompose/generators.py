@@ -89,15 +89,15 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
         surf_type = type(face.Surface)
 
         if surf_type is GCylinder:
-            for p in cks_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces, tolerances=tolerances):
                 yield p
 
         elif surf_type is GCone:
-            for p in cks_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces, tolerances=tolerances):
                 yield p
 
         elif surf_type is GSphere:
-            for p in cks_bound_planes(GUFaces, face, omitfaces):
+            for p in cks_bound_planes(GUFaces, face, omitfaces, tolerances=tolerances):
                 yield p
 
         elif surf_type is GTorus:
@@ -193,7 +193,7 @@ def next_multiplanes(solidFaces, plane_index_set, tolerances=None):
         used_plane.update(mp_plane_index)
         if len(mplanes) != 1:
             if no_convex(mplanes):
-                remove_twice_parallel(mplanes)
+                remove_twice_parallel(mplanes, tolerances=tolerances)
                 mp_params = build_multip_params(mplanes, tolerances=tolerances)
                 mp = GeounedSurface(("MultiPlane", mp_params))
                 if mp.Surf.PlaneNumber < 2:

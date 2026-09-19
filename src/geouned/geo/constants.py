@@ -17,8 +17,6 @@ like `vector_geometry.py`/`surface_geometry.py`/`solid_defects.py`.
 
 from __future__ import annotations
 
-import math
-
 MIN_SLIVER_EDGE_LENGTH = 1.0e-3
 """Absolute floor (mm) for find_short_edges' own threshold -- per direct
 user instruction: the effective threshold must never drop below this,
@@ -174,19 +172,6 @@ sliver, not a real piece -- a 16 mm^3 solid spread over 1.4e6 mm^2 of
 surface is not a fragment the decomposition should keep. Companion of
 `DEGENERATE_SOLID_VOLUME_FLOOR`; both from the historical
 `decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""
-
-SAME_SURFACE_AXIS_ANGLE_TOL = math.acos(0.99999)
-"""Maximum angle (rad, ~4.47e-3 = 0.256 degrees) between two axes (or two
-plane normals) for `surface_geometry`'s `is_same_*_surface` predicates to
-treat them as the same direction, either way round.
-
-This is the historical `abs(axis_1.dot(axis_2)) >= 0.99999` threshold
-written as the angle it really is. The dot-product form hides its own
-size: `1 - cos(theta)` is quadratic in `theta`, so a "1e-5" dot tolerance
-is an angle ~45x larger than `Tolerances.pln_angle`/`cyl_angle`'s own
-1e-4 rad default, i.e. ~4 mm of deviation per metre of extent. The
-value is deliberately UNCHANGED (behavior-preserving refactor); tightening
-it is a separate decision that needs a corpus-wide differential scan."""
 
 
 # ===========================================================================

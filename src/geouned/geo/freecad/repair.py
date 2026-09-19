@@ -100,7 +100,7 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     return None
 
 
-def Gmerge_coplanar_planes(solid: "GSolid") -> "GSolid":
+def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
     """Merge every group of adjacent, co-planar planar faces of `solid`
     into a single planar face -- a hand-rolled, planes-only alternative to
     ``GSolid.refine()``.

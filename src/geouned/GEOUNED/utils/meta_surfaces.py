@@ -227,7 +227,7 @@ def get_can_surfaces(cylinder, solidFaces, *, tolerances):
             faceindex.add(s.Index)
 
     if len(ext_faces) > 2:
-        ext_faces, remove_index = most_outer_faces(cylinder, ext_faces)
+        ext_faces, remove_index = most_outer_faces(cylinder, ext_faces, tolerances=tolerances)
         if remove_index:
             # remove_index is non-empty when one end has faces belonging
             # to neither extreme face's own surface -- i.e. that end is
@@ -280,7 +280,7 @@ def get_tcone_surfaces(cone, solidFaces, *, tolerances):
         faceindex.add(s.Index)  # same check as get_can_surfces
 
     if len(ext_faces) > 2:
-        ext_faces, remove_index = most_outer_faces(cone, ext_faces)
+        ext_faces, remove_index = most_outer_faces(cone, ext_faces, tolerances=tolerances)
         for s in reversed(surfaces[1:]):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
@@ -355,7 +355,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
         face_index.add(cylinder.Index)
     face_index.update({p1.Index, p2.Index})
 
-    if is_same_surface(p1.Surface, p2.Surface):
+    if is_same_surface(p1.Surface, p2.Surface, tolerances=tolerances):
         gpa = None
     else:
         # ep1/ep2 (not cyl): if the round corner's own cylinder was
