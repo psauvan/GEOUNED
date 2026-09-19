@@ -159,7 +159,8 @@ Layout:
   cascade's volume-conservation gates and, since 2026-09-19, every
   tolerance literal that used to be inline in `GEOUNED/`/`geo/`, named by
   ROLE plus the exponent of its historical value (`LENGTH_TOL_E5`,
-  `DIR_TOL_E6`, `ZERO_TOL_E9`, `KERNEL_TOL_E7`, `POINT_POINT_TOL`, ...),
+  `ZERO_TOL_E9`, `KERNEL_TOL_E7`, `POINT_POINT_TOL`, `NUMERIC_TOL`,
+  `VOLUME_REF`, `MAX_REPAIR_VOLUME_REL_CHANGE`, ...),
   so no engine carries its own duplicate copy of a literal. See "Known
   open items" -> Shared/cross-cutting -> "Tolerances" for the rule that
   decides what lives here and what is a user-facing `Tolerances` field.
@@ -168,6 +169,9 @@ Layout:
   fields). `geouned.Tolerances` extends it with what only CadToCsg uses;
   GEOReverse uses the base directly (it has no tolerance a user should
   change, decided 2026-09-19).
+- `geo/volume_utils.py` — `volume_within(value, expected, rel_tol)`, the ONE
+  pattern for every relative volume comparison (`tol * max(|ref|,
+  VOLUME_REF)`).
 - `geo/__init__.py` — the single import point for the rest of GEOUNED:
   `from ...geo import GSolid, Gmake_cylinder, ...`.
 
@@ -1601,15 +1605,129 @@ gaps for whenever it's picked back up:
     looser than identity.
   - Relabelled with the same value: `cell_definition_functions:95`
     (`two_pi * (1 - tol)` is a relative angle, now `PARAM_ANGLE_TOL_E5`).
-  **Still open**: unify the direction tests (see above, needs a decision
-  and a corpus + d1suned check), and unify the remaining lengths that are
-  neither surface identity nor point-to-point (`LENGTH_TOL_E7/E8` towards
-  `POINT_POINT_TOL`: edge/vector lengths, shape-to-shape distances,
-  *curve* centre/radius differences in `same_curve`). Known limitation of
-  the method: it measures the corpus, whose STEP files are high-precision
-  (coincident points are exactly equal or < 1e-9); a low-precision STEP
-  would sit closer to the thresholds, which is why the chosen values keep
-  a margin.
+  Known limitation of the method: it measures the corpus, whose STEP files
+  are high-precision (coincident points are exactly equal or < 1e-9); a
+  low-precision STEP would sit closer to the thresholds, which is why the
+  chosen values keep a margin.
+
+  **Second batch: directions, contexts, volumes.** Decisions of the user, each verified by the 3 suites and the
+  corpus differential (test_models 143 files + working_solids 30 fixtures,
+  0 differences in pieces, volume, primitive surfaces, composite counts vs
+  the original 22f0f51 code):
+  - **Directions are angles.** Every same-axis/parallel test became an
+    angle comparison (`axes_parallel`/`axes_same_direction`/
+    `axes_perpendicular` in `geo/surface_geometry.py`, `atan2`-based).
+    Perpendicular is `abs(pi/2 - abs(alpha)) < angle_tol` with the SAME
+    value as parallel (alpha may be +-pi/2). `DIR_TOL_*`, `AXIS_COS_MIN_*`,
+    `ANGLE_TOL_E5`, `LENGTH_TOL_E9`, `NEAR_SURFACE_AXIS_ANGLE`,
+    `SAME_SURFACE_AXIS_ANGLE_TOL` are gone. Numerical conditioning, sampled
+    flatness, winding and algorithmic margins stay named constants.
+  - **Comparison contexts (revised in the third batch, see below).** Surface
+    identity was first split in two contexts (faces of one solid with a
+    constant `NUMERIC_TOLERANCES`, everything else with the user's values);
+    the split was withdrawn for IDENTITY (the user's per-surface tolerances
+    apply everywhere) and kept for CONTACT, the full turn of a periodic
+    parameter and axes compared with X/Y/Z. `cks_bound_planes` uses
+    `Tolerances.distance` (1e-3 -> 1e-4, no regression seen);
+    `omit_isolated_planes` uses the user's `pln_angle`; `torus_bound_planes`
+    compares its `2*pi` and its axis with `NUMERIC_TOL`.
+  - **Defects and repair (load stage).** Kernel-object queries stay as they
+    are. `DEFECT_AXIS_ANGLE` (dedicated constant, same value as
+    `near_surface_pair`) is the detector's angle. The four volume-
+    conservation gates of the repair functions are ONE constant,
+    `MAX_REPAIR_VOLUME_REL_CHANGE = 3e-4` (measured: accepted repairs change
+    the volume <= ~1e-4 relative, rejected ones >= 5e-4); `Gmerge_coplanar_
+    planes` and `Gsplit` keep their own.
+  - **One volume pattern.** `volume_within(value, expected, rel_tol,
+    reference=None)` (`geo/volume_utils.py`) is `abs(a-b) <= tol *
+    max(|ref|, VOLUME_REF)`. `VOLUME_REF = 1 mm^3` is the intrinsic scale
+    below which a relative volume comparison makes no sense; it is NOT
+    `min_solid_volume`.
+  - **One minimum volume.** `Tolerances.min_solid_volume` (default 1e-2
+    mm^3, `DEFAULT_MIN_SOLID_VOLUME`) decides every "piece too small"
+    discard: `valid_solid(solid, min_volume)`, `Gsplit`'s fragment filter,
+    `_raw_bop_split`, `space_decomposition(..., min_volume)`, freecad's
+    `check_out_solids`/`remove_solids`. They used to be 1e-2/1e-3/1e-3/1e-3
+    (and `Gsplit` applied two in sequence). Measured: no fragment reaches
+    those checks with a volume between 1e-3 and 0.1 mm^3, so no decision
+    changes; the smallest legitimate piece is 0.072 mm^3
+    (`modelcell_cut1_v2_piece66.stp`).
+  - Noted, not fixed: `decom_one_generators.split_surfaces` warns "Lost
+    ...%" when the compound volume EXCEEDS the original (`volratio` sign).
+  **Third batch: stage 3 of the context-by-context review (registry, meta-
+  surface detection, `cell_definition`, `SolidGu`).** Analysis first, then the
+  user's decisions (2026-09-19). Measured over test_models + working_solids
+  (throwaway probes, scratchpad): 110 000 plane comparisons of the registry
+  and 76 000 face/edge contact queries.
+  - Registry plane identity: the angle (1e-4) sits in a 4-decade clean gap
+    (matches <= 3.4e-7 rad, nothing until 1e-2) but the DISTANCE (1e-4) does
+    not: 4 matching pairs in (1e-5, 1e-4] and 1 non-matching in (1e-4, 1e-3]
+    -- it is a real threshold on this corpus, not noise. Real matches reach
+    d = 6.7e-5 mm between different solids, which is what justifies keeping
+    the user's tolerance (and not a constant) for identity.
+  - Contact (`contiguous_face`, `separate_surfaces`, `commonEdgeFace`,
+    `commonVertex`): every distance is exactly 0 or > 1e-2 (nothing in
+    (1e-9, 1e-2)), so the value is a matter of principle, not of data.
+  - **Decisions.** D1: the sense of a plane in the registry is
+    `opposite_sense(a, b)` (sign of the dot product, `geo/surface_geometry`),
+    not `is_opposite(., ., pln_angle)`: a plane matched with `add_pln_angle`
+    (1e-2) could get its sign decided with `pln_angle` (1e-4); 0 occurrences
+    measured. D2: `is_same_surface` and every other surface-identity call
+    (also `Gmerge_coplanar_planes`, `_group_coaxial_*`) use the user's
+    per-surface tolerances again; `NUMERIC_TOLERANCES` is gone;
+    `is_same_cone/sphere/torus` take `tolerances` like plane and cylinder (no
+    private 1e-6 defaults). D3: contact between points/edges/faces of one
+    solid uses `NUMERIC_TOL` (1e-7; the user will revisit it if a
+    low-precision STEP needs it). D4: ONE `merge_periodic_uv` (was duplicated
+    with 1e-6 and 1e-5) using `NUMERIC_TOL`, and `angle < pi + NUMERIC_TOL`;
+    `Tolerances.relativePrecision` and `.value` are KEPT in the public class
+    (JSON configs, docs) but no longer read by anything: the user plans to
+    apply absolute/relative precision correctly later. D9: removed an
+    accidental `from turtle import distance`.
+  - **D6, first tried and withdrawn: "axis vs X/Y/Z uses NUMERIC_TOL".**
+    Deciding to write a plane as PX/PY/PZ, a cylinder as C/X.., a cone as
+    K/X.. or a torus as TX.. is an APPROXIMATION of the surface by an
+    axis-aligned one, i.e. the same decision as "same surface" (dropping
+    precision inside the tolerance): it must use the identity's own
+    tolerance (`pln/cyl/kne/tor_angle`). With NUMERIC_TOL the corpus showed
+    it: real CAD carries direction noise of ~5e-7 rad (7-digit direction
+    cosines, above 1e-7), so `2_degen_torii.stp` lost a torus from its cell
+    (its axis is 5.2e-7 rad off Z; `gen_torus` returned None) and 10 files
+    wrote GQ/P instead of C/Y, PZ, K/X (62 of 557 surfaces of `L4-WCS_4`).
+    Now: the 4 writers use the branch's own tolerance, `gen_torus` and the
+    torus V/U bounds `tor_angle`, `cone_apex_plane` `kne_angle`,
+    `remove_box_faces` `pln_angle`, the registry buckets `pln_angle`;
+    `tests/geo/test_numeric_contexts.py` pins that each flips exactly where
+    the identity flips. `torus_bound_planes` keeps NUMERIC for its `2*pi` and
+    for the edge-circle axis vs the torus axis (not a comparison with X/Y/Z).
+    Caveat found on the way: `NUMERIC_TOL = 1e-7` is BELOW the angular noise
+    of real data, fine for distances/contact (0 or > 1e-2 on the corpus).
+  - **`__eq__` of the surface params removed (D5).** `PlaneParams`,
+    `MultiPlanesParams` and `GeounedSurface` no longer define `__eq__` (it
+    had constants -- 1e-6 mm, 1e-4 rad -- no access to a `Tolerances`, and
+    was called implicitly by `in`, `.index`, `!=`). Census: a runtime probe
+    over test_models + working_solids plus an AST scan of every `==`, `!=`,
+    `in`, `.index`, `.remove` found 12 sites: 9 statements in
+    `build_roundC_params` (`functions.py`, now via `_index_of_plane`), 1 in
+    `get_cell_object` (`build_region.py`, which now takes `tolerances`) and 1
+    in `add_roundCorner`'s region (`geouned_classes.py`). They use
+    `surface_geometry.is_same_oriented_plane_surface(a, b, tolerances)` = same
+    plane (user `pln_distance`/`pln_angle`) AND same sense. The distance went
+    from 1e-6 to `pln_distance` (1e-4 by default); the corpus and the written
+    text did not change. Method: first an `__eq__` that raised, run over the
+    suites and both corpora (nothing raised), then deleted; a test pins that
+    none is defined again. Anything comparing these objects with `==`/`in` now
+    compares identity, so new code must call the predicate explicitly.
+  - **Held back / open.**
+    (a) `same_curve`/`planar_edges` compare edge curves with `LENGTH_TOL_E5` +
+    `tolerances.angle`; for lines `planar_edges` reads `curve.Position`, an
+    arbitrary point of the line. (b) With `relativeTol=True` the
+    cylinder-axis tolerance scales with `|Center|`, an arbitrary point of the
+    axis. (c) the writers decide CX vs C/X with an exact `Pos.y == 0.0`.
+  **Still open**: void, no-overlap and write stages of the review; the
+  remaining lengths that are neither identity nor point-to-point
+  (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`); whether
+  `spline_2D` should receive a tolerance instead of `is_parallel`'s default.
 
 ## Reference docs
 
