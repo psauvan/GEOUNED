@@ -213,3 +213,52 @@ def test_basic_functions_do_not_import_turtle():
     from geouned.GEOUNED.utils import basic_functions_part1
 
     assert "turtle" not in open(basic_functions_part1.__file__, encoding="utf-8").read()
+
+
+# ---------------------------------------------------------------------------
+# spline_2D: is a BSpline edge planar? -- an intrinsic constant (how the CAD stores the curve), no user tolerance
+# ---------------------------------------------------------------------------
+
+
+class _SplineEdge:
+    """A circle of radius 1 sampled at 3 knots; the plane of the LAST knot is tilted by `tilt` radians about X."""
+
+    def __init__(self, tilt):
+        self.tilt = tilt
+        self.thetas = [0.0, 1.0, 2.0]
+
+    def knots(self):
+        return list(range(3))
+
+    def curvature(self, k):
+        return 1.0
+
+    def _tilt(self, k):
+        return self.tilt if k == 2 else 0.0
+
+    def _rot(self, v, k):
+        a = self._tilt(k)  # rotation about X
+        return GVector(v.x, v.y * math.cos(a) - v.z * math.sin(a), v.y * math.sin(a) + v.z * math.cos(a))
+
+    def derivative1_at(self, k):
+        t = self.thetas[k]
+        return self._rot(GVector(-math.sin(t), math.cos(t), 0.0), k)
+
+    def normal_at(self, k):
+        t = self.thetas[k]
+        return self._rot(GVector(-math.cos(t), -math.sin(t), 0.0), k)
+
+
+def test_spline_2d_uses_the_intrinsic_planarity_constant():
+    from geouned.geo.constants import SPLINE_PLANARITY_ANGLE
+
+    assert SPLINE_PLANARITY_ANGLE == 1.0e-3
+    assert msu.spline_2D(_SplineEdge(0.0))  # exactly planar
+    assert msu.spline_2D(_SplineEdge(0.5 * SPLINE_PLANARITY_ANGLE))  # fitting noise inside the constant
+    assert not msu.spline_2D(_SplineEdge(2.0 * SPLINE_PLANARITY_ANGLE))  # a genuinely 3D curve
+
+
+def test_spline_2d_takes_no_tolerance_argument():
+    import inspect
+
+    assert list(inspect.signature(msu.spline_2D).parameters) == ["edge"]

@@ -236,11 +236,20 @@ BOX_TOL = POINT_POINT_TOL
 # 2.5 degrees). One value for both detectors.
 DEFECT_AXIS_ANGLE = math.acos(1.0 - 1.0e-5)
 
-# Numeric precision (mm and rad) of a solid's OWN data. Two faces of the same solid that lie on the same surface were built
-# from the same numbers, so their surfaces agree to floating-point noise: measured on test_models (2026-09-19), 3685 of 3687
-# such pairs are exactly equal or within 1e-10, none between 1e-8 and 1e-3. 1e-7 sits inside that empty gap and equals OCCT's
-# Precision::Confusion. Used ONLY to compare surfaces that come from the same solid; comparisons across solids or against a
-# cutting tool use the user's Tolerances (their data may not have been built from the same numbers).
+# Planarity of a BSpline edge (`spline_2D`): the binormal (tangent x normal) at every knot must stay parallel to the one at the first
+# knot, to within this angle. A spline that stores a planar curve carries fitting error in its binormal, so exact parallelism is not to
+# be expected. Measured 2026-09-20 on test_models + working_solids (187 splines reaching the test): the 32 planar ones lie between 0 and
+# 1e-3 rad (17 at <= 1e-12, the other 15 spread over (1e-8, 1e-3]); the 155 non-planar ones start right above (27 in (1e-3, 1e-2], 56 in
+# (1e-2, 1e-1], 72 beyond). A property of how the CAD stores the curve, not something the user tunes; it is the value `is_parallel`'s
+# default gave here before.
+SPLINE_PLANARITY_ANGLE = 1.0e-3
+
+# Numeric precision (mm and rad) of a solid's OWN data: what the CAD kernel returns for entities that touch or coincide inside one
+# solid. Measured on test_models + working_solids (2026-09-19/20): every face/edge contact distance is exactly 0 or above 1e-2 mm
+# (nothing in between), and a full turn of a periodic parameter closes to floating-point noise. 1e-7 equals OCCT's
+# Precision::Confusion. Used for CONTACT (points, edges, faces of one solid) and for the full 2*pi of a periodic parameter. NOT for
+# surface identity (the user's per-surface tolerances, always) and NOT to approximate a surface by an axis-aligned one (that is the
+# same decision as identity): real data carries ~5e-7 rad of direction noise, above this value.
 NUMERIC_TOL = 1.0e-7
 
 # Reference volume (mm^3) of every RELATIVE volume comparison: `abs(a - b) <= tol * max(|reference|, VOLUME_REF)`. Below it a

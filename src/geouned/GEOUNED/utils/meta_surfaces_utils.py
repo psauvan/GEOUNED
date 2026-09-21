@@ -6,7 +6,7 @@ from .geometry_gu import ShellFaceGu, FaceGu, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .basic_functions_part1 import twoPimod
 from .data_constants import twoPi, mask
-from ..utils.basic_functions_part1 import is_parallel, shapes_in_contact
+from ..utils.basic_functions_part1 import shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 from ...geo import (
     GEdge,
@@ -38,6 +38,7 @@ from ...geo.constants import (
     POINT_POINT_TOL,
     REL_TOL_E3,
     SIDE_FRACTION_GAP_MIN,
+    SPLINE_PLANARITY_ANGLE,
     WINDING_ANGLE_TOL,
     ZERO_TOL_E6,
     ZERO_TOL_E9,
@@ -1870,7 +1871,7 @@ def spline_2D(edge):
         # check if derivative orthogonal to curve normal vector
         dk = edge.derivative1_at(k)
         normal_k = dk.cross(edge.normal_at(k)).normalized()
-        if not is_parallel(normal_k, norm_0):
+        if not axes_parallel(normal_k, norm_0, SPLINE_PLANARITY_ANGLE):
             return False
     return True
 
