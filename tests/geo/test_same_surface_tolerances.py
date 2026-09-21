@@ -295,3 +295,28 @@ def test_surface_params_define_no_equality():
 
     for cls in (PlaneParams, MultiPlanesParams, GeounedSurface):
         assert "__eq__" not in vars(cls), cls.__name__
+
+
+# ---------------------------------------------------------------------------
+# plane identity: the distance is measured from a POINT OF the plane, not from the coordinate origin
+# ---------------------------------------------------------------------------
+
+
+def test_plane_distance_is_local_to_the_planes_not_to_the_origin():
+    # Two planes tilted 5e-5 rad against each other that cross near (1000, 0, 0), the region where their faces are.
+    # Measured from the origin they differ by ~0.05 mm (tilt * 1000 mm); measured from a point of the plane they
+    # coincide to 1e-5 mm.
+    a = _Surf(Axis=Z, Position=GVector(1000.0, 0.0, 0.0))
+    b = _Surf(Axis=_tilted_axis(5e-5), Position=GVector(1000.0, 0.0, 1e-5))
+    assert abs(a.Axis.dot(a.Position) - b.Axis.dot(b.Position)) > 1e-2  # what the origin-based offset used to see
+    assert sg.is_same_plane_surface(a, b, TOL)
+    far = _Surf(Axis=_tilted_axis(5e-5), Position=GVector(1000.0, 0.0, 1e-3))
+    assert not sg.is_same_plane_surface(a, far, TOL)  # a real 1e-3 mm gap between the points is still a gap
+
+
+def test_plane_distance_ignores_the_sense_of_the_axes_and_still_separates_parallel_planes():
+    a = _Surf(Axis=Z, Position=GVector(7.0, 2.0, 5.0))
+    reversed_same = _Surf(Axis=GVector(0, 0, -1), Position=GVector(-3.0, 9.0, 5.0))
+    reversed_other = _Surf(Axis=GVector(0, 0, -1), Position=GVector(-3.0, 9.0, 8.5))  # rc9.stp: 3.5 apart
+    assert sg.is_same_plane_surface(a, reversed_same, TOL)
+    assert not sg.is_same_plane_surface(a, reversed_other, TOL)

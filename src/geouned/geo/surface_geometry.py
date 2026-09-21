@@ -102,33 +102,27 @@ def opposite_sense(axis_1: GVector, axis_2: GVector) -> bool:
 
 def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
     """
-    True if two planes are the same infinite analytic plane (same axis
-    direction -- either way -- and same offset from the origin), to within
-    `tolerances.pln_angle` / `tolerances.pln_distance`.
+    True if two planes are the same infinite analytic plane: axes parallel -- either way -- within `tolerances.pln_angle`,
+    and the `Position` of `plane_2` no farther than `tolerances.pln_distance` from `plane_1`.
 
-    `tolerances` is a `GeoTolerances` (the user's own values): the
-    decomposition and the output stage share one notion of "same surface",
-    instead of this check keeping a fixed, private threshold.
+    The distance is measured from a POINT OF THE PLANE, not from the coordinate origin. A plane's `Position` lies in
+    the region where its face is defined, so this compares the two planes where they are actually used. The offset
+    from the origin (`Axis.dot(Position)`) would add `angle * distance-to-the-origin` to what is really a local
+    difference (1e-4 rad at 1 m from the origin is 0.1 mm), and says nothing about where each face is.
 
-    Each plane's own offset (`Axis.dot(Position)`) is measured along its
-    *own* axis -- when the two axes are antiparallel (opposite direction,
-    still the same infinite plane, e.g. the same real plane reached via
-    two different Face Orientations), those two offsets are measured in
-    opposite directions and must be compared via `d1 == -d2`, not
-    `d1 == d2` (confirmed as a real bug via `Solidos/test_models/
-    RoundCorners/rc9.stp`, 2026-08-23: two genuinely different, parallel
-    planes 3.5 units apart with antiparallel axes have equal-magnitude
-    offsets of the same sign, which `d1 == d2` alone wrongly matched --
-    `MetaSurfacesDict`/`build_roundC_params` then treated one cylinder's
-    own 2 distinct bounding planes as a single coincident one, losing its
-    real additional/closing plane entirely).
+    The distance is `|plane_1.Axis . (plane_2.Position - plane_1.Position)|`, so it does not depend on the senses of the
+    axes (the same plane reached through two Face Orientations has antiparallel axes). It is also what makes two
+    genuinely different parallel planes 3.5 units apart NOT match whatever their senses (the `d1 == d2` bug found on
+    `Solidos/test_models/RoundCorners/rc9.stp`, 2026-08-23, which merged the two bounding planes of a round corner).
+    `plane_1` is the reference: for planes that are tilted by up to `pln_angle` the result can differ, by about
+    `pln_angle * |Position_2 - Position_1|`, when the two arguments are swapped.
+
+    `tolerances` is a `GeoTolerances` (the user's own values): the decomposition and the output stage share one
+    notion of "same surface", instead of this check keeping a fixed, private threshold.
     """
     if not axes_parallel(plane_1.Axis, plane_2.Axis, tolerances.pln_angle):
         return False
-    d1 = plane_1.Axis.dot(plane_1.Position)
-    d2 = plane_2.Axis.dot(plane_2.Position)
-    offset = abs(d1 - d2) if plane_1.Axis.dot(plane_2.Axis) > 0 else abs(d1 + d2)
-    return offset <= tolerances.pln_distance
+    return abs(plane_1.Axis.dot(plane_2.Position - plane_1.Position)) <= tolerances.pln_distance
 
 
 def is_same_oriented_plane_surface(plane_1, plane_2, tolerances) -> bool:
