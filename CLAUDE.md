@@ -1718,16 +1718,53 @@ gaps for whenever it's picked back up:
     suites and both corpora (nothing raised), then deleted; a test pins that
     none is defined again. Anything comparing these objects with `==`/`in` now
     compares identity, so new code must call the predicate explicitly.
-  - **Held back / open.**
-    (a) `same_curve`/`planar_edges` compare edge curves with `LENGTH_TOL_E5` +
-    `tolerances.angle`; for lines `planar_edges` reads `curve.Position`, an
-    arbitrary point of the line. (b) With `relativeTol=True` the
-    cylinder-axis tolerance scales with `|Center|`, an arbitrary point of the
-    axis. (c) the writers decide CX vs C/X with an exact `Pos.y == 0.0`.
+  - **`spline_2D` and the edge-curve tests (2026-09-20).** `spline_2D`
+    (is this BSpline edge planar?) compares the binormal at every knot with
+    the first one; it now uses the intrinsic constant
+    `SPLINE_PLANARITY_ANGLE = 1e-3` rad (it was `is_parallel`'s default, same
+    value) and takes no tolerance. Measured (187 splines): the 32 planar ones
+    lie in [0, 1e-3] (17 at <= 1e-12, 15 in (1e-8, 1e-3]) and the 155
+    non-planar ones start right above (27 in (1e-3, 1e-2]). `same_curve` /
+    `planar_edges` were measured too: `planar_edges` only ever reaches its
+    multi-edge comparison with circles (13 calls) or splines (10), never with
+    lines, so the suspicion about `curve.Position` on lines is unreachable on
+    the corpus (all-line boundaries end in False anyway); `same_curve`
+    compares circles whose centres and radii differ by <= 1e-8 against
+    `LENGTH_TOL_E5`, axes exactly parallel or > 0.1 rad apart. No change
+    made there.
+  - **Plane identity is measured from a point of the plane (the user,
+    2026-09-21).** `is_same_plane_surface` no longer compares the offsets
+    from the coordinate origin (`Axis . Position`); it measures
+    `|plane_1.Axis . (plane_2.Position - plane_1.Position)|` against
+    `pln_distance` (after the parallelism test with `pln_angle`). Reason: a
+    plane's `Position` is a point in the region where its face is defined,
+    so the planes are compared where they are used; the origin-based offset
+    added `angle * distance-to-the-origin` (1e-4 rad at 1 m = 0.1 mm) to what
+    is a local difference and said nothing about where each face is. It is
+    independent of the senses of the axes (antiparallel planes are handled
+    by the `abs`), and two parallel planes 3.5 apart (`rc9.stp`) still do not
+    match. Note: `plane_1` is the reference, so for planes tilted by up to
+    `pln_angle` the result can differ by about `pln_angle * |P2 - P1|` when
+    the arguments are swapped. Also affects
+    `is_same_oriented_plane_surface`. Verified: suites (ocp/occ 298, freecad
+    269) and, against the original 22f0f51 code, decomposition and written
+    text (5 formats) over the 173 files of test_models + working_solids that
+    existed before: 0 differences. The new fixture
+    `working_solids/plates_plane.stp` is the one that changes: MultiPlane
+    3 -> 1 (4 pieces and 19 primitive surfaces unchanged, volume 221498.599
+    -> .602); not checked with d1suned. NOT changed (as of this entry): the
+    registry's `is_same_plane` (`basic_functions_part2.py`, with
+    `relativeTol`, fuzzy logging and `add_pln_*`), which still compares the
+    offsets from the origin -- the two notions differ again.
+  - **Held back / open.** (a) `same_curve`/`planar_edges` keep
+    `LENGTH_TOL_E5` (same value as `POINT_POINT_TOL`, a possible relabel).
+    (b) `relativeTol` stays as it is (the user, 2026-09-20): with
+    `relativeTol=True` the cylinder-axis tolerance scales with `|Center|`, an
+    arbitrary point of the axis. (c) the writers decide CX vs C/X with an
+    exact `Pos.y == 0.0`.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
-  (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`); whether
-  `spline_2D` should receive a tolerance instead of `is_parallel`'s default.
+  (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
 
 ## Reference docs
 
