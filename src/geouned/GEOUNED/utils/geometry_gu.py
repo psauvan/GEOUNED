@@ -28,6 +28,16 @@ from ...geo.constants import NUMERIC_TOL
 
 logger = logging.getLogger("general_logger")
 
+
+def faces_touch(face1, face2) -> bool:
+    """True if `face1` and `face2` are within `NUMERIC_TOL` of each other (touching or overlapping) -- faces of the
+    SAME solid, so the intrinsic constant applies (see `geo.constants.NUMERIC_TOL`'s own docstring). Shared by
+    `SolidGu.separate_surfaces` (grouping same-torus face fragments into connected pieces) and
+    `meta_surfaces_utils.commonEdgeFace` (the same "are these two faces even close" pre-filter before it looks for a
+    shared boundary edge) -- both already went through the identical `FaceGu.distToShape` -> `GFace.my_distToshape`
+    chain before this was factored out, so this is a pure deduplication, not a behaviour change."""
+    return face1.distToShape(face2)[0] < NUMERIC_TOL
+
 _SAME_SURFACE_PREDICATE = {
     GPlane: surface_geometry.is_same_plane_surface,
     GCylinder: surface_geometry.is_same_cylinder_surface,
@@ -168,7 +178,7 @@ class SolidGu(GSolid):
                 removeList = [temp[0]]
                 while len(temp) > 0 and i < len(current):
                     for tindex in temp:
-                        if self.Faces[current[i]].distToShape(self.Faces[tindex])[0] < NUMERIC_TOL:
+                        if faces_touch(self.Faces[current[i]], self.Faces[tindex]):
                             if tindex not in current:
                                 current.append(tindex)
                                 removeList.append(tindex)

@@ -2,7 +2,7 @@ import math
 
 from collections import OrderedDict
 
-from .geometry_gu import ShellFaceGu, FaceGu, other_face_edge, is_same_surface
+from .geometry_gu import ShellFaceGu, FaceGu, faces_touch, other_face_edge, is_same_surface
 from .geouned_classes import GeounedSurface
 from .basic_functions_part1 import twoPimod
 from .data_constants import twoPi, mask
@@ -1290,7 +1290,7 @@ def commonEdge(face1, face2, outer1_only=True, outer2_only=True):
 
 
 def commonEdgeFace(face1, face2, outer1_only=True, outer2_only=True):
-    if face1.distToShape(face2)[0] > NUMERIC_TOL:
+    if not faces_touch(face1, face2):
         return None
 
     edges = []
