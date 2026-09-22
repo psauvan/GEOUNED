@@ -6,13 +6,7 @@ from geouned.geo import GeoTolerances, GVector
 from geouned.geo.constants import NUMERIC_TOL
 from geouned.geo import surface_geometry as sg
 from geouned.geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction, opposite_sense
-from geouned.GEOUNED.utils.basic_functions_part2 import (
-    is_same_cone,
-    is_same_cylinder,
-    is_same_plane,
-    is_same_sphere,
-    is_same_torus,
-)
+from geouned.GEOUNED.utils.basic_functions_part2 import is_same_cylinder, is_same_plane
 from geouned.GEOUNED.utils.data_classes import Tolerances
 
 
@@ -127,9 +121,9 @@ def test_identical_surfaces_at_origin_are_same(relative):
 
     assert is_same_plane(plane, plane, tolerances=tol)
     assert is_same_cylinder(cylinder, cylinder, tolerances=tol)
-    assert is_same_sphere(sphere, sphere, tol)
-    assert is_same_cone(cone, cone, tol)
-    assert is_same_torus(torus, torus, tol)
+    assert sg.is_same_sphere_surface(sphere, sphere, tol)
+    assert sg.is_same_cone_surface(cone, cone, tol)
+    assert sg.is_same_torus_surface(torus, torus, tol)
 
 
 @pytest.mark.parametrize("relative", [False, True])
@@ -143,7 +137,7 @@ def test_float_noise_at_origin_does_not_split_a_surface(relative):
     sphere_b = _Surf(Radius=10.0, Center=noise)
 
     assert is_same_plane(plane_a, plane_b, tolerances=tol)
-    assert is_same_sphere(sphere_a, sphere_b, tol)
+    assert sg.is_same_sphere_surface(sphere_a, sphere_b, tol)
 
 
 def test_relative_tolerance_still_distinguishes_genuinely_different_surfaces():
@@ -154,7 +148,7 @@ def test_relative_tolerance_still_distinguishes_genuinely_different_surfaces():
     sphere_b = _Surf(Radius=10.0, Center=GVector(0.5, 0, 0))
 
     assert not is_same_plane(plane_a, plane_b, tolerances=tol)
-    assert not is_same_sphere(sphere_a, sphere_b, tol)
+    assert not sg.is_same_sphere_surface(sphere_a, sphere_b, tol)
 
 
 # ---------------------------------------------------------------------------
@@ -214,35 +208,49 @@ def test_coaxial_cone_pair_uses_kne_tolerances():
 
 
 # ---------------------------------------------------------------------------
-# is_same_cone / is_same_sphere / is_same_torus take the run's Tolerances, like plane and cylinder: no private defaults
+# is_same_cone_surface / is_same_sphere_surface / is_same_torus_surface take the run's Tolerances, like plane and
+# cylinder: no private defaults. Unlike plane/cylinder (still wrapped by the registry, for `add_pln_*` and the
+# fuzzy-match log), these three have NO registry copy any more -- MetaSurfacesDict/SurfacesDict call them directly
+# (2026-09-22 unification: the registry used to keep its own, divergent copy of every one of the 5 identity checks).
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("func", [is_same_cone, is_same_sphere, is_same_torus])
-def test_registry_predicates_require_the_tolerances(func):
+@pytest.mark.parametrize("func", [sg.is_same_cone_surface, sg.is_same_sphere_surface, sg.is_same_torus_surface])
+def test_geo_identity_predicates_require_the_tolerances_positionally(func):
     a = _Surf(SemiAngle=0.3, Axis=Z, Apex=ORIGIN, Radius=5.0, Center=ORIGIN, MajorRadius=20.0, MinorRadius=3.0)
     with pytest.raises(TypeError):
-        func(a, a)
-    with pytest.raises(TypeError):
-        func(a, a, None)
+        func(a, a)  # tolerances is a required positional argument, no silent default
 
 
-def test_registry_predicates_read_each_surfaces_own_tolerance():
+def test_geo_identity_predicates_read_each_surfaces_own_tolerance():
     sph = (_Surf(Radius=5.0, Center=ORIGIN), _Surf(Radius=5.0 + 5e-5, Center=ORIGIN))
-    assert is_same_sphere(*sph, Tolerances(sph_distance=1e-4))
-    assert not is_same_sphere(*sph, Tolerances(sph_distance=1e-5))
+    assert sg.is_same_sphere_surface(*sph, Tolerances(sph_distance=1e-4))
+    assert not sg.is_same_sphere_surface(*sph, Tolerances(sph_distance=1e-5))
     cone = (_Surf(SemiAngle=0.3, Axis=Z, Apex=ORIGIN), _Surf(SemiAngle=0.3 + 5e-5, Axis=Z, Apex=ORIGIN))
-    assert is_same_cone(*cone, Tolerances(kne_angle=1e-4))
-    assert not is_same_cone(*cone, Tolerances(kne_angle=1e-5))
+    assert sg.is_same_cone_surface(*cone, Tolerances(kne_angle=1e-4))
+    assert not sg.is_same_cone_surface(*cone, Tolerances(kne_angle=1e-5))
     tor = (_Surf(MajorRadius=20.0, MinorRadius=3.0, Axis=Z, Center=ORIGIN), _Surf(MajorRadius=20.0 + 5e-5, MinorRadius=3.0, Axis=Z, Center=ORIGIN))
-    assert is_same_torus(*tor, Tolerances(tor_distance=1e-4))
-    assert not is_same_torus(*tor, Tolerances(tor_distance=1e-5))
+    assert sg.is_same_torus_surface(*tor, Tolerances(tor_distance=1e-4))
+    assert not sg.is_same_torus_surface(*tor, Tolerances(tor_distance=1e-5))
 
 
-def test_torus_with_reversed_axis_is_kept_apart():
-    a = _Surf(MajorRadius=20.0, MinorRadius=3.0, Axis=Z, Center=ORIGIN)
-    b = _Surf(MajorRadius=20.0, MinorRadius=3.0, Axis=GVector(0, 0, -1), Center=ORIGIN)
-    assert not is_same_torus(a, b, Tolerances())  # unchanged behaviour: opposite axes are kept apart
+def test_torus_with_reversed_axis_is_the_same_torus():
+    # 2026-09-21 user decision: two tori with antiparallel axes ARE the same surface (axes_parallel already treats
+    # antiparallel as "the same line", so this is what geo's own predicate has always computed -- the registry's old,
+    # separate copy used to disagree, rejecting this case; that copy is gone).
+    a = _Surf(MajorRadius=20.0, MinorRadius=3.0, Axis=Z, Center=ORIGIN, a_sign=1)
+    b = _Surf(MajorRadius=20.0, MinorRadius=3.0, Axis=GVector(0, 0, -1), Center=ORIGIN, a_sign=1)
+    assert sg.is_same_torus_surface(a, b, Tolerances())
+
+
+def test_check_a_sign_still_keeps_a_degenerate_toruss_two_sheets_apart():
+    # SolidGu.same_torus_surf's own opt-in: never merge a self-intersecting torus's outer and inner sheets into one
+    # face group, even though the registry (default check_a_sign=False) writes them as a single surface.
+    outer = _Surf(MajorRadius=20.0, MinorRadius=30.0, Axis=Z, Center=ORIGIN, a_sign=1)
+    inner = _Surf(MajorRadius=20.0, MinorRadius=30.0, Axis=Z, Center=ORIGIN, a_sign=-1)
+    assert sg.is_same_torus_surface(outer, inner, Tolerances())
+    assert not sg.is_same_torus_surface(outer, inner, Tolerances(), check_a_sign=True)
+    assert sg.is_same_torus_surface(outer, outer, Tolerances(), check_a_sign=True)
 
 
 # ---------------------------------------------------------------------------

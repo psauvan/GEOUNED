@@ -1,6 +1,5 @@
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import twoPimod
-from .basic_functions_part2 import is_parallel
 from .geometry_gu import other_face_edge
 from ...geo import GLine, GPlane, GCylinder, GTorus, Gclassify_curve
 from .geometry_gu import ShellFaceGu, is_same_surface

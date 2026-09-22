@@ -152,24 +152,24 @@ def test_plane_is_written_axis_aligned_exactly_when_it_is_the_same_plane(toleran
 
 @pytest.mark.parametrize("tolerance, same", [(1.0e-4, True), (1.0e-5, False)])
 def test_cone_is_written_axis_aligned_exactly_when_it_is_the_same_cone(tolerance, same):
-    from geouned.GEOUNED.utils.basic_functions_part2 import is_same_cone
+    from geouned.geo.surface_geometry import is_same_cone_surface
 
     tol = Tolerances(kne_angle=tolerance)
     aligned = SimpleNamespace(Apex=GVector(0, 0, 0), Axis=Z, SemiAngle=0.3)
     tilted = SimpleNamespace(Apex=GVector(0, 0, 0), Axis=_tilted(TILT), SemiAngle=0.3)
-    assert is_same_cone(aligned, tilted, tol) is same
+    assert is_same_cone_surface(aligned, tilted, tol) is same
     assert ("KZ" in _write("ConeOnly", tilted, tol)) is same
 
 
 @pytest.mark.parametrize("tolerance, same", [(1.0e-4, True), (1.0e-5, False)])
 def test_torus_is_written_axis_aligned_exactly_when_it_is_the_same_torus(tolerance, same):
-    from geouned.GEOUNED.utils.basic_functions_part2 import is_same_torus
+    from geouned.geo.surface_geometry import is_same_torus_surface
 
     tol = Tolerances(tor_angle=tolerance)
     fields = dict(Center=GVector(0, 0, 0), MajorRadius=20.0, MinorRadius=3.0, Degenerated=False, a_sign=1)
     aligned = SimpleNamespace(Axis=Z, **fields)
     tilted = SimpleNamespace(Axis=_tilted(TILT), **fields)
-    assert is_same_torus(aligned, tilted, tol) is same
+    assert is_same_torus_surface(aligned, tilted, tol) is same
     assert ("TZ" in _write("TorusOnly", tilted, tol)) is same
 
 

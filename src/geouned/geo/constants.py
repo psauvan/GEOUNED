@@ -186,6 +186,13 @@ ZERO_TOL_E6 = 1.0e-6
 ZERO_TOL_E8 = 1.0e-8
 ZERO_TOL_E9 = 1.0e-9
 
+# Absolute floor (mm) for a *relative* surface-matching tolerance (`Tolerances.relativeTol=True`). Those tolerances
+# are `rel * scale`, which is exactly 0 for a surface anchored at the origin (or at another zero-scale reference) --
+# and a tolerance of 0 rejects even two bit-identical surfaces (`|0| < 0` is false), so e.g. every plane z=0 would
+# get its own surface card. 1e-9 mm is far above float noise on any realistic coordinate (~2e-11 mm at 1e5 mm) and
+# far below any real geometric difference.
+RELATIVE_TOL_ABS_FLOOR = 1.0e-9
+
 # Dimensionless relative tolerance (fraction of a model/solid scale or of a volume).
 REL_TOL_E2 = 1.0e-2
 REL_TOL_E3 = 1.0e-3

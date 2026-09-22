@@ -6,21 +6,18 @@ import math
 
 
 from .data_classes import Options, NumericFormat
-from .basic_functions_part1 import (
-    is_in_tolerance,
-    is_parallel,
-    is_same_value,
-)
-from .data_constants import RELATIVE_TOL_ABS_FLOOR
+from .basic_functions_part1 import is_in_tolerance
 from ..write.functions import mcnp_surface
 from ...geo.constants import PARAM_ANGLE_TOL_E5
-from ...geo.surface_geometry import opposite_sense
-
-
-def _relative_tol(rel, scale):
-    """`rel * scale`, never below RELATIVE_TOL_ABS_FLOOR (see its definition:
-    `scale` is 0 for a surface at the origin)."""
-    return max(rel * scale, RELATIVE_TOL_ABS_FLOOR)
+from ...geo.surface_geometry import (
+    axes_parallel,
+    cylinder_axis_offset,
+    cylinder_radius_diff,
+    is_same_cylinder_surface,
+    plane_offset,
+    plane_within,
+    relative_tolerance,
+)
 
 
 def _require(tolerances, caller):
@@ -59,26 +56,26 @@ def Fuzzy(index, dtype, surf1, surf2, val, tol, options, tolerances, numeric_for
 def is_same_plane(
     p1, p2, options=Options(), tolerances=None, numeric_format=NumericFormat(), fuzzy=(False, 0), stdtol=True
 ):
+    """The CSG-registry entry point for plane identity: same decision as `geo.surface_geometry.is_same_plane_surface`
+    (that is the ONE implementation, unified 2026-09-22 -- see its own docstring), plus what only the registry needs:
+    `add_pln_angle`/`add_pln_distance` for a non-real (`stdtol=False`) plane, and an opt-in near-miss diagnostic log
+    (`fuzzy`, written to the `fuzzy_logger`, never affects the returned decision)."""
     tolerances = _require(tolerances, "is_same_plane")
-    pln_angle = tolerances.pln_angle if stdtol else tolerances.add_pln_angle
-    pln_distance = tolerances.pln_distance if stdtol else tolerances.add_pln_distance
+    angle_tol = tolerances.pln_angle if stdtol else tolerances.add_pln_angle
+    distance_tol = tolerances.pln_distance if stdtol else tolerances.add_pln_distance
+    same = plane_within(p1, p2, angle_tol, distance_tol, tolerances.relativeTol)
 
-    if is_parallel(p1.Axis, p2.Axis, pln_angle):
-        d1 = p1.Axis.dot(p1.Position)
-        d2 = p2.Axis.dot(p2.Position)
-        if opposite_sense(p1.Axis, p2.Axis):
-            d2 = -d2
-        d = abs(d1 - d2)
+    if fuzzy[0] and axes_parallel(p1.Axis, p2.Axis, angle_tol):
+        tol = distance_tol
         if tolerances.relativeTol:
-            tol = _relative_tol(pln_distance, max(abs(d1), abs(d2)))
-        else:
-            tol = pln_distance
-
-        isSame, is_fuzzy = is_in_tolerance(d, tol, 0.5 * tol, 2 * tol)
-        if is_fuzzy and fuzzy[0]:
+            scale = max(abs(p1.Axis.dot(p1.Position)), abs(p2.Axis.dot(p2.Position)))
+            tol = relative_tolerance(distance_tol, scale)
+        d = plane_offset(p1, p2)
+        _, is_fuzzy = is_in_tolerance(d, tol, 0.5 * tol, 2 * tol)
+        if is_fuzzy:
             Fuzzy(fuzzy[1], "plane", p2, p1, d, tol, options, tolerances, numeric_format)
-        return isSame
-    return False
+
+    return same
 
 
 def is_same_cylinder(
@@ -89,129 +86,35 @@ def is_same_cylinder(
     numeric_format=NumericFormat(),
     fuzzy=(False, 0),
 ):
+    """The CSG-registry entry point for cylinder identity: same decision as
+    `geo.surface_geometry.is_same_cylinder_surface` (that is the ONE implementation -- unified 2026-09-22), plus the
+    registry's own opt-in near-miss diagnostic log (see `is_same_plane`'s docstring -- same contract). The radius
+    fuzzy-log check runs independently of the axis/centre one (matching this function's own historical control
+    flow): a radius near-miss is still worth logging even when the axes turn out not to be parallel at all."""
     tolerances = _require(tolerances, "is_same_cylinder")
-    if tolerances.relativeTol:
-        rtol = tolerances.cyl_distance * max(cyl2.Radius, cyl1.Radius)
-    else:
-        rtol = tolerances.cyl_distance
+    same = is_same_cylinder_surface(cyl1, cyl2, tolerances)
 
-    is_same_rad, is_fuzzy = is_in_tolerance(cyl2.Radius - cyl1.Radius, rtol, 0.5 * rtol, 2 * rtol)
-    if is_fuzzy and fuzzy[0]:
-        Fuzzy(
-            fuzzy[1],
-            "cylRad",
-            cyl2,
-            cyl1,
-            abs(cyl2.Radius - cyl1.Radius),
-            rtol,
-            options,
-            tolerances,
-            numeric_format,
-        )
+    if fuzzy[0]:
+        relative_tol = tolerances.relativeTol
 
-    if is_same_rad:
-        if is_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
-            axis1 = cyl1.Axis
-            center1 = cyl1.Center
-            center2 = cyl2.Center
-            c12 = center1 - center2
-            d = axis1.cross(c12).length
+        radius_tol = tolerances.cyl_distance
+        if relative_tol:
+            radius_tol = relative_tolerance(tolerances.cyl_distance, max(cyl2.Radius, cyl1.Radius))
+        radius_diff = cylinder_radius_diff(cyl1, cyl2)
+        _, is_fuzzy = is_in_tolerance(radius_diff, radius_tol, 0.5 * radius_tol, 2 * radius_tol)
+        if is_fuzzy:
+            Fuzzy(fuzzy[1], "cylRad", cyl2, cyl1, abs(radius_diff), radius_tol, options, tolerances, numeric_format)
 
-            if tolerances.relativeTol:
-                tol = _relative_tol(tolerances.cyl_distance, max(center1.length, center2.length))
-            else:
-                tol = tolerances.cyl_distance
+        if axes_parallel(cyl1.Axis, cyl2.Axis, tolerances.cyl_angle):
+            axis_tol = tolerances.cyl_distance
+            if relative_tol:
+                axis_tol = relative_tolerance(tolerances.cyl_distance, max(cyl1.Center.length, cyl2.Center.length))
+            d = cylinder_axis_offset(cyl1, cyl2)
+            _, is_fuzzy = is_in_tolerance(d, axis_tol, 0.5 * axis_tol, 2 * axis_tol)
+            if is_fuzzy:
+                Fuzzy(fuzzy[1], "cylAxs", cyl1, cyl2, d, axis_tol, options, tolerances, numeric_format)
 
-            is_same_center, is_fuzzy = is_in_tolerance(d, tol, 0.5 * tol, 2 * tol)
-            if is_fuzzy and fuzzy[0]:
-                Fuzzy(
-                    fuzzy[1],
-                    "cylAxs",
-                    cyl1,
-                    cyl2,
-                    d,
-                    tol,
-                    options,
-                    tolerances,
-                    numeric_format,
-                )
-
-            return is_same_center
-    return False
-
-
-def is_same_cone(cone1, cone2, tolerances):
-    tolerances = _require(tolerances, "is_same_cone")
-    dtol = tolerances.kne_distance
-    atol = tolerances.kne_angle
-    if is_same_value(cone1.SemiAngle, cone2.SemiAngle, atol):
-        if is_parallel(cone1.Axis, cone2.Axis, atol):
-            apex1 = cone1.Apex
-            apex2 = cone2.Apex
-            if tolerances.relativeTol:
-                tol = _relative_tol(dtol, max(apex1.length, apex2.length))
-            else:
-                tol = dtol
-            return apex1.is_equal(apex2, tol)
-    return False
-
-
-def is_same_sphere(sph1, sph2, tolerances):
-    tolerances = _require(tolerances, "is_same_sphere")
-    tolerance = tolerances.sph_distance
-    if tolerances.relativeTol:
-        rtol = tolerance * max(sph2.Radius, sph1.Radius)
-    else:
-        rtol = tolerance
-    if is_same_value(sph1.Radius, sph2.Radius, rtol):
-        center1 = sph1.Center
-        center2 = sph2.Center
-        if tolerances.relativeTol:
-            ctol = _relative_tol(tolerance, max(center1.length, center2.length))
-        else:
-            ctol = tolerance
-        return center1.is_equal(center2, ctol)
-
-    return False
-
-
-def is_same_torus(tor1, tor2, tolerances, check_a_sign=False):
-    tolerances = _require(tolerances, "is_same_torus")
-    dtol = tolerances.tor_distance
-    atol = tolerances.tor_angle
-    rel_tol = tolerances.relativeTol
-    if is_parallel(tor1.Axis, tor2.Axis, atol):
-        if tor1.Axis.dot(tor2.Axis) < 0:
-            return False  # Assume same cone with oposite axis as different
-        # `check_a_sign` distinguishes two genuinely different uses of
-        # "same torus": grouping same-analytic-surface face fragments
-        # during decomposition (SolidGu.same_torus_surf) must NOT merge
-        # a self-intersecting torus's outer and inner sheets, since
-        # they're geometrically distinct faces -- opts in with
-        # check_a_sign=True. Global CSG-surface registration
-        # (MetaSurfacesDict.get_id/add_torus) deliberately does NOT
-        # (default False): both sheets of one degenerate torus are
-        # written as a single MCNP/OpenMC/etc surface (the sign is
-        # encoded into the written major radius instead, see
-        # write/functions.py), so they must compare equal here.
-        if check_a_sign and getattr(tor1, "a_sign", 1) != getattr(tor2, "a_sign", 1):
-            return False
-        if rel_tol:
-            Rtol = dtol * max(tor1.MajorRadius, tor2.MajorRadius)
-            rtol = dtol * max(tor1.MinorRadius, tor2.MinorRadius)
-        else:
-            Rtol = dtol
-            rtol = dtol
-
-        if is_same_value(tor1.MajorRadius, tor2.MajorRadius, Rtol) and is_same_value(tor1.MinorRadius, tor2.MinorRadius, rtol):
-            center1 = tor1.Center
-            center2 = tor2.Center
-            if rel_tol:
-                ctol = _relative_tol(dtol, max(center1.length, center2.length))
-            else:
-                ctol = dtol
-            return center1.is_equal(center2, ctol)
-    return False
+    return same
 
 
 def is_duplicate_in_list(num_str1, i, lista):

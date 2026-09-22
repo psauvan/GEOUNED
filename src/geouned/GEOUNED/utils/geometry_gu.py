@@ -10,7 +10,6 @@ import math
 
 from .data_constants import twoPi
 from .basic_functions_part1 import is_same_value, twoPimod
-from .basic_functions_part2 import is_same_torus
 from ...geo import vector_geometry, surface_geometry
 from ...geo import (
     GCone,
@@ -145,7 +144,7 @@ class SolidGu(GSolid):
             i = temp[0]
             current = [i]
             for j in temp[1:]:
-                if is_same_torus(
+                if surface_geometry.is_same_torus_surface(
                     self.Faces[i].Surface,
                     self.Faces[j].Surface,
                     self.tolerances,

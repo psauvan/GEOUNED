@@ -27,7 +27,7 @@ from .basic_functions_part1 import (
     TConeParams,
 )
 from .basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
-from .basic_functions_part2 import is_same_plane, is_same_cylinder, is_same_cone, is_same_sphere, is_same_torus
+from .basic_functions_part2 import is_same_plane, is_same_cylinder
 
 from .data_classes import NumericFormat, Options, Tolerances
 from ...boolean_utils.boolean_function import BoolSurface, BoolVariable, literal_sign
@@ -1555,7 +1555,7 @@ class SurfacesDict(dict):
     def add_cone(self, cone):
         cone_added = True
         for i, c in enumerate(self["Cone"]):
-            if is_same_cone(cone.Surf, c.Surf, self.tolerances):
+            if surface_geometry.is_same_cone_surface(cone.Surf, c.Surf, self.tolerances):
                 cone_added = False
                 bVar = c.bVar
                 cone.bVar = bVar
@@ -1574,7 +1574,7 @@ class SurfacesDict(dict):
     def add_sphere(self, sph):
         sphere_added = True
         for i, s in enumerate(self["Sph"]):
-            if is_same_sphere(sph.Surf, s.Surf, self.tolerances):
+            if surface_geometry.is_same_sphere_surface(sph.Surf, s.Surf, self.tolerances):
                 sphere_added = False
                 bVar = s.bVar
                 sph.bVar = bVar
@@ -1593,15 +1593,15 @@ class SurfacesDict(dict):
     def add_torus(self, tor):
         add_torus = True
         for i, s in enumerate(self["Tor"]):
-            if is_same_torus(tor.Surf, s.Surf, self.tolerances):
+            if surface_geometry.is_same_torus_surface(tor.Surf, s.Surf, self.tolerances):
                 add_torus = False
                 bVar = s.bVar
                 tor.bVar = bVar
                 if s.Surf.Degenerated:
                     # Both sheets of a self-intersecting torus are
-                    # registered as ONE surface (is_same_torus doesn't
-                    # check a_sign here, by design -- see its own
-                    # docstring); keep the registered entry's own
+                    # registered as ONE surface (is_same_torus_surface's
+                    # check_a_sign defaults to False here, by design -- see its
+                    # own docstring); keep the registered entry's own
                     # a_sign in sync with whichever face is currently
                     # being processed, since only one sheet's sign can
                     # be encoded into the single written surface card
@@ -1654,17 +1654,17 @@ class SurfacesDict(dict):
 
         elif facein.Type == "Cone":
             for s in self["Cone"]:
-                if is_same_cone(facein.Surf, s.Surf, self.tolerances):
+                if surface_geometry.is_same_cone_surface(facein.Surf, s.Surf, self.tolerances):
                     return s.bVar
 
         elif facein.Type == "Sphere":
             for s in self["Sph"]:
-                if is_same_sphere(facein.Surf, s.Surf, self.tolerances):
+                if surface_geometry.is_same_sphere_surface(facein.Surf, s.Surf, self.tolerances):
                     return s.bVar
 
         elif facein.Type == "Torus":
             for s in self["Tor"]:
-                if is_same_torus(facein.Surf, s.Surf, self.tolerances):
+                if surface_geometry.is_same_torus_surface(facein.Surf, s.Surf, self.tolerances):
                     if s.Surf.Degenerated:
                         # See add_torus's identical sync -- only one
                         # degenerate torus sheet's sign can be encoded
