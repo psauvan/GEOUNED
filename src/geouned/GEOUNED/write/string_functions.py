@@ -1,5 +1,7 @@
 import re
 
+from ...boolean_utils.boolean_expression_parser import redundant
+
 #########################################
 # define patterns to be found in string #
 #########################################
@@ -79,47 +81,6 @@ def countP(string):
     lp = string.count("(")
     rp = string.count(")")
     return (lp, rp)
-
-
-def redundant(m, geom):
-    """check if the inner parentheses are redundant"""
-    term = m.group()
-
-    # Find first valid character at the left of the  parenthese
-    leftOK = True
-    left = m.start() - 1
-    while left > -1:
-        if geom[left] in ("\n", "C", "$", " "):
-            left -= 1
-        else:
-            if geom[left] not in ("(", ":"):
-                leftOK = False
-            break
-
-    # check if no ':' (or) are inside the parenthese
-    # if not, parentheses are redundants
-    if term.find(":") == -1:
-        return True
-
-    # Find first valid character at the right of the  parenthese
-    rightOK = True
-    right = m.end()
-    while right < len(geom):
-        if geom[right] in ("\n", "C", "$", " "):
-            right += 1
-        else:
-            if geom[right] not in (")", ":"):
-                rightOK = False
-            break
-
-    # if parentheses are like:
-    # {( or : } ( ....... ) {) or :}
-    # parentheses are redundants
-
-    if leftOK and rightOK:
-        return True
-    else:
-        return False
 
 
 def remove_redundant(geom):
