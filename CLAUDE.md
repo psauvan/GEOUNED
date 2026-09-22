@@ -1762,6 +1762,87 @@ gaps for whenever it's picked back up:
     `relativeTol=True` the cylinder-axis tolerance scales with `|Center|`, an
     arbitrary point of the axis. (c) the writers decide CX vs C/X with an
     exact `Pos.y == 0.0`.
+  - **Duplicated functions: census, plan, and step 1 (surface identity)
+    done (2026-09-21/22).** After the point-based plane identity the user
+    noticed the registry has its own `is_same_plane` (`basic_functions_part2.py`)
+    next to `geo.is_same_plane_surface`. Census (by name, by structural
+    similarity of functions >= 40 nodes, by concept; small functions with
+    different names may have escaped): (1) surface identity, registry
+    (15 call sites) vs `geo` (12): plane origin-based vs point-based, the
+    registry's `relativeTol`/fuzzy log/`add_pln_*`, and tori with
+    antiparallel axes (different in the registry, same in `geo`); (2)
+    `geo.is_parallel/is_opposite` next to `axes_parallel/opposite_sense`,
+    plus GEOUNED wrappers in `basic_functions_part1` (`is_same_value`,
+    `is_parallel`, `is_in_line` -- with a hidden 1e-3 rad default --,
+    `is_in_plane`), ~25 call sites; (3) contact (`contiguous_face`,
+    `commonEdgeFace`, `commonVertex`, `separate_surfaces`) = one
+    `distance <= NUMERIC_TOL` written four times; (4) the axis-family
+    classification repeated in the 4 writers (48 tests); (5) beyond
+    tolerances: `redundant`/`outer_terms`/`remove_redundant`/`countP` in 3
+    places (`boolean_utils`, GEOReverse `remh.py`, GEOUNED
+    `string_functions.py`) that have DIVERGED (12/95/83 differing lines),
+    the GEOReverse MCNP/XML parser twins, the exotic-quadric `is_inside`
+    copied in 3 engine files, `points_to_coeffs` x2.
+    Decided: two tori with antiparallel axes ARE the same surface; the plane
+    distance is point-based; `relativeTol` untouched for now. Agreed order:
+    (1) identity as ONE `geo` implementation computing deviations, the
+    registry a thin wrapper that only adds its effective tolerances and the
+    fuzzy log (keeping `check_a_sign`, needed by `SolidGu.same_torus_surf`
+    to never merge a degenerate torus's two sheets); (2) parallel/sense;
+    (3) one contact predicate; (4) one axis-family helper for the writers;
+    (5) the non-tolerance duplicates one at a time, each with an equivalence
+    test first.
+    **Step 1, done 2026-09-22**: `geo.surface_geometry` is now the ONE
+    implementation for all 5 `is_same_*_surface` predicates, including
+    `relativeTol` (read via `getattr(tolerances, "relativeTol", False)` --
+    `GeoTolerances` itself still has no such field, so GEOReverse's bare
+    instances default to absolute, unaffected) and, for the torus, an opt-in
+    `check_a_sign` parameter (default `False`, matching the registry's own
+    "both sheets of a degenerate torus write as one surface"; `True` only
+    from `SolidGu.same_torus_surf`, which must keep them apart). `RELATIVE_TOL_ABS_FLOOR`
+    moved from `GEOUNED/utils/data_constants.py` to `geo/constants.py`; a
+    new `relative_tolerance(base, scale)` helper is shared by every
+    predicate. `geo` also exposes the lower-level pieces the registry needs
+    without re-deriving the geometry: `plane_offset`/`plane_within` (explicit
+    angle/distance tolerances, so the registry can pass `add_pln_*` for a
+    non-real plane without a tolerances-shaped proxy), `cylinder_radius_diff`/
+    `cylinder_axis_offset`. `basic_functions_part2.is_same_plane`/
+    `is_same_cylinder` are now thin wrappers: the DECISION comes from
+    `plane_within`/`is_same_cylinder_surface` (called once), and the near-miss
+    diagnostic log (`fuzzy=`, written to `fuzzy_logger`, never read back by
+    the pipeline) is computed separately, only when requested, from the same
+    shared primitives -- the radius fuzzy-check still fires independently of
+    the axis test, matching the original control flow.
+    `basic_functions_part2.is_same_cone/is_same_sphere/is_same_torus` are
+    DELETED outright (no fuzzy-log call site ever passed `fuzzy=` for these
+    three, so there was nothing left to wrap): `MetaSurfacesDict`/`SurfacesDict`'s
+    `add_cone`/`add_sphere`/`add_torus`/`get_id` and `SolidGu.same_torus_surf`
+    now call `geo.surface_geometry.is_same_cone_surface`/`is_same_sphere_surface`/
+    `is_same_torus_surface` directly.
+    **Verified**: suites ocp/occ 299 passed/2 skipped, freecad 270 passed/16
+    skipped; against the original 22f0f51 code, decomposition and written
+    text (5 formats) over the 143 test_models + 30 working_solids files:
+    **1 file changes**, `Complex_cell/SCDR_90.stp` (`prim_surfaces` 17 -> 16,
+    one plane fewer; pieces/volume/every composite count unchanged) -- two
+    near-antiparallel planes (tilt ~1e-6 rad) that used to be kept apart by
+    the registry's old origin-based offset (a ~9.65 cm difference measured
+    from the origin, for faces that are actually coincident where they are
+    defined) now correctly merge, exactly the effect the point-based change
+    was for. Confirmed harmless with a direct d1suned check (`verify_one_solid.py`,
+    NPS 1e6): the ORIGINAL and the NEW code give the IDENTICAL tally
+    (0.99842 +/- 0.23%, 0.7 sigma, SD4 matches the true CAD volume, 0 lost
+    particles) -- the extra plane the original code kept was geometrically
+    redundant (implied by the cell's other surfaces), so removing it changes
+    nothing about the real solid, only the written definition's size.
+    `plates_plane.stp` (the new working_solids fixture, no original-code
+    baseline) is unaffected by this step (its own MultiPlane 3 -> 1 change
+    is from the point-based `geo` change of the previous session).
+    Tests: `tests/geo/test_same_surface_tolerances.py` updated (the 3 deleted
+    registry names replaced by the `geo` ones; the antiparallel-torus test
+    flipped to assert equality; a new `check_a_sign` test); `test_numeric_contexts.py`'s
+    cone/torus writer tests updated to import from `geo`.
+    **Remaining**: steps 2-5 above (parallel/sense, contact, writer axis
+    dispatch, the non-tolerance duplicates) -- not started.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
   (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
