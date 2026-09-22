@@ -84,6 +84,27 @@ def opposite_sense(axis_1: GVector, axis_2: GVector) -> bool:
     return axis_1.dot(axis_2) < 0.0
 
 
+_CARTESIAN_AXES = (GVector(1, 0, 0), GVector(0, 1, 0), GVector(0, 0, 1))
+
+
+def axis_alignment(direction: GVector, angle_tol: float, same_direction: bool = False) -> "int | None":
+    """Index (0=X, 1=Y, 2=Z) of the cartesian axis `direction` is aligned to within `angle_tol`, or `None` if it
+    isn't aligned with any of them -- the one classification every surface writer (mcnp/openmc/serpent/phits) makes
+    before choosing an axis-specific surface card (`PX`/`CX`/`KX`/`TX`, ...) over the general quadric/`GQ` fallback,
+    unified 2026-09-22 (they used to each run the same 3-way `if/elif/elif` themselves).
+
+    `same_direction=True` (Plane only: which way the normal points decides which card a plane is classified into,
+    not just its formatted text) requires the SAME sense (`axes_same_direction`); the default (Cylinder/Cone/Torus,
+    where only the axis LINE matters, not which way a vector happens to point along it) accepts either sense
+    (`axes_parallel`). Confirmed consistent across all 4 writers before unifying: every one of them already used
+    `axes_same_direction` for Plane and `axes_parallel` for Cylinder/Cone/Torus."""
+    test = axes_same_direction if same_direction else axes_parallel
+    for index, axis in enumerate(_CARTESIAN_AXES):
+        if test(direction, axis, angle_tol):
+            return index
+    return None
+
+
 def plane_offset(plane_1, plane_2) -> float:
     """Distance `is_same_plane_surface` compares -- see that function's docstring for why it is measured from a
     point of the plane rather than from the coordinate origin. The LARGER of the two planes' own axis: measured
