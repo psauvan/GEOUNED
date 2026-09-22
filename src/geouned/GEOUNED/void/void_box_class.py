@@ -8,7 +8,7 @@ from ...boolean_utils.boolean_function import BoolSequence, BoolVariable, BoolSu
 from ..utils.boolean_solids import build_c_table_from_solids, remove_extra_surfaces, get_kne_planes
 from ..utils.geouned_classes import GeounedSolid, GeounedSurface
 from ...geo import GBoundBox, GSolid, GVector, Gcommon, Gdistance, Gmake_box, to_gboundbox
-from ...geo.constants import KERNEL_TOL_E13
+from ...geo.constants import NUMERIC_DOUBLE_TOL
 
 logger = logging.getLogger("general_logger")
 
@@ -118,7 +118,7 @@ class VoidBox:
 
         return VoidBoxTuple
 
-    def piece_enclosure_split(self, Box, Tolerance=KERNEL_TOL_E13):
+    def piece_enclosure_split(self, Box, Tolerance=NUMERIC_DOUBLE_TOL):
         """This function creates a box-shaped solid with the new limits of given bounding box and
         it is intersected with the piece of nested enclosure to create the new void cell.
         If the limited region does not intersect with the piece, no void cell is created.
@@ -144,20 +144,6 @@ class VoidBox:
             return VoidBox(self.Objects, Box, common_solids[0], self.Definition)
         else:
             return None
-
-    def refine(self):
-        Cube = Gmake_box(
-            self.BoundBox.XMin,
-            self.BoundBox.YMin,
-            self.BoundBox.ZMin,
-            self.BoundBox.XMax,
-            self.BoundBox.YMax,
-            self.BoundBox.ZMax,
-        )
-
-        for m in self.Objects:
-            self.remove_extra_comp(m, Cube, mode="dist")
-        return
 
     def get_void_complementary(self, Surfaces, options, simplify="no"):
 
@@ -438,24 +424,15 @@ class VoidBox:
 
         return (PXMin, PXMax, PYMin, PYMax, PZMin, PZMax)
 
-    def remove_extra_comp(self, Obj, Box, mode="box"):
+    def remove_extra_comp(self, Obj, Box):
         reducedSol = []
         reducedDef = BoolSequence(operator="OR")
         if not Obj.Solids:
             return
         # Compare Solid BoundBox (here Box is a GBoundBox)
-        if mode == "box":
-            for i, sol in enumerate(Obj.Solids):
-                if to_gboundbox(sol.BoundBox).is_valid():
-                    if Box.intersects(to_gboundbox(sol.BoundBox)):
-                        reducedSol.append(sol)
-                        reducedDef.append(Obj.Definition.elements[i])
-
-        # Compare solid using distance (here Box is a GSolid Cube)
-        else:
-            for i, sol in enumerate(Obj.Solids):
-                dist = Gdistance(Box, GSolid(sol))
-                if dist == 0:
+        for i, sol in enumerate(Obj.Solids):
+            if to_gboundbox(sol.BoundBox).is_valid():
+                if Box.intersects(to_gboundbox(sol.BoundBox)):
                     reducedSol.append(sol)
                     reducedDef.append(Obj.Definition.elements[i])
 

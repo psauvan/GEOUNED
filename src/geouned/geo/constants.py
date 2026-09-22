@@ -203,8 +203,15 @@ REL_TOL_E6 = 1.0e-6
 # Kernel zero (mm^3): a boolean Common of two shapes has content only above this.
 VOLUME_MIN_E8 = 1.0e-8
 
+# The smallest meaningful nonzero value a double-precision arithmetic result can carry --
+# below this, a computed quantity (a relative distance, a relative volume difference) is
+# numerical round-off, not a real geometric feature. Used both as a kernel-operation
+# tolerance floor (geo/freecad/split.py's split-retry floor) and as the "effectively zero"
+# cutoff for relative geometric decisions (VoidBox.piece_enclosure_split's contact/
+# containment tests).
+NUMERIC_DOUBLE_TOL = 1.0e-13
+
 # Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
-KERNEL_TOL_E13 = 1.0e-13
 KERNEL_TOL_E3 = 1.0e-3
 KERNEL_TOL_E6 = 1.0e-6
 KERNEL_TOL_E7 = 1.0e-7

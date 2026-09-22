@@ -138,7 +138,6 @@ def get_void_def(
             if type(newspace) is tuple:
                 Temp.extend(newspace)
             else:
-                #           if len(z.Objects) >= 50 : z.refine()
                 boxDim = (
                     z.BoundBox.XMin * 0.1,
                     z.BoundBox.XMax * 0.1,

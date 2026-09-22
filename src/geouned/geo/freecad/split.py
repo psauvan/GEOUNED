@@ -16,7 +16,7 @@ import BOPTools.SplitAPI
 
 from .topology import GShape, GSolid
 from ..solid_defects import valid_solid
-from ..constants import DEFAULT_SPLIT_SCALE, KERNEL_TOL_E13, SPLIT_TOL_MAX, SPLIT_TOL_MIN
+from ..constants import DEFAULT_SPLIT_SCALE, NUMERIC_DOUBLE_TOL, SPLIT_TOL_MAX, SPLIT_TOL_MIN
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ def recursive_freecad_Gsplit(
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
     elif tolerance < SPLIT_TOL_MIN:
         if scale_up_floor is not None:
-            floor = KERNEL_TOL_E13 if scale_up_floor == 0 else scale_up_floor
+            floor = NUMERIC_DOUBLE_TOL if scale_up_floor == 0 else scale_up_floor
             return recursive_freecad_Gsplit(base, tool, floor / scale, tolerances, scale=1.0 / scale, scale_up_floor=scale_up_floor)
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
     else:

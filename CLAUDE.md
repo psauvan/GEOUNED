@@ -1988,9 +1988,147 @@ gaps for whenever it's picked back up:
     1-4, plus this one small piece of step 5) is done; what remains is
     either GEOReverse-side (paused) or not a real duplicate once read
     carefully.
-  **Still open**: void, no-overlap and write stages of the review; the
-  remaining lengths that are neither identity nor point-to-point
-  (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
+  **Stage 4 (void generation), done 2026-09-22.** Read `GEOUNED/void/void.py`
+  + `void_box_class.py` in full to find every tolerance-bearing decision.
+  Only one real one: `VoidBox.piece_enclosure_split` (only reached when a
+  real nested `EnclosureList` exists -- confirmed via `PieceEnclosure`,
+  set only from `Enclosure.CADSolid` in `get_void_def`) reused
+  `KERNEL_TOL_E13` (documented role: "tolerance handed to a CAD-kernel
+  operation") for two genuinely different geometric decisions: a relative
+  contact test (`dist/Box.DiagonalLength > Tolerance`) and a relative
+  containment test (`(cube_volume-common_volume)/cube_volume <=
+  Tolerance`) -- the same role-mismatch pattern found repeatedly
+  elsewhere in this review. `options.enlargeBox` (`get_void_complementary`)
+  confirmed NOT a tolerance (a box-enlargement margin, already a user
+  `Options` field) -- no action needed.
+  **Measured**: found a real fixture, `Solidos/test_models/Enclosures/
+  w_encl.stp` (a genuine `enclosure1_0_` STEP label). With default
+  settings the model is too small to ever split (`maxSurf`/`maxBracket`
+  never exceeded, 0 calls). Forced splitting (`maxSurf=1`, `maxBracket=1`,
+  `minVoidSize` scaled to the enclosure's own ~430 mm bbox diagonal, not
+  the 1 mm first tried -- that value, far below the model's real scale,
+  caused runaway near-exponential bisection) gave 24 real calls, ALL
+  landing at EXACT `0.0` for both the distance ratio and the volume
+  ratio: this particular enclosure is close to box-shaped, so every
+  candidate sub-box is either exactly touching or exactly fully
+  contained -- no sample anywhere near the `1e-13` threshold. No usable
+  data to pick a different value; a curved/irregular synthetic enclosure
+  would be needed to get non-trivial samples, which would mean
+  fabricating data rather than measuring real usage -- against this
+  session's own rule, so not done.
+  **User's decision**: the value IS a double-precision arithmetic-zero
+  floor, not really a "kernel operation" parameter -- renamed
+  `KERNEL_TOL_E13` to `NUMERIC_DOUBLE_TOL` (value unchanged, 1e-13),
+  pulled out of the `KERNEL_TOL_E3/E6/E7/E8` family in
+  `geo/constants.py` with its own docstring. Applies at BOTH of its real
+  call sites: `geo/freecad/split.py`'s split-retry floor (unchanged
+  role, just renamed) and `piece_enclosure_split`'s two tests (renamed,
+  no `volume_within` refactor -- the user judged the existing plain
+  relative-ratio form already correct for a "is this exactly zero"
+  check, `volume_within`'s `VOLUME_REF` floor being for a different kind
+  of comparison).
+  **Dead code removed**: `VoidBox.refine()` and `remove_extra_comp`'s
+  `mode="dist"` branch -- confirmed 100% dead (the one call to `.refine()`
+  is commented out in `void.py`) -- deleted, matching this session's
+  consistent practice with other confirmed-dead code
+  (`is_opposite`/`is_in_line`/`is_in_plane`/`sign_plane`,
+  `box_intersect`/`plane_region`/`operate_box`). `remove_extra_comp` lost
+  its now-single-valued `mode` parameter entirely (its one real caller,
+  `VoidBox.__init__`, already only ever used `mode="box"`).
+  **Verified**: suites ocp/occ 292 passed/1 skipped, freecad 263
+  passed/16 skipped (identical to the pre-change baseline -- a pure
+  rename plus deletion of code with zero live callers cannot change any
+  test outcome); the `w_encl.stp` enclosure probe re-run after the
+  rename gives the bit-identical 24 calls, all `(0.0, 0.0)`; a plain
+  default-settings end-to-end run of `w_encl.stp` (`run()` +
+  `export_csg`) completes cleanly. No corpus differential needed for the
+  void stage specifically -- the existing `write_worker.py` scratchpad
+  script runs with `voidGen=False`, so it never reaches this code path
+  either before or after; this stage's own real-fixture check above is
+  the meaningful verification.
+  **Stage 5 (no-overlap), done 2026-09-22.** Read `conversion/
+  cell_definition.py::noOverlapCell`/`process_overlap` (only reached with
+  `options.forceNoOverlap=True`, default `False`, never enabled anywhere
+  in the existing test suite or corpus scripts) and
+  `GeounedSolid.check_intersection` (used at load time for enclosure
+  containment/overlap checks, and by `void_functions.py::assignEnclosure`
+  -- both reachable via a real enclosure fixture). Three findings:
+  1. `check_intersection`'s `dtolerance=LENGTH_TOL_E6` parameter was
+     confirmed 100% dead: it never appears in the function's own body
+     (only in the signature and in a comment describing the OLD,
+     Gdistance-based early-out this function used before the 2026-08-24
+     fix -- `BoundBox.intersects()`, which replaced it, takes no
+     tolerance at all), and none of its 3 real call sites pass it.
+     Deleted, matching this session's practice with other confirmed-dead
+     parameters/branches.
+  2. `check_intersection`'s real tolerance, `vtolerance=ZERO_TOL_E10`
+     (the relative-volume-embedding test), measured via `w_encl.stp` (5
+     real calls): the same clean-gap pattern as everywhere else in this
+     review -- values are exactly `0.0` or of order 1-20, nothing near
+     `1e-10`. No evidence to change the value; left as-is.
+  3. `noOverlapCell`'s call to `shapes_in_contact(m.CADSolid,
+     other_cell.CADSolid)` used that function's default,
+     `tolerance=LENGTH_TOL_E6` -- a genuinely different role (contact
+     between two DIFFERENT cells' solids, deciding whether an automatic
+     complementary cut is needed) from `LENGTH_TOL_E6`'s many other,
+     unrelated "small length/degenerate" roles elsewhere in the
+     codebase. No fixture gives real data for this specific decision (see
+     below). **User's decision**: reuse `NUMERIC_TOL` here instead --
+     `shapes_in_contact`'s default changed from `LENGTH_TOL_E6` to
+     `NUMERIC_TOL`, which also makes it consistent with its OTHER real
+     call site (`meta_surfaces_utils.py:1263`, which already passed
+     `NUMERIC_TOL` explicitly) -- both call sites now agree.
+  **A real, pre-existing, unrelated bug found while trying to measure
+  point 3 empirically (not fixed, out of scope for a tolerance review --
+  flagged for whenever GEOUNED debugging is picked up)**: loading ANY
+  STEP file with a real enclosure label (`w_encl.stp`) with
+  `settings.voidGen=False` crashes `core.py::build_void()`'s "Cleaning
+  definition" loop (`core.py:528`,
+  `AttributeError: 'list' object has no attribute 'level'` -- some
+  cell's `Definition` is a bare `list`, not a `BoolSequence`) --
+  reproduces identically with `forceNoOverlap` `True` or `False`
+  (confirmed unrelated to this stage's own change), and confirmed via
+  `git stash` to already exist on the pre-change code, so definitely not
+  introduced by this session. Since it happens inside `build_void()`
+  BEFORE `no_overlap_cell()` is ever reached (`core.py::run()` calls
+  `no_overlap_cell()` only after `build_void()` returns), `w_encl.stp`
+  can never be used to exercise `noOverlapCell`/`shapes_in_contact` at
+  all -- a fixture with NO enclosure but two genuinely touching/
+  overlapping solid cells would be needed instead, not built this
+  session.
+  **Verified**: suites ocp/occ 292 passed/1 skipped, freecad 263
+  passed/16 skipped (unchanged baseline -- a dead-parameter deletion and
+  a default-argument swap between two already-established constants
+  can't move any existing test's outcome, and neither is exercised by
+  the suite at all, per the finding above).
+  **Stage 6 (write), investigated 2026-09-22 -- nothing to change.** Read
+  `write/functions.py`, `write_files.py`, `string_functions.py`,
+  `mcnp_like/*.py`, `openmc/openmc_format.py`, `utils/q_form.py` in full.
+  Every tolerance-bearing decision in the write stage was already
+  correctly handled by earlier work: the 16 axis-classification sites
+  were unified into `axis_alignment` in step 4 of the duplicated-
+  functions plan; the 2 "is this sphere centered at the origin"
+  checks (`pnt.is_equal(GVector(0,0,0), tolerances.sph_distance)`,
+  writing `SO` vs `S`) already use `sph_distance` -- the sphere's own
+  identity tolerance, exactly matching the D6 rule ("approximating a
+  surface as axis/origin-aligned uses that surface's own identity
+  tolerance") established earlier in this review. The only other
+  numeric literals in the write stage (`* 1e-3` for a volume unit
+  conversion, `< 1e-2` for a near-zero-density check) were already
+  explicitly excluded from this whole review from its very first batch
+  ("factors that are not tolerances... density < 1e-2... deliberately
+  left inline"). `q_form.py` and `string_functions.py` have no
+  tolerance literals at all. No code change, no verification needed.
+  **This closes the void/no-overlap/write context-by-context review.**
+  What remains open, not part of this review's original scope, is the
+  handful of individually-flagged lengths from earlier batches:
+  `LENGTH_TOL_E7` (a freecad-only kernel-API `isInside` query
+  parameter), `LENGTH_TOL_E8` (`surface_geometry.torus_sheet_sign` + 3
+  sites in `utils/build_shape_functions.py`, alongside `KERNEL_TOL_E8`),
+  and the degenerate-edge family `LENGTH_TOL_E5` (including
+  `same_curve`/`planar_edges`'s own use of it, flagged earlier as
+  "same value as `POINT_POINT_TOL`, a possible relabel" but never
+  measured).
 
 ## Reference docs
 
