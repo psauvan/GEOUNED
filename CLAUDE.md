@@ -1912,8 +1912,38 @@ gaps for whenever it's picked back up:
     **Verified**: suites ocp/occ 292 passed/2 skipped, freecad 263 passed/16
     skipped; against the original code, the SAME single diff as steps 1-2
     (`SCDR_90.stp`), zero new differences.
-    **Remaining**: steps 4-5 above (writer axis dispatch, the non-tolerance
-    duplicates) -- not started.
+    **Step 4 (writer axis dispatch), done 2026-09-22.** All 4 writers
+    (`mcnp_surface`/`open_mc_surface`/`serpent_surface`/`phits_surface`,
+    `GEOUNED/write/functions.py`) turned out to genuinely repeat the exact
+    same 3-way axis test for Plane/CylinderOnly/ConeOnly/TorusOnly (16 sites,
+    48 individual tests) -- unlike step 3's contact functions, this one
+    really was 4 copies of the same decision: verified every writer uses
+    `axes_same_direction` (not `axes_parallel`) for Plane specifically (the
+    written card's own classification, not just its text, depends on which
+    way the normal points) and `axes_parallel` for Cylinder/Cone/Torus
+    (only the axis LINE matters there) -- CONSISTENTLY across all 4, so this
+    distinction is a real, deliberate rule, not an inconsistency, and the
+    new shared helper takes it as an explicit `same_direction` flag rather
+    than guessing one behaviour for everyone. New
+    `geo.surface_geometry.axis_alignment(direction, angle_tol,
+    same_direction=False)` returns which cartesian axis (0/1/2) `direction`
+    is aligned to, or `None` -- each writer now computes it once per surface
+    and dispatches on the index; the actual per-axis FORMATTING (the
+    genuinely different part -- PX/CX/KX/TX vs OpenMC's `x-plane`/
+    `XPlane`/... vs Serpent's `px`/`cylx`/... vs PHITS' own MCNP-like
+    syntax) is untouched, per the agreed "one axis-family helper, each
+    writer only formats". Applied via a script processing each writer's
+    function body in isolation (not a blind file-wide find/replace) because
+    `mcnp_surface`/`open_mc_surface` share the exact same variable names
+    (`Dir`, `tolerances`) as each other, and a global substitution would
+    have silently cross-matched between them.
+    **Verified**: suites ocp/occ 292 passed/2 skipped, freecad 263
+    passed/16 skipped; against the original code, the SAME single diff as
+    steps 1-3 (`SCDR_90.stp`), zero new differences -- including in the
+    WRITTEN text of all 5 formats, confirming the 16-site substitution is
+    exactly behaviour-preserving.
+    **Remaining**: step 5 above (the non-tolerance duplicates) -- not
+    started.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
   (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
