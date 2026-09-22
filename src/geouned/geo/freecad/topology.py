@@ -42,7 +42,7 @@ from ..surface_geometry import (
 from ._native_utils import to_native_vector
 from ..io_utils import suppress_native_stdout
 from ..constants import (
-    ANGLE_TOL_5E2,
+    ANGLE_THRESHOLD,
     BOX_TOL,
     LENGTH_TOL_E6,
     LENGTH_TOL_E7,
@@ -137,7 +137,7 @@ class GPlane:
         if dl < NUMERIC_DOUBLE_TOL:
             return None  # parallel or coincident
 
-        if dl < ANGLE_TOL_5E2:  # well below the verified-safe 0.01 rad boundary
+        if dl < ANGLE_THRESHOLD:  # well below the verified-safe 0.01 rad boundary
             native1 = Part.Plane(to_native_vector(self.Position), to_native_vector(n1))
             native2 = Part.Plane(to_native_vector(other.Position), to_native_vector(n2))
             lines = native1.intersect(native2)
@@ -431,7 +431,7 @@ class GLine:
         w = other.Position - self.Position
         scale_ref = max(self.Position.length, other.Position.length, 1.0)
 
-        if crl < ANGLE_TOL_5E2:
+        if crl < ANGLE_THRESHOLD:
             native1 = Part.Line(to_native_vector(self.Position), to_native_vector(self.Position + d1))
             native2 = Part.Line(to_native_vector(other.Position), to_native_vector(other.Position + d2))
             pts = native1.intersect(native2)

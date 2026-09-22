@@ -30,7 +30,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
-from ...geo.constants import ANGLE_TOL_E6, NUMERIC_TOL, PARAM_ANGLE_TOL, REL_TOL_E2
+from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, REL_TOL_E2
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
@@ -114,7 +114,7 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
 
                 # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
                 cross = axis1.cross(axis2)
-                if cross.length > ANGLE_TOL_E6:
+                if cross.length > NUMERIC_DOUBLE_TOL:
                     dist = abs(cross.dot(p1 - p2)) / cross.length
                     if dist > tolerances.distance:
                         continue  # doesn't create plane if the axes are not close enough

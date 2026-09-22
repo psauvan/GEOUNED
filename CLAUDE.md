@@ -2324,6 +2324,43 @@ gaps for whenever it's picked back up:
   documented timeout/degenerate-geometry failure that doesn't decompose
   under either version, just a few seconds' difference in the timing
   text of its own error message).
+  **`ANGLE_TOL_*` family analyzed and cleaned up, 2026-09-23 (this was
+  the next commit's own batch -- `ae28e58` already covers everything
+  above this paragraph).** `ANGLE_TOL_E3`/`ANGLE_TOL_E4` were confirmed
+  100% dead code (zero real callers anywhere in the repo, only their
+  own definitions) and deleted outright. The 2 real sites of
+  `ANGLE_TOL_E6` turned out to be misclassified under its own docstring
+  ("angle tolerance between two 3D DIRECTIONS"): `decom_utils_generator.py`'s
+  own `cross = axis1.cross(axis2); if cross.length > ANGLE_TOL_E6` is
+  the exact same cross-product-of-two-unit-axes-near-zero "are these
+  parallel?" test already migrated to `NUMERIC_DOUBLE_TOL` at several
+  other sites in the previous batch -- missed there only because that
+  sweep searched for `ZERO_TOL_*` names specifically, not `ANGLE_TOL_E6`.
+  `surface_geometry.py::is_coaxial_cone_cylinder_pair`'s own
+  `semiangle_min` default (`abs(tan(cone.SemiAngle)) < semiangle_min`)
+  doesn't compare two directions either -- it tests a single surface's
+  own SemiAngle parameter for being numerically zero (a near-cylindrical
+  cone), the same "avoid a degenerate branch" role as every other
+  `NUMERIC_DOUBLE_TOL` site. Both moved there per the user's decision.
+  `ANGLE_TOL_E6` then had zero references left and was deleted.
+  `ANGLE_TOL_5E2` (the intersect_plane/intersect_line method-selection
+  threshold, confirmed NOT a tolerance in an earlier batch) was renamed
+  to `ANGLE_THRESHOLD` at the user's request, to stop it looking like
+  one of the tolerance family by name alone -- same value, same 6 call
+  sites (3 engines x 2 methods), no behaviour change.
+  `WINDING_ANGLE_TOL` (1 real site, `_closes_full_turn`) was confirmed
+  to be its own genuinely distinct role -- a 16-sample winding-angle
+  quantization tolerance, not a numeric-zero guard nor a direction
+  comparison -- and left untouched.
+  **Verified**: given this touches `is_coaxial_cone_cylinder_pair`
+  (historically fragile coaxial-cone code) with a 6-order-of-magnitude
+  tightening (1e-6 -> 1e-12, inherited from `NUMERIC_DOUBLE_TOL`'s own
+  already-decided value) -- learning directly from the
+  `SQUARED_LENGTH_TOL_E8` regression found earlier this same session --
+  a fresh 143-file before/after corpus differential was run
+  specifically for this change (not skipped): ocp suite 292 passed/1
+  skipped; **0 real differences** (same single pre-existing timeout
+  file as every other diff this session, unaffected).
 
 ## Reference docs
 

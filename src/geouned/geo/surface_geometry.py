@@ -24,7 +24,6 @@ from __future__ import annotations
 import math
 
 from .constants import (
-    ANGLE_TOL_E6,
     LENGTH_TOL_E6,
     NUMERIC_DOUBLE_TOL,
     REL_TOL_E2,
@@ -279,7 +278,7 @@ def is_coaxial_cone_pair(cone_1, cone_2, tolerances) -> bool:
     return radial < tolerances.kne_distance
 
 
-def is_coaxial_cone_cylinder_pair(cone, cylinder, tolerances, semiangle_min: float = ANGLE_TOL_E6) -> bool:
+def is_coaxial_cone_cylinder_pair(cone, cylinder, tolerances, semiangle_min: float = NUMERIC_DOUBLE_TOL) -> bool:
     """True when `cone` and `cylinder` share the same axis *line* (either
     axis direction) and `cone`'s SemiAngle is non-degenerate (not exactly
     0 or 90 degrees), so the cone genuinely reaches `cylinder.Radius` at

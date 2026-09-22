@@ -178,10 +178,7 @@ LENGTH_TOL_E8 = 1.0e-8
 SQUARED_LENGTH_TOL_E8 = 1.0e-8
 
 # Angle tolerance (rad) between two directions (also used for the sine of it: |unit x unit|).
-ANGLE_TOL_5E2 = 5.0e-2
-ANGLE_TOL_E4 = 1.0e-4
-ANGLE_TOL_E3 = 1.0e-3
-ANGLE_TOL_E6 = 1.0e-6
+ANGLE_THRESHOLD = 5.0e-2
 WINDING_ANGLE_TOL = 2.0e-3
 
 # Tolerance (rad, range 0-pi) on a surface (U, V) parameter or an arc/periodic angle -- a

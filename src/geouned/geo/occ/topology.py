@@ -102,7 +102,7 @@ from ._native_utils import (
     to_native_vector,
 )
 from ..constants import (
-    ANGLE_TOL_5E2,
+    ANGLE_THRESHOLD,
     BOX_TOL,
     KERNEL_TOL_E6,
     KERNEL_TOL_E7,
@@ -174,7 +174,7 @@ class GPlane:
         if dl < NUMERIC_DOUBLE_TOL:
             return None
 
-        if dl < ANGLE_TOL_5E2:
+        if dl < ANGLE_THRESHOLD:
             if self.__native__ is None or other.__native__ is None:
                 return None
             from OCC.Core.GeomAPI import GeomAPI_IntSS
@@ -405,7 +405,7 @@ class GLine:
         w = other.Position - self.Position
         scale_ref = max(self.Position.length, other.Position.length, 1.0)
 
-        if crl < ANGLE_TOL_5E2:
+        if crl < ANGLE_THRESHOLD:
             if self.__native__ is None or other.__native__ is None:
                 return None
             proj = GeomAPI_ProjectPointOnCurve(to_native_vector(self.Position), other.__native__)
