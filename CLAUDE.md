@@ -1841,8 +1841,37 @@ gaps for whenever it's picked back up:
     registry names replaced by the `geo` ones; the antiparallel-torus test
     flipped to assert equality; a new `check_a_sign` test); `test_numeric_contexts.py`'s
     cone/torus writer tests updated to import from `geo`.
-    **Remaining**: steps 2-5 above (parallel/sense, contact, writer axis
-    dispatch, the non-tolerance duplicates) -- not started.
+    **Step 2 (parallel/sense), done 2026-09-22**: `geo.is_parallel`/
+    `is_opposite` (the old, single-tolerance-default pair) and their
+    `GEOUNED.utils.basic_functions_part1` wrappers (`is_parallel`, plus
+    `is_in_line`/`is_in_plane`/`sign_plane`, which also delegated to
+    `surface_geometry`) are DELETED. Found, while tracing every call site
+    before touching anything, that `is_opposite`/`is_in_line`/`is_in_plane`/
+    `sign_plane` were already 100% dead across the whole repo (zero callers
+    anywhere, including GEOReverse -- `is_opposite`'s own last live callers
+    were migrated to `opposite_sense` back in the D1 step of the FIRST
+    tolerances batch): not really a "duplicate to unify" any more, just
+    confirmed-dead code found while looking here, removed the same way this
+    project has consistently treated dead code elsewhere (e.g. the old
+    `box_intersect`/`plane_region`/`operate_box`). `is_parallel` had exactly
+    6 remaining call sites, all in `geouned_classes.py` (the plane-bucket
+    dispatch, `PX`/`PY`/`PZ` vs axis and `get_id`'s equivalent), all already
+    passing an explicit tolerance (`self.tolerances.pln_angle`) -- switched
+    directly to `surface_geometry.axes_parallel` (module already imported
+    there), so there was no hidden-default behaviour to preserve or lose.
+    `geo/__init__.py`'s re-export list and `tests/geo/test_vector_geometry.py`
+    updated to match (8 tests for the deleted functions replaced by 1 for
+    `axes_parallel`/`opposite_sense`, which already have their own dedicated
+    tests in `test_same_surface_tolerances.py`).
+    **Verified**: suites ocp/occ 292 passed/2 skipped (299 minus the net 7
+    tests removed), freecad 263 passed/16 skipped; against the original
+    code, the SAME single diff as step 1 (`SCDR_90.stp`, already explained
+    and confirmed harmless with d1suned there) -- zero NEW differences, i.e.
+    `is_parallel` -> `axes_parallel` is exactly behaviour-preserving on this
+    corpus (the two differ only in `<` vs `<=` at the exact tolerance
+    boundary, never hit here).
+    **Remaining**: steps 3-5 above (contact, writer axis dispatch, the
+    non-tolerance duplicates) -- not started.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
   (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
