@@ -87,10 +87,10 @@ from ..constants import (
     FINITE_DIFF_STEP,
     MAX_REPAIR_VOLUME_REL_CHANGE,
     MIN_SLIVER_EDGE_LENGTH,
+    NUMERIC_DOUBLE_TOL,
     OCCT_FIX_TOLERANCE,
     POINT_POINT_TOL,
     REL_TOL_E6,
-    ZERO_TOL_E6,
 )
 from ..io_utils import suppress_native_stdout
 from ..surface_geometry import is_same_plane_surface
@@ -319,12 +319,12 @@ def _retrim_freed_quadrics(reduced_shape, drop_plane, keep_plane, tol):
         z1, z2 = z_at(v1), z_at(v2)
         if abs(z1 - drop_offset) <= abs(z2 - drop_offset):
             slope = (z_at(v1 + FINITE_DIFF_STEP) - z1) / FINITE_DIFF_STEP
-            if abs(slope) < ZERO_TOL_E6:
+            if abs(slope) < NUMERIC_DOUBLE_TOL:
                 continue
             v1 = v1 + (keep_offset - z1) / slope
         else:
             slope = (z_at(v2 + FINITE_DIFF_STEP) - z2) / FINITE_DIFF_STEP
-            if abs(slope) < ZERO_TOL_E6:
+            if abs(slope) < NUMERIC_DOUBLE_TOL:
                 continue
             v2 = v2 + (keep_offset - z2) / slope
         if v1 >= v2:

@@ -32,16 +32,14 @@ from ...geo.constants import (
     MESH_DEFLECTION,
     MIN_SLIVER_EDGE_LENGTH,
     NOT_PERPENDICULAR_COS_MIN,
+    NUMERIC_DOUBLE_TOL,
     NUMERIC_TOL,
-    PARAM_ANGLE_TOL_E4,
-    PARAM_ANGLE_TOL_E5,
+    PARAM_ANGLE_TOL,
     POINT_POINT_TOL,
     REL_TOL_E3,
     SIDE_FRACTION_GAP_MIN,
     SPLINE_PLANARITY_ANGLE,
     WINDING_ANGLE_TOL,
-    ZERO_TOL_E6,
-    ZERO_TOL_E9,
 )
 from ...geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction
 
@@ -498,7 +496,7 @@ def _loop_closes_full_turn(angle_of, oriented_edges):
             d += twoPi
         deltas.append(d)
 
-    nonzero = [d for d in deltas if abs(d) >= PARAM_ANGLE_TOL_E4]
+    nonzero = [d for d in deltas if abs(d) >= PARAM_ANGLE_TOL]
     if not nonzero:
         return False
 
@@ -552,7 +550,7 @@ def is_closed_cylinder_cone(shape):
 
     if type(shape) is not ShellFaceGu:
         umin, umax, vmin, vmax = shape.ParameterRange
-        return umax - umin > twoPi - PARAM_ANGLE_TOL_E5
+        return umax - umin > twoPi - PARAM_ANGLE_TOL
 
     Urange = []
     for f in shape.Faces:
@@ -574,14 +572,14 @@ def is_closed_cylinder_cone(shape):
     for umin, umax in Urange[1:]:
         if umax <= Umax:
             continue
-        elif umin - Umax < PARAM_ANGLE_TOL_E5:
+        elif umin - Umax < PARAM_ANGLE_TOL:
             angle += umax - Umax
             Umax = umax
-            if angle > twoPi - PARAM_ANGLE_TOL_E5:
+            if angle > twoPi - PARAM_ANGLE_TOL:
                 return True
         else:
             return False
-    return angle > twoPi - PARAM_ANGLE_TOL_E5
+    return angle > twoPi - PARAM_ANGLE_TOL
 
 
 def get_side_edges(cylinder_faces):
@@ -883,7 +881,7 @@ def gen_plane_cylinder(face_or_shell):
     axis = Faces[ifacemin].Surface.Axis
     cross = (V2 - V1).cross(axis)
     vmid = (V1 + V2) * 0.5
-    if cross.length < ZERO_TOL_E9:
+    if cross.length < NUMERIC_DOUBLE_TOL:
         # V1 == V2 (or V2-V1 happens to lie exactly along axis) -- the
         # closest-UV-node search picked the same point for both ends, a
         # real degenerate case confirmed live (2026-08-23,
@@ -1069,7 +1067,7 @@ def closed_circle_edge(planes):
     for p in planes:
         umin, umax = p.edge.ParameterRange
         angle += umax - umin
-    return abs(angle - 2 * math.pi) < PARAM_ANGLE_TOL_E5
+    return abs(angle - 2 * math.pi) < PARAM_ANGLE_TOL
 
 
 def most_outer_faces(cyl, faces, *, tolerances):
@@ -1214,7 +1212,7 @@ def eligible_plane(plane, tolerances):
             # vector would divide by zero. Leave it un-merged (append as
             # its own entry, matching the pre-merge behavior) rather than
             # crash or silently absorb a real degeneracy into a longer run.
-            if prev_vec.length < ZERO_TOL_E9 or cur_vec.length < ZERO_TOL_E9:
+            if prev_vec.length < NUMERIC_DOUBLE_TOL or cur_vec.length < NUMERIC_DOUBLE_TOL:
                 merged.append((e1, e2))
                 continue
             prev_dir = prev_vec.normalized()
@@ -1852,13 +1850,13 @@ def edge_1D(edge):
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
-    return edge.curvature(pe) < ZERO_TOL_E6
+    return edge.curvature(pe) < NUMERIC_TOL
 
 
 def spline_2D(edge):
     knots = edge.knots()
 
-    if edge.curvature(knots[0]) < ZERO_TOL_E6:
+    if edge.curvature(knots[0]) < NUMERIC_TOL:
         return False  # straight line
 
     d0 = edge.derivative1_at(knots[0])

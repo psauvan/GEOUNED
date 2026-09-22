@@ -18,7 +18,7 @@ from .meta_surfaces_utils import (
     eligible_plane,
     get_additional_corner_plane,
 )
-from ...geo.constants import LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
+from ...geo.constants import LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL
 from ...geo.surface_geometry import axes_parallel, axes_perpendicular
 from ...geo.surface_geometry import is_same_cylinder_surface
 
@@ -120,7 +120,7 @@ def get_fwdcan_surfaces(cylinder, solidFaces, *, tolerances):
 
         umin, umax, vmin, vmax = cylinder.ParameterRange
         angle = umax - umin
-        if abs(angle - twoPi) < PARAM_ANGLE_TOL_E5:
+        if abs(angle - twoPi) < PARAM_ANGLE_TOL:
             if p2s:
                 return (p1s, p2s), cylinder
             else:

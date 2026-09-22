@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from .constants import BOX_TOL, LENGTH_TOL_E12, PARAM_ANGLE_TOL_E5, POINT_POINT_TOL, REL_TOL_E6
+from .constants import BOX_TOL, LENGTH_TOL_E12, PARAM_ANGLE_TOL, POINT_POINT_TOL, REL_TOL_E6
 from .volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
@@ -550,7 +550,7 @@ class myBox:
 # ---------------------------------------------------------------------------
 
 
-def arc_extent(pairs: list[tuple[float, float]], tol: float = PARAM_ANGLE_TOL_E5) -> tuple[float, int, float, int]:
+def arc_extent(pairs: list[tuple[float, float]], tol: float = PARAM_ANGLE_TOL) -> tuple[float, int, float, int]:
     """
     Given a list of (a0, a1) angle pairs (a0 < a1, radians) that together
     trace exactly one open circular arc (total angular extent < 2*pi),

@@ -5,7 +5,7 @@ import logging
 import math
 
 from geouned.geo import surface_geometry
-from ...geo.constants import ZERO_TOL_E10
+from ...geo.constants import NUMERIC_DOUBLE_TOL
 
 logger = logging.getLogger("general_logger")
 
@@ -177,7 +177,7 @@ class GeounedSolid:
         if self.Rho is not None:
             self.Density = self.Rho * dilution
 
-    def check_intersection(self, solid, vtolerance=ZERO_TOL_E10):
+    def check_intersection(self, solid, vtolerance=NUMERIC_DOUBLE_TOL):
         """Check if solid intersect with current solid.
         return : -2 solid fully embedded in self.CADSolid ;
                  -1 self.CADSolid fully embedded in solid ;

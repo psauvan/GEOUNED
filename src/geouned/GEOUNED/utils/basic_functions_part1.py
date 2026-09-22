@@ -7,7 +7,7 @@ from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
 from ...geo import GSolid, GVector, Gin_contact
-from ...geo.constants import LENGTH_TOL_E6, NUMERIC_TOL, PARAM_ANGLE_TOL_E5
+from ...geo.constants import LENGTH_TOL_E6, NUMERIC_TOL, PARAM_ANGLE_TOL
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
@@ -41,9 +41,9 @@ def shapes_in_contact(shape1, shape2, tolerance=NUMERIC_TOL):
 
 def twoPimod(x):
     x = x % twoPi
-    if x < PARAM_ANGLE_TOL_E5:
+    if x < PARAM_ANGLE_TOL:
         return 0.0
-    elif twoPi - x < PARAM_ANGLE_TOL_E5:
+    elif twoPi - x < PARAM_ANGLE_TOL:
         return 0.0
     else:
         return x

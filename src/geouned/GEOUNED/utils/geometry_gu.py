@@ -23,7 +23,7 @@ from ...geo import (
     Gmake_shell,
     pick_outer_wire,
 )
-from ...geo.constants import PARAM_ANGLE_TOL_E5
+from ...geo.constants import PARAM_ANGLE_TOL
 from ...geo.constants import NUMERIC_TOL
 
 logger = logging.getLogger("general_logger")
@@ -282,7 +282,7 @@ class ShellFaceGu:
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
 
-        if abs(Umin - Umax) < PARAM_ANGLE_TOL_E5:
+        if abs(Umin - Umax) < PARAM_ANGLE_TOL:
             return 0, twoPi, 0, 0
         else:
             return Umin, Umax, ifacemin, ifacemax
@@ -454,12 +454,12 @@ def sort_range(Urange):
 
 
 def join_range(U0, U1):
-    if (U0[0] - U1[0] < PARAM_ANGLE_TOL_E5) and (-PARAM_ANGLE_TOL_E5 < U0[1] - U1[0]):
+    if (U0[0] - U1[0] < PARAM_ANGLE_TOL) and (-PARAM_ANGLE_TOL < U0[1] - U1[0]):
         if U1[1] > U0[1]:
             return (U0[0], U1[1])
         else:
             return U0
-    elif (U0[0] - U1[1] < PARAM_ANGLE_TOL_E5) and (-PARAM_ANGLE_TOL_E5 < U0[1] - U1[1]):
+    elif (U0[0] - U1[1] < PARAM_ANGLE_TOL) and (-PARAM_ANGLE_TOL < U0[1] - U1[1]):
         if U1[0] < U0[0]:
             return (U1[0], U0[1])
         else:
@@ -478,10 +478,10 @@ def adjust_range(U0, U1):
     V0 = [twoPimod(x) for x in U0]
     V1 = [twoPimod(x) for x in U1]
 
-    if abs(V0[0] - V1[1]) < PARAM_ANGLE_TOL_E5:
+    if abs(V0[0] - V1[1]) < PARAM_ANGLE_TOL:
         imin = 1  # U1[0]
         imax = 0  # U0[1]
-    elif abs(V1[0] - V0[1]) < PARAM_ANGLE_TOL_E5:
+    elif abs(V1[0] - V0[1]) < PARAM_ANGLE_TOL:
         imin = 0  # U0[0]
         imax = 1  # U1[1]
     elif V1[1] < V0[0]:

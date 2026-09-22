@@ -2,13 +2,11 @@
 # Set of useful functions used in different parts of the code
 #
 import logging
-import math
 
 
 from .data_classes import Options, NumericFormat
 from .basic_functions_part1 import is_in_tolerance
 from ..write.functions import mcnp_surface
-from ...geo.constants import PARAM_ANGLE_TOL_E5
 from ...geo.surface_geometry import (
     axes_parallel,
     cylinder_axis_offset,
@@ -115,26 +113,3 @@ def is_same_cylinder(
                 Fuzzy(fuzzy[1], "cylAxs", cyl1, cyl2, d, axis_tol, options, tolerances, numeric_format)
 
     return same
-
-
-def is_duplicate_in_list(num_str1, i, lista):
-    for j, elem2 in enumerate(lista):
-        if i == j:
-            continue
-        num_str2 = f"{elem2:11.4E}"
-        num_str3 = f"{elem2 + 2.0 * math.pi:11.4E}"
-        num_str4 = f"{elem2 - 2.0 * math.pi:11.4E}"
-
-        if abs(float(num_str2)) < PARAM_ANGLE_TOL_E5:
-            num_str2 = "%11.4E" % 0.0
-
-        if abs(float(num_str3)) < PARAM_ANGLE_TOL_E5:
-            num_str3 = "%11.4E" % 0.0
-
-        if abs(float(num_str4)) < PARAM_ANGLE_TOL_E5:
-            num_str4 = "%11.4E" % 0.0
-
-        if num_str1 == num_str2 or num_str1 == num_str3 or num_str1 == num_str4:
-            return True
-
-    return False

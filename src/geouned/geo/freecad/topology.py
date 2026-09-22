@@ -46,11 +46,9 @@ from ..constants import (
     BOX_TOL,
     LENGTH_TOL_E6,
     LENGTH_TOL_E7,
+    NUMERIC_DOUBLE_TOL,
     REL_TOL_E6,
     VOLUME_MIN_E8,
-    ZERO_TOL_E10,
-    ZERO_TOL_E12,
-    ZERO_TOL_E9,
 )
 from ..volume_utils import volume_within
 
@@ -136,7 +134,7 @@ class GPlane:
         n1, n2 = self.Axis, other.Axis
         d = n1.cross(n2)
         dl = d.length
-        if dl < ZERO_TOL_E10:
+        if dl < NUMERIC_DOUBLE_TOL:
             return None  # parallel or coincident
 
         if dl < ANGLE_TOL_5E2:  # well below the verified-safe 0.01 rad boundary
@@ -180,7 +178,7 @@ class GPlane:
         to fall back from.
         """
         denom = self.Axis.dot(line.Direction)
-        if abs(denom) < ZERO_TOL_E12:
+        if abs(denom) < NUMERIC_DOUBLE_TOL:
             return None
         t = self.Axis.dot(self.Position - line.Position) / denom
         return line.Position + line.Direction * t
@@ -427,7 +425,7 @@ class GLine:
         d1, d2 = self.Direction, other.Direction
         cr = d1.cross(d2)
         crl = cr.length
-        if crl < ZERO_TOL_E10:
+        if crl < NUMERIC_DOUBLE_TOL:
             return None  # parallel
 
         w = other.Position - self.Position
@@ -729,8 +727,8 @@ class GFace:
         inertial = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
         eigval = numpy.linalg.eigvalsh(inertial)
         rg_max = max(math.sqrt(e / self.Area) if e > 0 else 0.0 for e in eigval)
-        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > ZERO_TOL_E9 else float("inf")
-        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > ZERO_TOL_E9 else 0.0
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > NUMERIC_DOUBLE_TOL else float("inf")
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > NUMERIC_DOUBLE_TOL else 0.0
 
         # assigned later by whoever built the face list this face came
         # from (its position within the parent solid's face list, e.g.

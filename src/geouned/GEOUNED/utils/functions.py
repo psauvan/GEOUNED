@@ -3,7 +3,7 @@
 #
 import logging
 import math
-from ...geo.constants import LENGTH_TOL_E5, ZERO_TOL_E8
+from ...geo.constants import LENGTH_TOL_E5, SQUARED_LENGTH_TOL_E8
 
 logger = logging.getLogger("general_logger")
 
@@ -494,7 +494,7 @@ def build_can_params(cs, *, tolerances):
             a = cyl.Surface.Axis
             alpha = cp.dot(a)
             sqr = cp.dot(cp) - alpha * alpha
-            if abs(sqr) < ZERO_TOL_E8:
+            if abs(sqr) < SQUARED_LENGTH_TOL_E8:
                 adist = 0
             else:
                 adist = math.sqrt(sqr)

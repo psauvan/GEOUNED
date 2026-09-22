@@ -2129,6 +2129,201 @@ gaps for whenever it's picked back up:
   `same_curve`/`planar_edges`'s own use of it, flagged earlier as
   "same value as `POINT_POINT_TOL`, a possible relabel" but never
   measured).
+  **`GPlane.intersect_plane`/`intersect_line` (all 3 engines),
+  2026-09-22.** Read alongside the user, who classified every tolerance
+  in both methods directly: `ZERO_TOL_E10` (the `dl < ...` cross-product-
+  length-near-zero test in `intersect_plane`, deciding "are these two
+  planes parallel") and `ZERO_TOL_E12` (the `abs(denom) < ...` dot-
+  product-near-zero test in `intersect_line`, deciding "is this line
+  parallel to the plane") are BOTH the same `NUMERIC_DOUBLE_TOL` concept
+  as `KERNEL_TOL_E13`'s own 2026-09-22 rename (stage 4 above) -- a
+  double-precision arithmetic-zero floor -- so both call sites (6 total,
+  2 per engine) now use `NUMERIC_DOUBLE_TOL` (1e-13) directly, a real
+  tightening from their previous 1e-10/1e-12. `ZERO_TOL_E12` became
+  fully unused anywhere in the repo after this and was deleted from
+  `geo/constants.py`; `ZERO_TOL_E10` stays (still used by
+  `GLine.intersect_line`'s own, separate `crl < ...` check, not
+  discussed/touched here, and by `GeounedSolid.check_intersection`'s
+  `vtolerance` default from stage 5). `ANGLE_TOL_5E2` (the
+  well-conditioned-math vs. native-fallback method-selection threshold
+  in `intersect_plane`) was confirmed NOT a tolerance -- an algorithmic
+  threshold, correctly already a bare intrinsic constant, no
+  `Tolerances` field, left untouched. `KERNEL_TOL_E7` (the native
+  `GeomAPI_IntSS` intersector tolerance in the occ/ocp near-parallel
+  fallback branch) is a raw OCC/OCP kernel-API parameter introduced
+  early in the pyOCC migration -- left as-is for now, per the user
+  ("no controlo... lo dejamos asi por ahora").
+  **Verified**: suites ocp/occ 292 passed/1 skipped, freecad 263
+  passed/16 skipped (unchanged baseline); a full before/after corpus
+  differential (143 non-`Big_*` files of `Solidos/test_models`,
+  `rich_worker.py`: pieces/volume/primitive-surface/composite counts,
+  the current git HEAD vs. the live edited tree) -- **0 differences**,
+  confirming the 1e-10->1e-13 and 1e-12->1e-13 tightening changes no
+  real decomposition outcome on this corpus (both methods'
+  well-conditioned math already only activates once past
+  `ANGLE_TOL_5E2`, and real plane/line pairs in the corpus are either
+  clearly non-parallel or land in that intermediate zone -- none happen
+  to sit between the old and new zero-floors).
+  **`ZERO_TOL_E10` eliminated entirely, 2026-09-22** (direct follow-up,
+  same session): the user asked to trace every remaining call site and
+  replace each with the constant that actually represents its meaning,
+  rather than keep a generic catch-all name alive. Two more real sites
+  found: `GLine.intersect_line`'s own `crl < ZERO_TOL_E10` (all 3
+  engines) is the exact same cross-product-length-near-zero
+  "parallel?" test as `GPlane.intersect_plane`'s (just fixed above) --
+  swapped to `NUMERIC_DOUBLE_TOL`. `GeounedSolid.check_intersection`'s
+  `vtolerance=ZERO_TOL_E10` default (stage 5 of the void/no-overlap/
+  write review, already measured there: same "exact 0.0 or clearly
+  not" clean-gap pattern as everywhere else) is the same concept
+  applied to a relative-volume-embedding test instead of a direction
+  vector -- also swapped to `NUMERIC_DOUBLE_TOL`. With all 4 real call
+  sites (2 in `GPlane`, 1 in `GLine`, 1 in `check_intersection`) moved,
+  `ZERO_TOL_E10` had zero remaining references anywhere in the repo and
+  was deleted from `geo/constants.py`.
+  Also cleaned up in the same pass: the user directly deleted
+  `surface_geometry.torus_sheet_sign`'s own dead `tol: float =
+  LENGTH_TOL_E8` parameter (confirmed never read in the function's
+  body, a leftover default -- same pattern as `check_intersection`'s
+  already-removed `dtolerance`); its now-orphaned `LENGTH_TOL_E8`
+  import was dropped from `surface_geometry.py` (the constant itself
+  stays defined -- still 3 real uses in
+  `GEOUNED/utils/build_shape_functions.py`).
+  **A real, likely bug noticed while confirming `check_intersection`'s
+  real callers, NOT fixed, flagged for later**: `load_functions.py::
+  check_enclosure`'s `same_parent = dict()` is reset INSIDE the `for
+  encl in level:` loop (right before it's read by `check_overlap`) --
+  so by the time `for encl in same_parent.values(): check_overlap(encl)`
+  runs, each list holds only the LAST enclosure processed at that
+  level, never the full sibling group `check_overlap`'s own pairwise
+  loop (`enclosures[i+1:]`) needs to actually compare anything.
+  Confirmed this doesn't affect `check_intersection`'s own real-call
+  verification above (`w_encl.stp` only has 1 enclosure, so
+  `check_overlap`/the `not_embedded` chain walk were never exercised
+  there regardless -- the 5 real calls measured all came from
+  `assignEnclosure` instead, the third, unconditional-on-siblings call
+  site). Not verified against a real multi-enclosure fixture; not
+  fixed.
+  **Verification**: per direct user instruction, no test re-run or
+  corpus diff for this follow-up (unlike the `intersect_plane`/
+  `intersect_line`-in-`GPlane` change just above, which WAS a real
+  1e-10/1e-12 -> 1e-13 tightening verified with the 3 suites + a
+  143-file corpus differential -- this extension carries the same kind
+  of value change, at `GLine.intersect_line` and `check_intersection`,
+  just not independently re-verified at the time). Covered
+  retroactively by the combined batch differential below.
+  **The rest of the `ZERO_TOL_*` family eliminated, `NUMERIC_DOUBLE_TOL`
+  retuned to 1e-12, `PARAM_ANGLE_TOL_E4/E5` merged, 2026-09-22 (same
+  session, direct continuation).** Per the user's same instruction
+  ("en cada llamada ver que significado tiene y sustituirlo por la
+  variable que representa"), traced every remaining `ZERO_TOL_E6/E8/E9`
+  call site (8 for E9 alone: `geo/*/topology.py`'s `rg_max` division
+  guard in `Compactness`/`CharacteristicWidth`, `surface_geometry.py`'s
+  quadratic-coefficient and cross-product-of-axes guards,
+  `meta_surfaces_utils.py`'s cross-product/edge-vector-length guards,
+  `geo/{occ,ocp}/split_coaxial_cone.py`'s periodic-U-difference and
+  `tan(semi-angle)` guards) and classified each: all 8 are the same
+  "avoid a division/degenerate branch on a value that should be exactly
+  zero only in a genuine degenerate case" role as `KERNEL_TOL_E13`'s own
+  rename -> all moved to `NUMERIC_DOUBLE_TOL`. Per the user's explicit
+  decision, `NUMERIC_DOUBLE_TOL` itself was retuned from `1e-13` to
+  `1e-12` at the same time (a global value change affecting every one of
+  its call sites, not just the new ones). `ZERO_TOL_E6`'s 6 sites split
+  by real role instead of one blanket rename (matching the user's own
+  per-site read): the 2 curvature-near-zero "is this edge straight"
+  checks in `meta_surfaces_utils.py` (`edge_1D`/`spline_2D`) went to
+  `NUMERIC_TOL` (a real geometric classification decision, the user's
+  own call after inspecting the code); the 4 finite-difference-slope
+  division guards in `geo/{occ,ocp}/repair.py` went to
+  `NUMERIC_DOUBLE_TOL` instead (a different role -- avoiding a division
+  by a computed slope, not a classification -- confirmed by reading each
+  site before applying, not by pattern-matching the file/selection).
+  `ZERO_TOL_E9`/`E10`/`E12` all reached zero remaining references and
+  were deleted from `geo/constants.py`; `ZERO_TOL_E6`/`E8` likewise once
+  their own sole surviving site (`functions.py`'s `sqr` guard, see the
+  regression below) moved off them too -- the entire `ZERO_TOL_*` family
+  is now gone from the codebase.
+  **A real regression found and fixed via the corpus differential**:
+  `GEOUNED/utils/functions.py::build_can_params`'s own
+  `sqr = cp.dot(cp) - alpha*alpha; adist = sqrt(sqr) if abs(sqr) >=
+  tol else 0` (the cone-apex-to-cylinder-axis perpendicular distance,
+  for a Can's own cone/cylinder pairing) used `ZERO_TOL_E8` (1e-8) --
+  migrated to `NUMERIC_DOUBLE_TOL` (by then 1e-12) along with the other
+  8 sites, following the same role reasoning. This broke 2 real
+  fixtures: `Cans/fwd_can_1.stp`/`rev_can_1.stp` started raising
+  `ValueError: math domain error` (caught by a 143-file before/after
+  corpus differential, `rich_worker.py`, run specifically because this
+  batch's value jump -- up to 4 orders of magnitude in places -- was
+  flagged as higher-risk than earlier single-method changes). Root
+  cause, confirmed by direct reproduction and a corpus-wide measurement
+  of every real `sqr` value reaching this line (274,119 samples, all
+  143 files): `sqr` is a subtraction of two LARGE, near-equal mm^2
+  quantities (`cp.dot(cp)` and `alpha*alpha`), which carries far more
+  catastrophic-cancellation noise than a unit-vector cross/dot product
+  or a plain length -- the real residual on both failing fixtures is
+  exactly `-7.275957614183426e-12`, above the new 1e-12 floor but 4
+  orders of magnitude below the old 1e-8 one; every OTHER near-zero
+  sample of this same quantity across the whole corpus is genuine noise
+  at a completely different scale (1e-93..1e-62), so there is a wide,
+  clean, well-measured gap to place a dedicated value in. **Per the
+  user's own decision** (given 3 options -- a dedicated constant, a
+  plain revert, or loosening `NUMERIC_DOUBLE_TOL` globally -- chose the
+  dedicated constant): new `SQUARED_LENGTH_TOL_E8 = 1.0e-8` in
+  `geo/constants.py` (mm^2, NOT mm -- explicitly documented as a
+  different role from the existing, same-VALUE-but-different-UNITS
+  `LENGTH_TOL_E8`, so as not to conflate a length tolerance with a
+  squared-length cancellation guard), restoring the original,
+  long-proven 1e-8 value with a 4-order-of-magnitude margin over the
+  measured real residual. This is the one `ZERO_TOL_E8` site that does
+  NOT fit `NUMERIC_DOUBLE_TOL`'s role, despite superficially looking
+  like the same "guards a division" pattern as the other 8 -- the
+  underlying arithmetic (difference of two large squares vs. a
+  unit-scale dot/cross product) genuinely differs in how much
+  floating-point noise it carries, which is exactly why this session's
+  own "read every call site's real meaning, don't pattern-match" rule
+  exists.
+  Also found and deleted in the same pass, unrelated to tolerances:
+  `GEOUNED/utils/basic_functions_part2.py::is_duplicate_in_list` --
+  confirmed via a full-repo grep to have ZERO callers anywhere
+  (including tests), 100% dead code; deleted along with its
+  now-orphaned `math`/`PARAM_ANGLE_TOL_E5` imports. Deleting it
+  surfaced a second, unrelated, pre-existing dead-code bug the IDE's
+  own unreachable-code diagnostic caught: `is_same_cylinder` (the
+  function immediately above it) had a stray, unreachable `return False`
+  sitting right after its own real `return same` -- removed too.
+  **`PARAM_ANGLE_TOL_E4`/`PARAM_ANGLE_TOL_E5` merged into one
+  `PARAM_ANGLE_TOL = 1.0e-5`**, per the user's own reasoning ("es una
+  tolerancia de angulo 0-pi") -- both were already documented under the
+  same role ("Tolerance (rad) on surface (U, V) parameters and arc
+  angles"), genuinely distinct from `ANGLE_TOL_*`'s own role ("angle
+  between two 3D DIRECTIONS") despite `PARAM_ANGLE_TOL_E4`'s value
+  coinciding with `ANGLE_TOL_E4`'s by accident. 11 call sites across
+  `meta_surfaces_utils.py` (6), `vector_geometry.py::arc_extent`,
+  `basic_functions_part1.py::twoPimod`, `geometry_gu.py` (5), and
+  `meta_surfaces.py` moved to the merged name. Per the user's explicit
+  follow-up instruction, `decom_utils_generator.py::torus_bound_planes`'s
+  own `is_same_value(params[1]-params[0], twoPi, NUMERIC_TOL)` (the
+  torus face's own full-turn-parameter check -- flagged by name in this
+  same file's earlier "Comparison contexts" entry) was switched to
+  `PARAM_ANGLE_TOL` too, since it's exactly this role, not the
+  same-solid-contact role `NUMERIC_TOL` is for. The SAME file's other
+  `NUMERIC_TOL` use (`axes_parallel(dir, face.Surface.Axis, NUMERIC_TOL)`,
+  a real 3D-direction comparison) was deliberately left untouched, as
+  was `geometry_gu.py::merge_periodic_uv`'s own several NUMERIC_TOL-based
+  full-turn checks (an established, distinct, deliberate design decision
+  from an earlier batch -- "the parameters come from the same solid's
+  own faces, so they carry the same numbers" -- not touched without
+  being asked).
+  **Verified, combined for the whole follow-up batch (ZERO_TOL_E6/E8/E9/
+  E10/E12 elimination, NUMERIC_DOUBLE_TOL retune, PARAM_ANGLE_TOL merge,
+  the SQUARED_LENGTH_TOL_E8 fix, both dead-code deletions)**: ocp suite
+  292 passed/1 skipped (occ/freecad deferred to the end of the session
+  per the user's own standing instruction for this session); a 143-file
+  before/after corpus differential against the pre-session commit
+  (`666fbef`) -- **0 real differences** (the one remaining diff,
+  `Decomposed/SCDR_90_piece2.stp`, is the same pre-existing, already-
+  documented timeout/degenerate-geometry failure that doesn't decompose
+  under either version, just a few seconds' difference in the timing
+  text of its own error message).
 
 ## Reference docs
 

@@ -167,6 +167,16 @@ LENGTH_TOL_E6 = 1.0e-6
 LENGTH_TOL_E7 = 1.0e-7
 LENGTH_TOL_E8 = 1.0e-8
 
+# Zero floor (mm^2, NOT mm) for a squared-length difference before a sqrt (e.g. a
+# perpendicular-distance-squared obtained as |v|^2 - (v.axis)^2): this subtraction of two
+# large, near-equal mm^2 quantities carries far more catastrophic-cancellation noise than a
+# plain length or a unit-vector dot/cross product, so it needs its own, looser floor --
+# confirmed 2026-09-22, cone-apex/cylinder-axis distance in build_can_params: real residual
+# -7.3e-12 on Cans/fwd_can_1.stp+rev_can_1.stp (raises ValueError: math domain error under
+# NUMERIC_DOUBLE_TOL=1e-12), 4 orders of magnitude below this floor; every other near-zero
+# sample of the same quantity across the 143-file corpus is genuine noise at 1e-93..1e-62.
+SQUARED_LENGTH_TOL_E8 = 1.0e-8
+
 # Angle tolerance (rad) between two directions (also used for the sine of it: |unit x unit|).
 ANGLE_TOL_5E2 = 5.0e-2
 ANGLE_TOL_E4 = 1.0e-4
@@ -174,17 +184,11 @@ ANGLE_TOL_E3 = 1.0e-3
 ANGLE_TOL_E6 = 1.0e-6
 WINDING_ANGLE_TOL = 2.0e-3
 
-# Tolerance (rad) on surface (U, V) parameters and arc angles.
-PARAM_ANGLE_TOL_E4 = 1.0e-4
-PARAM_ANGLE_TOL_E5 = 1.0e-5
-
-# Numerical-zero floor of an intermediate quantity (denominator, slope, curvature, ...): guards a
-# division or a degenerate branch, not a geometric tolerance.
-ZERO_TOL_E10 = 1.0e-10
-ZERO_TOL_E12 = 1.0e-12
-ZERO_TOL_E6 = 1.0e-6
-ZERO_TOL_E8 = 1.0e-8
-ZERO_TOL_E9 = 1.0e-9
+# Tolerance (rad, range 0-pi) on a surface (U, V) parameter or an arc/periodic angle -- a
+# 1D position/extent in parameter space, NOT the angle between two 3D directions (that is
+# ANGLE_TOL_*'s own, separate role). Was two values (1e-4/1e-5) for the same role; unified
+# 2026-09-22.
+PARAM_ANGLE_TOL = 1.0e-5
 
 # Absolute floor (mm) for a *relative* surface-matching tolerance (`Tolerances.relativeTol=True`). Those tolerances
 # are `rel * scale`, which is exactly 0 for a surface anchored at the origin (or at another zero-scale reference) --
@@ -204,12 +208,18 @@ REL_TOL_E6 = 1.0e-6
 VOLUME_MIN_E8 = 1.0e-8
 
 # The smallest meaningful nonzero value a double-precision arithmetic result can carry --
-# below this, a computed quantity (a relative distance, a relative volume difference) is
-# numerical round-off, not a real geometric feature. Used both as a kernel-operation
-# tolerance floor (geo/freecad/split.py's split-retry floor) and as the "effectively zero"
+# below this, a computed quantity (a relative distance, a relative volume difference, a
+# cross-product/coefficient/parameter-difference guarding a division or a degenerate
+# branch) is numerical round-off, not a real geometric feature. Used as a kernel-operation
+# tolerance floor (geo/freecad/split.py's split-retry floor), as the "effectively zero"
 # cutoff for relative geometric decisions (VoidBox.piece_enclosure_split's contact/
-# containment tests).
-NUMERIC_DOUBLE_TOL = 1.0e-13
+# containment tests, GeounedSolid.check_intersection's volume-embedding test), for
+# near-parallel/degenerate direction tests (GPlane/GLine's own intersect_plane/
+# intersect_line), and for every other division/degenerate-branch guard formerly split
+# across ZERO_TOL_E9/E10/E12 (RadiusOfGyration, quadratic coefficients, edge/cross-product
+# lengths, periodic-parameter differences, tan(semi-angle)) -- all of these are the same
+# concept, not independently-tuned tolerances, so they share this one constant.
+NUMERIC_DOUBLE_TOL = 1.0e-12
 
 # Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
 KERNEL_TOL_E3 = 1.0e-3

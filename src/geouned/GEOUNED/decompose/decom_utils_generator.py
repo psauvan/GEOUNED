@@ -30,7 +30,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
-from ...geo.constants import ANGLE_TOL_E6, NUMERIC_TOL, REL_TOL_E2
+from ...geo.constants import ANGLE_TOL_E6, NUMERIC_TOL, PARAM_ANGLE_TOL, REL_TOL_E2
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
@@ -39,7 +39,7 @@ logger = logging.getLogger("general_logger")
 def torus_bound_planes(solidFaces, face, *, tolerances):
     params = face.ParameterRange
     planes = []
-    if is_same_value(params[1] - params[0], twoPi, NUMERIC_TOL):
+    if is_same_value(params[1] - params[0], twoPi, PARAM_ANGLE_TOL):
         return planes
 
     Edges = face.OuterWire.Edges

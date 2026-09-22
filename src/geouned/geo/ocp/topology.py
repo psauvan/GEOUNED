@@ -109,11 +109,9 @@ from ..constants import (
     KERNEL_TOL_E7,
     LENGTH_TOL_E6,
     MESH_DEFLECTION,
+    NUMERIC_DOUBLE_TOL,
     REL_TOL_E6,
     VOLUME_MIN_E8,
-    ZERO_TOL_E10,
-    ZERO_TOL_E12,
-    ZERO_TOL_E9,
 )
 from ..volume_utils import volume_within
 
@@ -167,7 +165,7 @@ class GPlane:
         n1, n2 = self.Axis, other.Axis
         d = n1.cross(n2)
         dl = d.length
-        if dl < ZERO_TOL_E10:
+        if dl < NUMERIC_DOUBLE_TOL:
             return None
 
         if dl < ANGLE_TOL_5E2:
@@ -204,7 +202,7 @@ class GPlane:
     def intersect_line(self, line: "GLine") -> GVector | None:
         """See _freecad_impl.py's own docstring -- pure GVector math, no native fallback needed."""
         denom = self.Axis.dot(line.Direction)
-        if abs(denom) < ZERO_TOL_E12:
+        if abs(denom) < NUMERIC_DOUBLE_TOL:
             return None
         t = self.Axis.dot(self.Position - line.Position) / denom
         return line.Position + line.Direction * t
@@ -390,7 +388,7 @@ class GLine:
         d1, d2 = self.Direction, other.Direction
         cr = d1.cross(d2)
         crl = cr.length
-        if crl < ZERO_TOL_E10:
+        if crl < NUMERIC_DOUBLE_TOL:
             return None
 
         w = other.Position - self.Position
@@ -705,7 +703,7 @@ class GFace:
         # closest pair.
         principal = props.PrincipalProperties()
         rg_max = max(principal.RadiusOfGyration())
-        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > ZERO_TOL_E9 else float("inf")
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > NUMERIC_DOUBLE_TOL else float("inf")
         # The face's own true short physical dimension ("width"), derived
         # from the same RG_max: for a rectangle of length L and width W,
         # RG_max == L/sqrt(12) exactly, so W == Area/(RG_max*sqrt(12)) --
@@ -724,7 +722,7 @@ class GFace:
         # own docstring for the full corpus-wide verification: every real
         # face in a 109-file/1733-face scan has width >=0.19mm, every
         # known sliver <=0.055mm).
-        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > ZERO_TOL_E9 else 0.0
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > NUMERIC_DOUBLE_TOL else 0.0
 
         self.index: int | None = None
         self.__wires__: "list[GWire] | None" = None

@@ -26,11 +26,10 @@ import math
 from .constants import (
     ANGLE_TOL_E6,
     LENGTH_TOL_E6,
-    LENGTH_TOL_E8,
+    NUMERIC_DOUBLE_TOL,
     REL_TOL_E2,
     REL_TOL_E3,
     RELATIVE_TOL_ABS_FLOOR,
-    ZERO_TOL_E9,
 )
 from .vector_geometry import GVector
 
@@ -402,7 +401,7 @@ def is_inside_torus(point: GVector, torus) -> bool:
     return rp > torus.MinorRadius
 
 
-def torus_sheet_sign(vertex: GVector, torus, tol: float = LENGTH_TOL_E8) -> int:
+def torus_sheet_sign(vertex: GVector, torus) -> int:
     """For a self-intersecting (degenerate: MinorRadius > MajorRadius)
     torus, +1 if `vertex` lies on the ordinary outer sheet, -1 if on the
     pinched, self-intersecting inner sheet -- these are two genuinely
@@ -496,7 +495,7 @@ def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None
     None if there are 0 real roots, or if the equation degenerates to
     non-quadratic (a ~ 0) -- the caller needs a genuine entry/exit pair,
     not a single crossing."""
-    if abs(a) < ZERO_TOL_E9:
+    if abs(a) < NUMERIC_DOUBLE_TOL:
         return None
     disc = b * b - 4.0 * a * c
     if disc < 0.0:
@@ -616,7 +615,7 @@ def find_can_plane(
         normal = A
     else:
         n_common = A.cross(secondary_axis)
-        if n_common.length < ZERO_TOL_E9:
+        if n_common.length < NUMERIC_DOUBLE_TOL:
             normal = A  # axes (near-)parallel -- common plane undefined
         else:
             normal = secondary_axis.cross(n_common.normalized()).normalized()

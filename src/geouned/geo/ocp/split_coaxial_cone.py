@@ -43,7 +43,7 @@ from ..surface_geometry import (
 from .topology import GCone, GCylinder, GFace, GSolid
 from ._native_utils import to_native_vector
 from .primitives import Gmake_shell, Gmake_solid
-from ..constants import KERNEL_TOL_E6, REL_TOL_E3, REL_TOL_E6, ZERO_TOL_E9
+from ..constants import KERNEL_TOL_E6, NUMERIC_DOUBLE_TOL, REL_TOL_E3, REL_TOL_E6
 from ..volume_utils import volume_within
 
 
@@ -159,7 +159,7 @@ def _split_face_at_v_line(native_face, native_cone_surf, point_a: GVector, point
     v_common = (uv_a.Y() + uv_b.Y()) / 2.0
     line2d = Geom2d_Line(gp_Pnt2d(0.0, v_common), gp_Dir2d(1.0, 0.0))
     u_lo, u_hi = sorted([uv_a.X(), uv_b.X()])
-    if u_hi - u_lo < ZERO_TOL_E9:
+    if u_hi - u_lo < NUMERIC_DOUBLE_TOL:
         # point_a/point_b project to (numerically) the same U on this
         # surface -- e.g. a periodic (cylinder/cone) surface where the two
         # candidate crossings differ by a full 2*pi wrap and so coincide
@@ -267,7 +267,7 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
         for other_face in group:
             cylinder = other_face.Surface
             tan_semi = math.tan(tool_cone.SemiAngle)
-            if abs(tan_semi) < ZERO_TOL_E9:
+            if abs(tan_semi) < NUMERIC_DOUBLE_TOL:
                 continue
             axis = tool_cone.Axis.normalized()
             t = cylinder.Radius / abs(tan_semi)
