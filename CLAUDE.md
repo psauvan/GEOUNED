@@ -1942,8 +1942,52 @@ gaps for whenever it's picked back up:
     steps 1-3 (`SCDR_90.stp`), zero new differences -- including in the
     WRITTEN text of all 5 formats, confirming the 16-site substitution is
     exactly behaviour-preserving.
-    **Remaining**: step 5 above (the non-tolerance duplicates) -- not
-    started.
+    **Step 5 (non-tolerance duplicates), narrowed after investigation, one
+    safe piece done 2026-09-22, the rest deliberately left.** The census
+    entry's own boolean-string sub-item needed the same correction as steps
+    1 and 3: `outer_terms`/`redundant`/`is_integer` were already unified
+    2026-09-12 into `boolean_utils/boolean_expression_parser.py` (its own
+    docstring says so); what the structural scan actually found were 2
+    genuinely different things wearing the same names:
+    - `GEOUNED/write/string_functions.py`'s own `redundant(m, geom)` was
+      confirmed BYTE-IDENTICAL to the canonical one (only cosmetic variable
+      renames, `left_ok`/`right_ok` vs `leftOK`/`rightOK`) -- a real, safe
+      duplicate. Replaced with an import from `boolean_utils`; its own copy
+      deleted. `remove_redundant` (which has no canonical twin -- it is a
+      genuinely different, string_functions-only operation: simplifying a
+      GEOUNED-written geometry string for output, not parsing MCNP input
+      text into a `BoolSequence`) is untouched, still calls `redundant`.
+    - `GEOReverse/Modules/MCNP_parser/remh.py`'s own free `redundant(m,
+      geom)` and its `Cline.outer_terms`/`Cline.remove_redundant`/
+      `Cline.countP` METHODS are a genuinely different, coupled layer, NOT
+      simple duplicates of the free functions: `remh.py`'s `redundant` has
+      a real extra check the canonical one lacks (`#`/hash-complement-
+      operator awareness, needed by its own `complementary()` text
+      transform); `Cline.remove_redundant` carries GEOReverse-specific
+      state (comment removal/restoration, a before/after paren-count diff
+      in `self.removedp`, an MCNP-complex-cell-wrapping option). Left
+      entirely as-is: forcing these into the shared free-function shape
+      would be a real `Cline`-architecture refactor, not a deduplication,
+      and touches the same historically fragile, load-bearing text-parsing
+      code this project has explicitly been cautious with before (see the
+      BoolSequence unification entry above).
+    - The remaining census sub-items (GEOReverse MCNP/XML parser twins,
+      the exotic-quadric `is_inside` copied in the 3 engine files,
+      `points_to_coeffs` in `MCNPinput.py` vs `basic_functions_part1.py`)
+      are ALL entirely or mostly GEOReverse-side code -- out of scope per
+      this project's own standing priority ("GEOReverse debugging work in
+      general is deliberately paused... do not start GEOReverse-side
+      debugging unless asked", see "Current status" above). Not
+      investigated further; flagged here instead of silently expanding
+      into paused work.
+    **Verified**: suites ocp/occ 292 passed/2 skipped, freecad 263
+    passed/16 skipped; against the original code, the SAME single diff as
+    steps 1-4 (`SCDR_90.stp`), zero new differences.
+    **This closes the duplicated-functions unification for now** -- every
+    item that was genuinely GEOUNED-side and genuinely a duplicate (steps
+    1-4, plus this one small piece of step 5) is done; what remains is
+    either GEOReverse-side (paused) or not a real duplicate once read
+    carefully.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
   (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
