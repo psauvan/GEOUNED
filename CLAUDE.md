@@ -1870,8 +1870,50 @@ gaps for whenever it's picked back up:
     `is_parallel` -> `axes_parallel` is exactly behaviour-preserving on this
     corpus (the two differ only in `<` vs `<=` at the exact tolerance
     boundary, never hit here).
-    **Remaining**: steps 3-5 above (contact, writer axis dispatch, the
-    non-tolerance duplicates) -- not started.
+    **Step 3 (contact), done 2026-09-22 -- narrower than the original census
+    entry.** The census had lumped `contiguous_face`/`commonEdgeFace`/
+    `commonVertex`/`separate_surfaces` together as "the same
+    `distance <= NUMERIC_TOL` written four times"; reading each one found
+    that's only true for HALF of them:
+    - `commonEdgeFace`'s own face-level pre-filter and `SolidGu.separate_surfaces`'s
+      pairwise grouping check both genuinely compare `FaceGu.distToShape(...)
+      < NUMERIC_TOL` (both already go through the identical
+      `GFace.my_distToshape` underneath) -- a real, safe duplicate. Factored
+      into one `geometry_gu.faces_touch(face1, face2)`, used by both. Pure
+      deduplication, confirmed zero behaviour change (identical formula,
+      identical constant already).
+    - `contiguous_face` and `commonVertex`'s own pre-filters are NOT the same
+      mechanism, even though both nominally check "close within NUMERIC_TOL":
+      `contiguous_face` calls `GEdge.my_distToshape` (BoundBox slack =
+      the fixed `BOX_TOL`, then a real edge-edge distance or, if the boxes
+      don't overlap, a coarse box-centre-distance); `commonVertex` calls
+      `shapes_in_contact` -> `Gin_contact` (BoundBox slack = the CALLER's
+      own tolerance, i.e. `NUMERIC_TOL` itself -- 100x tighter than `BOX_TOL`
+      -- then a real `BRepExtrema_DistShapeShape` query). Left as two
+      separate mechanisms: `commonVertex` turned out to have ZERO real
+      exercises anywhere in the 173-file corpus (its one caller,
+      `functions.py`'s MultiPlane vertex computation, never reaches it on
+      this data), so there is no evidence either way whether swapping it to
+      `my_distToshape` would ever change a real decision -- not changed
+      without data, per this project's own "measure, don't guess" rule.
+    - Separately noted, NOT changed: `separate_surfaces` still does the
+      whole-FACE `distToShape` (which for overlapping bounding boxes runs a
+      real `BRepAlgoAPI_Common`) where `contiguous_face` already switched to
+      the cheaper edge-to-edge `my_distToshape` for the identical kind of
+      task (grouping fragments of one analytic surface into connected
+      pieces) after a real, documented profiling bottleneck on
+      `hylife-v06.stp`. Measured: every torus group `separate_surfaces`
+      processes in the corpus has <= 5 faces (170 groups of 1, 27 of 2, 6 of
+      3, 2 of 5) -- the O(n^2) whole-face cost is never actually exercised
+      at a scale that would matter here, so this is flagged as a possible
+      future optimisation, not acted on (no evidence of a real problem, and
+      changing the algorithm -- not just its name -- is a different kind of
+      change than the deduplication this step is about).
+    **Verified**: suites ocp/occ 292 passed/2 skipped, freecad 263 passed/16
+    skipped; against the original code, the SAME single diff as steps 1-2
+    (`SCDR_90.stp`), zero new differences.
+    **Remaining**: steps 4-5 above (writer axis dispatch, the non-tolerance
+    duplicates) -- not started.
   **Still open**: void, no-overlap and write stages of the review; the
   remaining lengths that are neither identity nor point-to-point
   (`LENGTH_TOL_E7/E8`, the degenerate-edge family `LENGTH_TOL_E5`).
