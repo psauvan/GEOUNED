@@ -41,7 +41,6 @@ from .build_shape_functions import (
     makeRoundCorner,
     makeMultiRoundCorner,
 )
-from .basic_functions_part1 import is_parallel
 from ...geo.surface_geometry import is_same_oriented_plane_surface, opposite_sense
 from ...geo import (
     CAD_ENGINE,
@@ -1424,7 +1423,7 @@ class SurfacesDict(dict):
         ey = GVector(0, 1, 0)
         ez = GVector(0, 0, 1)
 
-        if is_parallel(plane.Surf.Axis, ex, self.tolerances.pln_angle):
+        if surface_geometry.axes_parallel(plane.Surf.Axis, ex, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PX"]):
                 if is_same_plane(
@@ -1448,7 +1447,7 @@ class SurfacesDict(dict):
                 self["PX"].append(plane)
                 self.__surfIndex__["PX"].append(plane.bVar)
 
-        elif is_parallel(plane.Surf.Axis, ey, self.tolerances.pln_angle):
+        elif surface_geometry.axes_parallel(plane.Surf.Axis, ey, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PY"]):
                 if is_same_plane(
@@ -1472,7 +1471,7 @@ class SurfacesDict(dict):
                 self["PY"].append(plane)
                 self.__surfIndex__["PY"].append(plane.bVar)
 
-        elif is_parallel(plane.Surf.Axis, ez, self.tolerances.pln_angle):
+        elif surface_geometry.axes_parallel(plane.Surf.Axis, ez, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PZ"]):
                 if is_same_plane(
@@ -1622,11 +1621,11 @@ class SurfacesDict(dict):
     def get_id(self, facein):
 
         if facein.Type == "Plane":
-            if is_parallel(facein.Surf.Axis, GVector(1, 0, 0), self.tolerances.pln_angle):
+            if surface_geometry.axes_parallel(facein.Surf.Axis, GVector(1, 0, 0), self.tolerances.pln_angle):
                 p = "PX"
-            elif is_parallel(facein.Surf.Axis, GVector(0, 1, 0), self.tolerances.pln_angle):
+            elif surface_geometry.axes_parallel(facein.Surf.Axis, GVector(0, 1, 0), self.tolerances.pln_angle):
                 p = "PY"
-            elif is_parallel(facein.Surf.Axis, GVector(0, 0, 1), self.tolerances.pln_angle):
+            elif surface_geometry.axes_parallel(facein.Surf.Axis, GVector(0, 0, 1), self.tolerances.pln_angle):
                 p = "PZ"
             else:
                 p = "P"

@@ -47,10 +47,6 @@ from .io_utils import GLabelNode
 from .surface_geometry import (
     cylinder_tangent_at,
     cylinder_value_at,
-    is_in_line,
-    is_in_plane,
-    is_opposite,
-    is_parallel,
     is_parallel_plane_surface,
     is_same_cone_surface,
     is_same_cylinder_surface,
@@ -60,7 +56,6 @@ from .surface_geometry import (
     is_same_value,
     plane_tangent_at,
     plane_value_at,
-    sign_plane,
     convex_planes,
 )
 from .solid_defects import (

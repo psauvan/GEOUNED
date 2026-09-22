@@ -265,10 +265,11 @@ def test_opposite_sense_is_the_sign_of_the_dot_product():
 
 def test_opposite_sense_does_not_depend_on_any_tolerance():
     # a plane matched with add_pln_angle (1e-2) and tilted 5e-3 rad, antiparallel: still recognised as reversed,
-    # which is_opposite(., ., pln_angle=1e-4) used to miss
+    # which an angle-tolerance-based "is this close to exactly antiparallel" test (the removed `is_opposite`, whose
+    # own default tolerance was 1e-3 rad) would have missed at pln_angle=1e-4
     tilted_reversed = GVector(math.sin(5e-3), 0.0, -math.cos(5e-3))
     assert opposite_sense(Z, tilted_reversed)
-    assert not sg.is_opposite(Z, tilted_reversed, 1e-4)
+    assert Z.angle_to(-tilted_reversed) > 1e-4  # what the removed is_opposite(., ., 1e-4) would have tested
 
 
 # ---------------------------------------------------------------------------

@@ -6,16 +6,13 @@ import pytest
 from geouned.geo import GBoundBox, GCylinder, GPlane, GVector
 from geouned.geo.vector_geometry import arbitrary_perpendicular, arc_extent, to_gboundbox
 from geouned.geo.surface_geometry import (
+    axes_parallel,
     cylinder_tangent_at,
     cylinder_value_at,
-    is_in_line,
-    is_in_plane,
-    is_opposite,
-    is_parallel,
     is_same_value,
+    opposite_sense,
     plane_tangent_at,
     plane_value_at,
-    sign_plane,
 )
 
 
@@ -24,41 +21,18 @@ def test_is_same_value():
     assert not is_same_value(1.0, 1.1)
 
 
-def test_is_parallel_same_direction():
-    assert is_parallel(GVector(1, 0, 0), GVector(2, 0, 0))
+# is_parallel/is_opposite/is_in_line/is_in_plane/sign_plane were removed 2026-09-22 (duplicated-functions
+# unification, step 2): confirmed dead in the whole pipeline (is_opposite/is_in_line/is_in_plane/sign_plane had zero
+# callers anywhere; is_parallel's only 8 callers, in geouned_classes.py, always passed an explicit tolerance and are
+# now axes_parallel calls directly). axes_parallel/opposite_sense are their still-alive, explicit-tolerance
+# replacements -- see test_same_surface_tolerances.py for their own dedicated tests.
 
 
-def test_is_parallel_opposite_direction():
-    assert is_parallel(GVector(1, 0, 0), GVector(-3, 0, 0))
-
-
-def test_is_parallel_perpendicular_is_false():
-    assert not is_parallel(GVector(1, 0, 0), GVector(0, 1, 0))
-
-
-def test_is_opposite():
-    assert is_opposite(GVector(1, 0, 0), GVector(-1, 0, 0))
-    assert not is_opposite(GVector(1, 0, 0), GVector(1, 0, 0))
-
-
-def test_is_in_line_point_on_line():
-    assert is_in_line(GVector(5, 0, 0), GVector(1, 0, 0), GVector(0, 0, 0))
-
-
-def test_is_in_line_point_off_line():
-    assert not is_in_line(GVector(5, 1, 0), GVector(1, 0, 0), GVector(0, 0, 0))
-
-
-def test_is_in_plane():
-    plane = GPlane.from_values(GVector(0, 0, 0), GVector(0, 0, 1))
-    assert is_in_plane(GVector(3, 4, 0), plane)
-    assert not is_in_plane(GVector(3, 4, 1), plane)
-
-
-def test_sign_plane():
-    plane = GPlane.from_values(GVector(0, 0, 0), GVector(0, 0, 1))
-    assert sign_plane(GVector(0, 0, 1), plane) == 1
-    assert sign_plane(GVector(0, 0, -1), plane) == -1
+def test_axes_parallel_and_opposite_sense_still_here():
+    assert axes_parallel(GVector(1, 0, 0), GVector(-3, 0, 0), 1e-4)
+    assert not axes_parallel(GVector(1, 0, 0), GVector(0, 1, 0), 1e-4)
+    assert opposite_sense(GVector(1, 0, 0), GVector(-1, 0, 0))
+    assert not opposite_sense(GVector(1, 0, 0), GVector(1, 0, 0))
 
 
 def test_plane_value_at():

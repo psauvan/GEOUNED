@@ -6,8 +6,8 @@ import math
 from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
-from ...geo import GPlane, GSolid, GVector, Gin_contact
-from ...geo.constants import ANGLE_TOL_E3, LENGTH_TOL_E6, LENGTH_TOL_E7, PARAM_ANGLE_TOL_E5
+from ...geo import GSolid, GVector, Gin_contact
+from ...geo.constants import LENGTH_TOL_E6, PARAM_ANGLE_TOL_E5
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
@@ -16,19 +16,6 @@ from ...geo.constants import ANGLE_TOL_E3, LENGTH_TOL_E6, LENGTH_TOL_E7, PARAM_A
 
 def is_same_value(v1, v2, tolerance=LENGTH_TOL_E6):
     return surface_geometry.is_same_value(v1, v2, tolerance)
-
-
-def is_parallel(vector_1, vector_2, tolerance=ANGLE_TOL_E3):
-    return surface_geometry.is_parallel(vector_1, vector_2, tolerance)
-
-
-def is_in_line(point, dir, pnt_line, tolerance=LENGTH_TOL_E6):
-    return surface_geometry.is_in_line(point, dir, pnt_line, tolerance)
-
-
-def is_in_plane(point, plane, d_tolerance=LENGTH_TOL_E7):
-    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return surface_geometry.is_in_plane(point, plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -40,11 +27,6 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
         return False, False
     else:
         return False, True
-
-
-def sign_plane(point, plane):
-    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return surface_geometry.sign_plane(point, plane_params)
 
 
 def shapes_in_contact(shape1, shape2, tolerance=LENGTH_TOL_E6):

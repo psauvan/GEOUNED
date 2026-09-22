@@ -24,10 +24,8 @@ from __future__ import annotations
 import math
 
 from .constants import (
-    ANGLE_TOL_E3,
     ANGLE_TOL_E6,
     LENGTH_TOL_E6,
-    LENGTH_TOL_E7,
     LENGTH_TOL_E8,
     REL_TOL_E2,
     REL_TOL_E3,
@@ -50,28 +48,6 @@ def relative_tolerance(base: float, scale: float) -> float:
 
 def is_same_value(v1: float, v2: float, tolerance: float = LENGTH_TOL_E6) -> bool:
     return abs(v1 - v2) < tolerance
-
-
-def is_opposite(vector_1: GVector, vector_2: GVector, tolerance: float = ANGLE_TOL_E3) -> bool:
-    return vector_1.angle_to(-vector_2) < tolerance
-
-
-def is_parallel(vector_1: GVector, vector_2: GVector, tolerance: float = ANGLE_TOL_E3) -> bool:
-    angle = vector_1.angle_to(vector_2)
-    return angle < tolerance or is_same_value(angle, math.pi, tolerance)
-
-
-def is_in_line(point: GVector, direction: GVector, point_on_line: GVector, tolerance: float = LENGTH_TOL_E6) -> bool:
-    to_point = point - point_on_line
-    return is_parallel(direction, to_point) or to_point.length < tolerance
-
-
-def is_in_plane(point: GVector, plane, tolerance: float = LENGTH_TOL_E7) -> bool:
-    return abs(plane.Axis.dot(point - plane.Position)) < tolerance
-
-
-def sign_plane(point: GVector, plane) -> int:
-    return 1 if plane.Axis.dot(point - plane.Position) >= 0.0 else -1
 
 
 # ---------------------------------------------------------------------------
