@@ -2361,6 +2361,56 @@ gaps for whenever it's picked back up:
   specifically for this change (not skipped): ocp suite 292 passed/1
   skipped; **0 real differences** (same single pre-existing timeout
   file as every other diff this session, unaffected).
+  **Audit of `NUMERIC_DOUBLE_TOL`'s 5 "direction-comparison" sites for a
+  possible NUMERIC_TOL downgrade, 2026-09-23 -- measured, no change
+  made, kept for future reference.** The user asked for a full list of
+  every real `NUMERIC_DOUBLE_TOL` call site (16 distinct roles, see the
+  table built for this session), then specifically flagged the 5 whose
+  quantity is a cross/dot product of two UNIT direction vectors
+  (`GPlane.intersect_plane`, `GPlane.intersect_line`,
+  `GLine.intersect_line`, `surface_geometry.find_can_plane`'s
+  `n_common`, `decom_utils_generator.py::cks_bound_planes`'s
+  `axis1.cross(axis2)`) as possibly too tight: this project's own
+  established finding is that real STEP-derived direction cosines carry
+  ~5e-7 rad of noise (why `NUMERIC_TOL=1e-7` exists at all), 5 orders of
+  magnitude above `NUMERIC_DOUBLE_TOL`'s 1e-12. Measured all 5 directly
+  over the 143-file corpus (decompose + build_solid_definition):
+  - `intersect_plane`: 1809 real calls, 55 samples "near zero" -- every
+    one is pure floating-point noise (1e-15 to 1e-28), nothing anywhere
+    near 1e-7.
+  - `GPlane.intersect_line`: 0 calls -- its only real callers are in
+    GEOReverse (`boundBox.py`, paused pipeline), not exercised by the
+    forward `CadToCsg` corpus scan at all.
+  - `GLine.intersect_line`: 3854 calls, 0 near.
+  - `find_can_plane`: 56 calls, 0 near.
+  - `cks_bound_planes`' own `axis1.cross(axis2)` (line 117): 53 calls,
+    24 exact zeros, 1 at floating-point noise scale (3e-18), and 12
+    samples (3 related fixtures: `Hollow_plates/cylcone_exact_placa3_pos.stp`,
+    2 copies of `cyl_cone.stp`) at a real, reproducible, non-noise value
+    of `~4.793370862739e-06` -- but that value is itself LARGER than
+    `NUMERIC_TOL` (1e-7), so both constants classify it identically
+    ("not parallel"); no real sample anywhere in [1e-12, 1e-7].
+  A first pass at measuring this last site gave misleading values (up
+  to 5e-4) from wrapping `GVector.cross` globally for the whole
+  `cks_bound_planes` call -- that captured EVERY cross product in the
+  function's own call tree (`planar_edges`/`other_face_edge`/
+  `is_same_surface`/...), not just line 117's own; corrected by
+  re-executing that exact snippet read-only, isolating only the real
+  quantity being asked about. Kept as a reminder: a broad monkeypatch
+  measures "everything nearby", not "this one line" -- re-derive the
+  exact expression when precision matters.
+  **Conclusion, per the user ("lo dejamos así, pero dejalo registrado
+  por si sale un bug relacionado")**: no change made to any of the 5
+  sites -- the corpus shows no real data landing between
+  `NUMERIC_DOUBLE_TOL` (1e-12) and `NUMERIC_TOL` (1e-7) for any of them,
+  so there is currently no evidence either constant would behave
+  differently here. If a future bug looks like a near-parallel
+  direction pair being wrongly classified as "not parallel" (a spurious
+  extra bounding plane, a missed axis-alignment merge, a `GPlane`/`GLine`
+  intersection unexpectedly returning `None`), re-check this entry and
+  these 5 sites first -- the ~5e-7 rad real-noise concern that motivated
+  this whole audit is still a real phenomenon in this codebase, it just
+  didn't show up as a live problem in the current 143-file corpus.
 
 ## Reference docs
 
