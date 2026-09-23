@@ -30,7 +30,7 @@ from OCC.Core.TopoDS import (
     topods,
 )
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
-from ..constants import KERNEL_TOL_E6, MAX_REPAIR_VOLUME_REL_CHANGE
+from ..constants import DEFAULT_FIX_TOLERANCE, MAX_REPAIR_VOLUME_REL_CHANGE, SEW_TOLERANCE
 from ._native_utils import _volume_props
 from ..volume_utils import volume_within
 
@@ -41,7 +41,7 @@ def _edge_face_map(native_solid) -> TopTools_IndexedDataMapOfShapeListOfShape:
     return m
 
 
-def _repair_non_manifold_solid(native_solid, fix_tolerance: float = KERNEL_TOL_E6) -> list:
+def _repair_non_manifold_solid(native_solid, fix_tolerance: float = DEFAULT_FIX_TOLERANCE) -> list:
     """Attempt to split a non-manifold TopoDS_Solid (confirmed invalid
     via BRepCheck_Analyzer) into its real connected components: build a
     face-adjacency graph over the solid's own faces, excluding edges
@@ -241,7 +241,7 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
 
     pieces = []
     for idxs in manifold_components.values():
-        sewer = BRepBuilderAPI_Sewing(KERNEL_TOL_E6)
+        sewer = BRepBuilderAPI_Sewing(SEW_TOLERANCE)
         for i in idxs:
             sewer.Add(faces[i])
         sewer.Perform()

@@ -13,7 +13,7 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
 )
-from ...geo.constants import KERNEL_TOL_E3
+from ...geo.constants import TOLERANCE_WELD_FLOOR
 from ...geo.volume_utils import volume_within
 
 logger = logging.getLogger("general_logger")
@@ -175,7 +175,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # RevCC_regression/Big_one_cell__modelCell_670000__solid0_piece52: a
     # 5406 mm^3 fused wedge -> [816.5, 4590.0].
     if not new_split and not healed:
-        tol_floor = max(50.0 * tolerances.split_tolerance, KERNEL_TOL_E3)
+        tol_floor = max(50.0 * tolerances.split_tolerance, TOLERANCE_WELD_FLOOR)
         if Gsolid_max_tolerance(solid) > tol_floor and Gsolid_nonmanifold_edge_count(solid) >= 1:
             rebuilt = Gheal_topology(solid)
             if rebuilt is not None:

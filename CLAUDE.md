@@ -2906,6 +2906,111 @@ gaps for whenever it's picked back up:
   changes in this sub-batch are exactly behavior-preserving on their
   own. occ/freecad suites still deferred to the end of the session per
   direct user instruction.
+  **`KERNEL_TOL_E*` family (E3/E6/E7/E8) analyzed and entirely
+  eliminated, same session, direct continuation.** Much larger and more
+  heterogeneous than every prior family reviewed: 4 constants covering
+  9 genuinely distinct roles, mostly under `KERNEL_TOL_E6` sharing
+  nothing but a historical value. Per the user's own general rule
+  stated mid-review ("en general todas la tolerancias asociadas a
+  opraciones de BREP internas sera asociadad as parametros constantes"):
+  every tolerance handed to an internal BRep-kernel operation (a native
+  OCCT/OCP call with no corresponding `Tolerances` field) stays its own
+  dedicated intrinsic constant, never threaded through `Tolerances` --
+  settling, for this whole family, the same "constant vs. threaded"
+  question the earlier `KERNEL_TOL_E7`/`GeomAPI_IntSS` site had already
+  been individually decided for (2026-09-22).
+  **Fix tolerance group** (`KERNEL_TOL_E6`, already literally
+  `Tolerances.fix_tolerance`'s own role) -- 5 real sites: the field's
+  own default -> plain `1.0e-6` literal (matching `volume_tolerance`'s
+  own established convention); `split_repair.py::
+  _repair_non_manifold_solid`'s own default (all real call sites
+  already pass `tolerances.fix_tolerance` explicitly) -> new
+  `DEFAULT_FIX_TOLERANCE`; `Gload_step`'s own `_native_fix` call (both
+  engines -- a "plain loading primitive" with no `tolerances` parameter
+  at all) -> `DEFAULT_FIX_TOLERANCE`. **2 real bugs fixed**:
+  `solid_ops.py::Gfuse_solids`'s `fused.fix(KERNEL_TOL_E6)` was
+  hardcoded despite `tolerances` being a real (possibly-`None`, GEOReverse
+  calls it bare in several places) parameter -- now
+  `tolerances.fix_tolerance if tolerances is not None else
+  DEFAULT_FIX_TOLERANCE`; `Gload_and_process_step`'s own `_native_fix`
+  call (both engines) ignored its own, real, in-scope `tolerances`
+  parameter -- now `tolerances.fix_tolerance` directly.
+  **Per direct user follow-up instruction**: `geo/tolerances.py`
+  (`GeoTolerances`, the internal base class) now references the named
+  `DEFAULT_<field>` constant directly for every field that has one
+  (`fix_tolerance` -> `DEFAULT_FIX_TOLERANCE`, `sliver_edge_rel_tol` ->
+  `DEFAULT_SLIVER_EDGE_REL_TOL`, alongside the pre-existing
+  `min_face_width`/`min_solid_volume`/`scale`) instead of repeating a
+  bare literal that happens to match -- `volume_tolerance`/
+  `split_tolerance`/`scale_up_floor` have no such sibling constant and
+  stay bare literals, matching every other field's own convention.
+  `geouned.Tolerances` (`data_classes.py`, the public subclass) is
+  deliberately untouched -- it has no `geo.constants` dependency at all
+  by design (a public constructor should show plain numbers, not
+  internal constant names).
+  **Sewing tolerance group** (`BRepBuilderAPI_Sewing`) -- 2 real sites
+  (`primitives.py::Gmake_shell`, `split_repair.py::
+  _separate_edge_joined_components`, both engines), neither with a
+  `tolerances` object in scope -> new `SEW_TOLERANCE`, a raw kernel-API
+  parameter with no `Tolerances` field, same precedent as
+  `KERNEL_TOL_E7`'s own `GeomAPI_IntSS` site.
+  **Differential-geometry group** (`GeomLProp_CLProps`/
+  `GeomLProp_SLProps`, `occ`/`ocp` only) -- 10 sites (curvature/
+  value_at/normal_at/tangent_at, both engines) -> new `GEOM_PROP_TOL`.
+  **UV-projection group** (`ShapeAnalysis_Surface.ValueOfUV`,
+  `split_coaxial_cone.py`) -- 6 sites (both engines) -> new
+  `UV_PROJECTION_TOL`.
+  **Face-construction group** (`BRepBuilderAPI_MakeFace`, `repair.py`'s
+  own `_retrim_freed_quadrics`) -> new `FACE_CONSTRUCTION_TOL`. **A
+  real cross-engine asymmetry found**: `occ`'s own version reused its
+  caller's own `dist_tol` parameter (a real, geometry-scaled value,
+  `max(diag * min_length_ratio, MIN_SLIVER_EDGE_LENGTH)`) for this
+  `MakeFace` call, while `ocp`'s own version used a separate, hardcoded
+  `KERNEL_TOL_E6` instead -- same function, same purpose, drifted
+  tolerance between engines. Per direct user decision ("aplicar a OCC
+  lo mismo que ocp y crear la constante FACE_CONSTRUCTION_TOL"): both
+  engines now use the new intrinsic constant, `occ` no longer reuses
+  `dist_tol` for this specific call (its own separate use of `tol` for
+  the function's own distance comparison a few lines above is
+  untouched). **Verified specifically for this real behavior change**:
+  a dedicated occ-engine 143-file before/after corpus scan (current
+  HEAD vs. the edited tree) -- 0 real differences (the usual single
+  pre-existing timeout-file diff, unaffected).
+  **Point-classification / surface-intersection group**
+  (`KERNEL_TOL_E7`, 2 genuinely different OCCT operations sharing one
+  name) -- split into `SURFACE_INTERSECT_TOL` (`GeomAPI_IntSS`, `GPlane.
+  intersect_plane`'s own native fallback, 1 site per engine -- already
+  identified and left as a bare constant on 2026-09-22, now given its
+  own distinct name once the second role sharing `KERNEL_TOL_E7` was
+  found) and `POINT_CLASSIFY_TOL` (`BRepTopAdaptor_FClass2d`/
+  `BRepClass3d_SolidClassifier`, 6 sites per engine, plus `freecad`'s
+  own `Part.Shape.isInside` call -- the same role, already unified
+  under this exact name/value back when it was still
+  `LENGTH_TOL_E7`/`KERNEL_TOL_E7`).
+  **Edge-projection tolerance** (`KERNEL_TOL_E8`) -- 1 real site,
+  `build_shape_functions.py::cut_face`'s own `e.is_inside(point,
+  KERNEL_TOL_E8)` call (the only real caller anywhere of `GEdge.
+  is_inside(point, tolerance)`, a real parameterized method combining a
+  point-to-curve projection distance and a parametric-range slack, not
+  a value buried inside a native wrapper). Flagged as a genuine
+  borderline case (a real, single, already-parameterized method with
+  `tolerances` in scope at its one call site, unlike the other groups)
+  -- user's decision: intrinsic constant regardless, new
+  `EDGE_PROJECTION_TOL`.
+  **`TOLERANCE_WELD_FLOOR`** -- `KERNEL_TOL_E3`'s own single,
+  already-well-documented site (`decom_one_generators.py::generic_split`'s
+  own BOPAlgo tolerance-weld detection floor) renamed for consistency,
+  closing out the family (no role change, same value).
+  `KERNEL_TOL_E3/E6/E7/E8` then had zero remaining references anywhere
+  and were deleted from `geo/constants.py` -- **the entire former
+  `KERNEL_TOL_E*` family is now gone**.
+  **Verified**: all 3 engines' full suites green (ocp 292 passed/1
+  skipped, occ 292 passed/1 skipped, freecad 258 passed/16 skipped, 0
+  failures anywhere); a 143-file before/after corpus differential under
+  `ocp` -- 0 real differences; a SEPARATE dedicated 143-file
+  before/after corpus differential under `occ` specifically (to cover
+  the real `_retrim_freed_quadrics` behavior change above) -- likewise
+  0 real differences.
 
 ## Reference docs
 

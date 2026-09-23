@@ -22,10 +22,11 @@ import typing
 
 from . import CAD_ENGINE
 from .constants import (
+    DEFAULT_FIX_TOLERANCE,
     DEFAULT_MIN_FACE_WIDTH,
     DEFAULT_MIN_SOLID_VOLUME,
+    DEFAULT_SLIVER_EDGE_REL_TOL,
     DEFAULT_SPLIT_SCALE,
-    KERNEL_TOL_E6,
 )
 
 
@@ -66,12 +67,12 @@ class GeoTolerances:
         tor_distance: float = 1.0e-4,
         tor_angle: float = 1.0e-4,
         min_face_width: float = DEFAULT_MIN_FACE_WIDTH,
-        sliver_edge_rel_tol: float = 1.0e-4,
+        sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL,
         split_tolerance: typing.Optional[float] = 1.0e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = DEFAULT_SPLIT_SCALE,
         min_solid_volume: float = DEFAULT_MIN_SOLID_VOLUME,
-        fix_tolerance: float = KERNEL_TOL_E6,
+        fix_tolerance: float = DEFAULT_FIX_TOLERANCE,
         volume_tolerance: float = 1.0e-4,
     ):
         self.pln_distance = pln_distance

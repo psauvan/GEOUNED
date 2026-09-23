@@ -43,7 +43,7 @@ from ..surface_geometry import (
 from .topology import GCone, GCylinder, GFace, GSolid
 from ._native_utils import to_native_vector
 from .primitives import Gmake_shell, Gmake_solid
-from ..constants import COAXIAL_RETRY, KERNEL_TOL_E6, NUMERIC_DOUBLE_TOL
+from ..constants import COAXIAL_RETRY, NUMERIC_DOUBLE_TOL, UV_PROJECTION_TOL
 from ..volume_utils import volume_within
 
 
@@ -112,7 +112,7 @@ def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone",
 
 
 def _cone_v_value(point: GVector, native_cone_surf) -> float:
-    return ShapeAnalysis_Surface(native_cone_surf).ValueOfUV(to_native_vector(point), KERNEL_TOL_E6).Y()
+    return ShapeAnalysis_Surface(native_cone_surf).ValueOfUV(to_native_vector(point), UV_PROJECTION_TOL).Y()
 
 
 def _find_v_crossings(face: "GFace", native_cone_surf, v0: float, samples: int = 64) -> "list[GVector]":
@@ -154,8 +154,8 @@ def _split_face_at_v_line(native_face, native_cone_surf, point_a: GVector, point
     than raising (confirmed 2026-08-18). Returns the resulting native
     faces (a 1-element list if the split didn't actually separate anything)."""
     sas = ShapeAnalysis_Surface(native_cone_surf)
-    uv_a = sas.ValueOfUV(to_native_vector(point_a), KERNEL_TOL_E6)
-    uv_b = sas.ValueOfUV(to_native_vector(point_b), KERNEL_TOL_E6)
+    uv_a = sas.ValueOfUV(to_native_vector(point_a), UV_PROJECTION_TOL)
+    uv_b = sas.ValueOfUV(to_native_vector(point_b), UV_PROJECTION_TOL)
     v_common = (uv_a.Y() + uv_b.Y()) / 2.0
     line2d = Geom2d_Line(gp_Pnt2d(0.0, v_common), gp_Dir2d(1.0, 0.0))
     u_lo, u_hi = sorted([uv_a.X(), uv_b.X()])

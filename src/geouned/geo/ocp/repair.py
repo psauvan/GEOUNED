@@ -79,8 +79,8 @@ from ..solid_defects import (
     near_surface_pair,
 )
 from ..constants import (
+    FACE_CONSTRUCTION_TOL,
     FINITE_DIFF_STEP,
-    KERNEL_TOL_E6,
     MAX_REPAIR_VOLUME_REL_CHANGE,
     MIN_SLIVER_EDGE_LENGTH,
     NUMERIC_DOUBLE_TOL,
@@ -349,7 +349,7 @@ def _retrim_freed_quadrics(reduced_shape, drop_plane, keep_plane, tol):
             v2 = v2 + (keep_offset - z2) / slope
         if v1 >= v2:
             continue
-        new_face = BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, KERNEL_TOL_E6)
+        new_face = BRepBuilderAPI_MakeFace(surface, u1, u2, v1, v2, FACE_CONSTRUCTION_TOL)
         if not new_face.IsDone():
             continue
         reshaper.Replace(face, new_face.Face())

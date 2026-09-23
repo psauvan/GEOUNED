@@ -16,7 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
-from .constants import DEGENERATE_SOLID_VOL_AREA_RATIO, FUSE_REFINE_REL_TOL, KERNEL_TOL_E6, NUMERIC_DOUBLE_TOL
+from .constants import DEFAULT_FIX_TOLERANCE, DEGENERATE_SOLID_VOL_AREA_RATIO, FUSE_REFINE_REL_TOL, NUMERIC_DOUBLE_TOL
 
 
 def Gfuse_solids(parts, tolerances=None):
@@ -87,8 +87,9 @@ def Gfuse_solids(parts, tolerances=None):
         if fused.is_valid():
             gsolid = fused
         else:
+            fix_tolerance = tolerances.fix_tolerance if tolerances is not None else DEFAULT_FIX_TOLERANCE
             try:
-                fixed = fused.fix(KERNEL_TOL_E6)
+                fixed = fused.fix(fix_tolerance)
             except Exception:
                 fixed = None
 

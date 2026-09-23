@@ -47,7 +47,7 @@ from ..vector_geometry import GVector, arbitrary_perpendicular
 from .topology import GEdge, GFace, GPlane, GShell, GSolid, GWire
 from ._native_utils import to_native_vector
 from .boolean import Gfuse
-from ..constants import KERNEL_TOL_E6
+from ..constants import SEW_TOLERANCE
 
 
 def Gmake_box(xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, zmax: float) -> GSolid:
@@ -232,7 +232,7 @@ def Gmake_polygon_face(points: list[GVector]) -> GFace:
 
 
 def Gmake_shell(faces: list[GFace]) -> GShell:
-    sewer = BRepBuilderAPI_Sewing(KERNEL_TOL_E6)
+    sewer = BRepBuilderAPI_Sewing(SEW_TOLERANCE)
     for face in faces:
         sewer.Add(face.__native__)
     sewer.Perform()

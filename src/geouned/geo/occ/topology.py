@@ -104,13 +104,14 @@ from ._native_utils import (
 from ..constants import (
     ANGLE_THRESHOLD,
     BOX_TOL,
-    KERNEL_TOL_E6,
-    KERNEL_TOL_E7,
+    GEOM_PROP_TOL,
     LINE_COPLANAR_REL_TOL,
     MESH_DEFLECTION,
     NATIVE_VOL_RATIO_TOL,
     NUMERIC_DOUBLE_TOL,
     NUMERIC_TOL,
+    POINT_CLASSIFY_TOL,
+    SURFACE_INTERSECT_TOL,
     VOLUME_MIN_E8,
 )
 from ..volume_utils import volume_within
@@ -180,7 +181,7 @@ class GPlane:
                 return None
             from OCC.Core.GeomAPI import GeomAPI_IntSS
 
-            intersector = GeomAPI_IntSS(self.__native__, other.__native__, KERNEL_TOL_E7)
+            intersector = GeomAPI_IntSS(self.__native__, other.__native__, SURFACE_INTERSECT_TOL)
             if not intersector.IsDone() or intersector.NbLines() == 0:
                 return None
             line_curve = intersector.Line(1)
@@ -571,7 +572,7 @@ class GEdge:
         """Curvature of the edge's curve at parametric coordinate `u`
         (0 for a straight line)."""
         curve_and_range = BRep_Tool.Curve(self.__native__)
-        props = GeomLProp_CLProps(curve_and_range[0], u, 2, KERNEL_TOL_E6)
+        props = GeomLProp_CLProps(curve_and_range[0], u, 2, GEOM_PROP_TOL)
         return props.Curvature()
 
     def knots(self) -> list[float]:
@@ -755,18 +756,18 @@ class GFace:
 
     def value_at(self, u: float, v: float) -> GVector:
         surf = BRep_Tool.Surface(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
+        props = GeomLProp_SLProps(surf, u, v, 1, GEOM_PROP_TOL)
         return _to_gvector(props.Value())
 
     def normal_at(self, u: float, v: float) -> GVector:
         surf = BRep_Tool.Surface(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
+        props = GeomLProp_SLProps(surf, u, v, 1, GEOM_PROP_TOL)
         n = _to_gvector(props.Normal())
         return -n if self.__native__.Orientation() == 1 else n
 
     def tangent_at(self, u: float, v: float) -> tuple[GVector, GVector]:
         surf = BRep_Tool.Surface(self.__native__)
-        props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
+        props = GeomLProp_SLProps(surf, u, v, 1, GEOM_PROP_TOL)
         return _to_gvector(props.D1U()), _to_gvector(props.D1V())
 
     def parameter(self, point: GVector) -> tuple[float, float]:
@@ -774,7 +775,7 @@ class GFace:
         return _project_point_on_surface(point, surf)
 
     def is_part_of_domain(self, u: float, v: float) -> bool:
-        classifier = BRepTopAdaptor_FClass2d(self.__native__, KERNEL_TOL_E7)
+        classifier = BRepTopAdaptor_FClass2d(self.__native__, POINT_CLASSIFY_TOL)
         return classifier.Perform(gp_Pnt2d(u, v)) != 1  # != TopAbs_OUT
 
     def tessellate(self, tolerance: float, reset: bool = False) -> list[GVector]:
@@ -810,7 +811,7 @@ class GFace:
         # surface, just off it, for the classifier probe below.
         probe = point + normal * NUMERIC_TOL
         classifier = BRepClass3d_SolidClassifier(solid.__native__)
-        classifier.Perform(to_native_vector(probe), KERNEL_TOL_E7)
+        classifier.Perform(to_native_vector(probe), POINT_CLASSIFY_TOL)
         return classifier.State() != TopAbs_IN
 
     def export_step(self, filename: str) -> None:
@@ -952,7 +953,7 @@ class GSolid:
 
     def is_inside(self, point: GVector, tolerance: float = 0.0) -> bool:
         classifier = BRepClass3d_SolidClassifier(self.__native__)
-        classifier.Perform(to_native_vector(point), tolerance if tolerance > 0 else KERNEL_TOL_E7)
+        classifier.Perform(to_native_vector(point), tolerance if tolerance > 0 else POINT_CLASSIFY_TOL)
         return classifier.State() == TopAbs_IN
 
     def optimal_bounding_box(self, use_triangulation: bool = True) -> GBoundBox:
@@ -976,7 +977,7 @@ class GSolid:
         first_shape = self.__shapes__[0]
         point = _volume_props(first_shape).CentreOfMass()
         classifier = BRepClass3d_SolidClassifier(native)
-        classifier.Perform(point, KERNEL_TOL_E7)
+        classifier.Perform(point, POINT_CLASSIFY_TOL)
         if classifier.State() == TopAbs_IN:
             return _to_gvector(point)
 
@@ -988,10 +989,10 @@ class GSolid:
             umin, umax, vmin, vmax = breptools.UVBounds(face)
             u = 0.5 * (umin + umax)
             v = 0.5 * (vmin + vmax)
-            classifier2d = BRepTopAdaptor_FClass2d(face, KERNEL_TOL_E7)
+            classifier2d = BRepTopAdaptor_FClass2d(face, POINT_CLASSIFY_TOL)
             if classifier2d.Perform(gp_Pnt2d(u, v)) != 1:  # inside the trimmed domain
                 surf = BRep_Tool.Surface(face)
-                props = GeomLProp_SLProps(surf, u, v, 1, KERNEL_TOL_E6)
+                props = GeomLProp_SLProps(surf, u, v, 1, GEOM_PROP_TOL)
                 pos = props.Value()
                 normal = props.Normal()
                 if face.Orientation() == 1:
@@ -1001,7 +1002,7 @@ class GSolid:
                 for _ in range(12):
                     d = d * 0.5
                     probe = gp_Pnt(pos.X() + d * normal.X(), pos.Y() + d * normal.Y(), pos.Z() + d * normal.Z())
-                    classifier.Perform(probe, KERNEL_TOL_E7)
+                    classifier.Perform(probe, POINT_CLASSIFY_TOL)
                     if classifier.State() == TopAbs_IN:
                         return _to_gvector(probe)
             fexp.Next()

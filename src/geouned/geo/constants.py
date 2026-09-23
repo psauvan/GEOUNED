@@ -333,11 +333,97 @@ dedicated role distinct from `Tolerances.volume_tolerance`/`NATIVE_VOL_RATIO_TOL
 # Kernel zero (mm^3): a boolean Common of two shapes has content only above this.
 VOLUME_MIN_E8 = 1.0e-8
 
+DEFAULT_FIX_TOLERANCE = 1.0e-6
+"""Default of `Tolerances.fix_tolerance` (a real, user-facing field -- itself now a plain 1e-6
+literal in both `GeoTolerances.__init__` and `geouned.Tolerances.__init__`, matching every other
+field's own convention), for the handful of sites that need a fix tolerance with no `tolerances`
+object available: `split_repair.py::_repair_non_manifold_solid`'s own default (all its real call
+sites already pass `tolerances.fix_tolerance` explicitly) and `Gload_step`'s own `_native_fix`
+call (all 3 engines -- a "plain loading primitive" with no `tolerances` parameter at all, by
+design). Split out of `KERNEL_TOL_E6` 2026-09-23 (same value, renamed) -- that name still covers at least 4
+other, unrelated CAD-kernel-adjacent roles (differential-geometry query resolution, UV-projection,
+face construction), under review one group at a time; this is only the "fix tolerance" group's own
+share of it."""
+
+SEW_TOLERANCE = 1.0e-6
+"""`BRepBuilderAPI_Sewing`'s own tolerance at the 2 sites (`primitives.py::Gmake_shell`,
+`split_repair.py::_separate_edge_joined_components`, both engines) that have no `tolerances`
+object available at all (pure low-level construction/repair helpers with no such parameter in
+their own signature) -- a raw OCCT kernel-API parameter with no corresponding `Tolerances` field,
+same precedent as `KERNEL_TOL_E7`'s own `GeomAPI_IntSS` site (left as a bare intrinsic constant,
+2026-09-22). Split out of `KERNEL_TOL_E6` 2026-09-23 (same value, renamed): a genuinely different
+CAD-kernel operation from `DEFAULT_FIX_TOLERANCE`'s own `ShapeFix_Shape`/`.fix()` role (joining
+faces into a shell vs. repairing an existing shape's topology) despite sharing the same
+conservative default value."""
+
+GEOM_PROP_TOL = 1.0e-6
+"""`GeomLProp_CLProps`/`GeomLProp_SLProps`'s own tolerance -- the differential-geometry property
+calculator OCCT uses for `GEdge.curvature`/`GFace.value_at`/`normal_at`/`tangent_at` (`occ`/`ocp`
+only -- `freecad`'s own equivalent methods use FreeCAD's own `Part.Edge.Curve`/`Part.Face.Surface`
+objects directly, no such OCCT class or tolerance involved), governing how it resolves a
+degenerate/singular parametric point, not a shape-repair or construction operation. Per direct
+user decision (2026-09-23): every tolerance handed to an internal BRep-kernel operation is its own
+constant, never threaded through `Tolerances` -- these are pure geometric query methods on
+`GEdge`/`GFace` with no `tolerances` object in scope regardless. Split out of `KERNEL_TOL_E6`
+2026-09-23 (same value, renamed)."""
+
+UV_PROJECTION_TOL = 1.0e-6
+"""`ShapeAnalysis_Surface.ValueOfUV`'s own tolerance (`split_coaxial_cone.py`, both engines) --
+projects a 3D point onto a cone's own parametric (U, V) surface coordinates during the coaxial-cone
+split fallback. Same "internal BRep-kernel operation, own constant" rule as `GEOM_PROP_TOL`. Split
+out of `KERNEL_TOL_E6` 2026-09-23 (same value, renamed)."""
+
+FACE_CONSTRUCTION_TOL = 1.0e-6
+"""`BRepBuilderAPI_MakeFace`'s own tolerance (`repair.py`, both engines) when building a new face
+directly from a surface and UV bounds. Same "internal BRep-kernel operation, own constant" rule as
+`GEOM_PROP_TOL`. Split out of `KERNEL_TOL_E6` 2026-09-23 (same value, renamed)."""
+
+SURFACE_INTERSECT_TOL = 1.0e-7
+"""`GeomAPI_IntSS`'s own tolerance -- the native surface-surface intersector `GPlane.
+intersect_plane`'s own fallback uses once its pure-GVector well-conditioned math isn't reliable
+enough (`occ`/`ocp` `topology.py`). Already identified and left as a bare intrinsic constant with
+no `Tolerances` field on 2026-09-22 ("no controlo... lo dejamos asi por ahora"); split out of
+`KERNEL_TOL_E7` 2026-09-23 into its own name (same value, unchanged) once `KERNEL_TOL_E7` itself
+was found to cover a second, unrelated role too (`POINT_CLASSIFY_TOL`, right below) -- a genuinely
+different OCCT operation (intersecting two surfaces vs. classifying a point against one) despite
+sharing the same historical value."""
+
+POINT_CLASSIFY_TOL = 1.0e-7
+"""`BRepTopAdaptor_FClass2d`/`BRepClass3d_SolidClassifier`'s own tolerance -- "is this (u, v) point
+inside the face's own trimmed domain" / "is this 3D point inside this solid" queries (`occ`/`ocp`
+`topology.py`'s `is_part_of_domain`/`orientation_outward`/others; `freecad`'s own equivalent
+`Part.Shape.isInside(probe, tol, False)` call shares this exact role too, already unified under
+this same name and value back when it was still `LENGTH_TOL_E7`/`KERNEL_TOL_E7`, 2026-09-23). A raw
+kernel-API classification tolerance with no corresponding `Tolerances` field -- same "internal
+BRep-kernel operation, own constant" rule as `GEOM_PROP_TOL`. Split out of `KERNEL_TOL_E7`
+2026-09-23 (same value, renamed), distinct from `SURFACE_INTERSECT_TOL`'s own different operation."""
+
 # Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
-KERNEL_TOL_E3 = 1.0e-3
-KERNEL_TOL_E6 = 1.0e-6
-KERNEL_TOL_E7 = 1.0e-7
-KERNEL_TOL_E8 = 1.0e-8
+# KERNEL_TOL_E6 removed 2026-09-23: every real site was, under a different name, a genuinely
+# distinct internal-BRep-operation role (DEFAULT_FIX_TOLERANCE, SEW_TOLERANCE, GEOM_PROP_TOL,
+# UV_PROJECTION_TOL, FACE_CONSTRUCTION_TOL above) -- same value (1e-6) throughout, just never one
+# single concept to begin with.
+# KERNEL_TOL_E7 removed 2026-09-23: split into SURFACE_INTERSECT_TOL (GeomAPI_IntSS) and
+# POINT_CLASSIFY_TOL (BRepTopAdaptor_FClass2d/BRepClass3d_SolidClassifier/freecad's own isInside)
+# above -- same value (1e-7), two genuinely different OCCT operations.
+
+TOLERANCE_WELD_FLOOR = 1.0e-3
+"""`decom_one_generators.py::generic_split`'s own minimum floor (`max(50 * tolerances.
+split_tolerance, TOLERANCE_WELD_FLOOR)`) for detecting a BOPAlgo tolerance-weld symptom: a
+fragment's own edge/vertex tolerances (`Gsolid_max_tolerance`) inflated far above the split
+tolerance, together with non-manifold edges, signals a near-tangent junction the split papered
+over rather than resolved (see the function's own inline comment for the full account). Split out
+of `KERNEL_TOL_E3` 2026-09-23 (same value, renamed) -- its own dedicated, already-well-documented
+role, the last surviving member of the former `KERNEL_TOL_E*` family."""
+
+EDGE_PROJECTION_TOL = 1.0e-8
+"""`GEdge.is_inside(point, tolerance)`'s own tolerance at its one real call site
+(`build_shape_functions.py::cut_face`, all 3 engines) -- combines a real point-to-curve projection
+distance check (`GeomAPI_ProjectPointOnCurve`) and a parametric-range slack to decide whether an
+intersection point genuinely lies on the edge's own finite extent, not just its underlying
+infinite curve. An internal BRep-kernel-adjacent operation, its own dedicated constant per the
+same rule as `GEOM_PROP_TOL`/`SEW_TOLERANCE`/etc. Split out of `KERNEL_TOL_E8` 2026-09-23 (same
+value, renamed)."""
 SPLIT_TOL_MAX = 0.1
 SPLIT_TOL_MIN = 1.0e-12
 

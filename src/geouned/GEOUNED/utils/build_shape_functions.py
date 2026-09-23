@@ -18,7 +18,7 @@ from ...geo import (
     getPart,
     myBox,
 )
-from ...geo.constants import KERNEL_TOL_E8, POINT_POINT_TOL
+from ...geo.constants import EDGE_PROJECTION_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel, axes_same_direction
 
 
@@ -192,7 +192,7 @@ def cut_face(gface: GFace, plane: GPlane, *, tolerances):
             else:
                 point = gline.intersect_line(edge_line)
 
-            if point is not None and e.is_inside(point, KERNEL_TOL_E8):
+            if point is not None and e.is_inside(point, EDGE_PROJECTION_TOL):
                 inter.append(point)
 
     newpoints = inter[:]
