@@ -107,10 +107,11 @@ from ..constants import (
     BOX_TOL,
     KERNEL_TOL_E6,
     KERNEL_TOL_E7,
+    LINE_COPLANAR_REL_TOL,
     MESH_DEFLECTION,
+    NATIVE_VOL_RATIO_TOL,
     NUMERIC_DOUBLE_TOL,
     NUMERIC_TOL,
-    REL_TOL_E6,
     VOLUME_MIN_E8,
 )
 from ..volume_utils import volume_within
@@ -402,7 +403,7 @@ class GLine:
                 return None
             return _to_gvector(proj.NearestPoint())
 
-        if abs(w.dot(cr)) / crl > REL_TOL_E6 * scale_ref:
+        if abs(w.dot(cr)) / crl > LINE_COPLANAR_REL_TOL * scale_ref:
             return None
 
         t = (w.cross(d2)).dot(cr) / (crl * crl)
@@ -1039,7 +1040,7 @@ class GSolid:
     def reverse(self) -> "GSolid":
         return GSolid(BRepBuilderAPI_Copy(self.__native__).Shape().Reversed())
 
-    def refine(self, rel_tol: float = REL_TOL_E6) -> "GSolid":
+    def refine(self, rel_tol: float = NATIVE_VOL_RATIO_TOL) -> "GSolid":
         """See the freecad engine's GSolid.refine docstring -- same
         volume-invariance guard (`rel_tol`, default 1e-6), using
         ShapeUpgrade_UnifySameDomain as the removeSplitter() equivalent.

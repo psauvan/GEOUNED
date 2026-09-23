@@ -26,8 +26,6 @@ from .constants import (
     DEFAULT_MIN_SOLID_VOLUME,
     DEFAULT_SPLIT_SCALE,
     KERNEL_TOL_E6,
-    REL_TOL_E4,
-    REL_TOL_E6,
 )
 
 
@@ -68,13 +66,13 @@ class GeoTolerances:
         tor_distance: float = 1.0e-4,
         tor_angle: float = 1.0e-4,
         min_face_width: float = DEFAULT_MIN_FACE_WIDTH,
-        sliver_edge_rel_tol: float = REL_TOL_E4,
+        sliver_edge_rel_tol: float = 1.0e-4,
         split_tolerance: typing.Optional[float] = 1.0e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = DEFAULT_SPLIT_SCALE,
         min_solid_volume: float = DEFAULT_MIN_SOLID_VOLUME,
         fix_tolerance: float = KERNEL_TOL_E6,
-        volume_tolerance: float = REL_TOL_E6,
+        volume_tolerance: float = 1.0e-4,
     ):
         self.pln_distance = pln_distance
         self.pln_angle = pln_angle

@@ -45,9 +45,10 @@ from ..constants import (
     ANGLE_THRESHOLD,
     BOX_TOL,
     KERNEL_TOL_E7,
+    LINE_COPLANAR_REL_TOL,
+    NATIVE_VOL_RATIO_TOL,
     NUMERIC_DOUBLE_TOL,
     NUMERIC_TOL,
-    REL_TOL_E6,
     VOLUME_MIN_E8,
 )
 from ..volume_utils import volume_within
@@ -439,7 +440,7 @@ class GLine:
                 return None
             return to_gvector(pts[0].toShape().Point)
 
-        if abs(w.dot(cr)) / crl > REL_TOL_E6 * scale_ref:
+        if abs(w.dot(cr)) / crl > LINE_COPLANAR_REL_TOL * scale_ref:
             return None  # skew lines, no true intersection
 
         t = (w.cross(d2)).dot(cr) / (crl * crl)
@@ -1059,7 +1060,7 @@ class GSolid:
         reversed_shape.reverse()
         return GSolid(reversed_shape)
 
-    def refine(self, rel_tol: float = REL_TOL_E6) -> "GSolid":
+    def refine(self, rel_tol: float = NATIVE_VOL_RATIO_TOL) -> "GSolid":
         """
         Remove redundant edges/faces left by a boolean operation between
         coplanar/tangent surfaces (equivalent to `Part.Shape.removeSplitter()`).

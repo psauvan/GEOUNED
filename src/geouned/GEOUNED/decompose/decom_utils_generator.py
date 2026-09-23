@@ -30,7 +30,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
-from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL, REL_TOL_E2
+from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
@@ -218,7 +218,7 @@ def spline_wires(edges, face, pc=None):
                 point = rmax
             else:
                 point = rmin
-            d = REL_TOL_E2 * abs(majoraxis.dot(rmax - rmin))
+            d = 0.01 * abs(majoraxis.dot(rmax - rmin))  # 1% of the real span along majoraxis
         else:
             point = 0.5 * (rmin + rmax)
             d = 0.51 * abs(majoraxis.dot(rmax - rmin))

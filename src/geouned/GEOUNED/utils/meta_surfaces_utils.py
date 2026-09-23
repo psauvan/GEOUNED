@@ -33,7 +33,7 @@ from ...geo.constants import (
     NUMERIC_TOL,
     PARAM_ANGLE_TOL,
     POINT_POINT_TOL,
-    REL_TOL_E3,
+    REL_DIST_TOL,
     SIDE_FRACTION_GAP_MIN,
     SPLINE_PLANARITY_ANGLE,
     WINDING_ANGLE_TOL,
@@ -228,7 +228,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None, *, t
             pnt = 0.5 * (e.Vertexes[0] + e.Vertexes[-1])
             _, v = cyl.parameter(pnt)
             vmin, vmax = axial_bounds
-            tol = REL_TOL_E3 * max(abs(vmax - vmin), 1.0)
+            tol = REL_DIST_TOL * max(abs(vmax - vmin), 1.0)
             if abs(v - vmin) > tol and abs(v - vmax) > tol:
                 continue
         result = other_face_edge(e, cyl, Faces, outer_only=False, skip_slivers=True, tolerances=tolerances)
@@ -953,10 +953,10 @@ def gen_plane_cone(face_or_shell):
     # apex-coincident one, rather than trusting the tessellated V as-is.
     if (V1 - apex).length < POINT_POINT_TOL:
         _, _, _, vmax1 = Faces[ifacemin].ParameterRange
-        V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], REL_TOL_E3 * vmax1)
+        V1 = Faces[ifacemin].value_at(UVNode_min[indmin][0], 0.001 * vmax1)  # small positive V nudge off the apex
     if (V2 - apex).length < POINT_POINT_TOL:
         _, _, _, vmax2 = Faces[ifacemax].ParameterRange
-        V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], REL_TOL_E3 * vmax2)
+        V2 = Faces[ifacemax].value_at(UVNode_max[indmax][0], 0.001 * vmax2)  # small positive V nudge off the apex
 
     dir1 = (V1 - apex).normalized()
     dir2 = (V2 - apex).normalized()

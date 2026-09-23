@@ -2604,6 +2604,308 @@ gaps for whenever it's picked back up:
   both (the second run didn't even show the usual single pre-existing
   timeout-file diff). occ/freecad suites still deferred to later in the
   session per direct user instruction.
+  **`REL_TOL_E*` family, same session, direct continuation.**
+  `REL_TOL_E2` (2 real sites, `find_can_plane`'s narrow/wide threshold
+  and `spline_wires`' own offset, both literally "1% of a real
+  geometric span") was, per the user's own direct instruction, not a
+  tolerance at all -- replaced with the literal `0.01` inline at both
+  sites (with a `# 1%` comment), matching this project's own established
+  convention for non-tolerance multiplicative factors (mm->cm `*0.1`,
+  box enlargement `0.2`, density `<1e-2`, ...); deleted from
+  `geo/constants.py` once unused.
+  `REL_TOL_E5` (4 real sites, `geo/{occ,ocp}/split.py::
+  remove_tools_from_raw_solids`, the "was the tool solid returned in the
+  split results, and is it the same volume" cleanup after a real
+  `BOPAlgo_Splitter` call) is exactly `Tolerances.volume_tolerance`'s own
+  role (volume conservation) at an unthreaded, hardcoded value --
+  **measured first** (given the historically fragile `Gsplit` code path)
+  by instrumenting all 3 of the function's own comparisons across the
+  143-file corpus: the `ratio2` comparison (`s_volume` vs `tool_volume`)
+  came back clean (0 samples in [1e-6, 1e-5]), but `ratio1`
+  (`out_volume` vs `in_volume`) had 3 real samples at exactly
+  `2.195333e-06` (`Cans/barrel_right.stp`) and `tool_volume_abs` (the
+  absolute "is the tool volume negligible" half of the same `if`) had
+  **28** real samples scattered through that same window
+  (`Mixed/double_RC.stp`, `Mixed/cut_0.stp`, `Torus/example.stp`,
+  `Cans/barrel_right.stp`) -- real, reproducible data, not noise,
+  meaning swapping to `volume_tolerance`'s default (1e-6) would
+  genuinely change these specific decisions, not just rename a value.
+  Presented 3 options (thread `tolerances` but keep 1e-5 as this
+  context's own override; accept the 1e-6 change and verify with
+  d1suned; leave `REL_TOL_E5` as its own separate constant) -- **user
+  chose to accept the tighter value and verify**: `tolerances` is now
+  threaded through `remove_tools_from_raw_solids` (a new required
+  parameter, both engines) and all 4 sites use
+  `tolerances.volume_tolerance` directly. Verified: ocp suite 292
+  passed/1 skipped; a 143-file before/after corpus differential -- **0
+  real differences anywhere, including on the flagged files**
+  (`Cans/barrel_right.stp` itself came back byte-identical in pieces/
+  volume/composite counts despite its own real near-threshold samples,
+  meaning the specific `tool`-removal branch this guards never actually
+  changes the FINAL decomposition outcome on this corpus, even though
+  the internal comparison itself does flip for it); a direct d1suned
+  check on `Cans/barrel_right.stp` (the file with the most affected
+  samples) specifically requested by the user -- `tally = 0.99644 +/-
+  0.25%` (1.4 sigma from 1.0), 0 lost particles (the "SD4 differs from
+  true" note the script also prints is a rounding artifact, 29mm^3 on a
+  2.52-billion-mm^3 solid, ~1e-8 relative -- not a real discrepancy).
+  `REL_TOL_E5` then had zero remaining references and was deleted from
+  `geo/constants.py`.
+  **A real unit-mismatch bug found and fixed while threading
+  `tolerances` through, same session, direct continuation.** Per the
+  user's own explicit rule ("hay que aplicar la tolerancia de volumen
+  relativa cuando se comparan dos volumenes y absoluta cuando se
+  compara respecto a un valor") -- checked every volume comparison in
+  `geo/{occ,ocp}/split.py`. All of them already followed this rule
+  except one: `remove_tools_from_raw_solids`'s own `abs(tool_volume) >
+  tolerances.volume_tolerance` compares a single ABSOLUTE volume (mm^3)
+  against `volume_tolerance`, a DIMENSIONLESS relative ratio (1e-6) --
+  comparing incompatible units, left over from the plain
+  `REL_TOL_E5`-for-everything version this same session's earlier step
+  had just replaced. Every other volume check in the same file already
+  correctly picks one or the other (`abs(...) > tolerances.
+  min_solid_volume` for an absolute floor at 2 other sites,
+  `volume_within(..., tolerances.volume_tolerance)` or `... <
+  tolerances.volume_tolerance * <a volume>` for a relative one, 4 other
+  sites) -- confirming the rule is already this file's own real
+  intent, just missed at this one spot. Fixed: `tool_volume` (the ACTUAL
+  volume of the cutting tool solid, "is it substantial enough to bother
+  comparing against the output pieces") is an absolute-floor decision,
+  the same role `tolerances.min_solid_volume` already serves 2 lines
+  above in this very file -- switched to it. `freecad`'s own `Gsplit`
+  has no equivalent function (its cascade is simpler, already only uses
+  `min_solid_volume` throughout) -- nothing to fix there.
+  Separately checked, per the user's own second instruction, whether
+  "minimum volume" is defined redundantly in both `geo/constants.py`
+  and `Tolerances`: confirmed NOT a duplicate -- `VOLUME_MIN_E8`
+  (1e-8, intrinsic, "does a boolean Common's result have genuine
+  non-degenerate content") and `Tolerances.min_solid_volume` (default
+  `DEFAULT_MIN_SOLID_VOLUME` = 1e-2, user-facing, "is this piece big
+  enough to keep as a distinct output solid") are 6 orders of magnitude
+  apart and serve genuinely different, already well-documented roles
+  (a kernel-noise/empty-intersection floor vs. a meaningful-output-size
+  floor) -- correctly separate, no action needed.
+  **Verified**: ocp suite 292 passed/1 skipped; a 143-file before/after
+  corpus differential covering this whole uncommitted batch
+  (`REL_TOL_E2`/`E5` + this fix together) -- **0 real differences**.
+  **The `min_solid_volume` fix above corrected, same session, direct
+  continuation -- a real pipeline-stage distinction, not just a units
+  fix.** The user pointed out `remove_tools_from_raw_solids` operates on
+  INTERMEDIATE solid components DURING decomposition, before they have
+  gone through the full reconstruction/repair cascade -- discarding a
+  small-but-real intermediate piece this early, at `min_solid_volume`'s
+  own threshold (1e-2, tuned for the FINAL "is this worth keeping as
+  output" decision), risks breaking that solid's own later
+  reconstruction. So the units fix above was right in spirit (an
+  absolute floor, not the relative `volume_tolerance`) but wrong in
+  which absolute floor. New `PRE_REPAIR_MIN_VOLUME = 1.0e-5` in
+  `geo/constants.py`, its own dedicated intrinsic constant for this
+  earlier pipeline stage -- kept at the same value this exact role
+  already had before being (mis)named `REL_TOL_E5`, per the user's own
+  explicit choice not to re-derive it from a fresh measurement.
+  `remove_tools_from_raw_solids`'s `abs(tool_volume) > ...` now compares
+  against this instead of `tolerances.min_solid_volume`; the 2 genuinely
+  relative comparisons in the same function keep
+  `tolerances.volume_tolerance`, per the user's own explicit
+  confirmation to preserve that part unchanged.
+  **Second instruction, same message -- a full audit of every "minimum
+  volume" constant/field in the codebase, not just what stage 1 of this
+  same finding had already checked in `split.py` alone.** Grepped both
+  `geo/constants.py`/`geo/tolerances.py` (every named constant/field)
+  and a broad pattern search across the whole `geo`/`GEOUNED` source
+  for any unnamed/inline "minimum volume" literal -- found none beyond
+  the already-catalogued set. The full picture, confirmed already
+  correctly homogenized with no duplicates: `Tolerances.min_solid_volume`
+  (default `DEFAULT_MIN_SOLID_VOLUME`, 1e-2 -- the FINAL "keep as
+  output" floor, already unified across every one of its own real call
+  sites since the original 2026-09-19 batch) vs. the new
+  `PRE_REPAIR_MIN_VOLUME` (1e-5, the intermediate-stage sibling just
+  added) vs. `VOLUME_MIN_E8` (1e-8, a genuinely different role -- "does
+  a boolean Common's result have real content", not a "worth keeping"
+  decision at all) vs. `VOLUME_REF` (1.0, not a threshold at all -- the
+  SCALE below which a relative volume comparison is meaningless).
+  `solid_ops.py::space_decomposition`'s own `min_volume` (used by
+  `c.Volume < min_volume`) is a real function parameter, not a
+  hardcoded literal, fed by callers passing `tolerances.
+  min_solid_volume` -- confirms no other scattered copy exists.
+  **Verified**: ocp suite 292 passed/1 skipped; a 143-file before/after
+  corpus differential -- 0 real differences (the usual single
+  pre-existing timeout-file diff, unaffected).
+  **`REL_TOL_E3` (all 8 real sites), same session, direct continuation
+  -- gone one site at a time, per direct user instruction ("vamos por
+  parte"), each edit applied without running tests until the whole
+  batch was done together:**
+  - `geo/{occ,ocp}/open_solid_repair.py::_resew_faces_to_solid`'s own
+    re-sew tolerance ceiling (`max(3*width, seam_tol)` capped at
+    `diagonal * REL_TOL_E3`) -> new `RESEW_CEILING` (a repair-operation
+    ceiling, not a detection/classification test).
+  - `geo/{occ,ocp}/split_coaxial_cone.py::_try_coaxial_cone_split`'s
+    retry cascade: the exact (`retry_tolerance == 0.0`) attempt now uses
+    `tolerances.volume_tolerance` (a real, threaded parameter, matching
+    `Gmerge_coplanar_planes`'s own established "exact operation" role);
+    the fuzzy-retry attempt keeps its own, deliberately looser new
+    `COAXIAL_RETRY` constant (an algorithmic retry margin, not something
+    a user tunes per model).
+  - `GEOUNED/utils/meta_surfaces_utils.py`'s 2 apex-nudge offsets (the
+    "push a UV probe point slightly off the exact apex" epsilons) were
+    not tolerances at all -- literal `0.001 * v...` with a `# small
+    positive V nudge off the apex` comment, same convention as
+    `REL_TOL_E2`'s own resolution.
+  - `geo/surface_geometry.py::find_can_plane`'s own second offset
+    (`min(0.001 * half_width, narrow_wide_threshold)`) -- same
+    resolution, literal with a `# 0.1% of half_width` comment.
+  - `geo/solid_defects.py::count_split_ring_pairs`'s own 3-way "split
+    boundary ring" detection tolerance (radius-ratio, gap-vs-diagonal,
+    perpendicular-offset-vs-radius, all gated by the SAME value by
+    design) -> new `SPLIT_RING_REL_TOL`.
+  - `GEOUNED/utils/meta_surfaces_utils.py`'s axial-extreme edge
+    classification tolerance (`get_adjacent_cylknesurfFace`, "is this
+    edge's V-parameter close to the cylinder/cone's own axial extreme")
+    -> new `REL_DIST_TOL` (a genuine relative-DISTANCE role, confirmed
+    by the user to be distinct from any of the relative-VOLUME roles
+    that make up the rest of this family).
+  - `decompose/decom_one_generators.py`'s own "Lost ...%" warning
+    print (the compound-volume-exceeds-original sign-inverted message,
+    a known, separately-tracked bug -- NOT fixed here) -> swapped
+    directly to `REL_TOL_E4`, per direct user instruction, for coherence
+    with `generic_split`'s own `volume_within` check just below it in
+    the same function -- not re-measured, a deliberate "make these two
+    related checks share one threshold" choice rather than a
+    measurement-driven one.
+  `REL_TOL_E3` then had zero remaining references and was deleted from
+  `geo/constants.py` -- every one of its 8 real sites turned out to be a
+  genuinely distinct role wearing the same historical value (1e-3), not
+  one single concept.
+  **`REL_TOL_E4`/`REL_TOL_E6` review, same session, direct continuation.**
+  `REL_TOL_E4` itself is untouched -- still a real, single, coherent role
+  (`sliver_edge_rel_tol`'s own default and `find_short_edges`/
+  `find_split_ring_faces`/`check_solid_defects`'s shared parameter,
+  `solid_ops.py::BuildSolidParts`'s own `refine(rel_tol=REL_TOL_E4)` call,
+  now also the "Lost...%" warning above) -- not part of this cleanup.
+  `REL_TOL_E6`'s remaining 3 real sites (after `REL_TOL_E5`'s own
+  unrelated removal above) were reviewed one at a time:
+  - `GSolid.refine()`'s own default `rel_tol` (all 3 engines: `freecad`/
+    `occ`/`ocp` `topology.py`) -- the user first explored wiring
+    `tolerances` through every `refine()` call site as a real parameter,
+    but declined once tracing the call graph showed it would require
+    touching core constructors that have no `tolerances` parameter at
+    all, some shared with paused GEOReverse code -- too large a
+    refactor for what this is. Instead, just renamed the hardcoded
+    default in place: `REL_TOL_E6` -> `NATIVE_VOL_TOL` -> (immediately
+    renamed again, same session) `NATIVE_VOL_RATIO_TOL` -- its own
+    dedicated role (a native/kernel-adjacent operation's own
+    volume-invariance self-check after `ShapeUpgrade_UnifySameDomain`/
+    `removeSplitter()`), distinct from `Tolerances.volume_tolerance`
+    (a relative-volume comparison between two independently-obtained
+    solids) even though the two happen to share a value.
+  - `GLine.intersect_line`'s own skew-vs-coplanar test (all 3 engines,
+    `REL_TOL_E6 * scale_ref`) -> new `LINE_COPLANAR_REL_TOL` -- a pure
+    geometric method with no `tolerances` object available, confirmed
+    via direct "sí".
+  - `geo/{occ,ocp}/repair.py::Gmerge_coplanar_planes`'s own
+    `volume_within(result.Volume, solid.Volume, REL_TOL_E6)` check ->
+    `tolerances.volume_tolerance` directly (a real, threaded parameter
+    of that function, and already the exact same role
+    `MAX_REPAIR_VOLUME_REL_CHANGE`'s own docstring had already
+    documented it as), confirmed via direct "sí".
+  - `geo/vector_geometry.py::myBox.add()`'s own Reversed+Reversed
+    exact-union-vs-safe-fallback check (the inclusion-exclusion identity
+    test deciding whether a box union is exact or must fall back to the
+    larger operand alone) -> new `BOX_UNION_VOL_TOL` -- `myBox` is pure
+    geometry with no `tolerances` object available either, same
+    reasoning as `LINE_COPLANAR_REL_TOL`.
+  `REL_TOL_E6` then had zero remaining references anywhere (including
+  `geo/tolerances.py`'s own `GeoTolerances.__init__`, where
+  `volume_tolerance: float = REL_TOL_E6` became a plain `1.0e-6` literal
+  in place, matching every other field's own already-established
+  convention of a literal default in that one constructor) and was
+  deleted from `geo/constants.py` -- **the entire former `REL_TOL_E*`
+  family (E2/E3/E5/E6) is now gone**, `REL_TOL_E4` the only survivor,
+  unchanged and still a single coherent role.
+  A stale direct reference to the now-deleted `REL_TOL_E6` in
+  `tests/geo/test_repair_volume_gate.py::
+  test_exact_operations_keep_their_own_tight_gate` (asserting it stays
+  below `MAX_REPAIR_VOLUME_REL_CHANGE`) was updated to assert
+  `NATIVE_VOL_RATIO_TOL` instead, with a comment explaining
+  `Gmerge_coplanar_planes` itself no longer needs a dedicated mention
+  there since it now shares `Tolerances().volume_tolerance` directly
+  with the line just above it.
+  **Verified**: ocp suite 292 passed/1 skipped (after fixing the one
+  stale test reference above); a 143-file before/after corpus
+  differential covering this whole `REL_TOL_E3`/`E4`/`E6` batch together
+  -- 0 real differences (every one of these changes is either a pure
+  rename at an unchanged value, or a print-message threshold swap with
+  no effect on any solid's own pieces/volume/surface counts). occ/
+  freecad suites still deferred to later in the session per direct user
+  instruction.
+  **`REL_TOL_E4` itself, same session, direct continuation -- the last
+  surviving member of the whole family, closed out.** Traced its
+  remaining 4 real sites: `GeoTolerances.sliver_edge_rel_tol`'s own
+  default -> a plain `1.0e-4` literal (matching `volume_tolerance`'s own
+  just-established convention); `geo/solid_defects.py`'s 3 pure,
+  duck-typed functions (`find_short_edges`/`find_split_ring_faces`/
+  `check_solid_defects`, which have no `tolerances` object to read from
+  by signature) -> new `DEFAULT_SLIVER_EDGE_REL_TOL`, matching the
+  already-established `DEFAULT_<field>` naming convention
+  (`DEFAULT_MIN_FACE_WIDTH`/`DEFAULT_MIN_SOLID_VOLUME`/
+  `DEFAULT_SPLIT_SCALE`) for a constant that backs a real `Tolerances`
+  field's own default rather than being an independent role; `geo/
+  solid_ops.py::Gfuse_solids`'s own `refine(rel_tol=REL_TOL_E4)` (a
+  deliberate, well-documented, looser-than-`NATIVE_VOL_RATIO_TOL` guard
+  for merging a boolean fuse's own redundant tangent-seam faces) -> new
+  `FUSE_REFINE_REL_TOL`, its own dedicated role despite sharing the
+  historical value; `decompose/decom_one_generators.py`'s paired "Lost
+  ...%" warning + `generic_split`'s own `volume_within` sanity check
+  (already deliberately sharing one threshold, per an earlier
+  instruction this same session) -> `tolerances.volume_tolerance`
+  directly, once the value question below was settled.
+  **A real bug found and fixed while tracing these sites**:
+  `geo/{occ,ocp}/repair.py::Gcollapse_split_rings` called
+  `find_split_ring_faces(solid, min_face_width)` without its own
+  `rel_tol` argument, silently falling back to the constant default even
+  though `tolerances` is the function's own parameter, right there in
+  scope, one line above (`min_face_width = tolerances.min_face_width`)
+  -- so a user's own `sliver_edge_rel_tol` override was silently ignored
+  by this one riser-detection call. Fixed: both engines now pass
+  `tolerances.sliver_edge_rel_tol` explicitly.
+  **`Tolerances.volume_tolerance`'s own default raised from `1e-6` to
+  `1e-4`, per direct user decision, MEASURED first.** The user asked
+  where `volume_tolerance` is actually used before deciding -- it is the
+  core volume-conservation guard threaded through essentially all of
+  `Gsplit`'s own repair/retry cascade (`check_changed_ok`,
+  `remove_tools_from_raw_solids`, `Gsplit`'s own final check,
+  `_try_coaxial_cone_split`'s exact-retry case, `Gmerge_coplanar_
+  planes`), not a niche site -- so raising it 100x is a real,
+  potentially high-impact change to the whole split cascade's strictness,
+  not a simple rename. A dedicated 143-file corpus scan comparing
+  `volume_tolerance=1e-6` (the then-current default) against a
+  hypothetical `1e-4` found **exactly 1 real difference**:
+  `Hollow_plates/placa2.stp`'s own final volume shifts from
+  `4008775.44` to `4008758.34` mm^3 (17.1 mm^3, ~4.3e-6 relative) with
+  its piece count and every composite-surface count (MultiP/RevCan/
+  RevTCone/RoundC/RevCC) completely unchanged -- some repair step
+  along the way accepts a marginally more volume-drifted intermediate
+  result at the looser threshold, with no visible effect on the final
+  decomposition's own topology. User confirmed the change given this
+  result. `GeoTolerances`/`geouned.Tolerances`'s own defaults (`geo/
+  tolerances.py`, `GEOUNED/utils/data_classes.py`) both updated to
+  `1.0e-4`; `decom_one_generators.py`'s 2 sites now read
+  `tolerances.volume_tolerance` directly instead of a separate,
+  independent `REL_TOL_E4` constant, per the user's own explicit
+  decision that these should share the SAME numeric value as
+  `volume_tolerance` going forward, not just coincidentally match it.
+  `REL_TOL_E4` then had zero remaining references anywhere and was
+  deleted from `geo/constants.py` -- **the entire `REL_TOL_E*` family
+  (E2 through E6) is now completely gone**.
+  **Verified**: ocp suite 292 passed/1 skipped; a 143-file before/after
+  corpus differential covering this whole final sub-batch (the 3
+  renames, the `Gcollapse_split_rings` bug fix, and the real
+  `volume_tolerance` value change together) -- the SAME single real
+  difference as the dedicated `volume_tolerance` measurement above
+  (`Hollow_plates/placa2.stp`, ~4.3e-6 relative), confirming the other 3
+  changes in this sub-batch are exactly behavior-preserving on their
+  own. occ/freecad suites still deferred to the end of the session per
+  direct user instruction.
 
 ## Reference docs
 

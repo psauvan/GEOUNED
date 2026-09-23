@@ -86,7 +86,6 @@ from ..constants import (
     NUMERIC_DOUBLE_TOL,
     OCCT_FIX_TOLERANCE,
     POINT_POINT_TOL,
-    REL_TOL_E6,
 )
 from ..io_utils import suppress_native_stdout
 from ..surface_geometry import is_same_plane_surface
@@ -216,7 +215,7 @@ def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
     "silent not-applicable, not a crash" convention for every geometry
     repair fallback."""
     min_face_width = tolerances.min_face_width
-    risers = find_split_ring_faces(solid, min_face_width)
+    risers = find_split_ring_faces(solid, min_face_width, tolerances.sliver_edge_rel_tol)
     if not risers:
         return None
     pairs_before = count_split_ring_pairs(solid)
@@ -820,7 +819,7 @@ def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
 
     if not BRepCheck_Analyzer(result.__native__).IsValid():
         return solid
-    if not volume_within(result.Volume, solid.Volume, REL_TOL_E6):
+    if not volume_within(result.Volume, solid.Volume, tolerances.volume_tolerance):
         return solid
     return result
 

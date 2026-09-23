@@ -20,8 +20,11 @@ def test_no_source_file_still_names_a_removed_gate():
 
 
 def test_exact_operations_keep_their_own_tight_gate():
-    # Gmerge_coplanar_planes and Gsplit's volume_tolerance confirm an (almost) exact operation: not part of the shared gate
+    # Gmerge_coplanar_planes and Gsplit's volume_tolerance confirm an (almost) exact operation: not part of the
+    # shared gate. Gmerge_coplanar_planes itself now uses tolerances.volume_tolerance directly (2026-09-23,
+    # replacing its own former REL_TOL_E6 literal); GSolid.refine()'s own kernel self-check keeps its own,
+    # separately-named NATIVE_VOL_RATIO_TOL (same historical value, split out of REL_TOL_E6 the same day).
     from geouned.GEOUNED.utils.data_classes import Tolerances
 
     assert Tolerances().volume_tolerance < constants.MAX_REPAIR_VOLUME_REL_CHANGE
-    assert constants.REL_TOL_E6 < constants.MAX_REPAIR_VOLUME_REL_CHANGE
+    assert constants.NATIVE_VOL_RATIO_TOL < constants.MAX_REPAIR_VOLUME_REL_CHANGE

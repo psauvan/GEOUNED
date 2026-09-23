@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from .constants import BOX_TOL, NUMERIC_DOUBLE_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL, REL_TOL_E6
+from .constants import BOX_TOL, BOX_UNION_VOL_TOL, NUMERIC_DOUBLE_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
 from .volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
@@ -517,7 +517,7 @@ class myBox:
                     self_vol = _box_volume(self.Box)
                     box_vol = _box_volume(box.Box)
                     union_vol = _box_volume(union_box)
-                    if volume_within(union_vol, self_vol + box_vol - inter_vol, REL_TOL_E6, union_vol):
+                    if volume_within(union_vol, self_vol + box_vol - inter_vol, BOX_UNION_VOL_TOL, union_vol):
                         self.Box = union_box
                     else:
                         self.Box = self.Box if self_vol >= box_vol else box.Box

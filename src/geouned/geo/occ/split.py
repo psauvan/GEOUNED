@@ -25,7 +25,7 @@ from .boolean import _exploded_solids
 from .split_repair import _separate_edge_joined_components, _repair_non_manifold_solid
 from .split_coaxial_cone import _find_cone_face, _try_coaxial_cone_split
 from .repair import Gsliver_heal, Gheal_topology, Gmerge_coplanar_planes, Gclose_open_solid
-from ..constants import POINT_POINT_TOL, REL_TOL_E5
+from ..constants import POINT_POINT_TOL, PRE_REPAIR_MIN_VOLUME
 from ..volume_utils import volume_within
 
 
@@ -65,7 +65,7 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
     if not raw_solids:
         return [base_native], False
 
-    raw_solids = remove_tools_from_raw_solids(raw_solids, base_native, tool_native)
+    raw_solids = remove_tools_from_raw_solids(raw_solids, base_native, tool_native, tolerances)
 
     repaired_any = False
     final_native_solids = []
@@ -148,7 +148,7 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
         return [base_native], False
 
 
-def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
+def remove_tools_from_raw_solids(raw_solids, base_native, tool_native, tolerances):
     """Sometimes the tool solid is returned in the split results, must be
     removed from split solid list."""
 
@@ -159,12 +159,15 @@ def remove_tools_from_raw_solids(raw_solids, base_native, tool_native):
     base_volume = _volume_props(base_native).Mass()
     in_volume = base_volume + tool_volume
     out_volume = sum(_volume_props(x).Mass() for x in raw_solids)
-    if abs(out_volume - in_volume) < REL_TOL_E5 * in_volume and abs(tool_volume) > REL_TOL_E5:
+    if (
+        abs(out_volume - in_volume) < tolerances.volume_tolerance * in_volume
+        and abs(tool_volume) > PRE_REPAIR_MIN_VOLUME
+    ):
         base_components = []
         tool_CM = _volume_props(tool_native).CentreOfMass()
         for s in raw_solids:
             s_volume = _volume_props(s).Mass()
-            if abs(s_volume - tool_volume) < REL_TOL_E5 * abs(s_volume):
+            if abs(s_volume - tool_volume) < tolerances.volume_tolerance * abs(s_volume):
                 sol_CM = _volume_props(s).CentreOfMass()
                 d2 = tool_CM.SquareDistance(sol_CM)
                 if math.sqrt(d2) < POINT_POINT_TOL:

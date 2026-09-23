@@ -227,7 +227,6 @@ else:
         Gcollapse_split_rings,
         Gcommon,
         Gcut,
-        Gdefeature,
         Gdiagnose_open_solid,
         Gdistance,
         Gexport_step,

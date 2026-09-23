@@ -25,8 +25,6 @@ import math
 
 from .constants import (
     NUMERIC_DOUBLE_TOL,
-    REL_TOL_E2,
-    REL_TOL_E3,
     RELATIVE_TOL_ABS_FLOOR,
 )
 from .vector_geometry import GVector
@@ -647,13 +645,13 @@ def find_can_plane(
         return None
 
     if narrow_wide_threshold is None:
-        narrow_wide_threshold = REL_TOL_E2 * main_radius
+        narrow_wide_threshold = 0.01 * main_radius  # 1% of the main cylinder's own radius
 
     half_width = 0.5 * (proj_far - proj_near)
     if half_width <= narrow_wide_threshold:
         offset_amount = half_width
     else:
-        offset_amount = min(REL_TOL_E3 * half_width, narrow_wide_threshold)
+        offset_amount = min(0.001 * half_width, narrow_wide_threshold)  # 0.1% of half_width
 
     position = point_near + normal * offset_amount
     return position, normal

@@ -24,13 +24,13 @@ from __future__ import annotations
 from .surface_geometry import axes_parallel
 from .constants import (
     DEFAULT_MIN_FACE_WIDTH,
+    DEFAULT_SLIVER_EDGE_REL_TOL,
     DEFECT_AXIS_ANGLE,
     DEGENERATE_EDGE_LENGTH_FLOOR,
     DEGENERATE_SOLID_VOL_AREA_RATIO,
     MIN_SLIVER_EDGE_LENGTH,
     POINT_POINT_TOL,
-    REL_TOL_E3,
-    REL_TOL_E4,
+    SPLIT_RING_REL_TOL,
 )
 
 
@@ -63,7 +63,7 @@ def valid_solid(solid, min_volume: float) -> bool:
     return True
 
 
-def find_short_edges(solid, rel_tol: float = REL_TOL_E4) -> list:
+def find_short_edges(solid, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
     """Faces of `solid` (a GSolid) touching at least one edge whose own
     length is pathologically small relative to the solid's overall scale
     (edge.Length / solid.BoundBox.DiagonalLength < rel_tol) -- a purely
@@ -140,7 +140,7 @@ def find_short_edges(solid, rel_tol: float = REL_TOL_E4) -> list:
 _SPLIT_RING_SURFACE_TYPES = ("GCylinder", "GCone", "GSphere", "GTorus")
 
 
-def find_split_ring_faces(solid, min_face_width: float = DEFAULT_MIN_FACE_WIDTH, rel_tol: float = REL_TOL_E4) -> list:
+def find_split_ring_faces(solid, min_face_width: float = DEFAULT_MIN_FACE_WIDTH, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
     """Faces that are the parasitic "riser" walls of a *duplicated
     micro-trim* -- the "split boundary ring" CAD defect (a.k.a. collapsed
     micro-step). A single trimming surface (a plane, or a cylinder)
@@ -215,7 +215,7 @@ def is_sliver_face(face, min_face_width: float) -> bool :
         pass
     return False
 
-def count_split_ring_pairs(solid, rel_tol: float = REL_TOL_E3) -> int:
+def count_split_ring_pairs(solid, rel_tol: float = SPLIT_RING_REL_TOL) -> int:
     """Number of *near-coincident concentric circular-edge pairs* on the
     faces of `solid` -- the direct fingerprint of a "split boundary ring"
     (see `find_split_ring_faces`). Two circular edges of the SAME face
@@ -312,7 +312,7 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
     return None
 
 
-def check_solid_defects(solid, sliver_edge_rel_tol: float = REL_TOL_E4, min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> list:
+def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL, min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> list:
     """Run every known corrupted/degenerate-geometry check against a
     loaded solid and return the reasons it currently fails (empty list
     if the solid is clean). One function, one place to extend: any

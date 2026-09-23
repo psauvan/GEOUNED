@@ -43,7 +43,7 @@ from ..surface_geometry import (
 from .topology import GCone, GCylinder, GFace, GSolid
 from ._native_utils import to_native_vector
 from .primitives import Gmake_shell, Gmake_solid
-from ..constants import KERNEL_TOL_E6, NUMERIC_DOUBLE_TOL, REL_TOL_E3, REL_TOL_E6
+from ..constants import COAXIAL_RETRY, KERNEL_TOL_E6, NUMERIC_DOUBLE_TOL
 from ..volume_utils import volume_within
 
 
@@ -335,7 +335,7 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
                 continue
             retry_solids = [GSolid(s) for s in retry_native_solids]
             total_volume = sum(s.Volume for s in retry_solids)
-            volume_rel_tol = REL_TOL_E6 if retry_tolerance == 0.0 else REL_TOL_E3
+            volume_rel_tol = tolerances.volume_tolerance if retry_tolerance == 0.0 else COAXIAL_RETRY
             if not volume_within(total_volume, base.Volume, volume_rel_tol):
                 continue
             if not all(s.is_valid() for s in retry_solids):

@@ -308,11 +308,12 @@ class Tolerances(GeoTolerances):
             parameterization, not a new default -- see that function's own docstring).
         volume_tolerance (float, optional): relative volume-conservation tolerance used by geo.Gsplit's
             own non-manifold-repair/sliver-heal acceptance checks (a repaired result is only trusted if
-            its own summed volume matches the pre-repair input to within this fraction). Defaults to
-            1.0e-6, matching the prior hardcoded value in geo._raw_bop_split (see that function's own
-            docstring, and _try_coaxial_cone_split's identical, separately-hardcoded 1e-6 -- both trace to
-            the same "never trust a topology repair blindly" discipline documented throughout this
-            project's history).
+            its own summed volume matches the pre-repair input to within this fraction), and by
+            decompose/decom_one_generators.py::generic_split's own "did this split actually separate the
+            base fragment's own volume" sanity check. Defaults to 1.0e-4 (changed 2026-09-23 from the
+            original 1.0e-6, measured on test_models + working_solids: a 143-file corpus diff at 1.0e-4
+            changes exactly 1 file's own final volume, by ~4.3e-6 relative, with 0 piece-count or
+            composite-surface-count changes anywhere -- see CLAUDE.md's "REL_TOL_E4" entry).
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -349,7 +350,7 @@ class Tolerances(GeoTolerances):
         scale: float = 0.1,
         min_solid_volume: float = 1.0e-2,
         fix_tolerance: float = 1.0e-6,
-        volume_tolerance: float = 1.0e-6,
+        volume_tolerance: float = 1.0e-4,
     ):
 
         super().__init__(

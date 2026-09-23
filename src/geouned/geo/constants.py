@@ -148,6 +148,19 @@ surface is not a fragment the decomposition should keep. Companion of
 `DEFAULT_MIN_SOLID_VOLUME`; both from the historical
 `decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""
 
+PRE_REPAIR_MIN_VOLUME = 1.0e-5
+"""Absolute volume floor (mm^3) for an intermediate solid COMPONENT during a
+split -- e.g. `remove_tools_from_raw_solids`' own "is the tool volume
+substantial enough to bother comparing" gate -- BEFORE that component has
+gone through the full reconstruction/repair cascade. Deliberately lower than
+`Tolerances.min_solid_volume` (1e-2, the FINAL-stage "is this solid worth
+keeping as output" floor): discarding a small-but-real intermediate piece
+this early, at the same threshold the final stage uses, risks breaking the
+solid's own later reconstruction (per direct user instruction, 2026-09-23 --
+not itself re-derived from a fresh corpus measurement, but kept at its
+original historical value, the one this role already had before it was
+found mislabelled as the unrelated relative-volume `REL_TOL_E5`)."""
+
 
 # ===========================================================================
 # Tolerance constants, one per (role, historical value).
@@ -216,11 +229,106 @@ PARAM_ANGLE_TOL = 1.0e-5
 RELATIVE_TOL_ABS_FLOOR = 1.0e-9
 
 # Dimensionless relative tolerance (fraction of a model/solid scale or of a volume).
-REL_TOL_E2 = 1.0e-2
-REL_TOL_E3 = 1.0e-3
-REL_TOL_E4 = 1.0e-4
-REL_TOL_E5 = 1.0e-5
-REL_TOL_E6 = 1.0e-6
+# REL_TOL_E2 removed 2026-09-23 (both its real sites were plain "1% of a real geometric span"
+# constructions, not a tolerance as such -- per direct user instruction, replaced with the
+# literal 0.01 inline, same convention as this project's other non-tolerance factors).
+REL_DIST_TOL = 1.0e-3
+"""Relative distance tolerance (fraction of a real parameter/length span). Split out of
+`REL_TOL_E3` 2026-09-23 (same value, renamed) for `get_adjacent_cylknesurfFace`'s own "is this
+edge's V-parameter close to the cylinder/cone's own axial extreme" classification -- a genuine
+relative-DISTANCE tolerance, not a relative-VOLUME one (which is what the rest of the
+`REL_TOL_E*` family, still under review, is really about)."""
+
+RESEW_CEILING = 1.0e-3
+"""Upper bound (fraction of the solid's own diagonal) on the re-sew tolerance
+`_resew_faces_to_solid` (`occ`/`ocp` `open_solid_repair.py`) applies when welding a doubled seam
+or a missing sliver strip back shut -- caps how far the actual sew tolerance
+(`min(max(3*width, seam_tol), RESEW_CEILING * diagonal)`) can grow, so a large gap never risks
+welding unrelated, distant geometry together. Split out of `REL_TOL_E3` 2026-09-23 (same value,
+renamed): a genuinely different role from `REL_DIST_TOL` (an edge-classification threshold)
+despite both being "a fraction of a real length" -- this one is a REPAIR ceiling, not a
+detection/classification test, and the two are free to diverge in value later if ever needed."""
+
+COAXIAL_RETRY = 1.0e-3
+"""Relative volume-conservation tolerance for `_try_coaxial_cone_split`'s own retry cascade
+(`occ`/`ocp` `split_coaxial_cone.py`) once it has moved past the exact (`retry_tolerance == 0.0`)
+attempt -- deliberately looser than `Tolerances.volume_tolerance` (used for that exact-case
+attempt instead), since a presplit's new edge is only exact to floating-point precision, not
+identical to the tool's own BRep representation of the same curve, so a fuzzy BOPAlgo retry needs
+real slack. Split out of `REL_TOL_E3` 2026-09-23 (same value, renamed): an algorithmic retry
+margin, not something a user would tune per model."""
+
+SPLIT_RING_REL_TOL = 1.0e-3
+"""`count_split_ring_pairs`'s own detection tolerance for a "split boundary ring" defect --
+governs 3 related checks on the SAME candidate circle pair at once, by design (radius ratio
+`|dR|/max(R)`, gap-vs-diagonal fraction, perpendicular-offset-vs-radius ratio): "two circles that
+should be one". Split out of `REL_TOL_E3` 2026-09-23 (same value, renamed) -- its own dedicated,
+already-well-documented role, distinct from `REL_DIST_TOL`'s single-purpose classification."""
+# REL_TOL_E3 removed 2026-09-23: every real site was, under a different name, a genuinely
+# distinct role (REL_DIST_TOL, RESEW_CEILING, COAXIAL_RETRY, SPLIT_RING_REL_TOL above, or a
+# plain non-tolerance "1% of a real span" construction replaced with a literal) -- same value
+# (1e-3) throughout, just never one single concept to begin with.
+
+DEFAULT_SLIVER_EDGE_REL_TOL = 1.0e-4
+"""Default of `Tolerances.sliver_edge_rel_tol` (a real, user-facing field -- itself now a plain
+1e-4 literal in `GeoTolerances.__init__`, matching every other field's own convention there), for
+`geo/solid_defects.py`'s own pure, duck-typed functions (`find_short_edges`/
+`find_split_ring_faces`/`check_solid_defects`), which have no `tolerances` object to read from by
+signature. Same naming convention as `DEFAULT_MIN_FACE_WIDTH`/`DEFAULT_MIN_SOLID_VOLUME`/
+`DEFAULT_SPLIT_SCALE`: a `DEFAULT_<field>` constant backing a real `Tolerances` field's own
+default for a context with no `tolerances` object, not an independent role of its own. Split out
+of `REL_TOL_E4` 2026-09-23 (same value, renamed) -- every real production call site of these 3
+functions already passes `tolerances.sliver_edge_rel_tol` explicitly except
+`Gcollapse_split_rings`' own call to `find_split_ring_faces` (occ/ocp), fixed at the same time to
+thread it through instead of silently falling back to this default."""
+
+FUSE_REFINE_REL_TOL = 1.0e-4
+"""`geo/solid_ops.py::Gfuse_solids`'s own `refine(rel_tol=...)` call after a successful boolean
+fuse: deliberately looser than `refine()`'s own strict default (`NATIVE_VOL_RATIO_TOL`, 1e-6) --
+merging the redundant tangent-seam faces a boolean fuse leaves behind legitimately moves the
+volume by ~1e-6 relative, and the strict guard would then discard the clean, merged result and
+keep the redundant-edge one instead (see `Gfuse_solids`'s own docstring for the full derivation
+and the real fixture that motivated this). Split out of `REL_TOL_E4` 2026-09-23 (same value,
+renamed): a deliberate, well-documented algorithmic choice for this one "fuse then tidy up" step,
+unrelated to `DEFAULT_SLIVER_EDGE_REL_TOL`'s own role despite sharing the same historical value."""
+
+# REL_TOL_E5 removed 2026-09-23: its 4 real sites (geo/{occ,ocp}/split.py's
+# remove_tools_from_raw_solids) are exactly Tolerances.volume_tolerance's own role (volume
+# conservation after a split) -- tolerances threaded through, real value change (1e-5 -> 1e-6)
+# accepted per direct user instruction after measurement showed real corpus samples in the
+# risky [1e-6, 1e-5] window; verified via corpus diff + a direct d1suned check on the
+# affected fixtures (see CLAUDE.md).
+# REL_TOL_E6 removed 2026-09-23: every real site was, under a different name, a genuinely
+# distinct role (NATIVE_VOL_RATIO_TOL, LINE_COPLANAR_REL_TOL, BOX_UNION_VOL_TOL below, or
+# `Tolerances.volume_tolerance`'s own real user-facing field, now a plain 1e-6 literal in its
+# own default) -- same value (1e-6) throughout, just never one single concept to begin with.
+
+NATIVE_VOL_RATIO_TOL = 1.0e-6
+"""Default of `GSolid.refine()`'s own `rel_tol` (all 3 engines): the volume-invariance guard
+`refine()` itself checks after its native `ShapeUpgrade_UnifySameDomain`/`removeSplitter()`
+operation, before trusting the refined result. Split out of `REL_TOL_E6` 2026-09-23 (same value,
+renamed) -- a tolerance on a native/kernel-adjacent operation's own self-check, not a relative-
+volume comparison between two independently-obtained solids (`Tolerances.volume_tolerance`'s own
+role) -- kept as its own name even though the two happen to share a value."""
+
+LINE_COPLANAR_REL_TOL = 1.0e-6
+"""`GLine.intersect_line`'s own (all 3 engines) skew-vs-coplanar test: two lines are treated as
+actually intersecting only if their own perpendicular gap, scaled by `max(|Position1|, |Position2|,
+1.0)` for numerical conditioning, stays below this fraction -- otherwise they are skew and no
+intersection point exists. Split out of `REL_TOL_E6` 2026-09-23 (same value, renamed): a pure
+geometric method with no `tolerances` object available, its own dedicated role distinct from
+`Tolerances.volume_tolerance`/`NATIVE_VOL_RATIO_TOL`."""
+
+BOX_UNION_VOL_TOL = 1.0e-6
+"""`myBox.add()`'s own (Reversed+Reversed case) exact-union-vs-safe-fallback check: the union of
+two boxes is kept as the combined result only if its volume matches `vol(A) + vol(B) - vol(A∩B)`
+(the inclusion-exclusion identity, true iff the two boxes leave no gap relative to their own
+combined bounding box) within this relative fraction -- otherwise the union is a real
+over-approximation and the code falls back to the larger of the two boxes alone. Split out of
+`REL_TOL_E6` 2026-09-23 (same value, renamed): `myBox` is pure geometry with no `tolerances`
+object available (see `geo/vector_geometry.py`'s own module docstring on `myBox`), its own
+dedicated role distinct from `Tolerances.volume_tolerance`/`NATIVE_VOL_RATIO_TOL`/
+`LINE_COPLANAR_REL_TOL`."""
 
 # Kernel zero (mm^3): a boolean Common of two shapes has content only above this.
 VOLUME_MIN_E8 = 1.0e-8

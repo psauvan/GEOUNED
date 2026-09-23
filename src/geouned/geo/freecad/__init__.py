@@ -54,7 +54,6 @@ from .repair import (
     Gcheck_and_repair,
     Gclose_open_solid,
     Gcollapse_split_rings,
-    Gdefeature,
     Gdiagnose_open_solid,
     Gface_valid,
     Gheal_topology,
