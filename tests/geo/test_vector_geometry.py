@@ -17,7 +17,12 @@ from geouned.geo.surface_geometry import (
 
 
 def test_is_same_value():
-    assert is_same_value(1.0, 1.0 + 1e-9)
+    # Default tolerance is NUMERIC_DOUBLE_TOL (1e-12) since 2026-09-23: is_same_value's
+    # own default is essentially unused in production (every real caller passes an
+    # explicit, context-appropriate tolerance), so its default is a generic
+    # floating-point-zero floor, not a length role.
+    assert is_same_value(1.0, 1.0 + 1e-13)
+    assert not is_same_value(1.0, 1.0 + 1e-9)
     assert not is_same_value(1.0, 1.1)
 
 

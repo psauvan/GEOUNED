@@ -3,7 +3,7 @@
 #
 import logging
 import math
-from ...geo.constants import LENGTH_TOL_E5, SQUARED_LENGTH_TOL_E8
+from ...geo.constants import POINT_POINT_TOL, SQUARED_LENGTH_TOL_E8
 
 logger = logging.getLogger("general_logger")
 
@@ -333,7 +333,7 @@ def build_roundC_params(rc_list, *, tolerances):
                     center = center + p.Surf.Position
                 center = center / len(plane_list)
                 dotvalue = p.Surf.Axis.dot(p.Surf.Position - center)
-                if abs(dotvalue) < LENGTH_TOL_E5:  # aligned planes (point-to-plane distance)
+                if abs(dotvalue) < POINT_POINT_TOL:  # aligned planes (point-to-plane distance)
                     orientation = rc.Surf.Cylinder.Orientation
                 else:
                     orientation = "Reversed" if dotvalue > 0 else "Forward"

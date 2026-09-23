@@ -7,14 +7,14 @@ from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
 from ...geo import GSolid, GVector, Gin_contact
-from ...geo.constants import LENGTH_TOL_E6, NUMERIC_TOL, PARAM_ANGLE_TOL
+from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
 # expected to already pass GVector.
 
 
-def is_same_value(v1, v2, tolerance=LENGTH_TOL_E6):
+def is_same_value(v1, v2, tolerance=NUMERIC_DOUBLE_TOL):
     return surface_geometry.is_same_value(v1, v2, tolerance)
 
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from .constants import BOX_TOL, LENGTH_TOL_E12, PARAM_ANGLE_TOL, POINT_POINT_TOL, REL_TOL_E6
+from .constants import BOX_TOL, NUMERIC_DOUBLE_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL, REL_TOL_E6
 from .volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ class myBox:
         else:
             if boundBox is not None:
                 boundBox = to_gboundbox(boundBox)
-                if boundBox.XLength <= LENGTH_TOL_E12 or boundBox.YLength <= LENGTH_TOL_E12 or boundBox.ZLength <= LENGTH_TOL_E12:
+                if boundBox.XLength <= NUMERIC_DOUBLE_TOL or boundBox.YLength <= NUMERIC_DOUBLE_TOL or boundBox.ZLength <= NUMERIC_DOUBLE_TOL:
                     self.Box = None
                 else:
                     self.Box = boundBox

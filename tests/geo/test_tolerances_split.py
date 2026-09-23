@@ -29,10 +29,15 @@ def test_shared_fields_have_a_single_default():
 
 
 def test_geotolerances_holds_only_what_geo_reads():
-    # CadToCsg-only fields must not leak into the base that GEOReverse uses
-    for name in ("min_area", "relativeTol", "relativePrecision", "value", "distance", "angle", "add_pln_distance", "add_pln_angle"):
+    # CadToCsg-only fields must not leak into the base that GEOReverse uses.
+    # `distance` was removed entirely 2026-09-23: it was the same "generic point-to-point
+    # coincidence" role as the intrinsic geo.constants.POINT_POINT_TOL under a different,
+    # user-facing name, never actually exercised at a non-default value anywhere -- its 5
+    # real call sites now use POINT_POINT_TOL directly.
+    for name in ("min_area", "relativeTol", "relativePrecision", "value", "angle", "add_pln_distance", "add_pln_angle"):
         assert not hasattr(GeoTolerances(), name), name
         assert hasattr(Tolerances(), name), name
+    assert not hasattr(Tolerances(), "distance")
 
 
 def test_flat_constructor_and_shared_validation():

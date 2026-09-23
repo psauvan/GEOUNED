@@ -24,7 +24,6 @@ from __future__ import annotations
 import math
 
 from .constants import (
-    LENGTH_TOL_E6,
     NUMERIC_DOUBLE_TOL,
     REL_TOL_E2,
     REL_TOL_E3,
@@ -44,7 +43,7 @@ def relative_tolerance(base: float, scale: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def is_same_value(v1: float, v2: float, tolerance: float = LENGTH_TOL_E6) -> bool:
+def is_same_value(v1: float, v2: float, tolerance: float = NUMERIC_DOUBLE_TOL) -> bool:
     return abs(v1 - v2) < tolerance
 
 
@@ -553,7 +552,7 @@ def find_can_plane(
     """
     A = main_axis.normalized()
     e2 = A.cross(GVector(1.0, 0.0, 0.0))
-    if e2.length < LENGTH_TOL_E6:
+    if e2.length < NUMERIC_DOUBLE_TOL:
         e2 = A.cross(GVector(0.0, 1.0, 0.0))
     e2 = e2.normalized()
     e1 = A.cross(e2).normalized()

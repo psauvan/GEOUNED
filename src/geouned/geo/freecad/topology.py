@@ -44,9 +44,9 @@ from ..io_utils import suppress_native_stdout
 from ..constants import (
     ANGLE_THRESHOLD,
     BOX_TOL,
-    LENGTH_TOL_E6,
-    LENGTH_TOL_E7,
+    KERNEL_TOL_E7,
     NUMERIC_DOUBLE_TOL,
+    NUMERIC_TOL,
     REL_TOL_E6,
     VOLUME_MIN_E8,
 )
@@ -799,8 +799,10 @@ class GFace:
         v = (v_min + v_max) / 2.0
         point = self.__native__.valueAt(u, v)
         normal = self.__native__.normalAt(u, v)
-        probe = point + normal * LENGTH_TOL_E6
-        return not solid.__native__.isInside(probe, LENGTH_TOL_E7, False)
+        # Increment along the normal to get a point very close to the solid's own
+        # surface, just off it, for the isInside probe below.
+        probe = point + normal * NUMERIC_TOL
+        return not solid.__native__.isInside(probe, KERNEL_TOL_E7, False)
 
     def export_step(self, filename: str) -> None:
         # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer

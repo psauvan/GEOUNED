@@ -107,9 +107,9 @@ from ..constants import (
     BOX_TOL,
     KERNEL_TOL_E6,
     KERNEL_TOL_E7,
-    LENGTH_TOL_E6,
     MESH_DEFLECTION,
     NUMERIC_DOUBLE_TOL,
+    NUMERIC_TOL,
     REL_TOL_E6,
     VOLUME_MIN_E8,
 )
@@ -804,7 +804,9 @@ class GFace:
         v = (vmin + vmax) / 2.0
         point = self.value_at(u, v)
         normal = self.normal_at(u, v)
-        probe = point + normal * LENGTH_TOL_E6
+        # Increment along the normal to get a point very close to the solid's own
+        # surface, just off it, for the classifier probe below.
+        probe = point + normal * NUMERIC_TOL
         classifier = BRepClass3d_SolidClassifier(solid.__native__)
         classifier.Perform(to_native_vector(probe), KERNEL_TOL_E7)
         return classifier.State() != TopAbs_IN

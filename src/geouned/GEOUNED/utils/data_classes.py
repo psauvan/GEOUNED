@@ -252,7 +252,6 @@ class Tolerances(GeoTolerances):
             planned absolute/relative precision.
         value (float, optional): Tolerance in single value comparison. Defaults to 1.0e-6. Not read by the code at the
             moment (see relativePrecision); kept for the same reason.
-        distance (float, optional): General Distance Tolerance. Defaults to 1.0e-4.
         angle (float, optional): General Angle Tolerance. Defaults to 1.0e-4.
         pln_distance (float, optional): distance between planes equal planes if distance between parallel planes < 1e-4 cm. Defaults to 1.0e-4.
         pln_angle (float, optional): angle between axis. 1e-4 : planes separate each other 0.1mm each 1m. Defaults to 1.0e-4.
@@ -330,7 +329,6 @@ class Tolerances(GeoTolerances):
         relativeTol: bool = False,
         relativePrecision: float = 1.0e-6,
         value: float = 1.0e-6,
-        distance: float = 1.0e-4,
         angle: float = 1.0e-4,
         pln_distance: float = 1.0e-4,
         pln_angle: float = 1.0e-4,
@@ -377,7 +375,6 @@ class Tolerances(GeoTolerances):
         self.relativeTol = relativeTol
         self.relativePrecision = relativePrecision
         self.value = value
-        self.distance = distance
         self.angle = angle
         self.min_area = min_area
         self.add_pln_distance = add_pln_distance
@@ -412,16 +409,6 @@ class Tolerances(GeoTolerances):
         if not isinstance(value, float):
             raise TypeError(f"geouned.Tolerances.value should be a float, not a {type(value)}")
         self._value = value
-
-    @property
-    def distance(self):
-        return self._distance
-
-    @distance.setter
-    def distance(self, distance: float):
-        if not isinstance(distance, float):
-            raise TypeError(f"geouned.Tolerances.distance should be a float, not a {type(distance)}")
-        self._distance = distance
 
     @property
     def angle(self):
@@ -516,7 +503,6 @@ class Tolerances(GeoTolerances):
             relativeTol=self.relativeTol,
             relativePrecision=self.relativePrecision,
             value=self.value,
-            distance=self.distance,
             angle=self.angle,
             pln_distance=self.pln_distance,
             pln_angle=self.pln_angle,

@@ -2411,6 +2411,199 @@ gaps for whenever it's picked back up:
   these 5 sites first -- the ~5e-7 rad real-noise concern that motivated
   this whole audit is still a real phenomenon in this codebase, it just
   didn't show up as a live problem in the current 143-file corpus.
+  **`LENGTH_TOL_E*` family analyzed and renamed to the constant each
+  site's real role already matches, 2026-09-23.** Read every real call
+  site of `LENGTH_TOL_E3/E5/E6/E7/E8/E12`. `LENGTH_TOL_E6` deliberately
+  left untouched (its ~15 sites span several genuinely different roles,
+  needs its own closer look); every other member turned out to already
+  be an existing, better-named constant under a different name, values
+  unchanged:
+  - `LENGTH_TOL_E7` (freecad's `orientation_outward`, the native
+    `isInside()` tolerance) is the exact same role as `KERNEL_TOL_E7`
+    (occ/ocp's own `BRepClass3d_SolidClassifier` tolerance in the
+    identical function) -- same value, just named differently per
+    engine. Renamed to `KERNEL_TOL_E7`.
+  - `LENGTH_TOL_E3` (`meta_surfaces_utils.py`'s "is this edge long
+    enough to bother with the angle-sweep" filter) is the exact same
+    value (1e-3) and role as the already-established
+    `MIN_SLIVER_EDGE_LENGTH`. Renamed.
+  - `LENGTH_TOL_E5` (~18 sites, all in `meta_surfaces_utils.py`, plus
+    `solid_defects.py`/`functions.py`/`meta_surfaces.py`) is the exact
+    same value and role as `POINT_POINT_TOL` -- flagged as a "possible
+    relabel, never measured" as far back as the 2026-09-19/20 batch.
+    Renamed at every site.
+  - `LENGTH_TOL_E8` (`build_shape_functions.py`'s `fix_same_points`/
+    `fix_points`/`remove_box_faces`, all literally "are these two
+    points close enough to merge") is the same role as `POINT_POINT_TOL`
+    at a tighter, undocumented value (1e-8 vs 1e-5) -- **measured**
+    before renaming (143-file corpus, all 3 functions instrumented
+    directly): the real near-zero residuals top out at ~1.5e-11,
+    ~3.7e-11, ~5.5e-12 respectively, three orders of magnitude below
+    the old 1e-8 floor and with **zero** samples anywhere in [1e-8,
+    1e-5] -- loosening to `POINT_POINT_TOL` changes nothing on this
+    corpus. Renamed.
+  - `LENGTH_TOL_E12` (`vector_geometry.py::myBox.__init__`'s degenerate-
+    bounding-box guard) is the exact same "double-precision arithmetic
+    zero" role as `NUMERIC_DOUBLE_TOL`, just still at its own pre-rename
+    value (1e-12, coincidentally already equal). **Measured** alongside
+    the structurally-identical `LENGTH_TOL_E6`-based guards in
+    `solid_ops.py::BuildSolidParts`/`build_region/Objects.py::
+    CellObj.makeBox` (2811 + 1371 real boundBox-dimension samples,
+    `BuildSolidParts` itself not reachable via decompose + build_solid_
+    definition alone on this corpus): **zero** near-zero samples in
+    either -- no evidence either value matters here, but `LENGTH_TOL_E6`
+    itself is deliberately NOT touched yet (same "needs a closer look"
+    reason as above); only `LENGTH_TOL_E12` -> `NUMERIC_DOUBLE_TOL` was
+    renamed (a pure rename, same value).
+  `LENGTH_TOL_E3/E5/E7/E8/E12` then had zero remaining references and
+  were deleted from `geo/constants.py`, leaving only `LENGTH_TOL_E6`
+  (with a docstring note explaining it's the one deliberately deferred
+  member of this family).
+  **`LENGTH_TOL_E6`'s 3 default-argument sites, same session,
+  continuation.** Of `LENGTH_TOL_E6`'s remaining sites, 3 are function
+  DEFAULT ARGUMENTS rather than inline comparisons -- reviewed
+  separately since a default can hide whether it's actually load-bearing:
+  - `is_same_value` (both copies, `geo.surface_geometry` and its
+    `GEOUNED.utils.basic_functions_part1` wrapper): traced every real
+    caller -- ALL of them pass an explicit, context-appropriate
+    tolerance (`Surfaces.tolerances.distance` at the time,
+    `PARAM_ANGLE_TOL`, `NUMERIC_TOL`); the function's own default is
+    exercised ONLY by `tests/geo/test_vector_geometry.py`, never by any
+    real pipeline code. Being a fully generic float-comparison helper
+    (no fixed physical role of its own -- used for lengths, angles,
+    ratios depending on the caller), its default is a pure floating-
+    point-zero fallback, not a "length" role -- **per the user's
+    decision**, changed to `NUMERIC_DOUBLE_TOL`. The one test that
+    exercised the old default at 1e-9 precision was updated to test at
+    the new, much tighter precision instead (1e-13 passes, 1e-9 no
+    longer does -- documented inline why).
+  - `_valid_chain_junction` (`meta_surfaces_utils.py`, the RevCC chain-
+    junction topology test): its own `tol` IS load-bearing at its 2 real
+    callers (both inside `get_join_cone_cyl`, always at the default --
+    no caller passed one explicitly) -- and its real use,
+    `(v - V0).length < tol`, is a genuine point-coincidence test, not a
+    generic float comparison. Per the user's own direction ("tenemos la
+    posibilidad de pasar la tolerancia del objeto tolerance... ¿hay un
+    parametro que define una distancia generica entre dos puntos?"),
+    the fix was two-part: (a) `tol` dropped its own default entirely
+    (now a required keyword-only parameter, matching this whole
+    project's "a forgotten call site is a TypeError, not a silent
+    default" convention), and (b) resolved the deeper duplication this
+    question surfaced -- see the `Tolerances.distance` entry right
+    below.
+  **`Tolerances.distance` retired entirely, same session, direct
+  continuation -- a real architectural duplicate, not just a naming
+  mismatch.** The question above ("is there a generic point-to-point
+  distance in the Tolerances object?") surfaced that there already WAS
+  one, `Tolerances.distance` ("General Distance Tolerance", default
+  1e-4, a public/JSON-config field) -- sitting alongside the intrinsic
+  `POINT_POINT_TOL` (1e-5) for what turned out to be the exact same
+  underlying physical phenomenon. Investigated before deciding which
+  direction to unify: `tolerances.distance` has 5 real call sites (3 in
+  `cell_definition_functions.py`'s `V_torus_surface`, comparing
+  z-heights/radii via `is_same_value`; 2 in `decom_utils_generator.py::
+  cks_bound_planes`, the same axis-to-point distance gate already
+  measured -- real values are exact noise or clearly large, nothing near
+  either 1e-4 or 1e-5), and has **never once been exercised at a
+  non-default value** anywhere in the repo or its tests (the one place
+  it's passed explicitly, `tests/test_cadtocsg.py`, restates the exact
+  same 1e-4 default). Combined with `POINT_POINT_TOL`'s own, already-
+  rigorously-measured intrinsic classification (real CAD point
+  coincidences are 0/<1e-9mm, distinct points >=1e-2mm, a wide clean gap
+  where the exact value never matters) and this file's own prior note
+  ("cks_bound_planes uses Tolerances.distance (1e-3 -> 1e-4, no
+  regression seen)" -- confirming even a 10x change never mattered
+  there either), the case for a real, tunable, per-user `distance` field
+  was never actually demonstrated. **Per the user's explicit
+  confirmation**: `distance` removed entirely from `Tolerances`
+  (constructor parameter, property/setter, docstring entry, the
+  `scaled()` passthrough) -- NOT kept-but-unused the way
+  `relativePrecision`/`value` were (those are aspirational, "the user
+  plans to apply [them] correctly later"; `distance` was a genuine,
+  demonstrated duplicate with no real use ever observed, a different
+  situation). All 5 real call sites now import and use `POINT_POINT_TOL`
+  directly; `tests/test_cadtocsg.py` and `tests/config_cadtocsg_
+  complete_defaults.json` (the "every parameter enumerated explicitly"
+  fixtures) had their own `distance=`/`"distance"` entries dropped to
+  match; `tests/geo/test_tolerances_split.py::
+  test_geotolerances_holds_only_what_geo_reads` (which used to pin
+  `distance` as a `Tolerances`-only field) updated to instead pin that
+  it no longer exists on either class at all.
+  **Verified, combined for this whole `LENGTH_TOL_E*`/`distance` batch**:
+  ocp suite 292 passed/1 skipped; a 143-file before/after corpus
+  differential against the pre-batch commit -- **0 real differences**
+  (same single pre-existing timeout file as every other diff this
+  session, unaffected). occ/freecad suites still deferred to later in
+  the session per direct user instruction.
+  **`LENGTH_TOL_E6`'s remaining 9 sites, same session, direct
+  continuation -- the whole `LENGTH_TOL_E*` family is now gone.**
+  `LENGTH_TOL_E6` was deliberately left untouched in the batch above (it
+  spans several genuinely different roles); reviewed site-by-site, per
+  direct user decision at each:
+  - `probe = point + normal * LENGTH_TOL_E6` (3 engines,
+    `orientation_outward`'s own point-just-off-the-surface probe, fed to
+    a native point-in-solid classifier): -> `NUMERIC_TOL`, with a new
+    inline comment ("increment along the normal to get a point very
+    close to the solid's own surface, just off it") documenting the
+    role directly at the call site, since the constant's own name
+    doesn't carry it the way `MIN_SLIVER_EDGE_LENGTH`/`POINT_POINT_TOL`
+    do.
+  - `solid_ops.py::BuildSolidParts` and `build_region/Objects.py::
+    CellObj.makeBox`'s own degenerate-bounding-box guards (the same
+    structural pattern as `myBox.__init__`'s own `LENGTH_TOL_E12`,
+    already renamed to `NUMERIC_DOUBLE_TOL` in the batch above, and
+    already measured together with these two: 4182 combined real
+    boundBox-dimension samples, zero near zero) -> `NUMERIC_DOUBLE_TOL`
+    at both, per the user's direct instruction.
+  - `surface_geometry.py::find_can_plane`'s own arbitrary-perpendicular
+    fallback (`e2 = A.cross(X); if e2.length < TOL: e2 = A.cross(Y)`) --
+    the same cross-product-of-two-unit-vectors-near-zero "is the main
+    axis parallel to X" degeneracy guard already migrated at several
+    other sites -> `NUMERIC_DOUBLE_TOL`.
+  - `cell_definition_functions.py`'s plane-to-shell distance gate and
+    `boolean_solids.py`'s 2 solid/shell-distance "does this actually
+    intersect" gates -- genuine CONTACT tests (not a construction
+    offset, not a degenerate-branch guard) -> `NUMERIC_TOL`, per the
+    user's direct instruction (not `POINT_POINT_TOL`, which was this
+    session's own first guess before asking).
+  - `meta_surfaces.py::get_can_surfaces`'s own `abs(s.Surface.Radius -
+    cylinder.Surface.Radius) < TOL` (adjacent-cylinder same-radius
+    test): the user drew a real, previously-uncaptured distinction --
+    this compares a single SCALAR VALUE (a radius), not a spatial
+    distance, and should use a dedicated "scalar value comparison"
+    tolerance, not `cyl_distance` (which the canonical
+    `is_same_cylinder_surface` already overloads for both radius AND
+    axis-distance) nor an intrinsic constant. Presented 3 options
+    (reuse the existing-but-so-far-unread `Tolerances.value`, add a new
+    dedicated field, or something else) -- **user chose reusing
+    `Tolerances.value`**: this is its first real, live use anywhere in
+    the pipeline (its own docstring previously said "Not read by the
+    code at the moment... kept for the same reason [as
+    relativePrecision]"). `tolerances` was already threaded into this
+    exact call site (`get_can_surfaces(cylinder, solidFaces, *,
+    tolerances)`), so no signature change was needed. `Tolerances.value`'s
+    own default (1e-6) happens to equal `LENGTH_TOL_E6`'s, so this is
+    default-behavior-neutral while making the comparison genuinely
+    user-tunable for the first time.
+  - `meta_surfaces_utils.py::get_adjacent_cylknesurfFace`'s own
+    `if e.Length < TOL: continue` (skip a degenerate/zero-length edge
+    before classifying it) -> `NUMERIC_TOL`, per the user's direct
+    instruction (a contact/degeneracy-adjacent skip, not the same
+    "sliver filter before an expensive computation" role
+    `MIN_SLIVER_EDGE_LENGTH` covers).
+  `LENGTH_TOL_E6` then had zero remaining references anywhere and was
+  deleted from `geo/constants.py` -- **the entire former
+  `LENGTH_TOL_E*` family (E3/E5/E6/E7/E8/E12) is now gone**, each site
+  folded into whichever already-established constant (or, for the one
+  cylinder-radius site, `Tolerances.value`) actually matched its real
+  role.
+  **Verified**: ocp suite 292 passed/1 skipped after each sub-step; two
+  separate 143-file before/after corpus differentials (one after the
+  `NUMERIC_TOL`/`tolerances.value` sites, one after the final
+  `NUMERIC_DOUBLE_TOL`/`NUMERIC_TOL` pair) -- **0 real differences** in
+  both (the second run didn't even show the usual single pre-existing
+  timeout-file diff). occ/freecad suites still deferred to later in the
+  session per direct user instruction.
 
 ## Reference docs
 

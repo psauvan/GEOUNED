@@ -18,7 +18,7 @@ from .meta_surfaces_utils import (
     eligible_plane,
     get_additional_corner_plane,
 )
-from ...geo.constants import LENGTH_TOL_E5, LENGTH_TOL_E6, PARAM_ANGLE_TOL
+from ...geo.constants import PARAM_ANGLE_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel, axes_perpendicular
 from ...geo.surface_geometry import is_same_cylinder_surface
 
@@ -109,7 +109,7 @@ def get_fwdcan_surfaces(cylinder, solidFaces, *, tolerances):
         axis = adjacent_planes[0].Surface.Axis
         for p in adjacent_planes[1:]:
             d = p.Surface.Position - r1
-            if d.length < LENGTH_TOL_E5:
+            if d.length < POINT_POINT_TOL:
                 p1s.append(p)
             else:
                 d = d.normalized()
@@ -148,7 +148,7 @@ def get_can_surfaces(cylinder, solidFaces, *, tolerances):
 
     for s in ext_faces:
         if type(s.Surface) is GCylinder:
-            if abs(s.Surface.Radius - cylinder.Surface.Radius) < LENGTH_TOL_E6:
+            if abs(s.Surface.Radius - cylinder.Surface.Radius) < tolerances.value:
                 # Same-radius adjacent cylinder -- deliberately NOT also
                 # requiring is_parallel(s.Axis, cylinder.Axis) here: any s
                 # reaching this point already passed get_adjacent_cylknesurf's

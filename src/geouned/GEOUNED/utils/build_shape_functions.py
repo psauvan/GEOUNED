@@ -18,7 +18,7 @@ from ...geo import (
     getPart,
     myBox,
 )
-from ...geo.constants import KERNEL_TOL_E8, LENGTH_TOL_E8
+from ...geo.constants import KERNEL_TOL_E8, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel, axes_same_direction
 
 
@@ -253,7 +253,7 @@ def sort_points(point_list: list, normal: GVector):
 
 def remove_box_faces(point_face_list: list, faces: list, boxlim: list, *, tolerances):
     """Remove the remaing initial BoundBox faces from the multplane faces produced"""
-    tol = LENGTH_TOL_E8
+    tol = POINT_POINT_TOL
     plane_points = []
     for i, gface in enumerate(faces):
         axis = gface.Surface.Axis
@@ -279,7 +279,7 @@ def fix_same_points(points_inplane: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = LENGTH_TOL_E8
+    tol = POINT_POINT_TOL
     remove = []
     for i, p1 in enumerate(points_inplane):
         if i in remove:
@@ -297,7 +297,7 @@ def fix_points(point_plane_list: list, vertex_list: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = LENGTH_TOL_E8
+    tol = POINT_POINT_TOL
     for i, current_plane in enumerate(point_plane_list):
         for point in current_plane:
             for planepts in point_plane_list[i + 1 :]:

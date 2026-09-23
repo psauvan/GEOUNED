@@ -26,9 +26,6 @@ from ...geo import (
     vector_geometry,
 )
 from ...geo.constants import (
-    LENGTH_TOL_E3,
-    LENGTH_TOL_E5,
-    LENGTH_TOL_E6,
     MESH_DEFLECTION,
     MIN_SLIVER_EDGE_LENGTH,
     NOT_PERPENDICULAR_COS_MIN,
@@ -85,7 +82,7 @@ def remove_twice_parallel(mplanes, *, tolerances):
                 dmin = d
                 pmin = p
 
-        if dmax - dmin < LENGTH_TOL_E5:
+        if dmax - dmin < POINT_POINT_TOL:
             continue
 
         for p in reversed(parallel):
@@ -279,7 +276,7 @@ def get_adjacent_cylknesurfFace(cylkne, Faces, *, tolerances):
 
     other_index = set()
     for e in cylkne.OuterWire.Edges:
-        if e.Length < LENGTH_TOL_E6:
+        if e.Length < NUMERIC_TOL:
             continue
         if type(Gclassify_curve(e)) is GLine:
             continue
@@ -475,7 +472,7 @@ def _loop_closes_full_turn(angle_of, oriented_edges):
     # loop wraps the axis completely, regardless of anything else in it.
     if any(
         (e.Vertexes[0] - e.Vertexes[-1]).length < POINT_POINT_TOL
-        and e.Length > LENGTH_TOL_E3
+        and e.Length > MIN_SLIVER_EDGE_LENGTH
         and _closes_full_turn(_oriented_angle_sweep(angle_of, e, v_from, v_to))
         for e, v_from, v_to in oriented_edges
     ):
@@ -693,7 +690,7 @@ def _find_adjacent_multiplane_planes(shell_or_face, GUFaces, multiplanes, tolera
     return found
 
 
-def _valid_chain_junction(shared_edge, faceA, faceB, tol=LENGTH_TOL_E6):
+def _valid_chain_junction(shared_edge, faceA, faceB, *, tol):
     """True if `shared_edge` (already known to be the boundary between
     faceA and faceB) represents a genuine near-parallel RevCC chain
     junction rather than a spurious/incidental edge-sharing between two
@@ -797,7 +794,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                 # ~last 6deg approaching exactly perpendicular), not a
                 # tight "must be small angle" bound.
                 and abs(face_or_shell.Surface.Axis.dot(adjacent1.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
-                and _valid_chain_junction(result1[0], result1[1], adjacent1)
+                and _valid_chain_junction(result1[0], result1[1], adjacent1, tol=POINT_POINT_TOL)
             ):
                 adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces, tolerances=tolerances)
                 new_adjacent1, arc1 = get_join_cone_cyl(adjacent1_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
@@ -808,7 +805,7 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                 adjacent2.Index not in omitFaces
                 and adjacent2.Orientation == "Reversed"
                 and abs(face_or_shell.Surface.Axis.dot(adjacent2.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
-                and _valid_chain_junction(result2[0], result2[1], adjacent2)
+                and _valid_chain_junction(result2[0], result2[1], adjacent2, tol=POINT_POINT_TOL)
             ):
                 adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces, tolerances=tolerances)
                 new_adjacent2, arc2 = get_join_cone_cyl(adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
@@ -1664,12 +1661,12 @@ def _edge_is_planar(edge):
     tangent is degenerate, in which case it's effectively a straight
     segment); any other/unsupported curve type (e.g. Hyperbola/
     Parabola) is treated as not confirmed planar."""
-    if edge.Length < LENGTH_TOL_E5:
+    if edge.Length < POINT_POINT_TOL:
         return False
     curve = edge.Curve
     if type(curve) is GBSpline:
         d0 = edge.derivative1_at(0)
-        if d0.length < LENGTH_TOL_E5:
+        if d0.length < POINT_POINT_TOL:
             return True
         return spline_2D(edge)
     if type(curve) in (GCircle, GEllipse):
@@ -1695,7 +1692,7 @@ def planar_edges(edges, *, tolerances):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < LENGTH_TOL_E5:
+    if e0.Length < POINT_POINT_TOL:
         return False
     # e0.Curve is already the classified curve (GLine/GCircle/GEllipse/
     # GBSpline/None), set once by GEdge.__init__ -- re-running
@@ -1704,7 +1701,7 @@ def planar_edges(edges, *, tolerances):
     curve0 = e0.Curve
     if type(curve0) is GBSpline:
         d0 = e0.derivative1_at(0)
-        if d0.length < LENGTH_TOL_E5:
+        if d0.length < POINT_POINT_TOL:
             dir0 = (e0.Vertexes[1] - e0.Vertexes[0]).normalized()
             center0 = 0.5 * (e0.Vertexes[1] + e0.Vertexes[0])
         elif spline_2D(e0):
@@ -1733,7 +1730,7 @@ def planar_edges(edges, *, tolerances):
         curve_i = ei.Curve
         if type(curve_i) is GBSpline:
             di = ei.derivative1_at(0)
-            if di.length < LENGTH_TOL_E5:
+            if di.length < POINT_POINT_TOL:
                 dir = (ei.Vertexes[1] - ei.Vertexes[0]).normalized()
                 center = 0.5 * (ei.Vertexes[1] + ei.Vertexes[0])
             elif spline_2D(ei):
@@ -1752,7 +1749,7 @@ def planar_edges(edges, *, tolerances):
 
         if not axes_parallel(dir0, dir, tolerances.angle):
             return False
-        if abs(dir0.dot(center - center0)) > LENGTH_TOL_E5:
+        if abs(dir0.dot(center - center0)) > POINT_POINT_TOL:
             return False
 
         if not edge_1D(ei):
@@ -1776,7 +1773,7 @@ def same_curve(edges, *, tolerances):
     if len(edges) == 0:
         return False
     e0 = edges[0]
-    if e0.Length < LENGTH_TOL_E5:
+    if e0.Length < POINT_POINT_TOL:
         return False
     curve0 = e0.Curve
     if curve0 is None:  # unsupported curve type (e.g. Hyperbola/Parabola)
@@ -1791,7 +1788,7 @@ def same_curve(edges, *, tolerances):
                 return False
             if not axes_parallel(curve0.Direction, curve_i.Direction, tolerances.angle):
                 return False
-            if curve0.Direction.cross(curve_i.Position - curve0.Position).length > LENGTH_TOL_E5:
+            if curve0.Direction.cross(curve_i.Position - curve0.Position).length > POINT_POINT_TOL:
                 return False
         return True
 
@@ -1802,15 +1799,15 @@ def same_curve(edges, *, tolerances):
                 return False
             if not axes_parallel(curve0.Axis, curve_i.Axis, tolerances.angle):
                 return False
-            if (curve_i.Center - curve0.Center).length > LENGTH_TOL_E5:
+            if (curve_i.Center - curve0.Center).length > POINT_POINT_TOL:
                 return False
             if type(curve0) is GCircle:
-                if abs(curve_i.Radius - curve0.Radius) > LENGTH_TOL_E5:
+                if abs(curve_i.Radius - curve0.Radius) > POINT_POINT_TOL:
                     return False
             else:
-                if abs(curve_i.MajorRadius - curve0.MajorRadius) > LENGTH_TOL_E5:
+                if abs(curve_i.MajorRadius - curve0.MajorRadius) > POINT_POINT_TOL:
                     return False
-                if abs(curve_i.MinorRadius - curve0.MinorRadius) > LENGTH_TOL_E5:
+                if abs(curve_i.MinorRadius - curve0.MinorRadius) > POINT_POINT_TOL:
                     return False
         return True
 
@@ -1836,7 +1833,7 @@ def same_curve(edges, *, tolerances):
         for i in range(len(chain) - 1):
             t1 = chain[i].derivative1_at(chain[i].ParameterRange[1])
             t2 = chain[i + 1].derivative1_at(chain[i + 1].ParameterRange[0])
-            if t1.length < LENGTH_TOL_E5 or t2.length < LENGTH_TOL_E5:
+            if t1.length < POINT_POINT_TOL or t2.length < POINT_POINT_TOL:
                 continue
             if not axes_parallel(t1, t2, tolerances.angle):
                 return False
@@ -1846,7 +1843,7 @@ def same_curve(edges, *, tolerances):
 
 
 def edge_1D(edge):
-    if edge.Length < LENGTH_TOL_E5:
+    if edge.Length < POINT_POINT_TOL:
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
@@ -1860,7 +1857,7 @@ def spline_2D(edge):
         return False  # straight line
 
     d0 = edge.derivative1_at(knots[0])
-    if d0.length < LENGTH_TOL_E5:
+    if d0.length < POINT_POINT_TOL:
         return False
 
     norm_0 = d0.cross(edge.normal_at(knots[0])).normalized()

@@ -11,7 +11,7 @@ from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
 from ...geo import GPlane, GSphere, GBoundBox, GVector, Gmake_wire
-from ...geo.constants import LENGTH_TOL_E6, NUMERIC_TOL
+from ...geo.constants import NUMERIC_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
@@ -107,7 +107,7 @@ def V_torus_surface(face, v_params, Surfaces):
     z2 = p2.dot(axis)
     d2 = p2.cross(axis).length
 
-    if is_same_value(z1, z2, Surfaces.tolerances.distance):
+    if is_same_value(z1, z2, POINT_POINT_TOL):
         center = torus_center + z1 * axis
         v_mid = (v_params[0] + v_params[1]) * 0.5
         p_mid = face.value_at(0, v_mid) - torus_center
@@ -115,10 +115,10 @@ def V_torus_surface(face, v_params, Surfaces):
             axis = -axis
         return GeounedSurface(("Plane", (center, axis, 1, 1))), None
 
-    elif is_same_value(d1, d2, Surfaces.tolerances.distance):
+    elif is_same_value(d1, d2, POINT_POINT_TOL):
         radius = min(d1, d2)
         center = torus_center
-        if is_same_value(d1, tface.Surface.MajorRadius, Surfaces.tolerances.distance):
+        if is_same_value(d1, tface.Surface.MajorRadius, POINT_POINT_TOL):
             v_mid = (vmin + vmax) * 0.5
 
             p_mid = tface.value_at(0, v_mid) - center
@@ -553,7 +553,7 @@ def gen_plane_sphere(shell):
     else:
         dmin = tmp_plane.distance_to(shell)
 
-    if dmin > LENGTH_TOL_E6:
+    if dmin > NUMERIC_TOL:
         new_center = center + 0.95 * dmin * normal
         plane = GeounedSurface(("Plane", (new_center, normal, 1, 1)))
         return plane

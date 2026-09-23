@@ -27,8 +27,8 @@ from .constants import (
     DEFECT_AXIS_ANGLE,
     DEGENERATE_EDGE_LENGTH_FLOOR,
     DEGENERATE_SOLID_VOL_AREA_RATIO,
-    LENGTH_TOL_E5,
     MIN_SLIVER_EDGE_LENGTH,
+    POINT_POINT_TOL,
     REL_TOL_E3,
     REL_TOL_E4,
 )
@@ -285,7 +285,7 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
         return None
 
     def _near(gap: float):
-        return gap if LENGTH_TOL_E5 < gap < dist_tol else None
+        return gap if POINT_POINT_TOL < gap < dist_tol else None
 
     if ta == "GPlane":
         axis_dot = surf_a.Axis.dot(surf_b.Axis)

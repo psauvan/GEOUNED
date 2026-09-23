@@ -159,13 +159,34 @@ surface is not a fragment the decomposition should keep. Companion of
 # own. These are the future fields of Tolerances.
 # ===========================================================================
 
-# Absolute length tolerance (mm): two points/edges/vertices coincide, a length is negligible.
-LENGTH_TOL_E12 = 1.0e-12
-LENGTH_TOL_E3 = 1.0e-3
-LENGTH_TOL_E5 = 1.0e-5
-LENGTH_TOL_E6 = 1.0e-6
-LENGTH_TOL_E7 = 1.0e-7
-LENGTH_TOL_E8 = 1.0e-8
+# Numeric precision (mm and rad) of a solid's OWN data: what the CAD kernel returns for entities that touch or coincide inside one
+# solid. Measured on test_models + working_solids (2026-09-19/20): every face/edge contact distance is exactly 0 or above 1e-2 mm
+# (nothing in between), and a full turn of a periodic parameter closes to floating-point noise. 1e-7 equals OCCT's
+# Precision::Confusion. Used for CONTACT (points, edges, faces of one solid) and for the full 2*pi of a periodic parameter. NOT for
+# surface identity (the user's per-surface tolerances, always) and NOT to approximate a surface by an axis-aligned one (that is the
+# same decision as identity): real data carries ~5e-7 rad of direction noise, above this value.
+NUMERIC_TOL = 1.0e-7
+
+# The smallest meaningful nonzero value a double-precision arithmetic result can carry --
+# below this, a computed quantity (a relative distance, a relative volume difference, a
+# cross-product/coefficient/parameter-difference guarding a division or a degenerate
+# branch) is numerical round-off, not a real geometric feature. Used as a kernel-operation
+# tolerance floor (geo/freecad/split.py's split-retry floor), as the "effectively zero"
+# cutoff for relative geometric decisions (VoidBox.piece_enclosure_split's contact/
+# containment tests, GeounedSolid.check_intersection's volume-embedding test), for
+# near-parallel/degenerate direction tests (GPlane/GLine's own intersect_plane/
+# intersect_line), and for every other division/degenerate-branch guard formerly split
+# across ZERO_TOL_E9/E10/E12 (RadiusOfGyration, quadratic coefficients, edge/cross-product
+# lengths, periodic-parameter differences, tan(semi-angle)) -- all of these are the same
+# concept, not independently-tuned tolerances, so they share this one constant.
+NUMERIC_DOUBLE_TOL = 1.0e-12
+
+# The former LENGTH_TOL_E* family (E3/E5/E6/E7/E8/E12) is gone entirely, 2026-09-23: every
+# site was, under a different name, the same role as an already-established constant
+# (MIN_SLIVER_EDGE_LENGTH, POINT_POINT_TOL, KERNEL_TOL_E7, NUMERIC_DOUBLE_TOL, NUMERIC_TOL,
+# or -- one site, a cylinder radius comparison -- Tolerances.value), values unchanged where
+# the role matched exactly. See CLAUDE.md's own "LENGTH_TOL_E*" entries for the full,
+# site-by-site reasoning.
 
 # Zero floor (mm^2, NOT mm) for a squared-length difference before a sqrt (e.g. a
 # perpendicular-distance-squared obtained as |v|^2 - (v.axis)^2): this subtraction of two
@@ -203,20 +224,6 @@ REL_TOL_E6 = 1.0e-6
 
 # Kernel zero (mm^3): a boolean Common of two shapes has content only above this.
 VOLUME_MIN_E8 = 1.0e-8
-
-# The smallest meaningful nonzero value a double-precision arithmetic result can carry --
-# below this, a computed quantity (a relative distance, a relative volume difference, a
-# cross-product/coefficient/parameter-difference guarding a division or a degenerate
-# branch) is numerical round-off, not a real geometric feature. Used as a kernel-operation
-# tolerance floor (geo/freecad/split.py's split-retry floor), as the "effectively zero"
-# cutoff for relative geometric decisions (VoidBox.piece_enclosure_split's contact/
-# containment tests, GeounedSolid.check_intersection's volume-embedding test), for
-# near-parallel/degenerate direction tests (GPlane/GLine's own intersect_plane/
-# intersect_line), and for every other division/degenerate-branch guard formerly split
-# across ZERO_TOL_E9/E10/E12 (RadiusOfGyration, quadratic coefficients, edge/cross-product
-# lengths, periodic-parameter differences, tan(semi-angle)) -- all of these are the same
-# concept, not independently-tuned tolerances, so they share this one constant.
-NUMERIC_DOUBLE_TOL = 1.0e-12
 
 # Tolerance handed to a CAD-kernel operation (fix, sewing, split) or a bound on one.
 KERNEL_TOL_E3 = 1.0e-3
@@ -264,14 +271,6 @@ DEFECT_AXIS_ANGLE = math.acos(1.0 - 1.0e-5)
 # (1e-2, 1e-1], 72 beyond). A property of how the CAD stores the curve, not something the user tunes; it is the value `is_parallel`'s
 # default gave here before.
 SPLINE_PLANARITY_ANGLE = 1.0e-3
-
-# Numeric precision (mm and rad) of a solid's OWN data: what the CAD kernel returns for entities that touch or coincide inside one
-# solid. Measured on test_models + working_solids (2026-09-19/20): every face/edge contact distance is exactly 0 or above 1e-2 mm
-# (nothing in between), and a full turn of a periodic parameter closes to floating-point noise. 1e-7 equals OCCT's
-# Precision::Confusion. Used for CONTACT (points, edges, faces of one solid) and for the full 2*pi of a periodic parameter. NOT for
-# surface identity (the user's per-surface tolerances, always) and NOT to approximate a surface by an axis-aligned one (that is the
-# same decision as identity): real data carries ~5e-7 rad of direction noise, above this value.
-NUMERIC_TOL = 1.0e-7
 
 # Reference volume (mm^3) of every RELATIVE volume comparison: `abs(a - b) <= tol * max(|reference|, VOLUME_REF)`. Below it a
 # relative test is meaningless, so the tolerance becomes the absolute `tol * VOLUME_REF`. It is a characteristic SCALE, not a
