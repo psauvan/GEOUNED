@@ -248,7 +248,9 @@ def forward_round_corner_region(p1id, p2id, cid, pid, configuration):
         if AND_p1_pd and AND_p2_pd:
             rc_region = ((BoolSurface(0, p1id) * BoolSurface(0, -pid)) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
         elif not AND_p1_pd and AND_p2_pd:
-            if not OR_bracket:
+            # Polarity of OR_bracket is inverted here w.r.t. the other branches: checked against the
+            # real material of 17 synthetic corners (17/17 wrong the other way round), e.g. shed_part.stp.
+            if OR_bracket:
                 rc_region = BoolSurface(0, p1id) + (BoolSurface(0, p2id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid)))
             else:
                 rc_region = (BoolSurface(0, p1id) + BoolSurface(0, -pid) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
@@ -263,7 +265,8 @@ def forward_round_corner_region(p1id, p2id, cid, pid, configuration):
         if AND_p1_pd and AND_p2_pd:
             rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -cid) + (BoolSurface(0, -pid) * BoolSurface(0, p2id)))
         elif AND_p1_pd and not AND_p2_pd:
-            if not OR_bracket:
+            # Same inverted polarity as the p2 branch above.
+            if OR_bracket:
                 rc_region = (BoolSurface(0, p1id) * (BoolSurface(0, -cid) + BoolSurface(0, -pid))) + BoolSurface(0, p2id)
             else:
                 rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid) + BoolSurface(0, p2id))

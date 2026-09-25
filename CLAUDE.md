@@ -452,6 +452,29 @@ this note.)
   scripts were throwaway (session scratchpad), not preserved in the
   repo.
 
+- **`forward_round_corner_region`: `OR_bracket` polarity inverted in two
+  branches, fixed 2026-09-25** (`basic_functions_part1.py`).
+  `RoundCorners/shed_part.stp` lost particles (d1suned 3.89, 28.9 sigma)
+  and `shed_solid.stp` too (0.893 +/- 23.6 %, 10 lost). Cause: both RC
+  planes DO point to the material (checked point by point) and
+  `cyl_plane_region_conf`'s `OR_p12_bracket` (`z1 . (p1_axis x p2_axis) <
+  0`) is consistent; the two Forward branches `not p1_cyl and p2_cyl`
+  (`not p1_pd and p2_pd`) and `p1_cyl and not p2_cyl` (`p1_pd and not
+  p2_pd`) used the opposite polarity (`if not OR_bracket` -> `if
+  OR_bracket`). Found by brute force against the real material of
+  synthetic corners (prism with one arc whose ends lie on/behind the
+  planes' crossing, 240 generated, 74 where the bit matters): Reversed 45/45
+  and other Forward branches 3/3 already right, these two branches 17/17
+  wrong the other way round; only `shed_part` in the real corpus reaches
+  them. `reversed_round_corner_region` untouched. **Verified**: ocp/occ 244
+  passed, freecad 258 passed; test_models MCNP text before/after: 140 of
+  142 identical, only `shed_part`/`shed_solid` change; d1suned on the 47
+  `RoundCorners`: `shed_part` 1.0048, no lost particles, `shed_solid`
+  0.948 +/- 1.8 % at NPS 1e6 turned out to be noise of a 0.249 cm^3 cell
+  (independent MC of its region: 0.24938 +/- 0.0002 vs CAD 0.249106; 0.981
+  +/- 0.9 % at NPS 4e6). **Not verified**: the tangent-arc case in those two
+  branches has no real fixture.
+
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 
 Deliberately paused as a whole — explicit user priority is to finish
