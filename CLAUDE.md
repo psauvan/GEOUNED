@@ -3079,9 +3079,9 @@ gaps for whenever it's picked back up:
     most recent one's files.
   Tests: `tests/geo/test_same_surface_tolerances.py` (band of each new
   near-miss, off without `fuzzy`, de-duplication) and the new
-  `tests/geo/test_log_utils.py`. Only the tolerance/fuzzy/log test files
-  were run under `ocp` (66 passed); the full suites of the 3 engines were
-  NOT re-run after this batch.
+  `tests/geo/test_log_utils.py`. Verified: full suites of all 3 engines
+  green after this batch (ocp 320 passed/1 skipped, occ 320 passed/1
+  skipped, freecad 286 passed/16 skipped, 0 failures).
 
 ## Reference docs
 
