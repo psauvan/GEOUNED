@@ -27,7 +27,7 @@ from .basic_functions_part1 import (
     TConeParams,
 )
 from .basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
-from .basic_functions_part2 import is_same_plane, is_same_cylinder
+from .basic_functions_part2 import is_same_cone, is_same_cylinder, is_same_plane, is_same_sphere
 
 from .data_classes import NumericFormat, Options, Tolerances
 from ...boolean_utils.boolean_function import BoolSurface, BoolVariable, literal_sign
@@ -734,7 +734,7 @@ class MetaSurfacesDict(dict):
                 if torus.Surf.SOrientation == "Forward":
                     sid = -sid
             else:
-                sid, exist_s = self.primitive_surfaces.add_cone(torus.Surf.VSurface)
+                sid, exist_s = self.primitive_surfaces.add_cone(torus.Surf.VSurface, True)
                 if torus.Surf.SOrientation == "Forward":
                     sid = -sid
 
@@ -939,7 +939,7 @@ class MetaSurfacesDict(dict):
 
     def TCone_region(self, TCone):
         kneCan = TCone.Surf.Cone
-        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
+        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone, True)
 
         components = {abs(cid): kneCan.Surf.Cone}
         surf_list = []
@@ -1199,7 +1199,7 @@ class MetaSurfacesDict(dict):
             s_region = BoolSurface(0, sid)
             components[abs(sid)] = cc.Surf.Cylinder
         else:
-            cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
+            cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone, True)
             cc.Surf.Cone.bVar = cid
             s_region = BoolSurface(0, cid)
             components[abs(cid)] = cc.Surf.Cone
@@ -1406,13 +1406,13 @@ class SurfacesDict(dict):
         elif surface.Type == "Cylinder":
             return self.add_cylinder(surface.Surf.Cylinder, fuzzy)
         elif surface.Type == "ConeOnly":
-            return self.add_cone(surface)
+            return self.add_cone(surface, fuzzy)
         elif surface.Type == "Cone":
-            return self.add_cone(surface.Surf.Cone)
+            return self.add_cone(surface.Surf.Cone, fuzzy)
         elif surface.Type == "SphereOnly":
-            return self.add_sphere(surface)
+            return self.add_sphere(surface, fuzzy)
         elif surface.Type == "Sphere":
-            return self.add_sphere(surface.Surf.Sphere)
+            return self.add_sphere(surface.Surf.Sphere, fuzzy)
         elif surface.Type == "TorusOnly":
             return self.add_torus(surface)
         elif surface.Type == "Torus":
@@ -1429,9 +1429,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1453,9 +1451,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1477,9 +1473,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1501,9 +1495,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1530,9 +1522,7 @@ class SurfacesDict(dict):
             if is_same_cylinder(
                 cyl.Surf,
                 c.Surf,
-                options=self.options,
                 tolerances=self.tolerances,
-                numeric_format=self.numeric_format,
                 fuzzy=(fuzzy, c.bVar.__int__()),
             ):
                 addCyl = False
@@ -1551,10 +1541,10 @@ class SurfacesDict(dict):
         else:
             return bVar, True
 
-    def add_cone(self, cone):
+    def add_cone(self, cone, fuzzy=False):
         cone_added = True
         for i, c in enumerate(self["Cone"]):
-            if surface_geometry.is_same_cone_surface(cone.Surf, c.Surf, self.tolerances):
+            if is_same_cone(cone.Surf, c.Surf, tolerances=self.tolerances, fuzzy=(fuzzy, c.bVar.__int__())):
                 cone_added = False
                 bVar = c.bVar
                 cone.bVar = bVar
@@ -1570,10 +1560,10 @@ class SurfacesDict(dict):
         else:
             return bVar, True
 
-    def add_sphere(self, sph):
+    def add_sphere(self, sph, fuzzy=False):
         sphere_added = True
         for i, s in enumerate(self["Sph"]):
-            if surface_geometry.is_same_sphere_surface(sph.Surf, s.Surf, self.tolerances):
+            if is_same_sphere(sph.Surf, s.Surf, tolerances=self.tolerances, fuzzy=(fuzzy, s.bVar.__int__())):
                 sphere_added = False
                 bVar = s.bVar
                 sph.bVar = bVar
@@ -1634,9 +1624,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     facein.Surf,
                     s.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                 ):
                     return s.bVar
 
@@ -1645,9 +1633,7 @@ class SurfacesDict(dict):
                 if is_same_cylinder(
                     facein.Surf,
                     s.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                 ):
                     return s.bVar
 

@@ -569,6 +569,6 @@ def omit_multiplane_repeated_planes(mp_region, Surfaces, Faces):
         for face in Faces:
             if not isinstance(face, GPlane):
                 continue
-            if is_same_plane(face.Surface, pg.Surf, Surfaces.options, Surfaces.tolerances, Surfaces.numeric_format):
+            if is_same_plane(face.Surface, pg.Surf, Surfaces.tolerances):
                 repeated_planes.add(face.Index)
     return repeated_planes

@@ -3034,6 +3034,54 @@ gaps for whenever it's picked back up:
   before/after corpus differential under `occ` specifically (to cover
   the real `_retrim_freed_quadrics` behavior change above) -- likewise
   0 real differences.
+  **Registry near-miss ("fuzzy") log extended and de-duplicated,
+  2026-09-27** (`GEOUNED/utils/basic_functions_part2.py`; diagnostic
+  only, never changes an identity decision).
+  - `Fuzzy(index, dtype, val, tol)` (the user cut it down to the stored
+    surface's index plus `val`/`tol`; every call site dropped the
+    now-unused surface/`options`/`tolerances`/`numeric_format`
+    arguments, and `is_same_plane`/`is_same_cylinder` lost their
+    `options`/`numeric_format` parameters -- callers in
+    `geouned_classes.py` and the positional call in
+    `cell_definition_functions.py` updated).
+  - New near-miss quantities, each logged when its deviation falls
+    between 0.5x and 2x its own tolerance (same band as the existing
+    ones), each independent of the others: cylinder axis ANGLE
+    (`cylAng`, vs `cyl_angle`), sphere radius and centre distance
+    (`sphRad`/`sphCen`, vs `sph_distance`), cone semi-angle, apex
+    distance and axis angle (`coneSAng`/`coneApx`/`coneAng`, vs
+    `kne_angle`/`kne_distance`). Angles are absolute; distances scale
+    with `relativeTol` exactly as in the decision. New registry
+    wrappers `is_same_sphere`/`is_same_cone` (decision from
+    `geo.surface_geometry.is_same_*_surface`, plus the log) are used by
+    `SurfacesDict.add_sphere`/`add_cone` (new `fuzzy` parameter); cones
+    get `fuzzy=True` where the cylinder equivalent already had it (torus
+    VSurface, `kneCan`, `cc`). Shared quantities live in
+    `geo/surface_geometry.py` (`axes_angle`, `sphere_radius_diff`,
+    `sphere_center_offset`, `cone_semiangle_diff`, `cone_apex_offset`),
+    used by both the predicates and the log, like the cylinder ones.
+    Not covered: tori, and the planes' fuzzy still only logs distance.
+  - **Repeated entries removed**: the same stored surface was compared
+    again, and logged again, every time another face of the same
+    surface was registered (the values differ only in the last digits).
+    `Fuzzy` now writes one entry per (stored index, quantity, outcome,
+    `val/tol` to 3 decimals); `reset_fuzzy_log()` clears that memory when
+    `CadToCsg` starts. Measured on `divertor_cam_cut2.stp` (default
+    tolerances, decompose + build_solid_definition): 66 `Fuzzy` calls ->
+    36 entries. That is the floor for what an entry now identifies (the
+    new surface is no longer printed).
+  - **Loggers cleared on start**: `utils/log_utils.py::setup_logger` now
+    removes and closes the handlers (and filters) an earlier run left on
+    the process-global logger before adding its own. Before, every new
+    `CadToCsg` in the same process added another `FileHandler` and each
+    message was written once per previous run, to that run's files too.
+    Side effect: two `CadToCsg` objects alive at once now log only to the
+    most recent one's files.
+  Tests: `tests/geo/test_same_surface_tolerances.py` (band of each new
+  near-miss, off without `fuzzy`, de-duplication) and the new
+  `tests/geo/test_log_utils.py`. Only the tolerance/fuzzy/log test files
+  were run under `ocp` (66 passed); the full suites of the 3 engines were
+  NOT re-run after this batch.
 
 ## Reference docs
 

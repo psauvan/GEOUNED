@@ -329,3 +329,151 @@ def test_plane_distance_ignores_the_sense_of_the_axes_and_still_separates_parall
     reversed_other = _Surf(Axis=GVector(0, 0, -1), Position=GVector(-3.0, 9.0, 8.5))  # rc9.stp: 3.5 apart
     assert sg.is_same_plane_surface(a, reversed_same, TOL)
     assert not sg.is_same_plane_surface(a, reversed_other, TOL)
+
+
+# ---------------------------------------------------------------------------
+# the registry's near-miss (fuzzy) log also covers the cylinder axis ANGLE: it fires for a deviation between half and
+# twice `cyl_angle`, on either side of the identity decision, and never changes that decision.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "factor, logged, same",
+    [(0.3, False, True), (0.7, True, True), (1.5, True, False), (2.5, False, False)],
+)
+def test_cylinder_fuzzy_logs_axis_angle_near_misses(monkeypatch, factor, logged, same):
+    from geouned.GEOUNED.utils import basic_functions_part2 as part2
+
+    calls = []
+    monkeypatch.setattr(part2, "Fuzzy", lambda index, dtype, val, tol: calls.append((index, dtype, val, tol)))
+    tol = Tolerances()
+    reference = _Surf(Axis=Z, Center=ORIGIN, Radius=10.0)
+    tilted = _Surf(Axis=_tilted_axis(factor * tol.cyl_angle), Center=ORIGIN, Radius=10.0)
+    assert is_same_cylinder(tilted, reference, tolerances=tol, fuzzy=(True, 7)) is same
+    angle_calls = [c for c in calls if c[1] == "cylAng"]
+    assert bool(angle_calls) is logged
+    if logged:
+        index, _, val, used_tol = angle_calls[0]
+        assert index == 7
+        assert used_tol == tol.cyl_angle
+        assert val == pytest.approx(factor * tol.cyl_angle)
+
+
+def test_cylinder_fuzzy_angle_is_off_without_fuzzy(monkeypatch):
+    from geouned.GEOUNED.utils import basic_functions_part2 as part2
+
+    calls = []
+    monkeypatch.setattr(part2, "Fuzzy", lambda *a: calls.append(a))
+    tol = Tolerances()
+    reference = _Surf(Axis=Z, Center=ORIGIN, Radius=10.0)
+    tilted = _Surf(Axis=_tilted_axis(1.5 * tol.cyl_angle), Center=ORIGIN, Radius=10.0)
+    is_same_cylinder(tilted, reference, tolerances=tol)
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# same near-miss (fuzzy) log for spheres and cones: every compared quantity fires between half and twice its own
+# tolerance, on either side of the identity decision, and never changes that decision.
+# ---------------------------------------------------------------------------
+
+_FUZZY_CASES = [(0.3, False, True), (0.7, True, True), (1.5, True, False), (2.5, False, False)]
+
+
+def _record_fuzzy(monkeypatch):
+    from geouned.GEOUNED.utils import basic_functions_part2 as part2
+
+    calls = []
+    monkeypatch.setattr(part2, "Fuzzy", lambda index, dtype, val, tol: calls.append((index, dtype, val, tol)))
+    return calls
+
+
+@pytest.mark.parametrize("factor, logged, same", _FUZZY_CASES)
+@pytest.mark.parametrize("what", ["radius", "centre"])
+def test_sphere_fuzzy_logs_radius_and_centre_near_misses(monkeypatch, what, factor, logged, same):
+    from geouned.GEOUNED.utils.basic_functions_part2 import is_same_sphere
+
+    calls = _record_fuzzy(monkeypatch)
+    tol = Tolerances()
+    reference = _Surf(Radius=10.0, Center=ORIGIN)
+    if what == "radius":
+        other = _Surf(Radius=10.0 + factor * tol.sph_distance, Center=ORIGIN)
+        kind = "sphRad"
+    else:
+        other = _Surf(Radius=10.0, Center=GVector(factor * tol.sph_distance, 0.0, 0.0))
+        kind = "sphCen"
+    assert is_same_sphere(other, reference, tolerances=tol, fuzzy=(True, 3)) is same
+    got = [c for c in calls if c[1] == kind]
+    assert bool(got) is logged
+    assert [c for c in calls if c[1] != kind] == []
+    if logged:
+        assert got[0][0] == 3
+        assert got[0][3] == tol.sph_distance
+        assert got[0][2] == pytest.approx(factor * tol.sph_distance)
+
+
+@pytest.mark.parametrize("factor, logged, same", _FUZZY_CASES)
+@pytest.mark.parametrize("what", ["semiangle", "apex", "axis"])
+def test_cone_fuzzy_logs_semiangle_apex_and_axis_near_misses(monkeypatch, what, factor, logged, same):
+    from geouned.GEOUNED.utils.basic_functions_part2 import is_same_cone
+
+    calls = _record_fuzzy(monkeypatch)
+    tol = Tolerances()
+    reference = _Surf(Apex=ORIGIN, Axis=Z, SemiAngle=0.3)
+    if what == "semiangle":
+        other = _Surf(Apex=ORIGIN, Axis=Z, SemiAngle=0.3 + factor * tol.kne_angle)
+        kind, used_tol = "coneSAng", tol.kne_angle
+    elif what == "apex":
+        other = _Surf(Apex=GVector(0.0, 0.0, factor * tol.kne_distance), Axis=Z, SemiAngle=0.3)
+        kind, used_tol = "coneApx", tol.kne_distance
+    else:
+        other = _Surf(Apex=ORIGIN, Axis=_tilted_axis(factor * tol.kne_angle), SemiAngle=0.3)
+        kind, used_tol = "coneAng", tol.kne_angle
+    assert is_same_cone(other, reference, tolerances=tol, fuzzy=(True, 5)) is same
+    got = [c for c in calls if c[1] == kind]
+    assert bool(got) is logged
+    assert [c for c in calls if c[1] != kind] == []
+    if logged:
+        assert got[0][0] == 5
+        assert got[0][3] == used_tol
+        assert got[0][2] == pytest.approx(factor * used_tol)
+
+
+def test_sphere_and_cone_fuzzy_are_off_without_fuzzy(monkeypatch):
+    from geouned.GEOUNED.utils.basic_functions_part2 import is_same_cone, is_same_sphere
+
+    calls = _record_fuzzy(monkeypatch)
+    tol = Tolerances()
+    is_same_sphere(_Surf(Radius=10.0 + 1.5 * tol.sph_distance, Center=ORIGIN), _Surf(Radius=10.0, Center=ORIGIN), tolerances=tol)
+    is_same_cone(
+        _Surf(Apex=ORIGIN, Axis=Z, SemiAngle=0.3 + 1.5 * tol.kne_angle), _Surf(Apex=ORIGIN, Axis=Z, SemiAngle=0.3), tolerances=tol
+    )
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# the fuzzy log writes each near-miss once: the same stored surface, quantity and outcome with the same val/tol (to 3
+# decimals) is one entry however many faces of that surface get registered; a new run starts clean.
+# ---------------------------------------------------------------------------
+
+
+def test_fuzzy_log_writes_a_repeated_near_miss_once(caplog):
+    import logging
+
+    from geouned.GEOUNED.utils.basic_functions_part2 import Fuzzy, reset_fuzzy_log
+
+    reset_fuzzy_log()
+    with caplog.at_level(logging.INFO, logger="fuzzy_logger"):
+        Fuzzy(49, "plane", 1.8308097689362954e-4, 1e-4)
+        Fuzzy(49, "plane", 1.8308097688950694e-4, 1e-4)  # same pair, float noise in the last digits
+        Fuzzy(49, "plane", 1.8308097580595954e-4, 1e-4)
+        assert len([r for r in caplog.records if r.name == "fuzzy_logger"]) == 2  # 1 entry = 2 lines
+        Fuzzy(51, "plane", 1.8308e-4, 1e-4)  # another stored surface
+        Fuzzy(49, "plane", 1.6551e-4, 1e-4)  # another offset for the same stored surface
+        Fuzzy(49, "cylRad", 1.8308e-4, 1e-4)  # another quantity
+        assert len([r for r in caplog.records if r.name == "fuzzy_logger"]) == 8
+        Fuzzy(49, "plane", 1.8308e-4, 1e-4)
+        assert len([r for r in caplog.records if r.name == "fuzzy_logger"]) == 8
+        reset_fuzzy_log()
+        Fuzzy(49, "plane", 1.8308e-4, 1e-4)
+        assert len([r for r in caplog.records if r.name == "fuzzy_logger"]) == 10
+    reset_fuzzy_log()

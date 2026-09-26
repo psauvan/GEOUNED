@@ -10,6 +10,7 @@ import time
 from tqdm import tqdm
 
 from .code_version import *
+from .utils.basic_functions_part2 import reset_fuzzy_log
 from .utils.log_utils import setup_logger
 from .conversion import cell_definition as Conv
 
@@ -74,6 +75,7 @@ class CadToCsg:
         log_path.mkdir(parents=True, exist_ok=True)
         setup_logger("general_logger", log_path / "geouned_general.log")
         setup_logger("fuzzy_logger", log_path / "geouned_fuzzy.log")
+        reset_fuzzy_log()
         setup_logger("solids_logger", log_path / "geouned_solids.log")
         logger.info(f"GEOUNED version {version('geouned')}")
         logger.info(f"FreeCAD version {kernel_version()}")

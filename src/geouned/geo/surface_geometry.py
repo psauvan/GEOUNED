@@ -49,10 +49,16 @@ def is_same_value(v1: float, v2: float, tolerance: float = NUMERIC_DOUBLE_TOL) -
 # "Is this the same underlying analytic surface" predicates
 # ---------------------------------------------------------------------------
 
+def axes_angle(axis_1: GVector, axis_2: GVector) -> float:
+    """Deviation from parallel, in [0, pi/2] radians: the quantity `axes_parallel` compares (0 for two vectors along the
+    same line, either direction). Shared with the registry's near-miss diagnostic log."""
+    angle = axis_1.angle_to(axis_2)
+    return min(angle, math.pi - angle)
+
+
 def axes_parallel(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
     """True if two vectors lie along the same line, either direction (angle 0 or pi), to within `angle_tol` radians."""
-    angle = axis_1.angle_to(axis_2)
-    return min(angle, math.pi - angle) <= angle_tol
+    return axes_angle(axis_1, axis_2) <= angle_tol
 
 
 def axes_same_direction(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
@@ -237,14 +243,24 @@ def is_same_cone_surface(cone_1, cone_2, tolerances) -> bool:
     apex within `tolerances.kne_distance`. With `tolerances.relativeTol` set (GEOUNED-only; see
     `is_same_plane_surface`'s own note), the apex tolerance scales by the larger of the two apexes' own distance
     from the origin -- kept as-is, not redesigned here."""
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > tolerances.kne_angle:
+    if abs(cone_semiangle_diff(cone_1, cone_2)) > tolerances.kne_angle:
         return False
     apex_tol = tolerances.kne_distance
     if getattr(tolerances, "relativeTol", False):
         apex_tol = relative_tolerance(tolerances.kne_distance, max(cone_1.Apex.length, cone_2.Apex.length))
-    if (cone_1.Apex - cone_2.Apex).length > apex_tol:
+    if cone_apex_offset(cone_1, cone_2) > apex_tol:
         return False
     return axes_parallel(cone_1.Axis, cone_2.Axis, tolerances.kne_angle)
+
+
+def cone_semiangle_diff(cone_1, cone_2) -> float:
+    """`cone_2.SemiAngle - cone_1.SemiAngle` (signed): the quantity `is_same_cone_surface` compares first."""
+    return cone_2.SemiAngle - cone_1.SemiAngle
+
+
+def cone_apex_offset(cone_1, cone_2) -> float:
+    """Distance between the two cones' apexes: the quantity `is_same_cone_surface` compares against the apex tolerance."""
+    return (cone_1.Apex - cone_2.Apex).length
 
 
 def is_coaxial_cone_pair(cone_1, cone_2, tolerances) -> bool:
@@ -310,12 +326,22 @@ def is_same_sphere_surface(sphere_1, sphere_2, tolerances) -> bool:
     radius_tol = tolerances.sph_distance
     if relative_tol:
         radius_tol = relative_tolerance(tolerances.sph_distance, max(sphere_1.Radius, sphere_2.Radius))
-    if abs(sphere_1.Radius - sphere_2.Radius) > radius_tol:
+    if abs(sphere_radius_diff(sphere_1, sphere_2)) > radius_tol:
         return False
     centre_tol = tolerances.sph_distance
     if relative_tol:
         centre_tol = relative_tolerance(tolerances.sph_distance, max(sphere_1.Center.length, sphere_2.Center.length))
-    return (sphere_1.Center - sphere_2.Center).length <= centre_tol
+    return sphere_center_offset(sphere_1, sphere_2) <= centre_tol
+
+
+def sphere_radius_diff(sphere_1, sphere_2) -> float:
+    """`sphere_2.Radius - sphere_1.Radius` (signed): the quantity `is_same_sphere_surface` compares first."""
+    return sphere_2.Radius - sphere_1.Radius
+
+
+def sphere_center_offset(sphere_1, sphere_2) -> float:
+    """Distance between the two spheres' centres: the quantity `is_same_sphere_surface` compares against the centre tolerance."""
+    return (sphere_1.Center - sphere_2.Center).length
 
 
 def is_same_torus_surface(torus_1, torus_2, tolerances, check_a_sign: bool = False) -> bool:
