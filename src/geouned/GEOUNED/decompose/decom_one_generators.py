@@ -89,7 +89,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     omitfaces = set()
 
     new_split = False
-    for surf in get_surfaces(solid, omitfaces, tolerances, options):
+    for surf in get_surfaces(solid, omitfaces, tolerances, options, meta_surface=options.meta_surfaces):
         try:
             # build_surface (Can/RoundCorner/... construction, via
             # get_cell_object) can raise -- e.g. round_corner_region's own

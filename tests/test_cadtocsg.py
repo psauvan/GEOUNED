@@ -221,3 +221,46 @@ def test_with_relative_tol_true():
     )
     geo.load_step_file(filename=f"{step_files[1].resolve()}", skip_solids=[])
     geo.run()
+
+
+def test_options_meta_surfaces_false_bypasses_composites_but_keeps_revcc():
+    """`Options.meta_surfaces=False` reproduces GEOUNED's original,
+    pre-meta-surface behaviour: decomposition/cell definition skip Can/
+    TCone/RoundCorner/MultiPlane detection entirely, falling back to
+    basic analytic surfaces -- except ReversedConeCylinder (RevCC),
+    which always runs regardless, since it's needed for correctness (an
+    open Reversed cylinder/cone face needs its extra bounding surface),
+    not just compaction. `RoundCorners/shed_part.stp`'s own single round
+    corner is a real, minimal fixture for exactly this: with meta
+    surfaces on, it resolves to one RoundC composite (no RevCC needed);
+    with them off, the same corner's cylinder face falls back to a
+    basic Cyl surface that DOES need RevCC to stay correctly bounded --
+    confirmed live, 2026-09-27, before pinning these exact counts here."""
+
+    def surface_counts(meta_surfaces):
+        geo = geouned.CadToCsg(
+            options=geouned.Options(meta_surfaces=meta_surfaces),
+            settings=geouned.Settings(voidGen=False),
+        )
+        geo.load_step_file(
+            filename="testing/inputSTEP/RoundCorners/shed_part.stp",
+            corrupted_solids="remove",
+            spline_surfaces="remove",
+        )
+        geo.run()
+        return {k: len(v) for k, v in geo.Surfaces.items() if isinstance(v, list)}
+
+    with_meta = surface_counts(True)
+    without_meta = surface_counts(False)
+
+    assert with_meta["RoundC"] == 1
+    assert with_meta["RevCC"] == 0
+
+    assert without_meta["RoundC"] == 0
+    assert without_meta["MultiRoundC"] == 0
+    assert without_meta["MultiP"] == 0
+    assert without_meta["FwdCan"] == 0
+    assert without_meta["RevCan"] == 0
+    assert without_meta["FwdTCone"] == 0
+    assert without_meta["RevTCone"] == 0
+    assert without_meta["RevCC"] == 1  # RevCC still fires even with composites off

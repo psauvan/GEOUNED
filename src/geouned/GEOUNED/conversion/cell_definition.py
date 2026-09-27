@@ -42,7 +42,7 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
 
     solid_definition = BoolSequence(operator="OR")
     for basic_solid in meta_obj.Solids:
-        comp = simple_solid_definition(basic_solid, Surfaces)
+        comp = simple_solid_definition(basic_solid, Surfaces, meta_surfaces=Surfaces.options.meta_surfaces)
         # if simplifyComp:
         # comp.expand_regions_to_boolVar()
         # comp.simplify()
@@ -112,20 +112,34 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             rc for rc in roundCorner if rc.Type == "MultiRoundCorner" and rc.Surf.Orientation == "Reversed" and not rc.Surf.ClosedSet
         ]
 
-        # `multiplanes` is threaded through as the real MultiPlane list, not
-        # just a boolean gate -- get_join_cone_cyl needs it to identify
-        # *which* of a RevCC's own 2 chain ends (if any) borders one of
-        # these, not just whether any exist in the solid.
-        reversedCC = get_reversed_cone_cylinder(
-            solid_gu.Faces, multiplanes + open_multi_round_corners, scaled_tolerances, omitFaces
-        )
-        for cs in reversedCC:
-            cc_region = Surfaces.add_reversedCC(cs)
-            component_definition.append(cc_region)
-
     else:
         omitFaces = set()
         omit_isolated_planes(solid_gu.Faces, omitFaces, tolerances=scaled_tolerances)
+        # No MultiPlane/open MultiRoundCorner detection ran this pass --
+        # RevCC's own AdjacentMultiplanePlanes escape (see the comment
+        # above) simply never has a candidate to match against, which is
+        # a safe, graceful degradation (identical to a solid that
+        # genuinely has none), not a special case to build here.
+        multiplanes = []
+        open_multi_round_corners = []
+
+    # RevCC (ReversedConeCylinder) always runs, regardless of
+    # options.meta_surfaces -- unlike Can/TCone/RoundCorner/MultiPlane,
+    # it isn't a pure compaction/simplification: an open (non-closed)
+    # Reversed cylinder/cone face genuinely needs the extra bounding
+    # surface it provides to stay correctly bounded (see this function's
+    # own Cylinder/Cone branch comments below), so skipping it would
+    # change more than just how large the written definition is.
+    # `multiplanes` is threaded through as the real MultiPlane list, not
+    # just a boolean gate -- get_join_cone_cyl needs it to identify
+    # *which* of a RevCC's own 2 chain ends (if any) borders one of
+    # these, not just whether any exist in the solid.
+    reversedCC = get_reversed_cone_cylinder(
+        solid_gu.Faces, multiplanes + open_multi_round_corners, scaled_tolerances, omitFaces
+    )
+    for cs in reversedCC:
+        cc_region = Surfaces.add_reversedCC(cs)
+        component_definition.append(cc_region)
 
     last_torus = -1
     for iface, face in enumerate(solid_gu.Faces):

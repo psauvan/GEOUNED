@@ -70,10 +70,10 @@ def _read_manifest(tmp_path):
     return json.loads((tmp_path / "decompose_cache" / "manifest.json").read_text(encoding="utf-8"))
 
 
-def _load_and_decompose(tmp_path, step_path, labels, load_from_cache, tolerances=None):
+def _load_and_decompose(tmp_path, step_path, labels, load_from_cache, tolerances=None, options=None):
     settings = geouned.Settings(outPath=str(tmp_path), voidGen=False, load_from_cache=load_from_cache)
     c = geouned.CadToCsg(
-        options=geouned.Options(),
+        options=options if options is not None else geouned.Options(),
         tolerances=tolerances if tolerances is not None else geouned.Tolerances(),
         settings=settings,
     )
@@ -170,6 +170,24 @@ def test_global_key_change_invalidates_whole_cache(tmp_path):
     _, spy2 = _load_and_decompose(tmp_path, step_path, ["A", "B"], load_from_cache=True, tolerances=changed_tolerances)
 
     assert spy2.call_count == 2
+
+
+def test_meta_surfaces_change_invalidates_whole_cache(tmp_path):
+    """`Options.meta_surfaces` changes which candidate surfaces
+    `main_split` tries first, so a solid cached under one value is not
+    trustworthy for the other -- it must be part of the global cache key
+    (`compute_global_key`), not silently ignored, the same way a
+    Tolerances change already is."""
+    step_path = tmp_path / "model.stp"
+    _make_step(step_path, 2)
+
+    _load_and_decompose(tmp_path, step_path, ["A", "B"], load_from_cache=True, options=geouned.Options(meta_surfaces=True))
+    _, spy2 = _load_and_decompose(
+        tmp_path, step_path, ["A", "B"], load_from_cache=True, options=geouned.Options(meta_surfaces=False)
+    )
+
+    assert spy2.call_count == 2
+    assert _read_manifest(tmp_path)["global_key"]["decomposition_params"]["meta_surfaces"] is False
 
 
 def test_load_from_cache_false_still_writes_but_never_reads(tmp_path):

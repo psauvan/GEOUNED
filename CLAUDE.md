@@ -737,6 +737,88 @@ instruction).
   **Not verified**: `Options.n_thread > 1` being forced to the
   sequential path still has no dedicated test.
 
+- **`Options.meta_surfaces` -- opt-out of composite meta-surfaces,
+  implemented 2026-09-27**: reproduces GEOUNED's original, pre-meta-
+  surface behavior on request -- decomposition and cell definition skip
+  Can/TCone/RoundCorner/MultiRoundCorner/MultiPlane detection entirely
+  and fall back to the 5 basic analytic surfaces (plane/cylinder/cone/
+  sphere/torus) directly, with ONE deliberate exception:
+  `ReversedConeCylinder` (RevCC) always runs regardless of this
+  setting. Per direct user instruction ("en la decomposicion solo
+  habria que by-pasear los get_CAN etc y empezar directamente por los
+  planos. En la parte de definicion seria hacer lo mismo aunque alli
+  hay que preservar el RevCC") -- RevCC isn't a pure compaction/
+  simplification the way Can/TCone/RoundCorner/MultiPlane are: an open
+  (non-closed) Reversed cylinder/cone face genuinely needs the extra
+  bounding surface RevCC provides to stay correctly bounded (see
+  `simple_solid_definition`'s own pre-existing `Cylinder`/`Cone` branch
+  comments -- "open reversed orientation is handled by RevCC"), so
+  turning it off along with the others would silently produce
+  under-bounded, wrong cells wherever that configuration occurs, not
+  just a larger written definition.
+  **What was already there, just unwired**: both the decomposition-side
+  generator (`decompose/generators.py::get_surfaces`) and the
+  definition-side function (`conversion/cell_definition.py::
+  simple_solid_definition`) already had a `meta_surface(s)` parameter
+  doing exactly this bypass -- added at some earlier point in the
+  project's history but never threaded from any real `Options`/call
+  site (both always ran with the hardcoded default `True`). This
+  feature is mostly wiring, not new logic: `decom_one_generators.py::
+  generic_split`'s own `get_surfaces(...)` call now passes
+  `meta_surface=options.meta_surfaces` (it already had `options` in
+  scope); `cell_definition.py::build_definition`'s own
+  `simple_solid_definition(...)` call now passes `meta_surfaces=
+  Surfaces.options.meta_surfaces` (`MetaSurfacesDict` already stores
+  `.options`). The one real code change: `simple_solid_definition`'s own
+  RevCC block (`get_reversed_cone_cylinder` + its `component_definition.
+  append` loop) was moved OUT of the `if meta_surfaces:` branch to run
+  unconditionally, with `multiplanes`/`open_multi_round_corners`
+  defaulting to `[]` in the `else` branch (a safe, graceful
+  degradation, identical to how RevCC already behaves on a solid with
+  no real MultiPlane/open MultiRoundCorner nearby -- not a new code
+  path of its own).
+  **Verified empirically first** (not just reasoned about): a real,
+  minimal fixture with a single round corner (`RoundCorners/
+  shed_part.stp`, copied into `testing/inputSTEP/RoundCorners/` from
+  the workshop corpus) resolves to `RoundC:1, RevCC:0` with
+  `meta_surfaces=True` (the corner absorbed into one composite, no
+  RevCC needed) and to `RoundC:0, RevCC:1` with `meta_surfaces=False`
+  (the same corner's cylinder face falls back to a basic `Cyl` surface
+  that DOES need RevCC to stay bounded) -- confirming the bypass and
+  the RevCC exception both fire exactly as intended, on both settings,
+  with zero errors either way. Pinned as
+  `tests/test_cadtocsg.py::test_options_meta_surfaces_false_bypasses_
+  composites_but_keeps_revcc`.
+  **Verified**: full suites green on all 3 engines after adding the new
+  fixture + test: ocp 293 passed, occ 293 passed, freecad 299 passed/14
+  skipped -- zero regressions (the new `Options.meta_surfaces` field
+  defaults to `True`, so every existing test's behavior is unchanged).
+  **Not verified**: no test exercises `meta_surfaces=False` against a
+  fixture with a real Can/TCone/MultiPlane (only RoundCorner/RevCC, via
+  `shed_part.stp`) -- the bypass logic is identical for all 4 (same
+  `if meta_surfaces:` gate in both `get_surfaces` and
+  `simple_solid_definition`), so this is a coverage gap in breadth, not
+  a known or suspected functional gap; no d1suned stochastic-volume
+  check has been run on `meta_surfaces=False` output for any fixture
+  yet.
+  **Follow-up, same day: `meta_surfaces` added to the decompose cache's
+  own global invalidation key**, per direct user instruction -- it
+  changes the candidate-surface order `main_split`'s own recursive
+  splitting uses (composite surfaces tried first vs. basic surfaces
+  only), so a solid's cached pieces from a `meta_surfaces=True` run are
+  not trustworthy for a `meta_surfaces=False` run and vice versa, even
+  though the input geometry never changed. One line
+  (`decompose_cache.py::compute_global_key`'s own
+  `decomposition_params` dict gained `"meta_surfaces":
+  options.meta_surfaces`, alongside the pre-existing `cut_large_cell`)
+  -- reuses the exact same whole-cache invalidation mechanism already
+  in place for a `Tolerances` change, no new mechanism needed. New test
+  `test_meta_surfaces_change_invalidates_whole_cache`
+  (`tests/test_decompose_cache.py`, now 12 tests) confirms both solids
+  redecompose when only this one `Options` field flips. **Verified**:
+  full suites green on all 3 engines: ocp 294 passed, occ 294 passed,
+  freecad 300 passed/14 skipped -- zero regressions.
+
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 
 Deliberately paused as a whole — explicit user priority is to finish

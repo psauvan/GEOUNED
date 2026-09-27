@@ -70,6 +70,25 @@ class Options:
             than searching the full face list for a Can/RoundCorner/...
             candidate directly. Defaults to a very large value (effectively
             disabled) -- pass a real threshold (e.g. 100) to opt in.
+        meta_surfaces (bool, optional): Whether decomposition and cell
+            definition attempt composite meta-surfaces (Can, TCone,
+            RoundCorner, MultiRoundCorner, MultiPlane) at all. `False`
+            reproduces GEOUNED's original, pre-meta-surface behavior:
+            decomposition starts directly from the basic analytic
+            surfaces (plane/cylinder/cone/sphere/torus, still tried
+            cylinder/cone before plane, see `decompose/generators.py::
+            get_surfaces`'s own docstring) instead of first trying Can/
+            TCone/RoundCorner/MultiPlane as candidate cutting surfaces;
+            cell definition likewise skips detecting those same composite
+            regions and writes each face's own basic surface directly.
+            `ReversedConeCylinder` (RevCC) is the one exception, always
+            attempted regardless of this setting -- unlike the others,
+            it isn't a pure compaction/simplification: an open (non-
+            closed) Reversed cylinder/cone face genuinely needs the extra
+            bounding surface RevCC provides to stay correctly bounded
+            (see `simple_solid_definition`'s own `Cylinder`/`Cone` branch
+            comments), so turning it off would change more than just how
+            large the written definition is. Defaults to True.
     """
 
     def __init__(
@@ -87,6 +106,7 @@ class Options:
         forceNoOverlap: bool = False,
         n_thread: int = 1,
         cut_large_cell: int = 1_000_000_000,
+        meta_surfaces: bool = True,
     ):
 
         self.forceCylinder = forceCylinder
@@ -104,6 +124,7 @@ class Options:
         self.forceNoOverlap = forceNoOverlap
         self.n_thread = n_thread
         self.cut_large_cell = cut_large_cell
+        self.meta_surfaces = meta_surfaces
 
     @property
     def forceCylinder(self):
@@ -240,6 +261,16 @@ class Options:
         if value < 1:
             raise ValueError(f"geouned.Options.cut_large_cell should be above 0, not {value}")
         self._cut_large_cell = value
+
+    @property
+    def meta_surfaces(self):
+        return self._meta_surfaces
+
+    @meta_surfaces.setter
+    def meta_surfaces(self, value: bool):
+        if not isinstance(value, bool):
+            raise TypeError(f"geouned.Options.meta_surfaces should be a bool, not a {type(value)}")
+        self._meta_surfaces = value
 
 
 class Tolerances(GeoTolerances):

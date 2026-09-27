@@ -106,7 +106,14 @@ def label_key(label: str) -> str:
 def compute_global_key(options, tolerances) -> dict:
     """Everything that invalidates the WHOLE cache if it differs from a
     prior run's: GEOUNED version, CAD engine/kernel, and every
-    Tolerances/Options field the decomposition path itself reads."""
+    Tolerances/Options field the decomposition path itself reads --
+    including `options.meta_surfaces` (whether `get_surfaces` tries
+    composite candidate surfaces -- Can/TCone/RoundCorner/MultiPlane --
+    before falling back to basic ones): it directly changes the
+    candidate-surface order `main_split`'s own recursive splitting uses,
+    so a cached solid's pieces from a `meta_surfaces=True` run are not
+    trustworthy for a `meta_surfaces=False` run, or vice versa, even
+    though the input geometry itself never changed."""
     return {
         "geouned_version": version("geouned"),
         "cad_engine": CAD_ENGINE,
@@ -114,6 +121,7 @@ def compute_global_key(options, tolerances) -> dict:
         "decomposition_params": {
             **{field: getattr(tolerances, field) for field in _DECOMPOSITION_TOLERANCE_FIELDS},
             "cut_large_cell": options.cut_large_cell,
+            "meta_surfaces": options.meta_surfaces,
         },
     }
 
