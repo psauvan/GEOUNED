@@ -818,6 +818,91 @@ instruction).
   redecompose when only this one `Options` field flips. **Verified**:
   full suites green on all 3 engines: ocp 294 passed, occ 294 passed,
   freecad 300 passed/14 skipped -- zero regressions.
+  **Follow-up, same day: every cache read/write in `DecomposeCache`
+  made defensive**, per direct user instruction, after an intermittent
+  native crash was observed inside `Gexport_binary` (occ engine,
+  `decompose_cache.py::store`) during a long combined test session --
+  not reproduced on 2 immediate later attempts (same command, and the
+  one failing test run standalone), so its exact cause stayed
+  unconfirmed, but it exposed a real design risk regardless: once the
+  consolidated cache is written UNCONDITIONALLY on every successful run
+  (not just `load_from_cache=True` ones, see above), this native
+  write/read path now runs on every solid of every run under `occ`/
+  `ocp` -- an auxiliary, purely-for-next-time optimization must never be
+  able to fail an otherwise fully successful decomposition. Every
+  `Gexport_binary`/`Gload_binary`/JSON read-write call inside `load`/
+  `lookup`/`store`/`finalize` is now wrapped in its own `try`/`except
+  Exception`, logging a warning and falling back to the safe default
+  (treat as a cache miss on read; skip persisting, keep the run going,
+  on write) rather than letting anything propagate. `finalize()`
+  specifically: a namespace whose own write fails falls back to
+  whatever was cached for it before (untouched), and `tmp/` staging is
+  preserved (not cleared) whenever any namespace's write failed, so a
+  future run can still recover this run's own progress from it even
+  after a finalize-level failure, not just a mid-run crash. New tests
+  `test_cache_write_failure_never_crashes_an_otherwise_good_run` and
+  `test_cache_read_failure_falls_back_to_redecomposing`
+  (`tests/test_decompose_cache.py`, now 14 tests) force `Gexport_binary`/
+  `Gload_binary` to always raise and confirm the run still completes
+  with correct decomposition results either way. **Verified**: full
+  suites green on all 3 engines: ocp 298 passed, occ 298 passed
+  (including 2 repeats of the exact combined command that originally
+  crashed, both clean -- consistent with the crash being either a fluke
+  or something this hardening now tolerates regardless), freecad 304
+  passed/14 skipped -- zero regressions.
+
+- **`region_sign` (`meta_surfaces_utils.py`) forced an AND/OR answer for
+  a genuinely degenerate input -- fixed 2026-09-27**, found via direct
+  user request to verify `region_sign`'s own coherence against a real
+  solid (`debug/origSolid_0.stp`, generated via `Settings.debug=True` on
+  a real workshop model, called via `decompose/generators.py::
+  external_plane`). Method: for every real plane-plane adjacent pair in
+  the solid (50 pairs), compared `region_sign`'s own AND/OR answer
+  against real point-in-solid ground truth (`GSolid.is_inside` via
+  `BRepClass3d_SolidClassifier`, sampling a point offset from the shared
+  edge along the "material direction" difference between the two
+  faces -- a convex/AND edge must exclude that point, a concave/OR edge
+  must include it). 49/50 matched exactly; the one exception (faces 0
+  and 9) turned out to be two faces on the EXACT SAME analytic plane
+  (identical axis/position to float precision, one a 0.73mm^2 sliver
+  next to the other's 364.8mm^2 -- almost certainly a residual same-
+  plane boolean-cut fragment, the kind `merge_same_surface_faces`
+  exists to consolidate elsewhere in the pipeline, but that merge only
+  runs in the cell-definition phase, not in this decomposition-side
+  check). Per direct user clarification: when two faces are coplanar
+  and share an edge, they represent the exact same infinite plane, so
+  the dihedral angle is exactly 0 -- AND and OR both describe the
+  identical region (intersecting or unioning one half-space with itself
+  gives that same half-space either way), making the question ill-posed
+  rather than merely hard to decide; forcing an answer is itself the
+  bug, regardless of which answer. (The ground-truth point-sampling
+  method used to find this doesn't even apply to this specific pair
+  either -- both `vect`s are tangential to the SAME shared plane, so the
+  sample point never leaves that plane's own surface, testing boundary
+  membership rather than a genuine interior/exterior 3D query -- a
+  useful reminder that a verification method built for the general case
+  can itself break down exactly at the degenerate case it's being used
+  to find.) Fixed: `region_sign` now checks `is_same_surface(s1.Surface,
+  s2.Surface, tolerances)` right after confirming a shared edge exists,
+  returning `None` (the same "no sign to report" convention already
+  used for "no common edge") before any AND/OR logic runs. Every real
+  call site (`external_plane`/`cutting_face_number` in
+  `decompose/decom_utils_generator.py`; `multiplane`/`multiplane_old`/
+  `no_convex` in `utils/meta_surfaces.py`/`meta_surfaces_utils.py`) was
+  individually checked to confirm treating `None` as "don't trigger this
+  branch" is the semantically correct, safe fallback in every one of
+  them, not just a value that happens not to crash. New
+  `tests/test_meta_surfaces_utils.py` (2 tests): the exact same face
+  compared against itself (the simplest deterministic reproduction of
+  "same analytic surface") returns `None`; a plain box's own genuine
+  convex corners still correctly resolve to `"AND"`, confirming the new
+  gate doesn't suppress real, everyday adjacency. **Verified**:
+  re-running the same real-fixture check after the fix -- the
+  previously-mismatched pair now correctly falls into "undetermined"
+  (skipped), and the other 49 pairs are unaffected; full suites green on
+  all 3 engines (ocp 294 passed, occ/freecad confirmed green in the same
+  combined runs as the cache-hardening entry above, since both fixes
+  landed in the same session's test passes).
 
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 

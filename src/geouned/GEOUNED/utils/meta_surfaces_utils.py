@@ -1536,6 +1536,26 @@ def region_sign(s1_in, s2, outAngle=False, *, tolerances):
         # sign to report either way.
         return (None, None) if outAngle else None
 
+    if is_same_surface(s1.Surface, s2.Surface, tolerances=tolerances):
+        # Genuinely the same analytic surface split into two adjacent
+        # pieces (e.g. a residual same-plane sliver left by a boolean
+        # cut) -- there is no real dihedral angle here (it's exactly 0),
+        # so AND and OR both describe the SAME region (intersecting or
+        # unioning one half-space with itself gives that half-space
+        # either way): the question this function answers is ill-posed
+        # for this pair, not just hard to decide. Confirmed live,
+        # 2026-09-27 (a real fixture, decompose/generators.py's own
+        # `external_plane`): forcing an answer here previously returned
+        # "OR" (an artifact of the generic plane/plane fallback logic
+        # below, which assumes a real corner exists), while point-sampling
+        # against the actual solid showed "AND" -- but that ground truth
+        # is itself not meaningful for a coplanar pair (the sample point
+        # never leaves the shared plane, so it's a boundary-membership
+        # question, not a true interior/exterior test), confirming
+        # neither answer is truly "correct" -- per direct user
+        # instruction, skip the test entirely instead of guessing.
+        return (None, None) if outAngle else None
+
     e1 = Edges[0]
     p0, p1 = e1.ParameterRange
     pe = 0.5 * (p1 + p0)

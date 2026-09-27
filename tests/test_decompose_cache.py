@@ -39,6 +39,7 @@ import pytest
 
 import geouned
 from geouned.GEOUNED import core as core_module
+from geouned.GEOUNED.decompose import decompose_cache as decompose_cache_module
 from geouned.GEOUNED.decompose.decom_one_generators import main_split as real_main_split
 from geouned.GEOUNED.loadfile import load_step as load_step_module
 from geouned.geo import (
@@ -159,6 +160,62 @@ def test_duplicate_label_always_redecomposes_both(tmp_path):
     # never trusted as a cache identity: always redecomposed, both runs
     assert spy2.call_count == 2
     assert "A" not in _read_manifest(tmp_path)["solids"]
+
+
+def test_cache_write_failure_never_crashes_an_otherwise_good_run(tmp_path):
+    """Regression test for a real, if unconfirmed, finding (2026-09-27):
+    an intermittent native crash was observed inside Gexport_binary
+    (occ engine) during a long test session -- not reproduced on 2 later
+    attempts, so its exact cause stayed unconfirmed, but it exposed a
+    real design risk regardless: the decompose cache is a pure
+    optimization for a FUTURE run, and must never be able to fail a
+    CURRENT, otherwise fully successful decomposition. Every write in
+    DecomposeCache (store/finalize) is wrapped defensively -- this test
+    forces Gexport_binary to always raise and confirms the run still
+    completes correctly, with real, correct decomposition results,
+    despite every single cache write failing."""
+    step_path = tmp_path / "model.stp"
+    _make_step(step_path, 3)
+
+    def always_fails(*args, **kwargs):
+        raise RuntimeError("simulated native export failure")
+
+    settings = geouned.Settings(outPath=str(tmp_path), voidGen=False, load_from_cache=True)
+    c = geouned.CadToCsg(options=geouned.Options(), tolerances=geouned.Tolerances(), settings=settings)
+    with patch.object(load_step_module, "Gload_step_labels", return_value=_fake_nodes(["A", "B", "C"])):
+        c.load_step_file(str(step_path))
+    with patch.object(decompose_cache_module, "Gexport_binary", side_effect=always_fails):
+        c.decompose_solids()  # must not raise
+
+    # the run itself produced correct results despite every cache write failing
+    volumes = sorted(round(m.Volume) for m in c.meta_list)
+    assert volumes == [1000, 1000, 1000]
+
+    # a manifest still gets written (nothing to cache, but the write
+    # itself -- a plain JSON file, unaffected by the mock -- succeeds)
+    manifest = _read_manifest(tmp_path)
+    assert manifest["solids"] == {}
+
+
+def test_cache_read_failure_falls_back_to_redecomposing(tmp_path):
+    """Counterpart to the write-failure test above: a cache that exists
+    but fails to read back (a corrupted .bin, a native parser error, ...)
+    must be treated exactly like a cache miss -- redecompose, don't
+    crash."""
+    step_path = tmp_path / "model.stp"
+    _make_step(step_path, 2)
+
+    _load_and_decompose(tmp_path, step_path, ["A", "B"], load_from_cache=True)
+
+    def always_fails(*args, **kwargs):
+        raise RuntimeError("simulated corrupt cache file")
+
+    with patch.object(decompose_cache_module, "Gload_binary", side_effect=always_fails):
+        c2, spy2 = _load_and_decompose(tmp_path, step_path, ["A", "B"], load_from_cache=True)
+
+    assert spy2.call_count == 2  # redecomposed, not crashed
+    volumes = sorted(round(m.Volume) for m in c2.meta_list)
+    assert volumes == [1000, 1000]
 
 
 def test_global_key_change_invalidates_whole_cache(tmp_path):
