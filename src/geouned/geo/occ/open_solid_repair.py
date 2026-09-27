@@ -49,15 +49,17 @@ from OCC.Core.TopoDS import TopoDS_Shell, topods
 
 from ..constants import (
     DEGENERATE_EDGE_LENGTH_FLOOR,
-    MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE,
+    MAX_REPAIR_VOLUME_REL_CHANGE,
     MIN_SLIVER_EDGE_LENGTH,
     OPEN_SEAM_REL_TOL,
     OPEN_STRIP_GAP_ABS,
     OPEN_STRIP_GAP_REL,
     OPEN_STRIP_THIN_RATIO,
+    RESEW_CEILING,
 )
 from ._native_utils import _linear_props, _volume_props
 from .split_repair import _edge_face_map
+from ..volume_utils import volume_within
 
 
 # --------------------------------------------------------------------------
@@ -166,7 +168,7 @@ def _resew_faces_to_solid(native_solid, width, seam_tol):
     """Re-sew every face at a tolerance a few x the crack/slot `width` so
     the two sides weld into one shared edge, then close to a TopoDS_Solid.
     Shared by "split_duplicate_seam" and "missing_sliver_strip"."""
-    ceiling = max(_solid_diagonal(native_solid) * 1.0e-3, seam_tol, 2.0 * width)
+    ceiling = max(_solid_diagonal(native_solid) * RESEW_CEILING, seam_tol, 2.0 * width)
     sew_tol = min(max(3.0 * width, seam_tol), ceiling)
 
     sewer = BRepBuilderAPI_Sewing(sew_tol, True, True, True, False)
@@ -310,7 +312,7 @@ def _close_open_solid(native_solid, problem: str, tolerances):
         return None
     v0 = abs(_volume_props(native_solid).Mass())
     v1 = abs(_volume_props(result).Mass())
-    if abs(v1 - v0) > MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE * max(v0, 1.0):
+    if not volume_within(v1, v0, MAX_REPAIR_VOLUME_REL_CHANGE):
         return None
     return result
 

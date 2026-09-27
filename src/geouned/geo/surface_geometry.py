@@ -23,85 +23,162 @@ from __future__ import annotations
 
 import math
 
+from .constants import (
+    NUMERIC_DOUBLE_TOL,
+    RELATIVE_TOL_ABS_FLOOR,
+)
 from .vector_geometry import GVector
+
+
+def relative_tolerance(base: float, scale: float) -> float:
+    """`base * scale`, never below `RELATIVE_TOL_ABS_FLOOR` (see that constant: `scale` is 0 for a surface anchored
+    at the origin). Shared by every `is_same_*_surface` predicate's own `relativeTol` handling, and by a caller that
+    needs the same effective tolerance for a diagnostic (e.g. the registry's fuzzy-match log)."""
+    return max(base * scale, RELATIVE_TOL_ABS_FLOOR)
 
 # ---------------------------------------------------------------------------
 # Basic geometric predicates on GVector
 # ---------------------------------------------------------------------------
 
 
-def is_same_value(v1: float, v2: float, tolerance: float = 1e-6) -> bool:
+def is_same_value(v1: float, v2: float, tolerance: float = NUMERIC_DOUBLE_TOL) -> bool:
     return abs(v1 - v2) < tolerance
-
-
-def is_opposite(vector_1: GVector, vector_2: GVector, tolerance: float = 1e-3) -> bool:
-    return vector_1.angle_to(-vector_2) < tolerance
-
-
-def is_parallel(vector_1: GVector, vector_2: GVector, tolerance: float = 1e-3) -> bool:
-    angle = vector_1.angle_to(vector_2)
-    return angle < tolerance or is_same_value(angle, math.pi, tolerance)
-
-
-def is_in_line(point: GVector, direction: GVector, point_on_line: GVector, tolerance: float = 1e-6) -> bool:
-    to_point = point - point_on_line
-    return is_parallel(direction, to_point) or to_point.length < tolerance
-
-
-def is_in_plane(point: GVector, plane, tolerance: float = 1e-7) -> bool:
-    return abs(plane.Axis.dot(point - plane.Position)) < tolerance
-
-
-def sign_plane(point: GVector, plane) -> int:
-    return 1 if plane.Axis.dot(point - plane.Position) >= 0.0 else -1
 
 
 # ---------------------------------------------------------------------------
 # "Is this the same underlying analytic surface" predicates
 # ---------------------------------------------------------------------------
 
+def axes_angle(axis_1: GVector, axis_2: GVector) -> float:
+    """Deviation from parallel, in [0, pi/2] radians: the quantity `axes_parallel` compares (0 for two vectors along the
+    same line, either direction). Shared with the registry's near-miss diagnostic log."""
+    angle = axis_1.angle_to(axis_2)
+    return min(angle, math.pi - angle)
 
-def is_same_plane_surface(plane_1, plane_2) -> bool:
-    """
-    True if two planes are the same infinite analytic plane (same axis
-    direction -- either way -- and same offset from the origin). Direct
-    port of the former `PlaneGu.isSameSurface`, kept at the same fixed
-    tolerances: this is a decomposition-time "is this literally the same
-    underlying surface" check, distinct from `is_same_plane` in
-    `basic_functions_part2.py`, which compares already-built output
-    surfaces with user-configurable tolerances for a different purpose
-    (surface-list deduplication).
 
-    Each plane's own offset (`Axis.dot(Position)`) is measured along its
-    *own* axis -- when the two axes are antiparallel (opposite direction,
-    still the same infinite plane, e.g. the same real plane reached via
-    two different Face Orientations), those two offsets are measured in
-    opposite directions and must be compared via `d1 == -d2`, not
-    `d1 == d2` (confirmed as a real bug via `Solidos/test_models/
-    RoundCorners/rc9.stp`, 2026-08-23: two genuinely different, parallel
-    planes 3.5 units apart with antiparallel axes have equal-magnitude
-    offsets of the same sign, which `d1 == d2` alone wrongly matched --
-    `MetaSurfacesDict`/`build_roundC_params` then treated one cylinder's
-    own 2 distinct bounding planes as a single coincident one, losing its
-    real additional/closing plane entirely).
-    """
-    axis_dot = plane_1.Axis.dot(plane_2.Axis)
-    if abs(axis_dot) < 0.99999:
+def axes_parallel(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors lie along the same line, either direction (angle 0 or pi), to within `angle_tol` radians."""
+    return axes_angle(axis_1, axis_2) <= angle_tol
+
+
+def axes_same_direction(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors point the same way (angle 0), to within `angle_tol` radians."""
+    return axis_1.angle_to(axis_2) <= angle_tol
+
+
+def axes_perpendicular(axis_1: GVector, axis_2: GVector, angle_tol: float) -> bool:
+    """True if two vectors are perpendicular, to within `angle_tol` radians -- the same tolerance as `axes_parallel`.
+
+    Perpendicular means alpha = +-pi/2 (both give cos(alpha) = 0), hence `abs(pi/2 - abs(alpha))`. `angle_to` is
+    unsigned, in [0, pi], so both orientations arrive as +pi/2 and the inner `abs` only matters for an oriented angle."""
+    alpha = axis_1.angle_to(axis_2)
+    return abs(math.pi / 2.0 - abs(alpha)) <= angle_tol
+
+
+def opposite_sense(axis_1: GVector, axis_2: GVector) -> bool:
+    """True if two axes that are ALREADY known to lie along the same line point in opposite senses.
+
+    A sign, not a tolerance: once two surfaces are recognised as the same one, whether their axes point the same way
+    or the opposite way is the sign of the dot product. Deciding it with an angle tolerance can disagree with the
+    tolerance that recognised them as parallel (a plane matched with `add_pln_angle`, 1e-2, whose sense is then
+    checked with `pln_angle`, 1e-4, could come out with the wrong sign)."""
+    return axis_1.dot(axis_2) < 0.0
+
+
+_CARTESIAN_AXES = (GVector(1, 0, 0), GVector(0, 1, 0), GVector(0, 0, 1))
+
+
+def axis_alignment(direction: GVector, angle_tol: float, same_direction: bool = False) -> "int | None":
+    """Index (0=X, 1=Y, 2=Z) of the cartesian axis `direction` is aligned to within `angle_tol`, or `None` if it
+    isn't aligned with any of them -- the one classification every surface writer (mcnp/openmc/serpent/phits) makes
+    before choosing an axis-specific surface card (`PX`/`CX`/`KX`/`TX`, ...) over the general quadric/`GQ` fallback,
+    unified 2026-09-22 (they used to each run the same 3-way `if/elif/elif` themselves).
+
+    `same_direction=True` (Plane only: which way the normal points decides which card a plane is classified into,
+    not just its formatted text) requires the SAME sense (`axes_same_direction`); the default (Cylinder/Cone/Torus,
+    where only the axis LINE matters, not which way a vector happens to point along it) accepts either sense
+    (`axes_parallel`). Confirmed consistent across all 4 writers before unifying: every one of them already used
+    `axes_same_direction` for Plane and `axes_parallel` for Cylinder/Cone/Torus."""
+    test = axes_same_direction if same_direction else axes_parallel
+    for index, axis in enumerate(_CARTESIAN_AXES):
+        if test(direction, axis, angle_tol):
+            return index
+    return None
+
+
+def plane_offset(plane_1, plane_2) -> float:
+    """Distance `is_same_plane_surface` compares -- see that function's docstring for why it is measured from a
+    point of the plane rather than from the coordinate origin. The LARGER of the two planes' own axis: measured
+    against BOTH `plane_1.Axis` and `plane_2.Axis` (not just `plane_1`'s), so the result does not depend on which
+    argument is which -- swapping `plane_1`/`plane_2` gives the identical value. Meaningless (but still computable)
+    when the two axes are not close to parallel; callers that need the decision use
+    `is_same_plane_surface`/`plane_within`, not this value alone."""
+    r12 = plane_2.Position - plane_1.Position
+    d1 = abs(plane_1.Axis.dot(r12))
+    d2 = abs(plane_2.Axis.dot(r12))
+    return max(d1, d2)
+
+
+def plane_within(plane_1, plane_2, angle_tol: float, distance_tol: float, relative_tol: bool = False) -> bool:
+    """`is_same_plane_surface`, taking the two tolerances directly instead of reading `.pln_angle`/`.pln_distance`
+    off a `Tolerances` object -- lets a caller apply a different pair (e.g. the registry's own `add_pln_angle`/
+    `add_pln_distance`, for a non-real/auxiliary plane) without a tolerances-shaped proxy object."""
+    if not axes_parallel(plane_1.Axis, plane_2.Axis, angle_tol):
         return False
-    d1 = plane_1.Axis.dot(plane_1.Position)
-    d2 = plane_2.Axis.dot(plane_2.Position)
-    if axis_dot > 0:
-        return abs(d1 - d2) <= 1e-5
-    else:
-        return abs(d1 + d2) <= 1e-5
+    tol = distance_tol
+    if relative_tol:
+        scale = max(abs(plane_1.Axis.dot(plane_1.Position)), abs(plane_2.Axis.dot(plane_2.Position)))
+        tol = relative_tolerance(distance_tol, scale)
+    return plane_offset(plane_1, plane_2) <= tol
 
 
-def is_parallel_plane_surface(plane_1, plane_2) -> bool:
-    """Direct port of the former `PlaneGu.isParallel`, same fixed tolerance."""
-    return abs(plane_1.Axis.dot(plane_2.Axis)) > 0.99999
+def is_same_plane_surface(plane_1, plane_2, tolerances) -> bool:
+    """
+    True if two planes are the same infinite analytic plane: axes parallel -- either way -- within `tolerances.pln_angle`,
+    and the `Position` of `plane_2` no farther than `tolerances.pln_distance` from `plane_1`.
+
+    The distance is measured from a POINT OF THE PLANE, not from the coordinate origin. A plane's `Position` lies in
+    the region where its face is defined, so this compares the two planes where they are actually used. The offset
+    from the origin (`Axis.dot(Position)`) would add `angle * distance-to-the-origin` to what is really a local
+    difference (1e-4 rad at 1 m from the origin is 0.1 mm), and says nothing about where each face is.
+
+    The distance is the LARGER of `|plane_1.Axis . (plane_2.Position - plane_1.Position)|` and
+    `|plane_2.Axis . (plane_2.Position - plane_1.Position)|` (see `plane_offset`) -- symmetric in `plane_1`/`plane_2`
+    (swapping the two arguments gives the identical value), and it does not depend on the senses of the axes (the
+    same plane reached through two Face Orientations has antiparallel axes). It is also what makes two genuinely
+    different parallel planes 3.5 units apart NOT match whatever their senses (the `d1 == d2` bug found on
+    `Solidos/test_models/RoundCorners/rc9.stp`, 2026-08-23, which merged the two bounding planes of a round corner).
+
+    With `tolerances.relativeTol` set (GEOUNED-only; absent/False for every other caller, including GEOReverse's bare
+    `GeoTolerances`), the distance tolerance scales by the planes' own offset from the ORIGIN, not from each other --
+    kept exactly as `basic_functions_part2.is_same_plane` computed it before this unification (2026-09-21: an
+    unrelated scale reference to the new point-based distance, same class of open question as `is_same_cylinder_surface`'s
+    own `relativeTol` docstring note; left as-is, not redesigned here).
+
+    `tolerances` is a `GeoTolerances` (the user's own values): the decomposition and the output stage share one
+    notion of "same surface", instead of this check keeping a fixed, private threshold. This is the ONE
+    implementation: `GEOUNED.utils.basic_functions_part2.is_same_plane` (the CSG-registry entry point, which also
+    needs `add_pln_*` for non-real planes and an optional near-miss diagnostic log) calls `plane_within` with the
+    tolerances it selects, rather than keeping its own copy of this decision (unified 2026-09-22 after the registry's
+    old, origin-based copy was found to disagree with this one -- see CLAUDE.md).
+    """
+    return plane_within(plane_1, plane_2, tolerances.pln_angle, tolerances.pln_distance, getattr(tolerances, "relativeTol", False))
 
 
-def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
+def is_same_oriented_plane_surface(plane_1, plane_2, tolerances) -> bool:
+    """True if two planes are the same infinite plane AND face the same way (`opposite_sense` is False).
+
+    What `PlaneParams.__eq__` used to mean (removed: it had no access to the run's tolerances and was used implicitly by
+    `in`, `.index`, `!=`), now explicit and with the user's `pln_distance` / `pln_angle`."""
+    return is_same_plane_surface(plane_1, plane_2, tolerances) and not opposite_sense(plane_1.Axis, plane_2.Axis)
+
+
+def is_parallel_plane_surface(plane_1, plane_2, tolerances) -> bool:
+    """True if two planes have the same normal line (either way), to within `tolerances.pln_angle`."""
+    return axes_parallel(plane_1.Axis, plane_2.Axis, tolerances.pln_angle)
+
+
+def is_same_cylinder_surface(cylinder_1, cylinder_2, tolerances) -> bool:
     """True if two cylinders are the same infinite analytic cylinder (same
     radius, same axis line -- direction either way).
 
@@ -116,48 +193,105 @@ def is_same_cylinder_surface(cylinder_1, cylinder_2) -> bool:
     R=7 cylinder whose `Center`s were 29.97 units apart *along the axis*
     (perpendicular distance ~2e-12) were wrongly judged different
     surfaces, so `Gsliver_heal` could not recognise the malformed
-    duplicate cylinder face it needed to drop. Was a direct port of the
-    former `CylinderGu.isSameSurface`; same fixed 1e-5 tolerances."""
-    if abs(cylinder_1.Radius - cylinder_2.Radius) > 1e-5:
+    duplicate cylinder face it needed to drop.
+
+    Radius and axis-line distance are compared with `tolerances.cyl_distance`,
+    the axis direction with `tolerances.cyl_angle`. With `tolerances.relativeTol` set (GEOUNED-only; see
+    `is_same_plane_surface`'s own note), each scales by the LARGER of the two cylinders' own `Radius`/`Center.length`
+    -- `Center` is an arbitrary point of the axis, so that second scale is itself arbitrary; kept as-is, not
+    redesigned here (2026-09-21 user decision, same open question as `is_same_plane_surface`'s)."""
+    relative_tol = getattr(tolerances, "relativeTol", False)
+    if not cylinder_radius_within(cylinder_1, cylinder_2, tolerances.cyl_distance, relative_tol):
         return False
-    if abs(cylinder_1.Axis.dot(cylinder_2.Axis)) < 0.99999:
+    if not axes_parallel(cylinder_1.Axis, cylinder_2.Axis, tolerances.cyl_angle):
         return False
+    return cylinder_axis_within(cylinder_1, cylinder_2, tolerances.cyl_distance, relative_tol)
+
+
+def cylinder_radius_diff(cylinder_1, cylinder_2) -> float:
+    """`cylinder_2.Radius - cylinder_1.Radius` (signed): the quantity `is_same_cylinder_surface` compares."""
+    return cylinder_2.Radius - cylinder_1.Radius
+
+
+def cylinder_radius_within(cylinder_1, cylinder_2, distance_tol: float, relative_tol: bool = False) -> bool:
+    """The radius half of `is_same_cylinder_surface`, taking the tolerance directly -- see `plane_within`."""
+    tol = distance_tol
+    if relative_tol:
+        tol = relative_tolerance(distance_tol, max(cylinder_1.Radius, cylinder_2.Radius))
+    return abs(cylinder_radius_diff(cylinder_1, cylinder_2)) <= tol
+
+
+def cylinder_axis_offset(cylinder_1, cylinder_2) -> float:
+    """Perpendicular distance between the two cylinders' axis LINES (see `is_same_cylinder_surface`'s own docstring
+    for why not the raw `Center` distance) -- the quantity `is_same_cylinder_surface` compares once the axes are
+    already known to be parallel."""
     offset = cylinder_1.Center - cylinder_2.Center
     perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
-    return perpendicular.length <= 1e-5
+    return perpendicular.length
 
 
-def is_same_elliptic_cylinder_surface(cylinder_1, cylinder_2) -> bool:
-    """Mirrors `is_same_cylinder_surface` for `GEllipticCylinder`, added
-    2026-09-18 (see CLAUDE.md's "Spline-vs-quadric identification"
-    entry) -- same fixed 1e-5 tolerances, same axis-line (not raw
-    Center-distance) test, plus a MajorAxis alignment check (either sign)
-    an ellipse needs that a circle doesn't."""
-    if abs(cylinder_1.MajorRadius - cylinder_2.MajorRadius) > 1e-5:
-        return False
-    if abs(cylinder_1.MinorRadius - cylinder_2.MinorRadius) > 1e-5:
-        return False
-    if abs(cylinder_1.Axis.dot(cylinder_2.Axis)) < 0.99999:
-        return False
-    if abs(cylinder_1.MajorAxis.dot(cylinder_2.MajorAxis)) < 0.99999:
-        return False
-    offset = cylinder_1.Center - cylinder_2.Center
-    perpendicular = offset - cylinder_1.Axis * offset.dot(cylinder_1.Axis)
-    return perpendicular.length <= 1e-5
+def cylinder_axis_within(cylinder_1, cylinder_2, distance_tol: float, relative_tol: bool = False) -> bool:
+    """The axis-line half of `is_same_cylinder_surface`, taking the tolerance directly -- see `plane_within`."""
+    tol = distance_tol
+    if relative_tol:
+        tol = relative_tolerance(distance_tol, max(cylinder_1.Center.length, cylinder_2.Center.length))
+    return cylinder_axis_offset(cylinder_1, cylinder_2) <= tol
 
 
-def is_same_cone_surface(cone_1, cone_2) -> bool:
-    """Direct port of the former `ConeGu.isSameSurface`, same fixed tolerances."""
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > 1e-5:
+def is_same_elliptic_cylinder_surface(cylinder_1, cylinder_2, tolerances) -> bool:
+    """Mirrors `is_same_cylinder_surface` for `GEllipticCylinder` (added 2026-09-18, see CLAUDE.md's
+    "Spline-vs-quadric identification" entry; reconciled 2026-09-27 with the `tolerances`-threaded unification
+    of every other `is_same_*_surface` predicate -- reuses `cyl_distance`/`cyl_angle`, no dedicated tolerance
+    fields for this base-surface-only first cut). Same axis-line (not raw Center-distance) test as the circular
+    case, plus a MajorAxis alignment check (either sign) an ellipse needs that a circle doesn't -- a real
+    `Geom_Ellipse` always reports `MajorRadius >= MinorRadius` by OCCT's own convention, so no major/minor swap
+    tie-break is needed here (unlike a fitted/ambiguous case)."""
+    relative_tol = getattr(tolerances, "relativeTol", False)
+
+    major_tol = tolerances.cyl_distance
+    minor_tol = tolerances.cyl_distance
+    if relative_tol:
+        major_tol = relative_tolerance(tolerances.cyl_distance, max(cylinder_1.MajorRadius, cylinder_2.MajorRadius))
+        minor_tol = relative_tolerance(tolerances.cyl_distance, max(cylinder_1.MinorRadius, cylinder_2.MinorRadius))
+    if abs(cylinder_1.MajorRadius - cylinder_2.MajorRadius) > major_tol:
         return False
-    if (cone_1.Apex - cone_2.Apex).length > 1e-5:
+    if abs(cylinder_1.MinorRadius - cylinder_2.MinorRadius) > minor_tol:
         return False
-    return abs(cone_1.Axis.dot(cone_2.Axis)) >= 0.99999
+
+    if not axes_parallel(cylinder_1.Axis, cylinder_2.Axis, tolerances.cyl_angle):
+        return False
+    if not axes_parallel(cylinder_1.MajorAxis, cylinder_2.MajorAxis, tolerances.cyl_angle):
+        return False
+
+    return cylinder_axis_within(cylinder_1, cylinder_2, tolerances.cyl_distance, relative_tol)
 
 
-def is_coaxial_cone_pair(
-    cone_1, cone_2, angle_tol: float = 1e-6, axis_dot_tol: float = 1e-5, apex_line_tol: float = 1e-5
-) -> bool:
+def is_same_cone_surface(cone_1, cone_2, tolerances) -> bool:
+    """True if two cones are the same infinite cone: `SemiAngle` and axis line within `tolerances.kne_angle`,
+    apex within `tolerances.kne_distance`. With `tolerances.relativeTol` set (GEOUNED-only; see
+    `is_same_plane_surface`'s own note), the apex tolerance scales by the larger of the two apexes' own distance
+    from the origin -- kept as-is, not redesigned here."""
+    if abs(cone_semiangle_diff(cone_1, cone_2)) > tolerances.kne_angle:
+        return False
+    apex_tol = tolerances.kne_distance
+    if getattr(tolerances, "relativeTol", False):
+        apex_tol = relative_tolerance(tolerances.kne_distance, max(cone_1.Apex.length, cone_2.Apex.length))
+    if cone_apex_offset(cone_1, cone_2) > apex_tol:
+        return False
+    return axes_parallel(cone_1.Axis, cone_2.Axis, tolerances.kne_angle)
+
+
+def cone_semiangle_diff(cone_1, cone_2) -> float:
+    """`cone_2.SemiAngle - cone_1.SemiAngle` (signed): the quantity `is_same_cone_surface` compares first."""
+    return cone_2.SemiAngle - cone_1.SemiAngle
+
+
+def cone_apex_offset(cone_1, cone_2) -> float:
+    """Distance between the two cones' apexes: the quantity `is_same_cone_surface` compares against the apex tolerance."""
+    return (cone_1.Apex - cone_2.Apex).length
+
+
+def is_coaxial_cone_pair(cone_1, cone_2, tolerances) -> bool:
     """True when two cones share the same axis *line* (their axis vectors
     may be parallel or anti-parallel -- direction is not constrained) and
     the same `SemiAngle`, but sit at *different* apexes along that line.
@@ -173,19 +307,19 @@ def is_coaxial_cone_pair(
     infinite cone): this predicate explicitly requires the apex to differ
     and tolerates either axis direction along the shared line.
     """
-    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > angle_tol:
+    if abs(cone_1.SemiAngle - cone_2.SemiAngle) > tolerances.kne_angle:
         return False
-    if abs(cone_1.Axis.dot(cone_2.Axis)) < 1.0 - axis_dot_tol:
+    if not axes_parallel(cone_1.Axis, cone_2.Axis, tolerances.kne_angle):
         return False
     apex_offset = cone_2.Apex - cone_1.Apex
-    if apex_offset.length < apex_line_tol:
+    if apex_offset.length < tolerances.kne_distance:
         return False  # same apex -> the same cone entirely, not a pair
     along = apex_offset.dot(cone_1.Axis)
     radial = (apex_offset - cone_1.Axis * along).length
-    return radial < apex_line_tol
+    return radial < tolerances.kne_distance
 
 
-def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semiangle_min: float = 1e-6) -> bool:
+def is_coaxial_cone_cylinder_pair(cone, cylinder, tolerances, semiangle_min: float = NUMERIC_DOUBLE_TOL) -> bool:
     """True when `cone` and `cylinder` share the same axis *line* (either
     axis direction) and `cone`'s SemiAngle is non-degenerate (not exactly
     0 or 90 degrees), so the cone genuinely reaches `cylinder.Radius` at
@@ -204,30 +338,71 @@ def is_coaxial_cone_cylinder_pair(cone, cylinder, radial_tol: float = 1e-5, semi
     """
     if abs(math.tan(cone.SemiAngle)) < semiangle_min:
         return False
-    if abs(cone.Axis.dot(cylinder.Axis)) < 1.0 - 1e-5:
+    if not axes_parallel(cone.Axis, cylinder.Axis, tolerances.kne_angle):
         return False
     offset = cylinder.Center - cone.Apex
     along = offset.dot(cone.Axis)
     radial = (offset - cone.Axis * along).length
-    return radial < radial_tol
+    return radial < tolerances.kne_distance
 
 
-def is_same_sphere_surface(sphere_1, sphere_2) -> bool:
-    """Direct port of the former `SphereGu.isSameSurface`, same fixed tolerance."""
-    if abs(sphere_1.Radius - sphere_2.Radius) > 1e-5:
+def is_same_sphere_surface(sphere_1, sphere_2, tolerances) -> bool:
+    """True if two spheres coincide: radius and centre within `tolerances.sph_distance`. With
+    `tolerances.relativeTol` set (GEOUNED-only; see `is_same_plane_surface`'s own note), both scale by the larger of
+    the two spheres' own radius/centre-distance-from-the-origin -- kept as-is, not redesigned here."""
+    relative_tol = getattr(tolerances, "relativeTol", False)
+    radius_tol = tolerances.sph_distance
+    if relative_tol:
+        radius_tol = relative_tolerance(tolerances.sph_distance, max(sphere_1.Radius, sphere_2.Radius))
+    if abs(sphere_radius_diff(sphere_1, sphere_2)) > radius_tol:
         return False
-    return (sphere_1.Center - sphere_2.Center).length <= 1e-5
+    centre_tol = tolerances.sph_distance
+    if relative_tol:
+        centre_tol = relative_tolerance(tolerances.sph_distance, max(sphere_1.Center.length, sphere_2.Center.length))
+    return sphere_center_offset(sphere_1, sphere_2) <= centre_tol
 
 
-def is_same_torus_surface(torus_1, torus_2) -> bool:
-    """Direct port of the former `TorusGu.isSameSurface`, same fixed tolerances."""
-    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > 1e-5:
+def sphere_radius_diff(sphere_1, sphere_2) -> float:
+    """`sphere_2.Radius - sphere_1.Radius` (signed): the quantity `is_same_sphere_surface` compares first."""
+    return sphere_2.Radius - sphere_1.Radius
+
+
+def sphere_center_offset(sphere_1, sphere_2) -> float:
+    """Distance between the two spheres' centres: the quantity `is_same_sphere_surface` compares against the centre tolerance."""
+    return (sphere_1.Center - sphere_2.Center).length
+
+
+def is_same_torus_surface(torus_1, torus_2, tolerances, check_a_sign: bool = False) -> bool:
+    """True if two tori coincide: both radii and the centre within `tolerances.tor_distance`, the axis LINE (either
+    direction -- two antiparallel-axis tori are the same torus, 2026-09-21 user decision) within `tolerances.tor_angle`.
+
+    `check_a_sign` opts into one extra, narrower requirement: the two tori's own `a_sign` (which sheet of a
+    self-intersecting/degenerate torus they represent, see `write/functions.py`) must also match. Two genuinely
+    distinct uses of "same torus" need different answers here: grouping same-analytic-surface face fragments during
+    decomposition (`SolidGu.same_torus_surf`, `check_a_sign=True`) must NOT merge a self-intersecting torus's outer
+    and inner sheets, since they are geometrically distinct faces; CSG-surface registration
+    (`MetaSurfacesDict`/`SurfacesDict`'s `add_torus`/`get_id`, the default `check_a_sign=False`) deliberately does
+    NOT -- both sheets of one degenerate torus are written as a single MCNP/OpenMC/etc surface (the sign is encoded
+    into the written major radius instead), so they must compare equal there. With `tolerances.relativeTol` set
+    (GEOUNED-only; see `is_same_plane_surface`'s own note), the radii and centre tolerances scale by the larger of
+    the two tori's own major/minor radius or centre-distance-from-the-origin -- kept as-is, not redesigned here."""
+    if not axes_parallel(torus_1.Axis, torus_2.Axis, tolerances.tor_angle):
         return False
-    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > 1e-5:
+    if check_a_sign and getattr(torus_1, "a_sign", 1) != getattr(torus_2, "a_sign", 1):
         return False
-    if (torus_1.Center - torus_2.Center).length > 1e-5:
+    relative_tol = getattr(tolerances, "relativeTol", False)
+    major_tol = minor_tol = tolerances.tor_distance
+    if relative_tol:
+        major_tol = relative_tolerance(tolerances.tor_distance, max(torus_1.MajorRadius, torus_2.MajorRadius))
+        minor_tol = relative_tolerance(tolerances.tor_distance, max(torus_1.MinorRadius, torus_2.MinorRadius))
+    if abs(torus_1.MajorRadius - torus_2.MajorRadius) > major_tol:
         return False
-    return abs(torus_1.Axis.dot(torus_2.Axis)) >= 0.99999
+    if abs(torus_1.MinorRadius - torus_2.MinorRadius) > minor_tol:
+        return False
+    centre_tol = tolerances.tor_distance
+    if relative_tol:
+        centre_tol = relative_tolerance(tolerances.tor_distance, max(torus_1.Center.length, torus_2.Center.length))
+    return (torus_1.Center - torus_2.Center).length <= centre_tol
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +451,7 @@ def is_inside_torus(point: GVector, torus) -> bool:
     return rp > torus.MinorRadius
 
 
-def torus_sheet_sign(vertex: GVector, torus, tol: float = 1e-8) -> int:
+def torus_sheet_sign(vertex: GVector, torus) -> int:
     """For a self-intersecting (degenerate: MinorRadius > MajorRadius)
     torus, +1 if `vertex` lies on the ordinary outer sheet, -1 if on the
     pinched, self-intersecting inner sheet -- these are two genuinely
@@ -370,7 +545,7 @@ def _solve_quadratic(a: float, b: float, c: float) -> tuple[float, float] | None
     None if there are 0 real roots, or if the equation degenerates to
     non-quadratic (a ~ 0) -- the caller needs a genuine entry/exit pair,
     not a single crossing."""
-    if abs(a) < 1e-9:
+    if abs(a) < NUMERIC_DOUBLE_TOL:
         return None
     disc = b * b - 4.0 * a * c
     if disc < 0.0:
@@ -429,7 +604,7 @@ def find_can_plane(
     """
     A = main_axis.normalized()
     e2 = A.cross(GVector(1.0, 0.0, 0.0))
-    if e2.length < 1e-6:
+    if e2.length < NUMERIC_DOUBLE_TOL:
         e2 = A.cross(GVector(0.0, 1.0, 0.0))
     e2 = e2.normalized()
     e1 = A.cross(e2).normalized()
@@ -490,7 +665,7 @@ def find_can_plane(
         normal = A
     else:
         n_common = A.cross(secondary_axis)
-        if n_common.length < 1e-9:
+        if n_common.length < NUMERIC_DOUBLE_TOL:
             normal = A  # axes (near-)parallel -- common plane undefined
         else:
             normal = secondary_axis.cross(n_common.normalized()).normalized()
@@ -524,13 +699,13 @@ def find_can_plane(
         return None
 
     if narrow_wide_threshold is None:
-        narrow_wide_threshold = 0.01 * main_radius
+        narrow_wide_threshold = 0.01 * main_radius  # 1% of the main cylinder's own radius
 
     half_width = 0.5 * (proj_far - proj_near)
     if half_width <= narrow_wide_threshold:
         offset_amount = half_width
     else:
-        offset_amount = min(0.001 * half_width, narrow_wide_threshold)
+        offset_amount = min(0.001 * half_width, narrow_wide_threshold)  # 0.1% of half_width
 
     position = point_near + normal * offset_amount
     return position, normal

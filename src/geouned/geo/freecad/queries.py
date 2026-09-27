@@ -7,6 +7,7 @@ Spatial queries between two independent shapes (Gin_contact/Gdistance).
 from __future__ import annotations
 
 from .topology import GShape
+from ..constants import VOLUME_MIN_E8
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ def Gin_contact(shape_a: GShape, shape_b: GShape, tolerance: float) -> bool:
 
     if hasattr(native_a, "Volume") and hasattr(native_b, "Volume"):
         common = native_a.common(native_b)
-        return abs(common.Volume) > 1e-8 or bool(common.Solids) or bool(common.Faces) or bool(common.Edges)
+        return abs(common.Volume) > VOLUME_MIN_E8 or bool(common.Solids) or bool(common.Faces) or bool(common.Edges)
     return False
 
 

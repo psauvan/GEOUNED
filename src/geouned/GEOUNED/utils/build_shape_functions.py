@@ -18,6 +18,8 @@ from ...geo import (
     getPart,
     myBox,
 )
+from ...geo.constants import EDGE_PROJECTION_TOL, POINT_POINT_TOL
+from ...geo.surface_geometry import axes_parallel, axes_same_direction
 
 
 def makePlane(normal: GVector, position: GVector, box: GBoundBox):
@@ -62,7 +64,7 @@ def makeCone(axis: GVector, apex: GVector, tan: float, box: GBoundBox):
     return (cone, shell)
 
 
-def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True):
+def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True, *, tolerances):
     """Build the CAD object of the multiplane surface: a genuine closed
     solid for .shape/Gsplit's own use (the box, clipped in turn by every
     plane in plane_list -- the material region the multiplane composite
@@ -97,10 +99,10 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
         if multibuild:
             axis = -axis  # for mutliplane shape construction planes direction must be inverted
         plane = GPlane.from_values(p.Surf.Position, axis)
-        newbox_points = cut_box(cutfaces, plane)
+        newbox_points = cut_box(cutfaces, plane, tolerances=tolerances)
         cutfaces = makeBoxFaces(newbox_points)
     if multibuild:
-        plane_points = remove_box_faces(newbox_points, cutfaces, boxlim)
+        plane_points = remove_box_faces(newbox_points, cutfaces, boxlim, tolerances=tolerances)
         fix_points(plane_points, vertex_list)
     else:
         plane_points = newbox_points
@@ -134,7 +136,7 @@ def makeTCone(tcone, Box, tolerances):
 
 
 def build_complex_shape(surface, Box, tolerances, forward=False):
-    rc = get_cell_object(surface)
+    rc = get_cell_object(surface, tolerances)
     rc.boundBox = myBox(Box, "Forward")
     if forward:
         # if forward is True, the forward shape of the surface is built instead of the reversed shape.
@@ -198,19 +200,19 @@ def makeBoxFaces(box: list):
     return faces
 
 
-def cut_face(gface: GFace, plane: GPlane):
+def cut_face(gface: GFace, plane: GPlane, *, tolerances):
     """Cut the "face" with the "plane". Remaining part is portion in "plane" normal direction."""
     gline = gface.Surface.intersect_plane(plane)  # faces here are always planar (built by makeBoxFaces)
     inter = []
     if gline is not None:
         for e in gface.Edges:
             edge_line = e.Curve  # edges here are always straight (built by makeBoxFaces)
-            if abs(abs(gline.Direction.dot(edge_line.Direction)) - 1) < 1e-6:
+            if axes_parallel(gline.Direction, edge_line.Direction, tolerances.angle):
                 point = None  # if e and line are parallel: no point or infinity
             else:
                 point = gline.intersect_line(edge_line)
 
-            if point is not None and e.is_inside(point, 1e-8):
+            if point is not None and e.is_inside(point, EDGE_PROJECTION_TOL):
                 inter.append(point)
 
     newpoints = inter[:]
@@ -224,12 +226,12 @@ def cut_face(gface: GFace, plane: GPlane):
         return sorted_points, inter
 
 
-def cut_box(faces: list, plane: GPlane):
+def cut_box(faces: list, plane: GPlane, *, tolerances):
     """Cut the box make of planar faces with "plane" """
     updatedfaces = []
     newface_points = []
     for f in faces:
-        newface, newpoints = cut_face(f, plane)
+        newface, newpoints = cut_face(f, plane, tolerances=tolerances)
         if newface is None:
             continue
         updatedfaces.append(newface)
@@ -269,24 +271,24 @@ def sort_points(point_list: list, normal: GVector):
     return points
 
 
-def remove_box_faces(point_face_list: list, faces: list, boxlim: list):
+def remove_box_faces(point_face_list: list, faces: list, boxlim: list, *, tolerances):
     """Remove the remaing initial BoundBox faces from the multplane faces produced"""
-    tol = 1e-8
+    tol = POINT_POINT_TOL
     plane_points = []
     for i, gface in enumerate(faces):
         axis = gface.Surface.Axis
         position = gface.Surface.Position
-        if abs(axis.dot(GVector(1, 0, 0)) - 1) < tol and abs(boxlim[0] - position.x) < tol:
+        if axes_same_direction(axis, GVector(1, 0, 0), tolerances.pln_angle) and abs(boxlim[0] - position.x) < tol:
             continue
-        elif abs(axis.dot(GVector(-1, 0, 0)) - 1) < tol and abs(boxlim[3] - position.x) < tol:
+        elif axes_same_direction(axis, GVector(-1, 0, 0), tolerances.pln_angle) and abs(boxlim[3] - position.x) < tol:
             continue
-        elif abs(axis.dot(GVector(0, 1, 0)) - 1) < tol and abs(boxlim[1] - position.y) < tol:
+        elif axes_same_direction(axis, GVector(0, 1, 0), tolerances.pln_angle) and abs(boxlim[1] - position.y) < tol:
             continue
-        elif abs(axis.dot(GVector(0, -1, 0)) - 1) < tol and abs(boxlim[4] - position.y) < tol:
+        elif axes_same_direction(axis, GVector(0, -1, 0), tolerances.pln_angle) and abs(boxlim[4] - position.y) < tol:
             continue
-        elif abs(axis.dot(GVector(0, 0, 1)) - 1) < tol and abs(boxlim[2] - position.z) < tol:
+        elif axes_same_direction(axis, GVector(0, 0, 1), tolerances.pln_angle) and abs(boxlim[2] - position.z) < tol:
             continue
-        elif abs(axis.dot(GVector(0, 0, -1)) - 1) < tol and abs(boxlim[5] - position.z) < tol:
+        elif axes_same_direction(axis, GVector(0, 0, -1), tolerances.pln_angle) and abs(boxlim[5] - position.z) < tol:
             continue
         plane_points.append(point_face_list[i])
 
@@ -297,7 +299,7 @@ def fix_same_points(points_inplane: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = 1e-8
+    tol = POINT_POINT_TOL
     remove = []
     for i, p1 in enumerate(points_inplane):
         if i in remove:
@@ -315,7 +317,7 @@ def fix_points(point_plane_list: list, vertex_list: list):
     """Replace all point separated by distance < tol, by the same point.
     Replace all vertexes point in multiplane surface by the original vertex point.
     """
-    tol = 1e-8
+    tol = POINT_POINT_TOL
     for i, current_plane in enumerate(point_plane_list):
         for point in current_plane:
             for planepts in point_plane_list[i + 1 :]:

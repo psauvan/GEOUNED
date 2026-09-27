@@ -41,6 +41,17 @@ from ..surface_geometry import (
 )
 from ._native_utils import to_native_vector
 from ..io_utils import suppress_native_stdout
+from ..constants import (
+    ANGLE_THRESHOLD,
+    BOX_TOL,
+    LINE_COPLANAR_REL_TOL,
+    NATIVE_VOL_RATIO_TOL,
+    NUMERIC_DOUBLE_TOL,
+    NUMERIC_TOL,
+    POINT_CLASSIFY_TOL,
+    VOLUME_MIN_E8,
+)
+from ..volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
 # Analytic surface descriptors (wrap a native face's Surface geometry, not
@@ -124,10 +135,10 @@ class GPlane:
         n1, n2 = self.Axis, other.Axis
         d = n1.cross(n2)
         dl = d.length
-        if dl < 1e-10:
+        if dl < NUMERIC_DOUBLE_TOL:
             return None  # parallel or coincident
 
-        if dl < 0.05:  # well below the verified-safe 0.01 rad boundary
+        if dl < ANGLE_THRESHOLD:  # well below the verified-safe 0.01 rad boundary
             native1 = Part.Plane(to_native_vector(self.Position), to_native_vector(n1))
             native2 = Part.Plane(to_native_vector(other.Position), to_native_vector(n2))
             lines = native1.intersect(native2)
@@ -168,7 +179,7 @@ class GPlane:
         to fall back from.
         """
         denom = self.Axis.dot(line.Direction)
-        if abs(denom) < 1e-12:
+        if abs(denom) < NUMERIC_DOUBLE_TOL:
             return None
         t = self.Axis.dot(self.Position - line.Position) / denom
         return line.Position + line.Direction * t
@@ -415,13 +426,13 @@ class GLine:
         d1, d2 = self.Direction, other.Direction
         cr = d1.cross(d2)
         crl = cr.length
-        if crl < 1e-10:
+        if crl < NUMERIC_DOUBLE_TOL:
             return None  # parallel
 
         w = other.Position - self.Position
         scale_ref = max(self.Position.length, other.Position.length, 1.0)
 
-        if crl < 0.05:
+        if crl < ANGLE_THRESHOLD:
             native1 = Part.Line(to_native_vector(self.Position), to_native_vector(self.Position + d1))
             native2 = Part.Line(to_native_vector(other.Position), to_native_vector(other.Position + d2))
             pts = native1.intersect(native2)
@@ -429,7 +440,7 @@ class GLine:
                 return None
             return to_gvector(pts[0].toShape().Point)
 
-        if abs(w.dot(cr)) / crl > 1e-6 * scale_ref:
+        if abs(w.dot(cr)) / crl > LINE_COPLANAR_REL_TOL * scale_ref:
             return None  # skew lines, no true intersection
 
         t = (w.cross(d2)).dot(cr) / (crl * crl)
@@ -635,7 +646,7 @@ class GEdge:
         shape1 = self.__native__
         shape2 = other.__native__
         Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
-        intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
+        intersect = Boxinter.XLength > -BOX_TOL and Boxinter.YLength > -BOX_TOL and Boxinter.ZLength > -BOX_TOL
         if intersect:
             return self.distance_to(other)
         c1 = shape1.BoundBox.Center
@@ -717,8 +728,8 @@ class GFace:
         inertial = numpy.array(((mat.A11, mat.A12, mat.A13), (mat.A21, mat.A22, mat.A23), (mat.A31, mat.A32, mat.A33)))
         eigval = numpy.linalg.eigvalsh(inertial)
         rg_max = max(math.sqrt(e / self.Area) if e > 0 else 0.0 for e in eigval)
-        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > 1e-9 else float("inf")
-        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > 1e-9 else 0.0
+        self.Compactness = self.Area / (rg_max * rg_max) if rg_max > NUMERIC_DOUBLE_TOL else float("inf")
+        self.CharacteristicWidth = self.Area / (rg_max * 3.4641016151377544) if rg_max > NUMERIC_DOUBLE_TOL else 0.0
 
         # assigned later by whoever built the face list this face came
         # from (its position within the parent solid's face list, e.g.
@@ -789,8 +800,10 @@ class GFace:
         v = (v_min + v_max) / 2.0
         point = self.__native__.valueAt(u, v)
         normal = self.__native__.normalAt(u, v)
-        probe = point + normal * 1e-6
-        return not solid.__native__.isInside(probe, 1e-7, False)
+        # Increment along the normal to get a point very close to the solid's own
+        # surface, just off it, for the isInside probe below.
+        probe = point + normal * NUMERIC_TOL
+        return not solid.__native__.isInside(probe, POINT_CLASSIFY_TOL, False)
 
     def export_step(self, filename: str) -> None:
         # Part.Shape.exportStep wraps the identical OCCT STEPControl_Writer
@@ -822,7 +835,7 @@ class GFace:
             return 0.0
         else:
             Boxinter = shape1.BoundBox.intersected(shape2.BoundBox)
-            intersect = Boxinter.XLength > -1e-6 and Boxinter.YLength > -1e-6 and Boxinter.ZLength > -1e-6
+            intersect = Boxinter.XLength > -BOX_TOL and Boxinter.YLength > -BOX_TOL and Boxinter.ZLength > -BOX_TOL
             if intersect:
                 try:
                     inter = shape1.common(shape2)
@@ -833,7 +846,7 @@ class GFace:
                         inter = None
 
                 if inter is not None and (
-                    abs(inter.Volume) > 1e-8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0
+                    abs(inter.Volume) > VOLUME_MIN_E8 or len(inter.Solids) > 0 or len(inter.Faces) > 0 or len(inter.Edges) > 0
                 ):
                     dist2Shape = 0.0
                 else:
@@ -1047,7 +1060,7 @@ class GSolid:
         reversed_shape.reverse()
         return GSolid(reversed_shape)
 
-    def refine(self, rel_tol: float = 1e-6) -> "GSolid":
+    def refine(self, rel_tol: float = NATIVE_VOL_RATIO_TOL) -> "GSolid":
         """
         Remove redundant edges/faces left by a boolean operation between
         coplanar/tangent surfaces (equivalent to `Part.Shape.removeSplitter()`).
@@ -1080,7 +1093,7 @@ class GSolid:
         except Exception:
             refined = native
 
-        if abs(refined.Volume - original_volume) > rel_tol * max(abs(original_volume), 1.0):
+        if not volume_within(refined.Volume, original_volume, rel_tol):
             return GSolid(native)
         return GSolid(refined)
 

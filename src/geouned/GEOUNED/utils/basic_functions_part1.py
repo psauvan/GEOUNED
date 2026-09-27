@@ -2,37 +2,20 @@
 # Set of useful functions used in different parts of the code
 #
 import math
-from turtle import distance
 
 from .data_constants import mask, twoPi
 from ...boolean_utils.boolean_function import BoolSurface
 from ...geo import surface_geometry
-from ...geo import GPlane, GSolid, GVector, Gin_contact
+from ...geo import GSolid, GVector, Gin_contact
+from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL
 
 # The functions below are thin adapters over `surface_geometry.py` (the
 # backend-agnostic predicate layer). Callers throughout GEOUNED are
 # expected to already pass GVector.
 
 
-def is_same_value(v1, v2, tolerance=1e-6):
+def is_same_value(v1, v2, tolerance=NUMERIC_DOUBLE_TOL):
     return surface_geometry.is_same_value(v1, v2, tolerance)
-
-
-def is_opposite(vector_1, vector_2, tolerance=1e-3):
-    return surface_geometry.is_opposite(vector_1, vector_2, tolerance)
-
-
-def is_parallel(vector_1, vector_2, tolerance=1e-3):
-    return surface_geometry.is_parallel(vector_1, vector_2, tolerance)
-
-
-def is_in_line(point, dir, pnt_line, tolerance=1e-6):
-    return surface_geometry.is_in_line(point, dir, pnt_line, tolerance)
-
-
-def is_in_plane(point, plane, d_tolerance=1e-7):
-    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return surface_geometry.is_in_plane(point, plane_params, d_tolerance)
 
 
 def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
@@ -46,12 +29,7 @@ def is_in_tolerance(val, tol, fuzzy_low, fuzzy_high):
         return False, True
 
 
-def sign_plane(point, plane):
-    plane_params = GPlane.from_values(plane.Surf.Position, plane.Surf.Axis)
-    return surface_geometry.sign_plane(point, plane_params)
-
-
-def shapes_in_contact(shape1, shape2, tolerance=1e-6):
+def shapes_in_contact(shape1, shape2, tolerance=NUMERIC_TOL):
     if shape1 is shape2:
         return True
     return Gin_contact(
@@ -63,9 +41,9 @@ def shapes_in_contact(shape1, shape2, tolerance=1e-6):
 
 def twoPimod(x):
     x = x % twoPi
-    if x < 1e-5:
+    if x < PARAM_ANGLE_TOL:
         return 0.0
-    elif twoPi - x < 1e-5:
+    elif twoPi - x < PARAM_ANGLE_TOL:
         return 0.0
     else:
         return x
@@ -270,7 +248,9 @@ def forward_round_corner_region(p1id, p2id, cid, pid, configuration):
         if AND_p1_pd and AND_p2_pd:
             rc_region = ((BoolSurface(0, p1id) * BoolSurface(0, -pid)) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
         elif not AND_p1_pd and AND_p2_pd:
-            if not OR_bracket:
+            # Polarity of OR_bracket is inverted here w.r.t. the other branches: checked against the
+            # real material of 17 synthetic corners (17/17 wrong the other way round), e.g. shed_part.stp.
+            if OR_bracket:
                 rc_region = BoolSurface(0, p1id) + (BoolSurface(0, p2id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid)))
             else:
                 rc_region = (BoolSurface(0, p1id) + BoolSurface(0, -pid) + BoolSurface(0, -cid)) * BoolSurface(0, p2id)
@@ -285,7 +265,8 @@ def forward_round_corner_region(p1id, p2id, cid, pid, configuration):
         if AND_p1_pd and AND_p2_pd:
             rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -cid) + (BoolSurface(0, -pid) * BoolSurface(0, p2id)))
         elif AND_p1_pd and not AND_p2_pd:
-            if not OR_bracket:
+            # Same inverted polarity as the p2 branch above.
+            if OR_bracket:
                 rc_region = (BoolSurface(0, p1id) * (BoolSurface(0, -cid) + BoolSurface(0, -pid))) + BoolSurface(0, p2id)
             else:
                 rc_region = BoolSurface(0, p1id) * (BoolSurface(0, -pid) + BoolSurface(0, -cid) + BoolSurface(0, p2id))
@@ -472,16 +453,6 @@ class PlaneParams:
             self.real = True
         self.pointDef = False
 
-    def __eq__(self, p2):
-        if type(p2) is not PlaneParams:
-            return False
-        r = self.Position - p2.Position
-        if abs(r.dot(self.Axis)) > 1e-6:
-            return False
-
-        d = self.Axis.dot(p2.Axis)
-        return abs(d - 1) < 1e-6
-
     def __str__(self):
         pos = self.Axis.dot(self.Position)
         outstr = f"""Plane :
@@ -589,17 +560,6 @@ class MultiPlanesParams:
         self.Edges = params[1]
         self.Vertexes = params[2]
         self.Planes = params[0][:]
-
-    def __eq__(self, mp):
-        if self.PlaneNumber != mp.PlaneNumber:
-            return False
-        eq_count = 0
-        for p1 in self.Planes:
-            for p2 in mp.Planes:
-                if p1 == p2:
-                    eq_count += 1
-                    break
-        return eq_count == self.PlaneNumber
 
     def __str__(self):
         outstr = f"""Multiplane :\n"""

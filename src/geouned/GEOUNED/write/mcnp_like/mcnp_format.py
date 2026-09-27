@@ -7,7 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from importlib.metadata import version
 
-from ...utils.basic_functions_part1 import is_opposite, points_to_coeffs
+from ...utils.basic_functions_part1 import points_to_coeffs
+from ....geo.surface_geometry import opposite_sense
 from ....geo import kernel_version
 from ..functions import CardLine, engine_label, mcnp_surface, write_mcnp_cell_def
 from .common_format import CommonInputWriter
@@ -243,7 +244,7 @@ C **************************************************************
             for p in Surfaces["P"]:
                 if p.Surf.pointDef:
                     axis, d = points_to_coeffs(p.Surf.Points)
-                    if is_opposite(axis, p.Surf.Axis):
+                    if opposite_sense(axis, p.Surf.Axis):
                         p.bVar.change_ref()
 
         return

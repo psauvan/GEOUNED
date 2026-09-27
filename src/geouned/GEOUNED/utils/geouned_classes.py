@@ -5,6 +5,7 @@ import logging
 import math
 
 from geouned.geo import surface_geometry
+from ...geo.constants import NUMERIC_DOUBLE_TOL
 
 logger = logging.getLogger("general_logger")
 
@@ -29,12 +30,11 @@ from .basic_functions_part1 import (
 )
 from .basic_functions_part1 import round_corner_region, multi_round_corner_region, can_region, tcone_region
 from .basic_functions_part2 import (
-    is_same_plane,
+    is_same_cone,
     is_same_cylinder,
     is_same_elliptic_cylinder,
-    is_same_cone,
+    is_same_plane,
     is_same_sphere,
-    is_same_torus,
 )
 
 from .data_classes import NumericFormat, Options, Tolerances
@@ -50,7 +50,7 @@ from .build_shape_functions import (
     makeRoundCorner,
     makeMultiRoundCorner,
 )
-from .basic_functions_part1 import is_parallel, is_opposite
+from ...geo.surface_geometry import is_same_oriented_plane_surface, opposite_sense
 from ...geo import (
     CAD_ENGINE,
     GBoundBox,
@@ -186,7 +186,7 @@ class GeounedSolid:
         if self.Rho is not None:
             self.Density = self.Rho * dilution
 
-    def check_intersection(self, solid, dtolerance=1.0e-6, vtolerance=1e-10):
+    def check_intersection(self, solid, vtolerance=NUMERIC_DOUBLE_TOL):
         """Check if solid intersect with current solid.
         return : -2 solid fully embedded in self.CADSolid ;
                  -1 self.CADSolid fully embedded in solid ;
@@ -349,12 +349,6 @@ class GeounedSurface:
         self.shape = Face
         return
 
-    def __eq__(self, s2):
-        if type(self.Surf) != type(s2.Surf):
-            return False
-        else:
-            return self.Surf == s2.Surf
-
     def build_surface(self, boundBox, tolerances, forward=False):
 
         Box = to_gboundbox(boundBox)
@@ -425,7 +419,7 @@ class GeounedSurface:
             Box = Box.enlarged(10)
             planes = self.Surf.Planes
             vertexes = self.Surf.Vertexes
-            result = makeMultiPlanes(planes, vertexes, Box)
+            result = makeMultiPlanes(planes, vertexes, Box, tolerances=tolerances)
             if result is None:
                 self.shape = None
                 self.shell = None
@@ -491,10 +485,12 @@ class MetaSurfacesDict(dict):
         self,
         offset: int = 0,
         options: Options = Options(),
-        tolerances: Tolerances = Tolerances(),
+        tolerances: Tolerances = None,
         numeric_format: NumericFormat = NumericFormat(),
     ):
 
+        if tolerances is None:
+            raise TypeError("tolerances is required: a default instance would silently ignore the user's values")
         self.IndexOffset = offset
         self.options = options
         self.tolerances = tolerances
@@ -566,7 +562,7 @@ class MetaSurfacesDict(dict):
 
         if exist:
             p_in = self.get_primitive_surface(pid)
-            same_dir = not is_opposite(plane.Surf.Axis, p_in.Surf.Axis)
+            same_dir = not opposite_sense(plane.Surf.Axis, p_in.Surf.Axis)
             if not same_dir:
                 pid = -pid
 
@@ -600,7 +596,7 @@ class MetaSurfacesDict(dict):
             pid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis):
                     pid = -pid
             cylinder_region = cylinder_region * BoolSurface(0, pid)
             components[abs(pid)] = cylinder.Surf.Plane
@@ -689,7 +685,7 @@ class MetaSurfacesDict(dict):
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.ApexPlane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(cone.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(cone.Surf.ApexPlane.Surf.Axis, p.Surf.Axis):
                     pid = -pid
 
             if cone.Orientation == "Forward":
@@ -702,7 +698,7 @@ class MetaSurfacesDict(dict):
             pid, exist_p = self.primitive_surfaces.add_plane(cone.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(cone.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(cone.Surf.Plane.Surf.Axis, p.Surf.Axis):
                     pid = -pid
             cone_region = cone_region * BoolSurface(0, pid)
             components[abs(pid)] = cone.Surf.Plane
@@ -745,7 +741,7 @@ class MetaSurfacesDict(dict):
             pid, exist_p = self.primitive_surfaces.add_plane(sphere.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(sphere.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(sphere.Surf.Plane.Surf.Axis, p.Surf.Axis):
                     pid = -pid
             sphere_region = sphere_region * BoolSurface(0, pid)
             components[abs(pid)] = sphere.Surf.Plane
@@ -790,7 +786,7 @@ class MetaSurfacesDict(dict):
             pid, exist_p = self.primitive_surfaces.add_plane(tp, True)
             if exist_p:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(tp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(tp.Surf.Axis, p.Surf.Axis):
                     pid = -pid
             psurf.append(pid)
             components[abs(pid)] = tp
@@ -815,14 +811,14 @@ class MetaSurfacesDict(dict):
                 if torus.Surf.SOrientation == "Forward":
                     sid = -sid
             else:
-                sid, exist_s = self.primitive_surfaces.add_cone(torus.Surf.VSurface)
+                sid, exist_s = self.primitive_surfaces.add_cone(torus.Surf.VSurface, True)
                 if torus.Surf.SOrientation == "Forward":
                     sid = -sid
 
             if exist_s:
                 surf = self.get_primitive_surface(sid)
                 if torus.Surf.VSurface.Type == "Plane":
-                    if is_opposite(torus.Surf.VSurface.Surf.Axis, surf.Surf.Axis, self.tolerances.pln_angle):
+                    if opposite_sense(torus.Surf.VSurface.Surf.Axis, surf.Surf.Axis):
                         sid = -sid
 
             torus_region = torus_region * BoolSurface(0, sid)
@@ -860,7 +856,7 @@ class MetaSurfacesDict(dict):
             pid, exist = self.primitive_surfaces.add_plane(mp, True)
             if exist:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(mp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(mp.Surf.Axis, p.Surf.Axis):
                     pid = -pid
 
             multiP_region = BoolSurface.add(multiP_region, BoolSurface(0, pid))
@@ -868,7 +864,7 @@ class MetaSurfacesDict(dict):
         add_multiP = True
         for mp_surf in self["MultiP"]:
             # A MultiPlane is built purely from real plane orientations
-            # (region_sign/is_opposite, per plane), with no separate
+            # (region_sign/opposite_sense, per plane), with no separate
             # Fwd/Rev registration split -- but two distinct, adjacent
             # MultiPlanes can still legitimately share one real plane with
             # opposite sense, the same "structurally complementary,
@@ -912,7 +908,7 @@ class MetaSurfacesDict(dict):
         pid, exist = self.primitive_surfaces.add_surface(plane, True)
         if exist:
             p = self.get_primitive_surface(pid)
-            if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+            if opposite_sense(plane.Surf.Axis, p.Surf.Axis):
                 pid = -pid
                 # change plane axis because Can/TCone shape is build with solid definition based on Surfaces dict reference
                 plane.Surf.Axis = -plane.Surf.Axis
@@ -1020,7 +1016,7 @@ class MetaSurfacesDict(dict):
 
     def TCone_region(self, TCone):
         kneCan = TCone.Surf.Cone
-        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone)
+        cid, exist = self.primitive_surfaces.add_cone(kneCan.Surf.Cone, True)
 
         components = {abs(cid): kneCan.Surf.Cone}
         surf_list = []
@@ -1100,7 +1096,7 @@ class MetaSurfacesDict(dict):
             pid, exist = self.primitive_surfaces.add_plane(plane, True)
             if exist:
                 p = self.get_primitive_surface(pid)
-                if is_opposite(plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(plane.Surf.Axis, p.Surf.Axis):
                     pid = -pid
                     # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                     plane.Surf.Axis = -plane.Surf.Axis
@@ -1134,7 +1130,7 @@ class MetaSurfacesDict(dict):
 
             if exist_p:
                 p = self.get_primitive_surface(abs(pcid))
-                if is_opposite(cylplane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(cylplane.Surf.Axis, p.Surf.Axis):
                     pcid = -pcid
                     # change plane axis because MultiRoundCorner shape is build with solid definition based on Surfaces dict reference
                     cylplane.Surf.Axis = -cylplane.Surf.Axis
@@ -1191,7 +1187,7 @@ class MetaSurfacesDict(dict):
             pcid, exist_p = self.primitive_surfaces.add_plane(cylinder.Surf.Plane, True)
             if exist_p:
                 p = self.get_primitive_surface(pcid)
-                if is_opposite(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(cylinder.Surf.Plane.Surf.Axis, p.Surf.Axis):
                     pcid = -pcid
                     # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                     cylinder.Surf.Plane.Surf.Axis = -cylinder.Surf.Plane.Surf.Axis
@@ -1203,17 +1199,17 @@ class MetaSurfacesDict(dict):
         p1id, exist = self.primitive_surfaces.add_plane(p1, True)
         if exist:
             p = self.get_primitive_surface(p1id)
-            if is_opposite(p1.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+            if opposite_sense(p1.Surf.Axis, p.Surf.Axis):
                 p1id = -p1id
                 # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                 p1.Surf.Axis = -p1.Surf.Axis
                 p1.bVar = p1id
 
-        if p1 != p2:
+        if not is_same_oriented_plane_surface(p1.Surf, p2.Surf, self.tolerances):
             p2id, exist = self.primitive_surfaces.add_plane(p2, True)
             if exist:
                 p = self.get_primitive_surface(p2id)
-                if is_opposite(p2.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                if opposite_sense(p2.Surf.Axis, p.Surf.Axis):
                     p2id = -p2id
                     # change plane axis because Round corner shape is build with solid definition based on Surfaces dict reference
                     p2.Surf.Axis = -p2.Surf.Axis
@@ -1280,7 +1276,7 @@ class MetaSurfacesDict(dict):
             s_region = BoolSurface(0, sid)
             components[abs(sid)] = cc.Surf.Cylinder
         else:
-            cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone)
+            cid, exist = self.primitive_surfaces.add_cone(cc.Surf.Cone, True)
             cc.Surf.Cone.bVar = cid
             s_region = BoolSurface(0, cid)
             components[abs(cid)] = cc.Surf.Cone
@@ -1288,7 +1284,7 @@ class MetaSurfacesDict(dict):
                 apid, exist = self.primitive_surfaces.add_plane(cc.Surf.ApexPlane, True)
                 if exist:
                     p = self.get_primitive_surface(apid)
-                    if is_opposite(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    if opposite_sense(cc.Surf.ApexPlane.Surf.Axis, p.Surf.Axis):
                         apid = -apid
                 s_region = s_region + (-BoolSurface(0, apid))
                 components[abs(apid)] = cc.Surf.ApexPlane
@@ -1296,7 +1292,7 @@ class MetaSurfacesDict(dict):
         pid, exist = self.primitive_surfaces.add_plane(cc.Surf.Plane, True)
         if exist:
             p = self.get_primitive_surface(pid) 
-            if is_opposite(cc.Surf.Plane.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+            if opposite_sense(cc.Surf.Plane.Surf.Axis, p.Surf.Axis):
                 pid = -pid
         p_region = BoolSurface(0, pid)
         components[abs(pid)] = cc.Surf.Plane
@@ -1372,7 +1368,7 @@ class MetaSurfacesDict(dict):
                 pid, exist = self.primitive_surfaces.add_plane(mpp, True)
                 if exist:
                     p = self.get_primitive_surface(pid)
-                    if is_opposite(mpp.Surf.Axis, p.Surf.Axis, self.tolerances.pln_angle):
+                    if opposite_sense(mpp.Surf.Axis, p.Surf.Axis):
                         pid = -pid
                 components[abs(pid)] = mpp
                 multiplane_region = BoolSurface.mult(multiplane_region, -BoolSurface(0, pid))
@@ -1403,10 +1399,12 @@ class SurfacesDict(dict):
         self,
         offset: int = 0,
         options: Options = Options(),
-        tolerances: Tolerances = Tolerances(),
+        tolerances: Tolerances = None,
         numeric_format: NumericFormat = NumericFormat(),
     ):
 
+        if tolerances is None:
+            raise TypeError("tolerances is required: a default instance would silently ignore the user's values")
         self.IndexOffset = offset
         self.options = options
         self.tolerances = tolerances
@@ -1491,13 +1489,13 @@ class SurfacesDict(dict):
         elif surface.Type == "EllipticCylinder":
             return self.add_elliptic_cylinder(surface.Surf.Cylinder, fuzzy)
         elif surface.Type == "ConeOnly":
-            return self.add_cone(surface)
+            return self.add_cone(surface, fuzzy)
         elif surface.Type == "Cone":
-            return self.add_cone(surface.Surf.Cone)
+            return self.add_cone(surface.Surf.Cone, fuzzy)
         elif surface.Type == "SphereOnly":
-            return self.add_sphere(surface)
+            return self.add_sphere(surface, fuzzy)
         elif surface.Type == "Sphere":
-            return self.add_sphere(surface.Surf.Sphere)
+            return self.add_sphere(surface.Surf.Sphere, fuzzy)
         elif surface.Type == "TorusOnly":
             return self.add_torus(surface)
         elif surface.Type == "Torus":
@@ -1508,15 +1506,13 @@ class SurfacesDict(dict):
         ey = GVector(0, 1, 0)
         ez = GVector(0, 0, 1)
 
-        if is_parallel(plane.Surf.Axis, ex, self.tolerances.pln_angle):
+        if surface_geometry.axes_parallel(plane.Surf.Axis, ex, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PX"]):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1532,15 +1528,13 @@ class SurfacesDict(dict):
                 self["PX"].append(plane)
                 self.__surfIndex__["PX"].append(plane.bVar)
 
-        elif is_parallel(plane.Surf.Axis, ey, self.tolerances.pln_angle):
+        elif surface_geometry.axes_parallel(plane.Surf.Axis, ey, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PY"]):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1556,15 +1550,13 @@ class SurfacesDict(dict):
                 self["PY"].append(plane)
                 self.__surfIndex__["PY"].append(plane.bVar)
 
-        elif is_parallel(plane.Surf.Axis, ez, self.tolerances.pln_angle):
+        elif surface_geometry.axes_parallel(plane.Surf.Axis, ez, self.tolerances.pln_angle):
             add_plane = True
             for i, p in enumerate(self["PZ"]):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1586,9 +1578,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     plane.Surf,
                     p.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                     fuzzy=(fuzzy, p.bVar.__int__()),
                     stdtol=plane.Surf.real,
                 ):
@@ -1615,9 +1605,7 @@ class SurfacesDict(dict):
             if is_same_cylinder(
                 cyl.Surf,
                 c.Surf,
-                options=self.options,
                 tolerances=self.tolerances,
-                numeric_format=self.numeric_format,
                 fuzzy=(fuzzy, c.bVar.__int__()),
             ):
                 addCyl = False
@@ -1644,9 +1632,7 @@ class SurfacesDict(dict):
             if is_same_elliptic_cylinder(
                 cyl.Surf,
                 c.Surf,
-                options=self.options,
                 tolerances=self.tolerances,
-                numeric_format=self.numeric_format,
                 fuzzy=(fuzzy, c.bVar.__int__()),
             ):
                 addCyl = False
@@ -1665,16 +1651,10 @@ class SurfacesDict(dict):
         else:
             return bVar, True
 
-    def add_cone(self, cone):
+    def add_cone(self, cone, fuzzy=False):
         cone_added = True
         for i, c in enumerate(self["Cone"]):
-            if is_same_cone(
-                cone.Surf,
-                c.Surf,
-                dtol=self.tolerances.kne_distance,
-                atol=self.tolerances.kne_angle,
-                rel_tol=self.tolerances.relativeTol,
-            ):
+            if is_same_cone(cone.Surf, c.Surf, tolerances=self.tolerances, fuzzy=(fuzzy, c.bVar.__int__())):
                 cone_added = False
                 bVar = c.bVar
                 cone.bVar = bVar
@@ -1690,15 +1670,10 @@ class SurfacesDict(dict):
         else:
             return bVar, True
 
-    def add_sphere(self, sph):
+    def add_sphere(self, sph, fuzzy=False):
         sphere_added = True
         for i, s in enumerate(self["Sph"]):
-            if is_same_sphere(
-                sph.Surf,
-                s.Surf,
-                self.tolerances.sph_distance,
-                rel_tol=self.tolerances.relativeTol,
-            ):
+            if is_same_sphere(sph.Surf, s.Surf, tolerances=self.tolerances, fuzzy=(fuzzy, s.bVar.__int__())):
                 sphere_added = False
                 bVar = s.bVar
                 sph.bVar = bVar
@@ -1717,21 +1692,15 @@ class SurfacesDict(dict):
     def add_torus(self, tor):
         add_torus = True
         for i, s in enumerate(self["Tor"]):
-            if is_same_torus(
-                tor.Surf,
-                s.Surf,
-                dtol=self.tolerances.tor_distance,
-                atol=self.tolerances.tor_angle,
-                rel_tol=self.tolerances.relativeTol,
-            ):
+            if surface_geometry.is_same_torus_surface(tor.Surf, s.Surf, self.tolerances):
                 add_torus = False
                 bVar = s.bVar
                 tor.bVar = bVar
                 if s.Surf.Degenerated:
                     # Both sheets of a self-intersecting torus are
-                    # registered as ONE surface (is_same_torus doesn't
-                    # check a_sign here, by design -- see its own
-                    # docstring); keep the registered entry's own
+                    # registered as ONE surface (is_same_torus_surface's
+                    # check_a_sign defaults to False here, by design -- see its
+                    # own docstring); keep the registered entry's own
                     # a_sign in sync with whichever face is currently
                     # being processed, since only one sheet's sign can
                     # be encoded into the single written surface card
@@ -1752,11 +1721,11 @@ class SurfacesDict(dict):
     def get_id(self, facein):
 
         if facein.Type == "Plane":
-            if is_parallel(facein.Surf.Axis, GVector(1, 0, 0), self.tolerances.pln_angle):
+            if surface_geometry.axes_parallel(facein.Surf.Axis, GVector(1, 0, 0), self.tolerances.pln_angle):
                 p = "PX"
-            elif is_parallel(facein.Surf.Axis, GVector(0, 1, 0), self.tolerances.pln_angle):
+            elif surface_geometry.axes_parallel(facein.Surf.Axis, GVector(0, 1, 0), self.tolerances.pln_angle):
                 p = "PY"
-            elif is_parallel(facein.Surf.Axis, GVector(0, 0, 1), self.tolerances.pln_angle):
+            elif surface_geometry.axes_parallel(facein.Surf.Axis, GVector(0, 0, 1), self.tolerances.pln_angle):
                 p = "PZ"
             else:
                 p = "P"
@@ -1765,9 +1734,7 @@ class SurfacesDict(dict):
                 if is_same_plane(
                     facein.Surf,
                     s.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                 ):
                     return s.bVar
 
@@ -1776,37 +1743,23 @@ class SurfacesDict(dict):
                 if is_same_cylinder(
                     facein.Surf,
                     s.Surf,
-                    options=self.options,
                     tolerances=self.tolerances,
-                    numeric_format=self.numeric_format,
                 ):
                     return s.bVar
 
         elif facein.Type == "Cone":
             for s in self["Cone"]:
-                if is_same_cone(
-                    facein.Surf,
-                    s.Surf,
-                    dtol=self.tolerances.kne_distance,
-                    atol=self.tolerances.kne_angle,
-                    rel_tol=self.tolerances.relativeTol,
-                ):
+                if surface_geometry.is_same_cone_surface(facein.Surf, s.Surf, self.tolerances):
                     return s.bVar
 
         elif facein.Type == "Sphere":
             for s in self["Sph"]:
-                if is_same_sphere(facein.Surf, s.Surf, self.tolerances.sph_distance, rel_tol=self.tolerances.relativeTol):
+                if surface_geometry.is_same_sphere_surface(facein.Surf, s.Surf, self.tolerances):
                     return s.bVar
 
         elif facein.Type == "Torus":
             for s in self["Tor"]:
-                if is_same_torus(
-                    facein.Surf,
-                    s.Surf,
-                    dtol=self.tolerances.tor_distance,
-                    atol=self.tolerances.tor_angle,
-                    rel_tol=self.tolerances.relativeTol,
-                ):
+                if surface_geometry.is_same_torus_surface(facein.Surf, s.Surf, self.tolerances):
                     if s.Surf.Degenerated:
                         # See add_torus's identical sync -- only one
                         # degenerate torus sheet's sign can be encoded

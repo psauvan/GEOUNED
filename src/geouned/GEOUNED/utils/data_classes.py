@@ -2,6 +2,7 @@ import typing
 from numbers import Real
 
 from ...geo import CAD_ENGINE
+from ...geo.tolerances import GeoTolerances
 
 
 class Options:
@@ -241,14 +242,16 @@ class Options:
         self._cut_large_cell = value
 
 
-class Tolerances:
+class Tolerances(GeoTolerances):
     """A class for containing tolerances values
 
     Args:
         relativeTol (bool, optional): _description_. Defaults to False.
-        relativePrecision (float, optional): relative precision. Defaults to 1.0e-6.
-        value (float, optional): Tolerance in single value comparison. Defaults to 1.0e-6.
-        distance (float, optional): General Distance Tolerance. Defaults to 1.0e-4.
+        relativePrecision (float, optional): relative precision. Defaults to 1.0e-6. Not read by the code at the moment
+            (the full-turn test of a periodic parameter uses the intrinsic geo.constants.NUMERIC_TOL); kept for the
+            planned absolute/relative precision.
+        value (float, optional): Tolerance in single value comparison. Defaults to 1.0e-6. Not read by the code at the
+            moment (see relativePrecision); kept for the same reason.
         angle (float, optional): General Angle Tolerance. Defaults to 1.0e-4.
         pln_distance (float, optional): distance between planes equal planes if distance between parallel planes < 1e-4 cm. Defaults to 1.0e-4.
         pln_angle (float, optional): angle between axis. 1e-4 : planes separate each other 0.1mm each 1m. Defaults to 1.0e-4.
@@ -292,24 +295,25 @@ class Tolerances:
             split_tolerance above. Defaults to None (no floor), matching the prior default.
         scale (float, optional): geo.Gsplit's own per-retry tolerance scale-up factor. Defaults to 0.1,
             matching the prior hardcoded default on Gsplit's own (now-retired) `scale` parameter.
-        min_solid_volume (float, optional): geo.Gsplit's own minimum-volume filter -- a split-result
-            fragment whose |Volume| falls at or below this is discarded rather than returned as a real
-            solid. A NEW filter (no prior equivalent existed before this same 2026-08-30 refactor) --
-            PROVISIONAL default of 1.0e-6 (mm^3), picked only to filter genuinely near-zero-volume
-            numerical-noise fragments, not real slivers (see min_face_width/sliver_edge_rel_tol above for
-            those) -- not yet independently verified against a real corpus the way this file's other
-            defaults are.
+        min_solid_volume (float, optional): the smallest volume (mm^3) of a piece worth keeping -- ONE value for
+            every place that discards a piece as too small (geo.valid_solid, Gsplit's fragment filter, the
+            reconstructed fragments of a repaired split and space_decomposition's subregions). Depends on the
+            scale of the model: the smallest legitimate piece seen in the test corpus is 0.072 mm^3. Not to be
+            confused with geo.constants.VOLUME_REF, the (intrinsic) reference volume of the relative volume
+            comparisons. Defaults to 1.0e-2, which measured on test_models + working_solids changes no decision
+            with respect to the former mixture of 1e-2 and 1e-3.
         fix_tolerance (float, optional): geo._repair_non_manifold_solid's own BRepBuilderAPI_Sewing
             tolerance when reconstructing a non-manifold solid's real connected components. Defaults to
             1.0e-6, matching that function's own prior hardcoded value exactly (this is a pure
             parameterization, not a new default -- see that function's own docstring).
         volume_tolerance (float, optional): relative volume-conservation tolerance used by geo.Gsplit's
             own non-manifold-repair/sliver-heal acceptance checks (a repaired result is only trusted if
-            its own summed volume matches the pre-repair input to within this fraction). Defaults to
-            1.0e-6, matching the prior hardcoded value in geo._raw_bop_split (see that function's own
-            docstring, and _try_coaxial_cone_split's identical, separately-hardcoded 1e-6 -- both trace to
-            the same "never trust a topology repair blindly" discipline documented throughout this
-            project's history).
+            its own summed volume matches the pre-repair input to within this fraction), and by
+            decompose/decom_one_generators.py::generic_split's own "did this split actually separate the
+            base fragment's own volume" sanity check. Defaults to 1.0e-4 (changed 2026-09-23 from the
+            original 1.0e-6, measured on test_models + working_solids: a 143-file corpus diff at 1.0e-4
+            changes exactly 1 file's own final volume, by ~4.3e-6 relative, with 0 piece-count or
+            composite-surface-count changes anywhere -- see CLAUDE.md's "REL_TOL_E4" entry).
         spline_quadric_fit_rel_tol (float, optional): geo.Gsubstitute_spline_quadrics' own detection
             tolerance -- a BSplineSurface face's sampled-point-vs-candidate-analytic-surface fit residual,
             as a fraction of the face's own bounding-box diagonal, below which the face is trusted to
@@ -353,7 +357,6 @@ class Tolerances:
         relativeTol: bool = False,
         relativePrecision: float = 1.0e-6,
         value: float = 1.0e-6,
-        distance: float = 1.0e-4,
         angle: float = 1.0e-4,
         pln_distance: float = 1.0e-4,
         pln_angle: float = 1.0e-4,
@@ -372,40 +375,40 @@ class Tolerances:
         split_tolerance: typing.Optional[float] = 1.0e-6,
         scale_up_floor: typing.Optional[float] = 1e-12,
         scale: float = 0.1,
-        min_solid_volume: float = 1.0e-3,
+        min_solid_volume: float = 1.0e-2,
         fix_tolerance: float = 1.0e-6,
-        volume_tolerance: float = 1.0e-6,
+        volume_tolerance: float = 1.0e-4,
         spline_quadric_fit_rel_tol: float = 1.0e-6,
         spline_quadric_volume_rel_tol: float = 2.0e-2,
     ):
 
+        super().__init__(
+            pln_distance=pln_distance,
+            pln_angle=pln_angle,
+            cyl_distance=cyl_distance,
+            cyl_angle=cyl_angle,
+            sph_distance=sph_distance,
+            kne_distance=kne_distance,
+            kne_angle=kne_angle,
+            tor_distance=tor_distance,
+            tor_angle=tor_angle,
+            min_face_width=min_face_width,
+            sliver_edge_rel_tol=sliver_edge_rel_tol,
+            split_tolerance=split_tolerance,
+            scale_up_floor=scale_up_floor,
+            scale=scale,
+            min_solid_volume=min_solid_volume,
+            fix_tolerance=fix_tolerance,
+            volume_tolerance=volume_tolerance,
+        )
+
         self.relativeTol = relativeTol
         self.relativePrecision = relativePrecision
         self.value = value
-        self.distance = distance
         self.angle = angle
-        self.pln_distance = pln_distance
-        self.pln_angle = pln_angle
-        self.cyl_distance = cyl_distance
-        self.cyl_angle = cyl_angle
-        self.sph_distance = sph_distance
-        self.kne_distance = kne_distance
-        self.kne_angle = kne_angle
-        self.tor_distance = tor_distance
-        self.tor_angle = tor_angle
         self.min_area = min_area
         self.add_pln_distance = add_pln_distance
         self.add_pln_angle = add_pln_angle
-        self.min_face_width = min_face_width
-        self.sliver_edge_rel_tol = sliver_edge_rel_tol
-        if split_tolerance is None:
-            split_tolerance = 1.0e-4 if CAD_ENGINE in ("occ", "ocp") else 0.0
-        self.split_tolerance = split_tolerance
-        self.scale_up_floor = scale_up_floor
-        self.scale = scale
-        self.min_solid_volume = min_solid_volume
-        self.fix_tolerance = fix_tolerance
-        self.volume_tolerance = volume_tolerance
         self.spline_quadric_fit_rel_tol = spline_quadric_fit_rel_tol
         self.spline_quadric_volume_rel_tol = spline_quadric_volume_rel_tol
 
@@ -440,16 +443,6 @@ class Tolerances:
         self._value = value
 
     @property
-    def distance(self):
-        return self._distance
-
-    @distance.setter
-    def distance(self, distance: float):
-        if not isinstance(distance, float):
-            raise TypeError(f"geouned.Tolerances.distance should be a float, not a {type(distance)}")
-        self._distance = distance
-
-    @property
     def angle(self):
         return self._angle
 
@@ -458,96 +451,6 @@ class Tolerances:
         if not isinstance(angle, float):
             raise TypeError(f"geouned.Tolerances.angle should be a float, not a {type(angle)}")
         self._angle = angle
-
-    @property
-    def pln_distance(self):
-        return self._pln_distance
-
-    @pln_distance.setter
-    def pln_distance(self, pln_distance: float):
-        if not isinstance(pln_distance, float):
-            raise TypeError(f"geouned.Tolerances.pln_distance should be a float, not a {type(pln_distance)}")
-        self._pln_distance = pln_distance
-
-    @property
-    def cyl_distance(self):
-        return self._cyl_distance
-
-    @cyl_distance.setter
-    def cyl_distance(self, cyl_distance: float):
-        if not isinstance(cyl_distance, float):
-            raise TypeError(f"geouned.Tolerances.cyl_distance should be a float, not a {type(cyl_distance)}")
-        self._cyl_distance = cyl_distance
-
-    @property
-    def cyl_angle(self):
-        return self._cyl_angle
-
-    @cyl_angle.setter
-    def cyl_angle(self, cyl_angle: float):
-        if not isinstance(cyl_angle, float):
-            raise TypeError(f"geouned.Tolerances.cyl_angle should be a float, not a {type(cyl_angle)}")
-        self._cyl_angle = cyl_angle
-
-    @property
-    def sph_distance(self):
-        return self._sph_distance
-
-    @sph_distance.setter
-    def sph_distance(self, sph_distance: float):
-        if not isinstance(sph_distance, float):
-            raise TypeError(f"geouned.Tolerances.sph_distance should be a float, not a {type(sph_distance)}")
-        self._sph_distance = sph_distance
-
-    @property
-    def pln_angle(self):
-        return self._pln_angle
-
-    @pln_angle.setter
-    def pln_angle(self, pln_angle: float):
-        if not isinstance(pln_angle, float):
-            raise TypeError(f"geouned.Tolerances.pln_angle should be a float, not a {type(pln_angle)}")
-        self._pln_angle = pln_angle
-
-    @property
-    def kne_distance(self):
-        return self._kne_distance
-
-    @kne_distance.setter
-    def kne_distance(self, kne_distance: float):
-        if not isinstance(kne_distance, float):
-            raise TypeError(f"geouned.Tolerances.kne_distance should be a float, not a {type(kne_distance)}")
-        self._kne_distance = kne_distance
-
-    @property
-    def kne_angle(self):
-        return self._kne_angle
-
-    @kne_angle.setter
-    def kne_angle(self, kne_angle: float):
-        if not isinstance(kne_angle, float):
-            raise TypeError(f"geouned.Tolerances.kne_angle should be a float, not a {type(kne_angle)}")
-        self._kne_angle = kne_angle
-
-    @property
-    def tor_distance(self):
-        return self._tor_distance
-
-    @tor_distance.setter
-    def tor_distance(self, tor_distance: float):
-        if not isinstance(tor_distance, float):
-            raise TypeError(f"geouned.Tolerances.tor_distance should be a float, not a {type(tor_distance)}")
-        self._tor_distance = tor_distance
-
-    @property
-    def tor_angle(self):
-        return self._tor_angle
-
-    @tor_angle.setter
-    def tor_angle(self, tor_angle: float):
-        if not isinstance(tor_angle, float):
-            raise TypeError(f"geouned.Tolerances.tor_angle should be a float, not a {type(tor_angle)}")
-        self._tor_angle = tor_angle
 
     @property
     def add_pln_distance(self):
@@ -578,86 +481,6 @@ class Tolerances:
         if not isinstance(min_area, float):
             raise TypeError(f"geouned.Tolerances.min_area should be a float, not a {type(min_area)}")
         self._min_area = min_area
-
-    @property
-    def min_face_width(self):
-        return self._min_face_width
-
-    @min_face_width.setter
-    def min_face_width(self, min_face_width: float):
-        if not isinstance(min_face_width, float):
-            raise TypeError(f"geouned.Tolerances.min_face_width should be a float, not a {type(min_face_width)}")
-        self._min_face_width = min_face_width
-
-    @property
-    def sliver_edge_rel_tol(self):
-        return self._sliver_edge_rel_tol
-
-    @sliver_edge_rel_tol.setter
-    def sliver_edge_rel_tol(self, sliver_edge_rel_tol: float):
-        if not isinstance(sliver_edge_rel_tol, float):
-            raise TypeError(f"geouned.Tolerances.sliver_edge_rel_tol should be a float, not a {type(sliver_edge_rel_tol)}")
-        self._sliver_edge_rel_tol = sliver_edge_rel_tol
-
-    @property
-    def split_tolerance(self):
-        return self._split_tolerance
-
-    @split_tolerance.setter
-    def split_tolerance(self, split_tolerance: float):
-        if not isinstance(split_tolerance, float):
-            raise TypeError(f"geouned.Tolerances.split_tolerance should be a float, not a {type(split_tolerance)}")
-        self._split_tolerance = split_tolerance
-
-    @property
-    def scale_up_floor(self):
-        return self._scale_up_floor
-
-    @scale_up_floor.setter
-    def scale_up_floor(self, scale_up_floor: typing.Optional[float]):
-        if scale_up_floor is not None and not isinstance(scale_up_floor, float):
-            raise TypeError(f"geouned.Tolerances.scale_up_floor should be a float or None, not a {type(scale_up_floor)}")
-        self._scale_up_floor = scale_up_floor
-
-    @property
-    def scale(self):
-        return self._scale
-
-    @scale.setter
-    def scale(self, scale: float):
-        if not isinstance(scale, float):
-            raise TypeError(f"geouned.Tolerances.scale should be a float, not a {type(scale)}")
-        self._scale = scale
-
-    @property
-    def min_solid_volume(self):
-        return self._min_solid_volume
-
-    @min_solid_volume.setter
-    def min_solid_volume(self, min_solid_volume: float):
-        if not isinstance(min_solid_volume, float):
-            raise TypeError(f"geouned.Tolerances.min_solid_volume should be a float, not a {type(min_solid_volume)}")
-        self._min_solid_volume = min_solid_volume
-
-    @property
-    def fix_tolerance(self):
-        return self._fix_tolerance
-
-    @fix_tolerance.setter
-    def fix_tolerance(self, fix_tolerance: float):
-        if not isinstance(fix_tolerance, float):
-            raise TypeError(f"geouned.Tolerances.fix_tolerance should be a float, not a {type(fix_tolerance)}")
-        self._fix_tolerance = fix_tolerance
-
-    @property
-    def volume_tolerance(self):
-        return self._volume_tolerance
-
-    @volume_tolerance.setter
-    def volume_tolerance(self, volume_tolerance: float):
-        if not isinstance(volume_tolerance, float):
-            raise TypeError(f"geouned.Tolerances.volume_tolerance should be a float, not a {type(volume_tolerance)}")
-        self._volume_tolerance = volume_tolerance
 
     def scaled(self, volume: float) -> "Tolerances":
         """Returns a copy of this Tolerances with min_area/min_face_width
@@ -712,7 +535,6 @@ class Tolerances:
             relativeTol=self.relativeTol,
             relativePrecision=self.relativePrecision,
             value=self.value,
-            distance=self.distance,
             angle=self.angle,
             pln_distance=self.pln_distance,
             pln_angle=self.pln_angle,

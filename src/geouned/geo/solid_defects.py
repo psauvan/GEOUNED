@@ -21,19 +21,24 @@ across all 3 engines, exactly like `vector_geometry.py`/
 
 from __future__ import annotations
 
+from .surface_geometry import axes_parallel
 from .constants import (
+    DEFAULT_MIN_FACE_WIDTH,
+    DEFAULT_SLIVER_EDGE_REL_TOL,
+    DEFECT_AXIS_ANGLE,
     DEGENERATE_EDGE_LENGTH_FLOOR,
     DEGENERATE_SOLID_VOL_AREA_RATIO,
-    DEGENERATE_SOLID_VOLUME_FLOOR,
     MIN_SLIVER_EDGE_LENGTH,
+    POINT_POINT_TOL,
+    SPLIT_RING_REL_TOL,
 )
 
 
-def valid_solid(solid) -> bool:
+def valid_solid(solid, min_volume: float) -> bool:
     """True if `solid` is a BOPAlgo split fragment worth keeping as a
     real, independent solid: positive volume, not a thin sliver
     (``Volume / Area >= DEGENERATE_SOLID_VOL_AREA_RATIO``), above the
-    absolute degeneracy floor (``|Volume| >= DEGENERATE_SOLID_VOLUME_FLOOR``).
+    minimum volume `min_volume` (``|Volume| >= min_volume``, `Tolerances.min_solid_volume`).
 
     Duck-typed on ``.Volume`` / ``.Area`` -- works on a `GSolid` or any
     thin wrapper exposing those. This is the canonical copy of the check
@@ -53,12 +58,12 @@ def valid_solid(solid) -> bool:
         return False
     if area == 0 or abs(vol / area) < DEGENERATE_SOLID_VOL_AREA_RATIO:
         return False
-    if abs(vol) < DEGENERATE_SOLID_VOLUME_FLOOR:
+    if abs(vol) < min_volume:
         return False
     return True
 
 
-def find_short_edges(solid, rel_tol: float = 1e-4) -> list:
+def find_short_edges(solid, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
     """Faces of `solid` (a GSolid) touching at least one edge whose own
     length is pathologically small relative to the solid's overall scale
     (edge.Length / solid.BoundBox.DiagonalLength < rel_tol) -- a purely
@@ -135,7 +140,7 @@ def find_short_edges(solid, rel_tol: float = 1e-4) -> list:
 _SPLIT_RING_SURFACE_TYPES = ("GCylinder", "GCone", "GSphere", "GTorus")
 
 
-def find_split_ring_faces(solid, min_face_width: float = 0.1, rel_tol: float = 1e-4) -> list:
+def find_split_ring_faces(solid, min_face_width: float = DEFAULT_MIN_FACE_WIDTH, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
     """Faces that are the parasitic "riser" walls of a *duplicated
     micro-trim* -- the "split boundary ring" CAD defect (a.k.a. collapsed
     micro-step). A single trimming surface (a plane, or a cylinder)
@@ -210,7 +215,7 @@ def is_sliver_face(face, min_face_width: float) -> bool :
         pass
     return False
 
-def count_split_ring_pairs(solid, rel_tol: float = 1e-3) -> int:
+def count_split_ring_pairs(solid, rel_tol: float = SPLIT_RING_REL_TOL) -> int:
     """Number of *near-coincident concentric circular-edge pairs* on the
     faces of `solid` -- the direct fingerprint of a "split boundary ring"
     (see `find_split_ring_faces`). Two circular edges of the SAME face
@@ -244,7 +249,7 @@ def count_split_ring_pairs(solid, rel_tol: float = 1e-3) -> int:
         for i in range(len(circles)):
             for j in range(i + 1, len(circles)):
                 c1, c2 = circles[i], circles[j]
-                if abs(abs(c1.Axis.dot(c2.Axis)) - 1.0) > 1e-4:
+                if not axes_parallel(c1.Axis, c2.Axis, DEFECT_AXIS_ANGLE):
                     continue
                 max_r = max(c1.Radius, c2.Radius)
                 if abs(c1.Radius - c2.Radius) / max_r >= rel_tol:
@@ -280,18 +285,18 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
         return None
 
     def _near(gap: float):
-        return gap if 1e-5 < gap < dist_tol else None
+        return gap if POINT_POINT_TOL < gap < dist_tol else None
 
     if ta == "GPlane":
         axis_dot = surf_a.Axis.dot(surf_b.Axis)
-        if abs(axis_dot) < 0.99999:
+        if not axes_parallel(surf_a.Axis, surf_b.Axis, DEFECT_AXIS_ANGLE):
             return None
         d_a = surf_a.Axis.dot(surf_a.Position)
         d_b = surf_b.Axis.dot(surf_b.Position)
         return _near(abs(d_a - d_b) if axis_dot > 0 else abs(d_a + d_b))
 
     if ta == "GCylinder":
-        if abs(surf_a.Axis.dot(surf_b.Axis)) < 0.99999:
+        if not axes_parallel(surf_a.Axis, surf_b.Axis, DEFECT_AXIS_ANGLE):
             return None
         offset = surf_b.Center - surf_a.Center
         along = offset.dot(surf_a.Axis)
@@ -307,7 +312,7 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
     return None
 
 
-def check_solid_defects(solid, sliver_edge_rel_tol: float = 1e-4, min_face_width: float = 0.1) -> list:
+def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL, min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> list:
     """Run every known corrupted/degenerate-geometry check against a
     loaded solid and return the reasons it currently fails (empty list
     if the solid is clean). One function, one place to extend: any

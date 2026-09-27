@@ -1,8 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 
-from ....GEOUNED.utils.data_classes import Tolerances
-from ....geo import Gcommon, Gfuse_solids, Gsplit
+from ....geo import Gcommon, Gfuse_solids, GeoTolerances, Gsplit
 from ..Utils.matrix_utils import to_gmatrix_from_np
 from ..Utils.booleanFunction import BoolSequence
 from ..Utils.boundBox import myBox
@@ -13,13 +12,13 @@ def interferencia(container, cell, mode="slice"):
     if mode == "common":
         return Gfuse_solids(Gcommon(cell.shape, [container.shape]))
 
-    # Gsplit's own `tolerances` argument is a positional Tolerances object,
+    # Gsplit's own `tolerances` argument is a positional GeoTolerances object,
     # not a `tolerance=` float keyword (see the same fix in
     # CAD/splitFunction.py::SplitSolid for the full history) -- this call
     # silently raised a TypeError, caught nowhere here, so every FILL/
     # lattice universe-cut would have crashed outright rather than just
     # silently under-cutting.
-    solids = Gsplit(cell.shape, container.shape, Tolerances(split_tolerance=0)).solids
+    solids = Gsplit(cell.shape, container.shape, GeoTolerances(split_tolerance=0)).solids
 
     cellParts = [s for s in solids if container.shape.is_inside(s.center_of_mass())]
 

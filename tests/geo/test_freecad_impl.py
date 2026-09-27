@@ -1,6 +1,5 @@
 import math
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -55,11 +54,11 @@ def _bbox_tuple(bbox):
 
 
 def _tolerances(split_tolerance=1e-6, scale_up_floor=None, scale=0.1):
-    # Gsplit's own `tolerances` param is duck-typed (not literally
-    # GEOUNED.utils.data_classes.Tolerances -- geo must not depend on
-    # GEOUNED) -- a SimpleNamespace carrying exactly the fields Gsplit reads
-    # keeps this test file's own established independence from GEOUNED.
-    return SimpleNamespace(split_tolerance=split_tolerance, scale_up_floor=scale_up_floor, scale=scale)
+    # geo's own `GeoTolerances` (no dependency on GEOUNED): carries every field
+    # Gsplit reads, so this helper cannot drift from what Gsplit needs.
+    from geouned.geo.tolerances import GeoTolerances
+
+    return GeoTolerances(split_tolerance=split_tolerance, scale_up_floor=scale_up_floor, scale=scale)
 
 
 # -- Primitive construction -------------------------------------------------

@@ -1,11 +1,14 @@
 """
 geo/freecad/repair.py
 
-Load-time CAD-defect repair -- Gdefeature is the only real (non-stub)
-implementation here (Part.Shape.defeaturing()); Gcollapse_split_rings/
-Gsliver_heal/Gheal_topology are None-returning stubs (no native tools
-wired for FreeCAD, see their own docstrings), and Gcheck_and_repair
-is the cascade orchestrating all of them plus Gspline_surface.
+Load-time CAD-defect repair -- Gcollapse_split_rings/Gsliver_heal/
+Gheal_topology are None-returning stubs (no native tools wired for
+FreeCAD, see their own docstrings), and Gcheck_and_repair bypasses the
+whole cascade unconditionally (see its own docstring) rather than
+orchestrating them. Gdefeature (Part.Shape.defeaturing()) used to be
+the one real, non-stub implementation here, but was confirmed 100% dead
+code -- Gcheck_and_repair's own unconditional bypass means nothing in
+the whole repo ever called it -- and deleted 2026-09-23.
 """
 
 from __future__ import annotations
@@ -13,54 +16,11 @@ from __future__ import annotations
 import FreeCAD
 import Part
 
-from .topology import GFace, GSolid, Gclassify_surface
-from ..solid_defects import find_short_edges
-from ..constants import MAX_DEFEATURE_VOLUME_REL_CHANGE
+from .topology import GSolid, Gclassify_surface
+from ..constants import DEFAULT_MIN_FACE_WIDTH
 
 
-def Gdefeature(solid: "GSolid", faces: "list[GFace]") -> "GSolid | None":
-    """Attempt to remove `faces` (typically solid_defects.find_short_edges'
-    own output) from `solid` via `Part.Shape.defeaturing()` (FreeCAD's own
-    wrapper over OCCT's `BRepAlgoAPI_Defeaturing`), verifying the result is
-    genuinely usable before trusting it -- see _ocp_impl.py's own identical
-    docstring for the full story (confirmed live under ocp, 2026-08-27:
-    a successful-looking defeaturing call is NOT enough on its own to
-    trust -- it can return a topologically valid but silently wrong
-    solid). Not independently re-verified under this engine yet --
-    ported for backend symmetry, same safety net as the other two
-    engines (isValid() + find_short_edges() + volume-conservation
-    re-check).
-
-    Deliberately a single, fast, one-shot attempt, not an iterative or
-    graph-based search for the "correct" minimal face set -- per
-    explicit user direction, detecting a genuine CAD defect matters more
-    than perfectly auto-repairing it, and any repair kept here must stay
-    general and fast. Returning None and letting the caller fall back to
-    "flag as corrupted, don't convert" is the intended outcome when this
-    single attempt doesn't cleanly resolve the defect.
-
-    Returns None whenever defeaturing raises, the healed result isn't
-    valid, find_short_edges() still finds a short edge in it, or its own
-    Volume has drifted from the input by more than
-    MAX_DEFEATURE_VOLUME_REL_CHANGE."""
-    if not faces:
-        return None
-    native_faces = [f.__native__ for f in faces]
-    try:
-        healed_native = solid.__native__.defeaturing(native_faces)
-    except Exception:
-        return None
-    if not healed_native.isValid():
-        return None
-    healed = GSolid(healed_native)
-    if find_short_edges(healed):
-        return None
-    if abs(healed.Volume - solid.Volume) > MAX_DEFEATURE_VOLUME_REL_CHANGE * max(abs(solid.Volume), 1.0):
-        return None
-    return healed
-
-
-def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
     """Repair a "split boundary ring" / duplicated micro-trim defect --
     a single trimming surface duplicated at a sub-tolerance offset, with
     parasitic "riser" faces bridging the thin slab and every curved face
@@ -76,7 +36,7 @@ def Gcollapse_split_rings(solid: "GSolid", min_face_width: float = 0.1) -> "GSol
     return None
 
 
-def Gsliver_heal(solid: "GSolid", min_face_width: float = 0.1) -> "GSolid | None":
+def Gsliver_heal(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> "GSolid | None":
     """`sliver_healing` (version 0) -- the fuller form of
     `Gcollapse_split_rings` (remove sliver faces, resolve a
     near-coincident surface pair by dropping the smaller face + capping

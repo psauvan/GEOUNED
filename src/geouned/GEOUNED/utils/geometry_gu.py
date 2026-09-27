@@ -10,8 +10,6 @@ import math
 
 from .data_constants import twoPi
 from .basic_functions_part1 import is_same_value, twoPimod
-from .basic_functions_part2 import is_same_torus
-from .data_classes import Tolerances
 from ...geo import vector_geometry, surface_geometry
 from ...geo import (
     CAD_ENGINE,
@@ -26,8 +24,20 @@ from ...geo import (
     Gmake_shell,
     pick_outer_wire,
 )
+from ...geo.constants import PARAM_ANGLE_TOL
+from ...geo.constants import NUMERIC_TOL
 
 logger = logging.getLogger("general_logger")
+
+
+def faces_touch(face1, face2) -> bool:
+    """True if `face1` and `face2` are within `NUMERIC_TOL` of each other (touching or overlapping) -- faces of the
+    SAME solid, so the intrinsic constant applies (see `geo.constants.NUMERIC_TOL`'s own docstring). Shared by
+    `SolidGu.separate_surfaces` (grouping same-torus face fragments into connected pieces) and
+    `meta_surfaces_utils.commonEdgeFace` (the same "are these two faces even close" pre-filter before it looks for a
+    shared boundary edge) -- both already went through the identical `FaceGu.distToShape` -> `GFace.my_distToshape`
+    chain before this was factored out, so this is a pure deduplication, not a behaviour change."""
+    return face1.distToShape(face2)[0] < NUMERIC_TOL
 
 _SAME_SURFACE_PREDICATE = {
     GPlane: surface_geometry.is_same_plane_surface,
@@ -55,11 +65,60 @@ else:
         freecad."""
 
 
-def is_same_surface(surface_1, surface_2):
+def is_same_surface(surface_1, surface_2, tolerances):
     """Dispatches to the neutral-type predicate for the 5 analytic surface types."""
     if type(surface_1) is not type(surface_2):
         return False
-    return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2)
+    return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2, tolerances)
+
+
+def merge_periodic_uv(parameter, faces):
+    """Merged parameter range, along "U" or "V", of `faces` (pieces of ONE periodic surface).
+
+    Returns `(closed, (v_min, v_max))`: `closed` is True when the pieces add up to a full turn (2*pi), in which case
+    the range is `(V0, V0 + 2*pi)`. "Adds up to a full turn" and "starts at 0 / ends at 2*pi / touches its neighbour"
+    are decided with NUMERIC_TOL: the parameters come from the same solid's own faces, so they carry the same numbers."""
+    two_pi = 2.0 * math.pi
+    if parameter == "U":
+        i1, i2 = 0, 2
+    elif parameter == "V":
+        i1, i2 = 2, 4
+    else:
+        raise ValueError(f"parameter must be 'U' or 'V', not {parameter!r}")
+
+    params = []
+    arcLength = 0.0
+    for face in faces:
+        V0, V1 = face.ParameterRange[i1:i2]
+        arcLength += V1 - V0
+        params.append((V0, V1))
+
+    params.sort()
+    V0 = params[0][0]
+    V1 = params[-1][1]
+    if arcLength >= two_pi * (1.0 - NUMERIC_TOL):
+        mergedParams = (True, (V0, V0 + two_pi))
+    else:
+        if is_same_value(V0, 0.0, NUMERIC_TOL) and is_same_value(V1, two_pi, NUMERIC_TOL):
+            for i in range(len(params) - 1):
+                if not is_same_value(params[i][1], params[i + 1][0], NUMERIC_TOL):
+                    break
+            v_min = params[i + 1][0] - two_pi
+            v_max = params[i][1]
+        else:
+            # params is sorted by V0 ascending, so params[0][0] is always
+            # the true minimum V0 -- but sorting by V0 does not imply
+            # sorted V1, so params[-1][1] is only the true maximum V1
+            # when the pieces form a simple, non-nested chain. When one
+            # piece's own range is fully nested inside another's (e.g. a
+            # tiny residual sliver piece sitting within a larger piece's
+            # own V-span), params[-1][1] can under-report the real
+            # merged extent -- take the max explicitly instead.
+            v_min = params[0][0]
+            v_max = max(v1 for _, v1 in params)
+        mergedParams = (False, (v_min, v_max))
+
+    return mergedParams
 
 
 class face_index:
@@ -113,12 +172,10 @@ class SolidGu(GSolid):
             i = temp[0]
             current = [i]
             for j in temp[1:]:
-                if is_same_torus(
+                if surface_geometry.is_same_torus_surface(
                     self.Faces[i].Surface,
                     self.Faces[j].Surface,
-                    dtol=self.tolerances.tor_distance,
-                    atol=self.tolerances.tor_angle,
-                    rel_tol=self.tolerances.relativeTol,
+                    self.tolerances,
                     check_a_sign=True,  # never merge a self-intersecting torus's two distinct sheets into one face group
                 ):
                     current.append(j)
@@ -139,7 +196,7 @@ class SolidGu(GSolid):
                 removeList = [temp[0]]
                 while len(temp) > 0 and i < len(current):
                     for tindex in temp:
-                        if self.Faces[current[i]].distToShape(self.Faces[tindex])[0] < self.tolerances.distance:
+                        if faces_touch(self.Faces[current[i]], self.Faces[tindex]):
                             if tindex not in current:
                                 current.append(tindex)
                                 removeList.append(tindex)
@@ -152,53 +209,7 @@ class SolidGu(GSolid):
         return sameSurfaces
 
     def merge_periodic_uv(self, parameter, faceList):
-        two_pi = 2.0 * math.pi
-        if parameter == "U":
-            i1 = 0
-            i2 = 2
-        elif parameter == "V":
-            i1 = 2
-            i2 = 4
-
-        params = []
-        arcLength = 0.0
-        for face in faceList:
-            V0, V1 = self.Faces[face].ParameterRange[i1:i2]
-            arcLength += V1 - V0
-            params.append((V0, V1))
-
-        params.sort()
-        V0 = params[0][0]
-        V1 = params[-1][1]
-        if arcLength >= two_pi * (1.0 - self.tolerances.relativePrecision):
-            mergedParams = (True, (V0, V0 + two_pi))
-        else:
-            if is_same_value(V0, 0.0, self.tolerances.relativePrecision) and is_same_value(
-                V1, two_pi, self.tolerances.relativePrecision
-            ):
-                for i in range(len(params) - 1):
-                    if not is_same_value(
-                        params[i][1],
-                        params[i + 1][0],
-                        self.tolerances.relativePrecision,
-                    ):
-                        break
-                v_min = params[i + 1][0] - two_pi
-                v_max = params[i][1]
-            else:
-                # params is sorted by V0 ascending, so params[0][0] is always
-                # the true minimum V0 -- but sorting by V0 does not imply
-                # sorted V1, so params[-1][1] is only the true maximum V1
-                # when the pieces form a simple, non-nested chain. When one
-                # piece's own range is fully nested inside another's (e.g. a
-                # tiny residual sliver piece sitting within a larger piece's
-                # own V-span), params[-1][1] can under-report the real
-                # merged extent -- take the max explicitly instead.
-                v_min = params[0][0]
-                v_max = max(v1 for _, v1 in params)
-            mergedParams = (False, (v_min, v_max))
-
-        return mergedParams
+        return merge_periodic_uv(parameter, [self.Faces[face] for face in faceList])
 
 
 # FACES
@@ -289,7 +300,7 @@ class ShellFaceGu:
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
 
-        if abs(Umin - Umax) < 1e-5:
+        if abs(Umin - Umax) < PARAM_ANGLE_TOL:
             return 0, twoPi, 0, 0
         else:
             return Umin, Umax, ifacemin, ifacemax
@@ -345,7 +356,7 @@ def define_surface(face, surface=None):
 
 
 def other_face_edge(
-    current_edge, current_face, Faces, outer_only=False, skip_slivers=False, _min_area=None, _min_face_width=None, _visited=None
+    current_edge, current_face, Faces, outer_only=False, skip_slivers=False, *, tolerances=None, _visited=None
 ):
     # skip_slivers=False preserves the original behavior for every existing
     # caller: returns just the found face. A caller that's walking adjacency
@@ -388,8 +399,10 @@ def other_face_edge(
             if current_edge.is_same(edge):
                 if not skip_slivers:
                     return face
-                area_threshold = _min_area if _min_area is not None else Tolerances().min_area
-                width_threshold = _min_face_width if _min_face_width is not None else Tolerances().min_face_width
+                if tolerances is None:
+                    raise ValueError("other_face_edge(skip_slivers=True) needs the run's tolerances")
+                area_threshold = tolerances.min_area
+                width_threshold = tolerances.min_face_width
                 width = getattr(face, "CharacteristicWidth", float("inf"))
                 if face.Area >= area_threshold and width >= width_threshold:
                     return current_edge, current_face, face
@@ -401,7 +414,7 @@ def other_face_edge(
                 for e2 in face.OuterWire.Edges if outer_only else face.Edges:
                     if e2.is_same(current_edge):
                         continue
-                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, area_threshold, width_threshold, visited)
+                    found = other_face_edge(e2, face, Faces, outer_only, skip_slivers, tolerances=tolerances, _visited=visited)
                     if found is not None:
                         return found
                 return None
@@ -459,12 +472,12 @@ def sort_range(Urange):
 
 
 def join_range(U0, U1):
-    if (U0[0] - U1[0] < 1e-5) and (-1e-5 < U0[1] - U1[0]):
+    if (U0[0] - U1[0] < PARAM_ANGLE_TOL) and (-PARAM_ANGLE_TOL < U0[1] - U1[0]):
         if U1[1] > U0[1]:
             return (U0[0], U1[1])
         else:
             return U0
-    elif (U0[0] - U1[1] < 1e-5) and (-1e-5 < U0[1] - U1[1]):
+    elif (U0[0] - U1[1] < PARAM_ANGLE_TOL) and (-PARAM_ANGLE_TOL < U0[1] - U1[1]):
         if U1[0] < U0[0]:
             return (U1[0], U0[1])
         else:
@@ -483,10 +496,10 @@ def adjust_range(U0, U1):
     V0 = [twoPimod(x) for x in U0]
     V1 = [twoPimod(x) for x in U1]
 
-    if abs(V0[0] - V1[1]) < 1e-5:
+    if abs(V0[0] - V1[1]) < PARAM_ANGLE_TOL:
         imin = 1  # U1[0]
         imax = 0  # U0[1]
-    elif abs(V1[0] - V0[1]) < 1e-5:
+    elif abs(V1[0] - V0[1]) < PARAM_ANGLE_TOL:
         imin = 0  # U0[0]
         imax = 1  # U1[1]
     elif V1[1] < V0[0]:

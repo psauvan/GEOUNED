@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from .constants import BOX_TOL, BOX_UNION_VOL_TOL, NUMERIC_DOUBLE_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
+from .volume_utils import volume_within
 
 # ---------------------------------------------------------------------------
 # Neutral vector type
@@ -88,7 +90,7 @@ class GVector:
         length = self.length
         return GVector(self.x / length, self.y / length, self.z / length)
 
-    def is_equal(self, other: "GVector", tolerance: float = 1e-6) -> bool:
+    def is_equal(self, other: "GVector", tolerance: float = POINT_POINT_TOL) -> bool:
         return (self - other).length < tolerance
 
     def angle_to(self, other: "GVector") -> float:
@@ -389,7 +391,7 @@ class myBox:
         else:
             if boundBox is not None:
                 boundBox = to_gboundbox(boundBox)
-                if boundBox.XLength <= 1e-12 or boundBox.YLength <= 1e-12 or boundBox.ZLength <= 1e-12:
+                if boundBox.XLength <= NUMERIC_DOUBLE_TOL or boundBox.YLength <= NUMERIC_DOUBLE_TOL or boundBox.ZLength <= NUMERIC_DOUBLE_TOL:
                     self.Box = None
                 else:
                     self.Box = boundBox
@@ -515,7 +517,7 @@ class myBox:
                     self_vol = _box_volume(self.Box)
                     box_vol = _box_volume(box.Box)
                     union_vol = _box_volume(union_box)
-                    if abs(union_vol - (self_vol + box_vol - inter_vol)) < 1e-6 * max(union_vol, 1.0):
+                    if volume_within(union_vol, self_vol + box_vol - inter_vol, BOX_UNION_VOL_TOL, union_vol):
                         self.Box = union_box
                     else:
                         self.Box = self.Box if self_vol >= box_vol else box.Box
@@ -538,7 +540,7 @@ class myBox:
         for i in range(6):
             p1 = self.Box.get_point(i)
             p2 = box.Box.get_point(i)
-            if (p1 - p2).length > 1e-6:
+            if (p1 - p2).length > BOX_TOL:
                 return False
         return True
 
@@ -548,7 +550,7 @@ class myBox:
 # ---------------------------------------------------------------------------
 
 
-def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[float, int, float, int]:
+def arc_extent(pairs: list[tuple[float, float]], tol: float = PARAM_ANGLE_TOL) -> tuple[float, int, float, int]:
     """
     Given a list of (a0, a1) angle pairs (a0 < a1, radians) that together
     trace exactly one open circular arc (total angular extent < 2*pi),
@@ -559,7 +561,8 @@ def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[flo
     (a0,a1)/(b0,b1) the only allowed relations are a chained overlap
     (a0<=b0<=a1<=b1), a nesting (a0<=b0<b1<=a1), or a real gap (a1<b0)
     that some other pair in the list bridges -- possibly by wrapping
-    through 0/2*pi.
+    through 0/2*pi. A nesting may itself happen through the wrap: a pair
+    running across 0/2*pi can contain, after the wrap, other pairs.
 
     Returns (angle_min, index_min, angle_max, index_max): the original,
     unmodified endpoint values (and their pair's index in `pairs`) that
@@ -588,10 +591,9 @@ def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[flo
 
     order = sorted(range(n), key=lambda i: c0[i])
 
-    # Standard sweep-merge in the canonical frame. Because the whole set
-    # forms one arc on the circle, and cutting a circle at one point
-    # (here, the 0/2*pi boundary) can split a single arc into at most 2
-    # pieces, this can only ever produce 1 or 2 groups.
+    # Sweep-merge in the canonical frame. Groups are disjoint, sorted by
+    # start_val ascending; a group's end_val may exceed 2*pi when one of
+    # its pairs runs across the 0/2*pi boundary.
     groups = []
     for i in order:
         if groups and c0[i] <= groups[-1]["end_val"] + tol:
@@ -612,16 +614,38 @@ def arc_extent(pairs: list[tuple[float, float]], tol: float = 1e-5) -> tuple[flo
         g = groups[0]
         return pairs[g["start_idx"]][0], g["start_idx"], pairs[g["end_idx"]][1], g["end_idx"]
 
-    if len(groups) == 2:
-        # groups is sorted by start_val ascending: groups[0] is the piece
-        # nearest 0 (the arc's tail after wrapping), groups[-1] is the
-        # piece nearest 2*pi (the arc's true start, continuing through
-        # the wrap into groups[0]).
-        first, last = groups[0], groups[-1]
-        if last["end_val"] < first["start_val"] + two_pi - tol:
+    # Several groups: the arc crosses 0/2*pi. The pair reaching furthest past
+    # 2*pi lives in the last group (any pair starting after it would overlap
+    # it and have been merged into it), and after the wrap it covers
+    # [0, wrap_end] AGAIN -- so every group starting inside that wrapped tail
+    # belongs to the same arc, and may itself extend the tail further.
+    # Absorb them in order. (The sweep alone cannot see this: it never
+    # compares a pair's wrapped tail with the pairs nested inside it, so
+    # sub-arcs lying under the tail -- e.g. a second axial band of the same
+    # cylinder -- came out as extra "disconnected" groups, or silently cut
+    # the arc short at the first group's end. Confirmed on a real solid,
+    # Mixed/sleeve.stp: 7 faces of one cylinder, 3 groups, ValueError.)
+    last = groups[-1]
+    wrap_end = last["end_val"] - two_pi
+    if wrap_end < -tol:
+        raise ValueError(
+            "arc_extent: pairs do not stitch into a single arc across " "the 0/2*pi boundary (gap between the two groups)"
+        )
+    cur_end, cur_idx = wrap_end, last["end_idx"]
+    k = 0
+    while k < len(groups) - 1 and groups[k]["start_val"] <= cur_end + tol:
+        if groups[k]["end_val"] >= cur_end - tol:
+            # Within tol the group's own end wins: it is the same geometric
+            # end as the wrapped tail's, and what this function returned
+            # before the absorption existed.
+            cur_end, cur_idx = max(cur_end, groups[k]["end_val"]), groups[k]["end_idx"]
+        k += 1
+
+    if k != len(groups) - 1:
+        if len(groups) == 2:
             raise ValueError(
                 "arc_extent: pairs do not stitch into a single arc across " "the 0/2*pi boundary (gap between the two groups)"
             )
-        return pairs[last["start_idx"]][0], last["start_idx"], pairs[first["end_idx"]][1], first["end_idx"]
+        raise ValueError(f"arc_extent: pairs split into {len(groups)} disconnected groups, not a single arc")
 
-    raise ValueError(f"arc_extent: pairs split into {len(groups)} disconnected groups, not a single arc")
+    return pairs[last["start_idx"]][0], last["start_idx"], pairs[cur_idx][1], cur_idx

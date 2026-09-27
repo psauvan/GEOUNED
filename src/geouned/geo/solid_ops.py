@@ -16,6 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
+from .constants import DEFAULT_FIX_TOLERANCE, DEGENERATE_SOLID_VOL_AREA_RATIO, FUSE_REFINE_REL_TOL, NUMERIC_DOUBLE_TOL
 
 
 def Gfuse_solids(parts, tolerances=None):
@@ -86,8 +87,9 @@ def Gfuse_solids(parts, tolerances=None):
         if fused.is_valid():
             gsolid = fused
         else:
+            fix_tolerance = tolerances.fix_tolerance if tolerances is not None else DEFAULT_FIX_TOLERANCE
             try:
-                fixed = fused.fix(1e-6)
+                fixed = fused.fix(fix_tolerance)
             except Exception:
                 fixed = None
 
@@ -100,7 +102,7 @@ def Gfuse_solids(parts, tolerances=None):
 
     if len(gsolid.Solids) == 1 and gsolid.is_valid():
         try:
-            refined = gsolid.refine(rel_tol=1e-4)
+            refined = gsolid.refine(rel_tol=FUSE_REFINE_REL_TOL)
             if refined.is_valid():
                 gsolid = refined
         except Exception:
@@ -203,7 +205,7 @@ def getPart(slist):
     return sol
 
 
-def space_decomposition(solids, surfaces, classify):
+def space_decomposition(solids, surfaces, classify, min_volume):
     """Get the position of each subregion of `solids` with respect to all
     of `surfaces`, via the caller-supplied `classify(point, surf) -> bool`
     point-classification callable (see this section's own module-level
@@ -211,8 +213,8 @@ def space_decomposition(solids, surfaces, classify):
     component = []
     good_solids = []
     for c in solids:
-        if c.Volume < 1e-3:
-            if abs(c.Volume) < 1e-3:
+        if c.Volume < min_volume:
+            if abs(c.Volume) < min_volume:
                 continue
             else:
                 c = c.reverse()
@@ -260,7 +262,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerances, classify):
     else:
         orientation = "Forward"
 
-    if abs(base.base.Volume / base.base.Area) < 1e-2:
+    if abs(base.base.Volume / base.base.Area) < DEGENERATE_SOLID_VOL_AREA_RATIO:
         return fullPart, cutPart
 
     tool = surfacesCut[0].shape
@@ -289,7 +291,7 @@ def SplitSolid(base, surfacesCut, cellObj, tolerances, classify):
     else:
         Solids = [base.base]
 
-    partPositions, partSolids = space_decomposition(Solids, surfacesCut, classify)
+    partPositions, partSolids = space_decomposition(Solids, surfacesCut, classify, tolerances.min_solid_volume)
 
     for pos, sol in zip(partPositions, partSolids):
         pos.update(base.knownSurf)
@@ -352,7 +354,7 @@ def BuildSolidParts(cell, base, tolerances, classify):
 
     if base:
         boundBox = base.base.BoundBox
-        if boundBox.XLength < 1e-6 or boundBox.YLength < 1e-6 or boundBox.ZLength < 1e-6:
+        if boundBox.XLength < NUMERIC_DOUBLE_TOL or boundBox.YLength < NUMERIC_DOUBLE_TOL or boundBox.ZLength < NUMERIC_DOUBLE_TOL:
             return [], []
     else:
         # GEOUNED's CellObj has no build_BoundBox at all (its single,

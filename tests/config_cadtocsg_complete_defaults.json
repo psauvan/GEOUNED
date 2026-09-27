@@ -19,9 +19,8 @@
     "Tolerances": {
         "relativeTol": false, 
         "relativePrecision": 1e-06, 
-        "value": 1e-06, 
-        "distance": 0.0001, 
-        "angle": 0.0001, 
+        "value": 1e-06,
+        "angle": 0.0001,
         "pln_distance": 0.0001, 
         "pln_angle": 0.0001, 
         "cyl_distance": 0.0001, 

@@ -19,6 +19,7 @@ from OCC.Core.TopoDS import topods
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from .topology import GShape
 from ._native_utils import _bnd_box, _volume_props
+from ..constants import VOLUME_MIN_E8
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ def Gin_contact(shape_a: GShape, shape_b: GShape, tolerance: float) -> bool:
         if common.IsNull():
             return False
         props = _volume_props(common)
-        if abs(props.Mass()) > 1e-8:
+        if abs(props.Mass()) > VOLUME_MIN_E8:
             return True
         for kind in (TopAbs_FACE, TopAbs_EDGE):
             if TopExp_Explorer(common, kind).More():

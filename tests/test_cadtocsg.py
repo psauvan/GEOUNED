@@ -55,7 +55,6 @@ def test_conversion(input_step_file):
         relativeTol=False,
         relativePrecision=0.000001,
         value=0.000001,
-        distance=0.0001,
         angle=0.0001,
         pln_distance=0.0001,
         pln_angle=0.0001,

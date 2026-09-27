@@ -7,6 +7,7 @@ import logging
 from ...boolean_utils.boolean_function import BoolSequence, BoolSurface
 from .geouned_classes import GeounedSurface
 from ...geo import GSolid, GVector, Gdistance, Gsplit, surface_geometry
+from ...geo.constants import NUMERIC_TOL
 
 BoolVals = (None, True, False)
 primitives_surfaces = ("Plane", "CylinderOnly", "SphereOnly", "ConeOnly", "TorusOnly")
@@ -491,7 +492,7 @@ def split_solid_fast(solid, surf, box, options):
         # "not box" => return the position of the +/- region of s1 (the solid) with respect s2
         if surf.shell:
             dist = Gdistance(GSolid(solid), GSolid(surf.shell))
-            if dist > 1e-6:
+            if dist > NUMERIC_TOL:
                 # chech if surf and solid don't intersect actually (native call: distToShape's
                 # positive-distance report can be a false negative for a degenerate/tangent
                 # contact, e.g. touching along a zero-area line -- common()'s Area is the
@@ -502,7 +503,7 @@ def split_solid_fast(solid, surf, box, options):
         else:
             dist = 1.0
             # volume = 0
-        if dist > 1e-6:  # face doesn't intersect solid
+        if dist > NUMERIC_TOL:  # face doesn't intersect solid
             # if volume < 1e-6:  # face doesn't intersect solid
 
             sgn = check_sign(solid, surf)

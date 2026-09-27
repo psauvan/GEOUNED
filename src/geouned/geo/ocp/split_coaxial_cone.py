@@ -37,10 +37,14 @@ from ..vector_geometry import GVector
 from ..surface_geometry import (
     is_coaxial_cone_cylinder_pair,
     is_coaxial_cone_pair,
+    is_same_cone_surface,
+    is_same_cylinder_surface,
 )
 from .topology import GCone, GCylinder, GFace, GSolid
 from ._native_utils import to_native_vector
 from .primitives import Gmake_shell, Gmake_solid
+from ..constants import COAXIAL_RETRY, NUMERIC_DOUBLE_TOL, UV_PROJECTION_TOL
+from ..volume_utils import volume_within
 
 
 def _find_cone_face(shape) -> "GFace | None":
@@ -60,7 +64,7 @@ def _find_cone_face(shape) -> "GFace | None":
     return None
 
 
-def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
+def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone", tolerances) -> "list[list[GFace]]":
     """Groups of `base_faces` whose own cone surface is coaxial with, and
     shares the same |SemiAngle| as, `tool_cone` (see
     surface_geometry.is_coaxial_cone_pair) -- each group sharing one exact
@@ -72,15 +76,11 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
         s = f.Surface
         if not isinstance(s, GCone):
             continue
-        if not is_coaxial_cone_pair(tool_cone, s):
+        if not is_coaxial_cone_pair(tool_cone, s, tolerances):
             continue
         for group in groups:
             gs = group[0].Surface
-            if (
-                abs(gs.SemiAngle - s.SemiAngle) < 1e-6
-                and abs(gs.Axis.dot(s.Axis)) > 1.0 - 1e-5
-                and (gs.Apex - s.Apex).length < 1e-5
-            ):
+            if is_same_cone_surface(gs, s, tolerances):
                 group.append(f)
                 break
         else:
@@ -88,7 +88,7 @@ def _group_coaxial_cone_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> 
     return groups
 
 
-def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone") -> "list[list[GFace]]":
+def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone", tolerances) -> "list[list[GFace]]":
     """Cylinder counterpart of `_group_coaxial_cone_faces`: groups of
     `base_faces` whose own cylinder surface is coaxial with `tool_cone`
     (see surface_geometry.is_coaxial_cone_cylinder_pair) -- each group
@@ -99,11 +99,11 @@ def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone")
         s = f.Surface
         if not isinstance(s, GCylinder):
             continue
-        if not is_coaxial_cone_cylinder_pair(tool_cone, s):
+        if not is_coaxial_cone_cylinder_pair(tool_cone, s, tolerances):
             continue
         for group in groups:
             gs = group[0].Surface
-            if abs(gs.Radius - s.Radius) < 1e-5 and abs(gs.Axis.dot(s.Axis)) > 1.0 - 1e-5:
+            if is_same_cylinder_surface(gs, s, tolerances):
                 group.append(f)
                 break
         else:
@@ -112,7 +112,7 @@ def _group_coaxial_cylinder_faces(base_faces: "list[GFace]", tool_cone: "GCone")
 
 
 def _cone_v_value(point: GVector, native_cone_surf) -> float:
-    return ShapeAnalysis_Surface(native_cone_surf).ValueOfUV(to_native_vector(point), 1e-6).Y()
+    return ShapeAnalysis_Surface(native_cone_surf).ValueOfUV(to_native_vector(point), UV_PROJECTION_TOL).Y()
 
 
 def _find_v_crossings(face: "GFace", native_cone_surf, v0: float, samples: int = 64) -> "list[GVector]":
@@ -154,12 +154,12 @@ def _split_face_at_v_line(native_face, native_cone_surf, point_a: GVector, point
     than raising (confirmed 2026-08-18). Returns the resulting native
     faces (a 1-element list if the split didn't actually separate anything)."""
     sas = ShapeAnalysis_Surface(native_cone_surf)
-    uv_a = sas.ValueOfUV(to_native_vector(point_a), 1e-6)
-    uv_b = sas.ValueOfUV(to_native_vector(point_b), 1e-6)
+    uv_a = sas.ValueOfUV(to_native_vector(point_a), UV_PROJECTION_TOL)
+    uv_b = sas.ValueOfUV(to_native_vector(point_b), UV_PROJECTION_TOL)
     v_common = (uv_a.Y() + uv_b.Y()) / 2.0
     line2d = Geom2d_Line(gp_Pnt2d(0.0, v_common), gp_Dir2d(1.0, 0.0))
     u_lo, u_hi = sorted([uv_a.X(), uv_b.X()])
-    if u_hi - u_lo < 1e-9:
+    if u_hi - u_lo < NUMERIC_DOUBLE_TOL:
         # point_a/point_b project to (numerically) the same U on this
         # surface -- e.g. a periodic (cylinder/cone) surface where the two
         # candidate crossings differ by a full 2*pi wrap and so coincide
@@ -257,17 +257,17 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
     tool_cone = tool_cone_face.Surface
 
     candidates: list[tuple["GFace", GVector, float]] = []
-    for group in _group_coaxial_cone_faces(base.Faces, tool_cone):
+    for group in _group_coaxial_cone_faces(base.Faces, tool_cone, tolerances):
         for other_face in group:
             other_cone = other_face.Surface
             mid_point = (tool_cone.Apex + other_cone.Apex) * 0.5
             radius = (tool_cone.Apex - other_cone.Apex).length / 2.0
             candidates.append((other_face, mid_point, radius))
-    for group in _group_coaxial_cylinder_faces(base.Faces, tool_cone):
+    for group in _group_coaxial_cylinder_faces(base.Faces, tool_cone, tolerances):
         for other_face in group:
             cylinder = other_face.Surface
             tan_semi = math.tan(tool_cone.SemiAngle)
-            if abs(tan_semi) < 1e-9:
+            if abs(tan_semi) < NUMERIC_DOUBLE_TOL:
                 continue
             axis = tool_cone.Axis.normalized()
             t = cylinder.Radius / abs(tan_semi)
@@ -335,8 +335,8 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
                 continue
             retry_solids = [GSolid(s) for s in retry_native_solids]
             total_volume = sum(s.Volume for s in retry_solids)
-            volume_rel_tol = 1e-6 if retry_tolerance == 0.0 else 1e-3
-            if abs(total_volume - base.Volume) > volume_rel_tol * max(abs(base.Volume), 1.0):
+            volume_rel_tol = tolerances.volume_tolerance if retry_tolerance == 0.0 else COAXIAL_RETRY
+            if not volume_within(total_volume, base.Volume, volume_rel_tol):
                 continue
             if not all(s.is_valid() for s in retry_solids):
                 continue

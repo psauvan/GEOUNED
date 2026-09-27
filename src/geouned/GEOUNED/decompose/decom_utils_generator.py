@@ -27,18 +27,19 @@ from ...geo import (
     Gmake_wire,
 )
 from ..utils.basic_functions_part1 import (
-    is_parallel,
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
+from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
+from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
 
 
-def torus_bound_planes(solidFaces, face, tolerances):
+def torus_bound_planes(solidFaces, face, *, tolerances):
     params = face.ParameterRange
     planes = []
-    if is_same_value(params[1] - params[0], twoPi, tolerances.value):
+    if is_same_value(params[1] - params[0], twoPi, PARAM_ANGLE_TOL):
         return planes
 
     Edges = face.OuterWire.Edges
@@ -48,12 +49,12 @@ def torus_bound_planes(solidFaces, face, tolerances):
 
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
-            if is_same_surface(face.Surface, adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
                 continue  # doesn't create plane if other face has same surface
 
         if type(curve) is GCircle:
             dir = curve.Axis
-            if not is_parallel(dir, face.Surface.Axis, tolerances.angle):
+            if not axes_parallel(dir, face.Surface.Axis, NUMERIC_TOL):
                 center = curve.Center
                 dim1 = curve.Radius
                 dim2 = curve.Radius
@@ -77,14 +78,14 @@ def torus_bound_planes(solidFaces, face, tolerances):
     return planes
 
 
-def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
+def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
 
     if Edges is None:
         Edges = face.OuterWire.Edges
     planes = []
 
     for e in Edges:
-        if not planar_edges([e]):
+        if not planar_edges([e], tolerances=tolerances):
             continue
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
@@ -92,7 +93,7 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
                 continue
             if type(adjacent_face.Surface) is GTorus:
                 continue  # doesn't create plane if other face is a torus
-            if is_same_surface(face.Surface, adjacent_face.Surface):
+            if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
                 continue  # doesn't create plane if other face has same surface
             if (type(face.Surface) is GCone or type(face.Surface) is GCylinder) and (
                 type(adjacent_face.Surface) is GCone or type(adjacent_face.Surface) is GCylinder
@@ -113,14 +114,14 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None):
 
                 # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
                 cross = axis1.cross(axis2)
-                if cross.length > 1e-6:
+                if cross.length > NUMERIC_DOUBLE_TOL:
                     dist = abs(cross.dot(p1 - p2)) / cross.length
-                    if dist > 1e-3:
+                    if dist > POINT_POINT_TOL:
                         continue  # doesn't create plane if the axes are not close enough
                 else:
                     # if the axes are parallel, check the distance between the two points
                     dist = (p1 - p2).length
-                    if dist > 1e-3:
+                    if dist > POINT_POINT_TOL:
                         continue  # doesn't create plane if the axes are not close enough
 
             plane = cks_edge_plane(face, [e])
@@ -217,7 +218,7 @@ def spline_wires(edges, face, pc=None):
                 point = rmax
             else:
                 point = rmin
-            d = 0.01 * abs(majoraxis.dot(rmax - rmin))
+            d = 0.01 * abs(majoraxis.dot(rmax - rmin))  # 1% of the real span along majoraxis
         else:
             point = 0.5 * (rmin + rmax)
             d = 0.51 * abs(majoraxis.dot(rmax - rmin))
@@ -249,7 +250,7 @@ def get_axis_inertia(mat: GMatrix):
     return GVector(float(principal[0]), float(principal[1]), float(principal[2]))
 
 
-def external_plane(plane, Faces):
+def external_plane(plane, Faces, *, tolerances):
     Edges = plane.Edges
     for e in Edges:
         adjacent_face = other_face_edge(e, plane, Faces)
@@ -258,14 +259,14 @@ def external_plane(plane, Faces):
         if isinstance(
             adjacent_face.Surface, GPlane
         ):  # if not plane not sure current plane will not cut other part of the solid
-            if region_sign(plane, adjacent_face) == "OR":
+            if region_sign(plane, adjacent_face, tolerances=tolerances) == "OR":
                 return False
         else:
             return False
     return True
 
 
-def exclude_no_cutting_planes(Faces, omit=None):
+def exclude_no_cutting_planes(Faces, omit=None, *, tolerances):
     if omit is None:
         omit = set()
         return_set = True
@@ -275,13 +276,13 @@ def exclude_no_cutting_planes(Faces, omit=None):
         if f.Index in omit:
             continue
         if isinstance(f.Surface, GPlane):
-            if external_plane(f, Faces):
+            if external_plane(f, Faces, tolerances=tolerances):
                 omit.add(f.Index)
 
     return omit if return_set else None
 
 
-def cutting_face_number(f, Faces, omitfaces):
+def cutting_face_number(f, Faces, omitfaces, *, tolerances):
     Edges = f.Edges
     ncut = 0
     for e in Edges:
@@ -299,12 +300,12 @@ def cutting_face_number(f, Faces, omitfaces):
             # debug dump -- FreeCAD-only API, so under pyOCC it raised
             # AttributeError and masked this RuntimeError; removed.)
             raise RuntimeError("Spline surface detected")
-        elif region_sign(f, adjacent_face) == "OR":
+        elif region_sign(f, adjacent_face, tolerances=tolerances) == "OR":
             ncut += 1
     return ncut
 
 
-def order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None):
+def order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None, *, tolerances):
     # A residual sliver plane (a real face, but a near-zero-area boolean-
     # cut artifact, not a genuine feature -- see Tolerances.min_area's own
     # docstring) was never excluded here: plane_generator's own cutting-
@@ -346,7 +347,7 @@ def order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None):
             continue
         if not isinstance(f.Surface, GPlane):
             continue
-        ncut = cutting_face_number(f, Faces, omitfaces)
+        ncut = cutting_face_number(f, Faces, omitfaces, tolerances=tolerances)
         counts.append((ncut, f.Index))
         face_dict[f.Index] = f
 
@@ -354,7 +355,7 @@ def order_plane_face(Faces, omitfaces, min_area=None, min_face_width=None):
     return tuple(face_dict[x[1]] for x in counts)
 
 
-def omit_isolated_planes(Faces, omitfaces):
+def omit_isolated_planes(Faces, omitfaces, *, tolerances):
     for f in Faces:
         if f.Index in omitfaces:
             continue
@@ -373,7 +374,7 @@ def omit_isolated_planes(Faces, omitfaces):
             if adjacent_face is None:
                 continue
             if type(adjacent_face.Surface) is GPlane:
-                if abs(abs(adjacent_face.Surface.Axis.dot(f.Surface.Axis)) - 1) < 1e-5:
+                if axes_parallel(adjacent_face.Surface.Axis, f.Surface.Axis, tolerances.pln_angle):
                     if adjacent_face.Index not in omitfaces:
                         omitfaces.add(f.Index)
                         break

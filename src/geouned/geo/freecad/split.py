@@ -16,6 +16,7 @@ import BOPTools.SplitAPI
 
 from .topology import GShape, GSolid
 from ..solid_defects import valid_solid
+from ..constants import DEFAULT_SPLIT_SCALE, NUMERIC_DOUBLE_TOL, SPLIT_TOL_MAX, SPLIT_TOL_MIN
 
 
 # ---------------------------------------------------------------------------
@@ -51,17 +52,18 @@ def Gsplit(
     tolerances,
 ) -> SplitResult:
 
-    scale = 0.1
+    scale = DEFAULT_SPLIT_SCALE
     split_tolerance = tolerances.split_tolerance
     scale_up_floor = tolerances.scale_up_floor
     scale = tolerances.scale
-    return recursive_freecad_Gsplit(base, tool, split_tolerance, scale, scale_up_floor) 
+    return recursive_freecad_Gsplit(base, tool, split_tolerance, tolerances, scale, scale_up_floor)
 
 def recursive_freecad_Gsplit(
     base: GSolid,
     tool: GShape,
     tolerance: float,
-    scale: float = 0.1,
+    tolerances,
+    scale: float = DEFAULT_SPLIT_SCALE,
     scale_up_floor: float | None = None,
 ) -> SplitResult:
     """
@@ -71,6 +73,10 @@ def recursive_freecad_Gsplit(
     resolving degenerate cases (tangencies, tool not intersecting the
     solid, kernel exceptions at small tolerances) -- callers must NOT
     implement their own retry/offset logic on top of this.
+
+    `tolerances` is the full `Tolerances` (only `min_solid_volume` is read here, by
+    `check_out_solids`); `tolerance` is the split tolerance of THIS attempt, which the
+    retry cascade rescales, so the two are not redundant.
 
     `scale_up_floor` mirrors GEOUNED's public `Options.scaleUp`/
     `Options.splitTolerance`: when `tolerance` drops below 1e-12 and
@@ -82,28 +88,28 @@ def recursive_freecad_Gsplit(
     """
     tools = [tool.__native__]
 
-    if tolerance >= 0.1:
+    if tolerance >= SPLIT_TOL_MAX:
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
-    elif tolerance < 1e-12:
+    elif tolerance < SPLIT_TOL_MIN:
         if scale_up_floor is not None:
-            floor = 1e-13 if scale_up_floor == 0 else scale_up_floor
-            return recursive_freecad_Gsplit(base, tool, floor / scale, scale=1.0 / scale, scale_up_floor=scale_up_floor)
+            floor = NUMERIC_DOUBLE_TOL if scale_up_floor == 0 else scale_up_floor
+            return recursive_freecad_Gsplit(base, tool, floor / scale, tolerances, scale=1.0 / scale, scale_up_floor=scale_up_floor)
         compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
     else:
         try:
             compound = BOPTools.SplitAPI.slice(base.__native__, tools, "Split", tolerance=tolerance)
         except Exception:
-            retried = recursive_freecad_Gsplit(base, tool, tolerance * scale, scale, scale_up_floor)
+            retried = recursive_freecad_Gsplit(base, tool, tolerance * scale, tolerances, scale, scale_up_floor)
             return SplitResult(
                 solids=retried.solids,
                 degenerate_case_handled=True,
                 notes=f"retried at tolerance={tolerance * scale}",
             )
 
-    return check_out_solids(base, compound.Solids)
+    return check_out_solids(base, compound.Solids, tolerances)
 
 
-def check_out_solids(original, split_solids):
+def check_out_solids(original, split_solids, tolerances):
     if not split_solids:
         # tool doesn't intersect solid at all (e.g. a cutting plane
         # entirely outside the solid's extent) -- slice() reports this as
@@ -116,7 +122,7 @@ def check_out_solids(original, split_solids):
             notes="tool did not intersect solid; returning it unchanged",
         )
 
-    if sum(s.Volume for s in split_solids) < 1e-3:
+    if sum(s.Volume for s in split_solids) < tolerances.min_solid_volume:
         return SplitResult(
             solids=[original],
             degenerate_case_handled=True,
@@ -125,7 +131,7 @@ def check_out_solids(original, split_solids):
     elif len(split_solids) == 1:
         return SplitResult(solids=[original])
     else:
-        cleaned = remove_solids(split_solids, original.Volume)
+        cleaned = remove_solids(split_solids, tolerances)
         if len(cleaned) < 2:
             # Fewer than 2 sane fragments after filtering degenerate
             # slivers: the tool grazed `original` rather than genuinely
@@ -148,17 +154,16 @@ def check_out_solids(original, split_solids):
             return SplitResult(solids=[GSolid(s) for s in cleaned])
 
 
-def remove_solids(Solids: list, Volume) -> list:
+def remove_solids(Solids: list, tolerances) -> list:
     # `Solids` here are native Part.Solid (straight from BOPTools.SplitAPI.
     # slice()'s own compound, via check_out_solids) -- solid_defects.valid_solid
     # is duck-typed on .Volume/.Area and _refine_if_valid is GSolid-typed, so
     # wrap on the way in and unwrap on the way out, matching check_out_solids'
-    # own expectation that `cleaned` stays native. `Volume` is unused (the
-    # historical valid_solid's dead 2nd arg), kept in the signature only so
-    # check_out_solids' call site is untouched.
+    # own expectation that `cleaned` stays native. `tolerances` supplies
+    # `min_solid_volume`, the minimum volume of a fragment worth keeping.
     Solids_Clean = []
     for solid in Solids:
-        if not valid_solid(GSolid(solid)):
+        if not valid_solid(GSolid(solid), tolerances.min_solid_volume):
             continue
         Solids_Clean.append(solid)
 
