@@ -99,6 +99,62 @@ def Gload_step(filename: str) -> list[GSolid]:
     return solids
 
 
+def Gexport_binary(shapes: list[GShape], filename: str) -> None:
+    """Writes `shapes` to `filename` in OCCT's own native binary shape
+    format (`BinTools`) instead of STEP. Not an exchange format at all --
+    no other application reads it, and no format translation happens on
+    write, so there is no risk of an analytic quadric surface (plane/
+    cylinder/cone/sphere/torus/...) being downgraded to a generic
+    spline/revolution/extrusion representation the way an exchange
+    format's own reader/writer pair sometimes forces (see GEOReverse's
+    own "STEP round-trip for Geom_Hyperbola-based..." entry in
+    CLAUDE.md for a real example of that happening with STEP) --
+    `BinTools` serializes the exact in-memory geometry directly. Purely
+    for GEOUNED's own internal round-trips (the decompose cache).
+    Measured, 2026-09-27, a small multi-quadric compound: ~3x smaller,
+    ~7x faster to write, ~50x faster to read than the equivalent STEP
+    round-trip, with identical surface classification afterward on all
+    3 engines."""
+    from OCC.Core.BinTools import bintools
+
+    from .primitives import Gmake_compound
+
+    native = shapes[0].__native__ if len(shapes) == 1 else Gmake_compound(shapes).__native__
+    ok = bintools.Write(native, filename)
+    if not ok:
+        raise RuntimeError(f"binary shape export failed for {filename}")
+
+
+def Gload_binary(filename: str) -> list[GSolid]:
+    """Counterpart to `Gexport_binary`. Deliberately does NOT apply the
+    same defensive `.fix(DEFAULT_FIX_TOLERANCE)` healing `Gload_step`
+    applies after every STEP load -- confirmed live, 2026-09-27 (a real
+    decompose-cache reload, `Solidos/test_models/Big_model_reserved/
+    shed_shutter.stp`): the underlying `ShapeUpgrade_UnifySameDomain`
+    step crashed with a native `Standard_Failure: Courbes non jointives`
+    on a solid that is otherwise perfectly valid (it's the exact
+    bit-for-bit geometry `main_split` itself produced -- a `BinTools`
+    round-trip has no reader reconstruction step at all, unlike STEP, so
+    there is nothing here to heal, and forcing a fresh unify pass on
+    already-fine geometry can itself introduce a topological failure
+    that was never present). `Gload_step`'s own healing exists
+    specifically to compensate for STEP's own reader; it does not
+    generalize to this loader."""
+    from OCC.Core.BinTools import bintools
+    from OCC.Core.TopoDS import TopoDS_Shape
+
+    shape = TopoDS_Shape()
+    ok = bintools.Read(shape, filename)
+    if not ok:
+        raise RuntimeError(f"binary shape import failed for {filename}")
+    solids = []
+    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    while explorer.More():
+        solids.append(GSolid(topods.Solid(explorer.Current())))
+        explorer.Next()
+    return solids
+
+
 def Gload_and_process_step(filename: str, tolerances) -> "tuple":
     """GEOUNED's own load-time pass: load every solid, natively fix it
     (`_native_fix`, the same healing `Gload_step` applies, required

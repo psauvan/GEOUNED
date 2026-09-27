@@ -177,6 +177,11 @@ tests_outputs/
 # work folder
 work/
 
+# Settings.load_from_cache's own on-disk cache (decompose_cache.py) --
+# never meant to be committed, and can be left behind at the repo root
+# by an ad-hoc script/manual run using the default outPath="."
+decompose_cache/
+
 # debug output folders
 fuzzySurfaces
 Suspicious_solids/

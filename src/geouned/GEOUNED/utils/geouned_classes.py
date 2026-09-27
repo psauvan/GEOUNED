@@ -125,6 +125,8 @@ class GeounedSolid:
         self.CADSolid = None
         self.UniverseBox = None
         self.NullCell = True
+        self.StepLabel = None
+        self.Modified = False
 
     def update_solids(self, solidList):
         self.Solids = solidList

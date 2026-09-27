@@ -801,6 +801,33 @@ class Settings:
             CAD models, the voids cells of the enclosure will be located in
             the output file in the same location where the enclosure solid
             is located in the CAD solid tree.. Defaults to False.
+        load_from_cache (bool, optional): Read a previous run's cached
+            decomposition (the CPU-expensive phase) from
+            `<outPath>/decompose_cache/` if it exists, keyed by each
+            solid's own STEP label -- a solid whose label is unchanged
+            and unique since that cache was written reuses its cached
+            decomposition instead of redecomposing it; add the marker
+            `__modified__` anywhere in a solid's STEP label (stripped
+            back out before use as the cache key) to force it to be
+            redecomposed regardless. A solid whose label is missing,
+            duplicated, or genuinely new is always (re)decomposed. If no
+            cache exists yet, every solid is decomposed as normal. This
+            is a user-driven mechanism, not an automatic geometric-change
+            detector: a solid edited without adding the marker silently
+            reuses its stale cached decomposition.
+            Independently of this setting, the result of any FULLY
+            successful decomposition run is always written to
+            `<outPath>/decompose_cache/`, replacing whatever was there
+            before -- so a later run with `load_from_cache=True` benefits
+            from it even if this setting was False when it was produced.
+            Only phase 1 (decomposition into convex pieces) is ever
+            cached -- surface registration/numbering always reruns
+            identically for every solid, so this can only change how
+            long a run takes, never its written output. Ignored together
+            with `Options.n_thread > 1` (decomposition falls back to the
+            sequential path whenever any cache activity -- reading or
+            writing -- is possible, to avoid concurrent cache writes).
+            Defaults to False.
     """
 
     def __init__(
@@ -820,6 +847,7 @@ class Settings:
         startCell: int = 1,
         startSurf: int = 1,
         sort_enclosure: bool = False,
+        load_from_cache: bool = False,
     ):
 
         self.outPath = outPath
@@ -837,6 +865,7 @@ class Settings:
         self.startCell = startCell
         self.startSurf = startSurf
         self.sort_enclosure = sort_enclosure
+        self.load_from_cache = load_from_cache
 
     @property
     def outPath(self):
@@ -1003,3 +1032,13 @@ class Settings:
         if not isinstance(sort_enclosure, bool):
             raise TypeError(f"geouned.Settings.sort_enclosure should be a bool, not a {type(sort_enclosure)}")
         self._sort_enclosure = sort_enclosure
+
+    @property
+    def load_from_cache(self):
+        return self._load_from_cache
+
+    @load_from_cache.setter
+    def load_from_cache(self, load_from_cache: bool):
+        if not isinstance(load_from_cache, bool):
+            raise TypeError(f"geouned.Settings.load_from_cache should be a bool, not a {type(load_from_cache)}")
+        self._load_from_cache = load_from_cache

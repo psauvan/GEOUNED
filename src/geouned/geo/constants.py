@@ -473,3 +473,11 @@ SPLINE_PLANARITY_ANGLE = 1.0e-3
 # much smaller floor would reject. Measured window for the 3e-4 repair gate: it must accept |dV| = 8.0e-5 and reject the
 # 0.17 and 0.20 mm^3 failures (ring.stp, rc17.stp), so VOLUME_REF in (0.27, ~570); 1.0 sits inside (only 4 small-solid cases).
 VOLUME_REF = 1.0
+
+# Whether GEOUNED.decompose.decompose_cache.DecomposeCache stages each freshly (re)decomposed solid to its own file
+# under decompose_cache/tmp/ as it's computed, so a crash mid-run can be resumed from exactly where it left off on
+# the next Settings.load_from_cache=True run. Not a user-facing Settings field -- an internal safety/performance
+# knob, per direct user instruction (2026-09-27). The final, consolidated decompose_cache/{solids,enclosures}.bin
+# is written unconditionally at the end of any fully successful decomposition run regardless of this flag; this
+# only controls the granular, crash-recoverable staging during the run itself.
+TMP_CACHE = True

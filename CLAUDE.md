@@ -475,6 +475,268 @@ instruction).
   +/- 0.9 % at NPS 4e6). **Not verified**: the tangent-arc case in those two
   branches has no real fixture.
 
+- **Decomposition cache (`Settings.load_from_cache`), implemented
+  2026-09-27** -- new feature, not a bug fix: `decompose_solids()` (via
+  `main_split`/`generic_split`/`Gsplit`, `decompose/
+  decom_one_generators.py`) is the CPU-expensive phase of the pipeline
+  (real recursive CAD boolean cuts, per solid); the following phase,
+  `build_solid_definition()` (via `build_definition`/
+  `simple_solid_definition`, `conversion/cell_definition.py`), is cheap
+  by comparison but registers every surface into the model-wide,
+  deduplicated `Surfaces` registry (`MetaSurfacesDict`) that assigns
+  final surface numbering. Motivating use case: the user edits a STEP
+  model incrementally (some solids' shape changes, some get added or
+  removed) and wants to skip redecomposing everything that didn't
+  change. Went through several rounds of design with the user before
+  landing on the final shape below (started as `Settings.rerun`, a
+  simple opt-in read/write flag with per-solid STEP files -- see the
+  earlier drafts of this entry in git history/the
+  `project_decomposition_rerun_cache_design` memory for the road not
+  taken and why).
+  **Core design, unchanged since the first draft**:
+  - Only phase 1's OUTPUT (a solid's own decomposed convex pieces) is
+    ever cached -- phase 2 always reruns, for every solid, in the same
+    order as today, which is what keeps global surface numbering
+    deterministic and is what makes this feature provably unable to
+    change any written output, only how long a run takes.
+  - Identity key = the solid's own raw STEP label (`GLabelNode.label`,
+    read via the existing `Gload_step_labels()`/`load_cad()` loop),
+    **not** its position in `meta_list` -- list position breaks the
+    moment a solid is added/removed, and can independently drift at load
+    time too (`corrupted_solids="remove"`, spline handling,
+    `skip_solids`). The **raw**, untrimmed label is used (before
+    `LF.get_label()`'s trailing-number trim), so array copies like
+    "Bolt 001"/"Bolt 002" stay distinct.
+  - **Change detection is user-driven, not automatic** -- deliberately
+    NOT a geometric fingerprint (a fingerprint design was fully worked
+    out first, then explicitly dropped by the user in favor of
+    simplicity: "menos robusta... pero mas facil de implementar").
+    Instead, the user adds the literal marker `__modified__` anywhere in
+    a solid's STEP label before re-exporting (e.g. `"Bolt 001"` ->
+    `"Bolt 001__modified__"`); GEOUNED detects it at load time, forces
+    that solid to be redecomposed, and strips the marker back out before
+    using the label as the cache identity key. **Explicitly accepted
+    trade-off**: a solid edited without the marker silently reuses its
+    stale cached decomposition -- a lightweight "warn if volume/face-
+    count differ unexpectedly" safety net was offered and explicitly
+    declined by the user in favor of the purely marker-driven mechanism.
+  - **Safety rule**: any label that is not unique this run (duplicated
+    in the current model, or in the loaded cache) is excluded from the
+    caching mechanism entirely for every solid sharing it -- always
+    redecomposed, never read from or written to under that label. Worst
+    case is losing the speed benefit for that solid; identity can never
+    be mismatched.
+  - Global invalidation: the whole cache is discarded (every solid
+    redecomposed, cache rebuilt from scratch) if GEOUNED version /
+    `CAD_ENGINE` / `kernel_version()` / any decomposition-relevant
+    `Tolerances` field (`split_tolerance`, `fix_tolerance`,
+    `volume_tolerance`, `scale`, `scale_up_floor`, `min_solid_volume`) /
+    `Options.cut_large_cell` differs from what's stored -- a code or
+    tolerance change can make old cached geometry meaningless even with
+    no user edit at all.
+  **Final semantics of `Settings.load_from_cache` (renamed from
+  `rerun`, per direct user redesign request, same day)** -- the
+  READ/WRITE split is no longer symmetric:
+  - The consolidated cache is written **unconditionally** at the end of
+    ANY fully successful decomposition run (both the `solids` and, when
+    attempted, `enclosures` passes complete without raising) --
+    regardless of `load_from_cache`'s own value. So even a deliberate
+    "ignore whatever's cached, redo everything" run (`load_from_cache=
+    False`) leaves behind a fresh, trustworthy cache for the next run.
+  - `load_from_cache` only gates whether an *existing* cache is read
+    back and reused at all -- `True` consults it (subject to the label/
+    marker rules above), `False` ignores it completely for reading (but
+    still overwrites it with this run's own fresh result on success).
+  - `Options.n_thread > 1` is disabled (forced to the sequential path,
+    with a one-time warning) whenever ANY cache activity is possible
+    this run (`load_from_cache` True, or the always-on write path, or
+    `TMP_CACHE`'s own staging) -- concurrent writes to the same
+    in-memory/on-disk bookkeeping are not supported in this version.
+  **Two-tier on-disk storage (added same day, per direct user request:
+  "se podria juntar todos los bin en un unico fichero binario... si el
+  codigo se para en medio de la decomposicion... se podria recuperar la
+  informacion")**:
+  1. `decompose_cache/{solids,enclosures}.bin` + `manifest.json` -- the
+     last FULLY successful run's consolidated result. Every processed
+     solid's pieces (cache hits and freshly decomposed alike, tracked in
+     memory as the run progresses -- no need to re-read anything from
+     disk to build this) are packed into ONE compound per namespace and
+     written via `Gexport_binary` in one shot; `manifest.json` records
+     each label's own `{start, count}` slice into that flat piece list
+     (native shape enumeration order through a binary round-trip is
+     exactly insertion order -- verified directly on all 3 engines
+     before relying on it, an 8-box test with distinct volumes came back
+     bit-identical in order every time). A label no longer present this
+     run simply never entered the in-memory tracking dict and is
+     therefore silently absent from the fresh cache -- reconciliation
+     (dropping removed/now-ambiguous labels) falls out for free, no
+     explicit deletion step needed (this replaced the first design's own
+     explicit per-label `reconcile()` call entirely). The `enclosures`
+     section is left completely untouched whenever this run didn't
+     attempt that pass at all (`Settings.voidGen=False` or no enclosures
+     loaded) -- otherwise a run that simply didn't check enclosures
+     would wipe out a previous run's own valid enclosure cache.
+  2. `decompose_cache/tmp/` -- one small `.bin` file per solid, written
+     the instant it's (re)decomposed (not batched), plus its own
+     manifest kept continuously up to date via a temp-file-then-
+     `os.replace` atomic write (so it's never more than one solid behind
+     real progress, and is never left in a half-written state by a crash
+     mid-write). Gated by the internal `TMP_CACHE` constant
+     (`geo/constants.py`, default `True`, per direct user instruction --
+     NOT a user-facing `Settings` field, an internal safety/performance
+     knob). This is what survives if a run is interrupted (raises)
+     before reaching the final consolidation step -- the previous run's
+     own consolidated `.bin`/`manifest.json` are left completely
+     untouched in that case (the consolidation code is only ever reached
+     after both passes finish cleanly). The NEXT `load_from_cache=True`
+     run's own `load()` overlays `tmp/`'s entries on top of the last
+     good consolidated cache (`tmp` wins per label, being the freshest),
+     so an interrupted run resumes exactly where it left off -- a solid
+     that made it into `tmp` before the crash is not recomputed, and
+     neither is one the interrupted run never even reached (served from
+     the untouched older consolidated cache instead). `tmp/` is deleted
+     once a run's own consolidation succeeds (its data is now folded
+     into the fresh consolidated files, so it's no longer needed).
+     A single monolithic file kept continuously up to date (the
+     initially-proposed alternative to this two-tier split) was
+     considered and rejected: `BinTools`'s own multi-shape writer
+     (`BinTools_ShapeSet`) is an atomic, whole-file-at-once API, so
+     keeping ONE file resumable at every point would mean rewriting the
+     entire thing after every single solid -- more expensive as the
+     model grows, AND itself a new crash-corruption risk (a crash
+     mid-rewrite could lose everything accumulated so far, not just the
+     one solid in flight). Two tiers gets the performance benefit of one
+     big file for the common (fully successful) case while keeping the
+     crash-recovery property of independent, individually-finalized
+     per-solid files for the in-progress case.
+  **Files touched**: new `GEOUNED/decompose/decompose_cache.py`
+  (`DecomposeCache`: `load`/`lookup`/`record`/`store`/`finalize`, plus
+  `compute_global_key`/`label_key`/`_atomic_write_json` -- pure
+  bookkeeping, no geometric comparison at all, by design); `TMP_CACHE`
+  (`geo/constants.py`); `Settings.load_from_cache: bool = False`
+  (`utils/data_classes.py`, renamed from `rerun`); `GeounedSolid.
+  StepLabel`/`.Modified` (`utils/geouned_classes.py`, plain attributes);
+  the `__modified__` marker parsing in `loadfile/load_step.py::load_cad`'s
+  existing per-node loop (next to the pre-existing `_m<mat>_`/`_d<dil>_`/
+  `enclosure<n>_<parent>_` naming-convention parsing -- confirmed the
+  literal string `__modified__` cannot match any of those regexes);
+  `core.py::CadToCsg.__init__`/`decompose_solids`/`_decompose_solids`/
+  `_decompose_target` wire the cache in (label-usability computed once
+  per run via a `collections.Counter`, not incrementally per solid; the
+  cache object itself is now ALWAYS constructed, since writing is
+  unconditional -- `enabled=settings.load_from_cache` only gates
+  reading).
+  **Storage format precision the user flagged during review, resolved
+  by switching storage format entirely (STEP -> native binary)**: the
+  export used for caching must never let a solid's analytic quadric
+  surfaces (plane/cylinder/cone/sphere/torus/elliptic-cylinder) get
+  substituted for a generic spline/revolution/extrusion representation
+  on write -- losing that would silently corrupt what gets reloaded from
+  cache, since `Gclassify_surface` needs to recognize the SAME surface
+  type it saw before caching. First checked and confirmed against the
+  original STEP-based implementation (`Gexport_step`/
+  `_export_shapes_step`, `geo/{occ,ocp}/io.py`, is a plain
+  `STEPControl_Writer.Transfer`/`.Write(..., STEPControl_AsIs)` with no
+  surface substitution of any kind -- the BSpline-conversion-for-STEP-
+  reader-compatibility trick documented elsewhere in this file, see
+  GEOReverse's own "`Geom_Hyperbola`-based revolution/extrusion
+  surfaces" entry, is a wholly separate mechanism specific to
+  GEOReverse's own external-facing export path for that one rare
+  surface family, never invoked here). But per direct user follow-up
+  request ("escribir el objeto CAD que esta en memoria en un fichero
+  binario... sin pasar por el step"), STEP itself was dropped from the
+  cache path entirely -- this round-trip is purely internal (GEOUNED
+  writing to and reading back from its own cache, never opened by any
+  other tool), so there is no reason to pay STEP's own exchange-format
+  cost, or carry its own unrelated format-translation risk for ANY
+  surface type, at all. New `Gexport_binary`/`Gload_binary`
+  (`geo/{occ,ocp,freecad}/io.py`, re-exported from `geo/__init__.py`)
+  wrap OCCT's own native binary shape serialization directly
+  (`BinTools.Write_s`/`Read_s` under ocp, `bintools.Write`/`Read` under
+  occ, `Part.Shape.exportBinary`/`importBinary` under freecad -- itself
+  the same `BinTools` under the hood) -- not an exchange format, no
+  other application reads it, no translation of any kind happens on
+  write, so the risk this precision was about cannot arise here
+  regardless of surface type.
+  **Measured, 2026-09-27** (a small 4-solid cylinder/cone/sphere/torus
+  compound, ocp): STEP 14761 bytes / 1.35ms write / 6.51ms read vs.
+  binary 4374 bytes / 0.20ms write / 0.12ms read -- ~3.4x smaller, ~7x
+  faster to write, ~54x faster to read; confirmed working with
+  identical surface-type preservation on all 3 engines (occ: identical
+  4374-byte output: the binary format is engine-independent, though
+  nothing relies on that -- the cache's own `global_key` already
+  invalidates on an engine change regardless; freecad: 4811 bytes, same
+  surface types preserved). New test
+  `test_cache_export_preserves_analytic_quadric_surfaces` builds a
+  cylinder/cone/sphere/torus, round-trips them through
+  `Gexport_binary`/`Gload_binary`, and asserts `Gclassify_surface`
+  returns the identical set of analytic types afterward -- green on all
+  3 engines. Native shape enumeration ORDER through this same round-trip
+  was independently verified too (an 8-box compound with distinct
+  volumes, order compared before/after on all 3 engines) -- load-bearing
+  for the consolidated `.bin` files' own `{start, count}` offset scheme.
+  **Verified**: `tests/test_decompose_cache.py` (10 tests: first-run
+  population, unchanged-labels-skip-decomposition, the `__modified__`
+  marker forcing redecomposition of only that solid, new-label
+  add/reuse, removed-label reconciliation, duplicate-label
+  always-redecompose, global-key invalidation,
+  `load_from_cache=False` always writing but never reading (including a
+  3rd run confirming a `False`-produced cache is still consulted once
+  `load_from_cache=True`), a simulated mid-run crash (a monkeypatched
+  `main_split` raises on its 3rd call) followed by a clean run
+  confirming BOTH the `tmp/`-staged solids AND the one solid the crashed
+  run never reached are served without recomputation, and the
+  quadric-surface round-trip test) -- uses controlled, monkeypatched
+  `GLabelNode`s (via `Gload_step_labels`) rather than a real
+  XCAF-authored labeled STEP fixture (the INPUT model fixtures built by
+  the test's own `_make_step` helper are still real STEP files,
+  simulating a user's own CAD export -- only the cache's own internal
+  storage is binary), since `Gexport_step` itself has no
+  label-assignment API; isolates "does the label-driven caching logic
+  behave correctly" from "can a STEP writer embed a given name", which
+  is not part of this feature. All green on all 3 engines: ocp 290
+  passed, occ 290 passed, freecad 296 passed/14 skipped (each full suite
+  + these 10) -- zero regressions.
+  **A real, independent bug found and fixed via the user's own real
+  workflow (`Test RoundCorners/myrun.py`,
+  `Solidos/test_models/Big_model_reserved/shed_shutter.stp`,
+  2026-09-27)**: the SECOND run of a real 31-solid model with
+  `load_from_cache=True` crashed hard on load with a native
+  `OCP.Standard.Standard_Failure: Courbes non jointives` inside
+  `Gload_binary` -- traced to `_native_fix`/`.fix(DEFAULT_FIX_TOLERANCE)`,
+  which `Gload_binary` (occ/ocp) called on every reloaded solid "to match
+  `Gload_step`'s own contract" (the reasoning explicitly flagged as
+  unverified in that function's own docstring at the time -- exactly
+  where it turned out to be wrong). Root cause: `Gload_step`'s healing
+  compensates for STEP's own READER, which can introduce subtle
+  topology issues invisible to `BRepCheck_Analyzer` on otherwise-valid-
+  looking geometry -- a real, documented problem for THAT loader. A
+  `BinTools` round-trip has no such reader-reconstruction step at all
+  (it's the exact bit-for-bit geometry `main_split` itself produced);
+  forcing a fresh `ShapeUpgrade_UnifySameDomain` unify pass onto already-
+  fine geometry can itself introduce a topological failure that was
+  never there, as this real fixture demonstrated. Fixed by simply NOT
+  healing on this path at all (`geo/{occ,ocp}/io.py::Gload_binary`) --
+  `freecad`'s own version never had this call to begin with (its own
+  `Gload_step` has no equivalent healing step either), so it was
+  unaffected. **Verified**: the exact failing script re-run clean after
+  the fix, output confirmed byte-identical between a cold-cache and a
+  warm-cache run of the same model (only the written "Creation Date"
+  comment line differs) -- the first real end-to-end timing measurement
+  of this whole feature's actual motivating benefit: decomposition went
+  from 10.2s (cold) to 0.41s (warm) on this real 31-solid model, ~25x.
+  Full suites re-verified green on all 3 engines after the fix (290/290/
+  296+14skipped, unchanged from before -- this bug was never exercised by
+  the existing test suite's own trivial box fixtures, which have no face
+  that a unify pass would ever touch either way).
+  New regression test `test_cache_round_trip_survives_native_healing_on_
+  curved_solids` (a real cylinder solid, not a box) added the same day
+  to close the coverage gap this bug exposed -- every other fixture in
+  this test file is a plain box (6 planar faces), which never exercised
+  the code path that crashed.
+  **Not verified**: `Options.n_thread > 1` being forced to the
+  sequential path still has no dedicated test.
+
 ### GEOReverse (`CsgToCad`, the reverse CSG -> STEP pipeline)
 
 Deliberately paused as a whole — explicit user priority is to finish

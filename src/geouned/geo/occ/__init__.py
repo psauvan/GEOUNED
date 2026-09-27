@@ -79,7 +79,7 @@ from .repair import (
     Gsliver_heal,
     Gspline_surface,
 )
-from .io import Gexport_step, Gfirst_shell, Gload_and_process_step, Gload_step, Gload_step_labels
+from .io import Gexport_binary, Gexport_step, Gfirst_shell, Gload_and_process_step, Gload_binary, Gload_step, Gload_step_labels
 from .spline_quadrics import Gsubstitute_spline_quadrics
 from .primitives import (
     Gmake_box,

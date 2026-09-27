@@ -15,6 +15,7 @@ from .utils.log_utils import setup_logger
 from .conversion import cell_definition as Conv
 
 from .decompose.decom_one_generators import main_split
+from .decompose.decompose_cache import DecomposeCache
 from .loadfile import load_step as Load
 from .utils.geouned_classes import GeounedSolid, MetaSurfacesDict
 from .utils.functions import get_box
@@ -25,6 +26,7 @@ from .void import void as void
 from .write.functions import write_mcnp_cell_def
 from .write.write_files import write_geometry
 from ..geo import GBoundBox, Gmake_compound, kernel_version
+from ..geo.constants import TMP_CACHE
 
 logger = logging.getLogger("general_logger")
 logger.info(f"GEOUNED version {version('geouned')}")
@@ -83,6 +85,21 @@ class CadToCsg:
         if self.settings.debug:
             self.debug_output_folder = Path(self.settings.outPath) / "debug"
             self.debug_output_folder.mkdir(parents=True, exist_ok=True)
+
+        self._cache_usable_labels = {"solids": set(), "enclosures": set()}
+        self._warned_thread_disabled_for_cache = False
+        # Always constructed: the consolidated cache is written
+        # unconditionally at the end of any fully successful run,
+        # regardless of Settings.load_from_cache (see DecomposeCache's
+        # own module docstring). `enabled` only gates whether an
+        # existing cache is actually read back and reused.
+        self._decompose_cache = DecomposeCache(
+            Path(self.settings.outPath) / "decompose_cache",
+            self.options,
+            self.tolerances,
+            enabled=self.settings.load_from_cache,
+        )
+        self._decompose_cache.load()
 
     @property
     def options(self):
@@ -395,12 +412,39 @@ class CadToCsg:
 
     def decompose_solids(self):
 
+        self._cache_usable_labels = self._compute_cache_usable_labels()
+
         # decompose all solids in elementary solids (convex ones)
         self._decompose_solids(meta=True)
 
         # decompose Enclosure solids
-        if self.settings.voidGen and self.enclosure_list:
+        process_enclosures = self.settings.voidGen and self.enclosure_list
+        if process_enclosures:
             self._decompose_solids(meta=False)
+
+        # Only reached if both passes above completed without raising --
+        # see DecomposeCache.finalize's own docstring for why that matters.
+        # "enclosures" is left out of `namespaces` entirely when this run
+        # never attempted it (voidGen=False or no enclosures this time),
+        # so a previous run's own valid enclosure cache is left untouched
+        # rather than wiped just because it wasn't checked this time.
+        namespaces = ["solids"] + (["enclosures"] if process_enclosures else [])
+        self._decompose_cache.finalize(namespaces, self._cache_usable_labels)
+
+    def _compute_cache_usable_labels(self):
+        """The current run's own set of `StepLabel`s that are usable as a
+        cache identity key, per namespace -- present exactly once among
+        this run's solids (a label seen 0 or >1 times is never trusted:
+        see Settings.load_from_cache's own docstring)."""
+        from collections import Counter
+
+        solids = [m for m in self.meta_list if not m.IsEnclosure]
+        counts_solids = Counter(m.StepLabel for m in solids if m.StepLabel)
+        counts_enclosures = Counter(m.StepLabel for m in self.enclosure_list if m.StepLabel)
+        return {
+            "solids": {label for label, count in counts_solids.items() if count == 1},
+            "enclosures": {label for label, count in counts_enclosures.items() if count == 1},
+        }
 
     def build_solid_definition(self):
         # start Building CGS cells phase
@@ -661,7 +705,25 @@ class CadToCsg:
             meta_list = self.enclosure_list
             description = "Decomposing enclosure solids"
 
-        if self.options.n_thread > 1:
+        # Whether ANY cache activity is possible this run -- reading
+        # (Settings.load_from_cache) or writing (the consolidated result
+        # is always written on success, and TMP_CACHE's own per-solid
+        # staging) -- since main_split/decompose_solids's own accounting
+        # (self._all_pieces, tmp/'s manifest) is plain in-memory/on-disk
+        # bookkeeping with no locking, concurrent writes from multiple
+        # threads are not supported in this first version.
+        threaded = self.options.n_thread > 1
+        if threaded and (self._decompose_cache.enabled or TMP_CACHE):
+            if not self._warned_thread_disabled_for_cache:
+                logger.warning(
+                    "Settings.load_from_cache/TMP_CACHE is active: disabling multi-threaded "
+                    "decomposition (Options.n_thread) to avoid concurrent decompose-cache writes -- "
+                    "falling back to the sequential path"
+                )
+                self._warned_thread_disabled_for_cache = True
+            threaded = False
+
+        if threaded:
             ThreadPoolExecutor(
                 self._decompose_target,
                 meta_list,
@@ -678,6 +740,19 @@ class CadToCsg:
 
         if meta and m.IsEnclosure:
             return
+
+        cache = self._decompose_cache
+        namespace = "solids" if meta else "enclosures"
+        label = m.StepLabel
+        usable_label = label is not None and label in self._cache_usable_labels[namespace]
+
+        if usable_label and not m.Modified:
+            cached_pieces = cache.lookup(namespace, label)
+            if cached_pieces is not None:
+                cache.record(namespace, label, cached_pieces)
+                m.set_cad_solid()
+                m.update_solids(cached_pieces)
+                return
 
         if self.settings.debug:
             if m.IsEnclosure:
@@ -699,6 +774,9 @@ class CadToCsg:
 
         m.set_cad_solid()
         m.update_solids(comsolid.Solids)
+
+        if usable_label:
+            cache.store(namespace, label, comsolid.Solids)
 
 
 def update_comment(meta, idLabel):

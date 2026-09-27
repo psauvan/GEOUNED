@@ -81,6 +81,17 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
         # MIO: lightly modification of label if required
         label = LF.get_label(node.label, options)
         comment = comment + "/" + label
+
+        # decompose-cache identity: a user marks a solid as modified by
+        # adding this literal marker anywhere in its raw STEP label
+        # before re-exporting; stripped back out so the same solid keeps
+        # the same cache identity across runs (see Settings.
+        # load_from_cache's own docstring). Checked against the raw,
+        # untrimmed node.label (not the get_label()-trimmed `label`
+        # above), so array copies like "Bolt 001"/"Bolt 002" stay
+        # distinct once the marker is removed.
+        modified = "__modified__" in node.label
+        step_label = node.label.replace("__modified__", "") if modified else node.label
         if i in removed_indexes:
             removed_labels[i] = comment
         if node.parent is not None:
@@ -129,6 +140,8 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
         for i in range(n_solids):
             meta_list[i_solid].set_comments(f"{comment}{i + 1}")
             meta_list[i_solid].set_cad_solid()
+            meta_list[i_solid].StepLabel = step_label
+            meta_list[i_solid].Modified = modified
 
             if tempre_mat:
                 mat_label = int(tempre_mat.group("mat"))

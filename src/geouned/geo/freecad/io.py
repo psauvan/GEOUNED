@@ -51,6 +51,31 @@ def Gload_step(filename: str) -> list[GSolid]:
     return [GSolid(solid) for solid in shape.Solids]
 
 
+def Gexport_binary(shapes: list[GShape], filename: str) -> None:
+    """Writes `shapes` to `filename` in FreeCAD's own native binary shape
+    format (`Part.Shape.exportBinary`, itself OCCT's `BinTools` under the
+    hood) instead of STEP. Not an exchange format at all -- no other
+    application reads it, and no format translation happens on write, so
+    there is no risk of an analytic quadric surface (plane/cylinder/
+    cone/sphere/torus/...) being downgraded to a generic spline/
+    revolution/extrusion representation the way an exchange format's own
+    reader/writer pair sometimes forces -- this serializes the exact
+    in-memory geometry directly. Purely for GEOUNED's own internal
+    round-trips (the decompose cache). Measured, 2026-09-27: confirmed
+    identical surface classification after a round-trip on this engine
+    too (the analogous occ/ocp functions have the actual size/speed
+    numbers, measured there)."""
+    compound = Part.makeCompound([shape.__native__ for shape in shapes])
+    compound.exportBinary(filename)
+
+
+def Gload_binary(filename: str) -> list[GSolid]:
+    """Counterpart to `Gexport_binary`."""
+    shape = Part.Shape()
+    shape.importBinary(filename)
+    return [GSolid(solid) for solid in shape.Solids]
+
+
 def Gload_and_process_step(filename: str, tolerances) -> "tuple[list[GSolid], list[int], list[int]]":
     """GEOUNED's own load-time pass: load every solid and run
     `Gspline_surface` on it. `Gcheck_and_repair` is deliberately never
