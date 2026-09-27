@@ -456,7 +456,16 @@ def _classify_elliptic_cylinder_extrusion(native_face):
     # explicit DownCast to reach SurfaceOfLinearExtrusion-specific
     # methods like BasisCurve()/Direction().
     native_surf = Geom_SurfaceOfLinearExtrusion.DownCast(BRep_Tool.Surface(native_face))
-    basis = Geom_Ellipse.DownCast(native_surf.BasisCurve())
+    basis_curve = native_surf.BasisCurve()
+    # DownCast raises SystemError (not just returning None) when the basis
+    # curve isn't a Geom_Ellipse at all (e.g. a Geom_Hyperbola, the real
+    # basis curve of a GEOReverse hyperbolic-prism/cylinder side face) --
+    # confirmed live via test_exotic_quadric_convertion[hyperbolic_cylinder_test]
+    # after the georeverse-migration merge (2026-09-27), so a type check
+    # first is required, not just a None check after the fact.
+    if not basis_curve.IsInstance("Geom_Ellipse"):
+        return None
+    basis = Geom_Ellipse.DownCast(basis_curve)
     if basis is None:
         return None
     ellipse_axis = basis.Axis().Direction()

@@ -327,8 +327,8 @@ class Tolerances(GeoTolerances):
             volume-conservation gate -- a substitution is only accepted if the solid's own volume, before
             vs. after every spline face is swapped for its analytic surface, agrees to within this
             fraction. Defaults to 2.0e-2 (2%) -- deliberately much looser than this file's other post-
-            repair volume-conservation gates (compare MAX_SPLIT_RING_VOLUME_REL_CHANGE/
-            MAX_SLIVER_HEAL_VOLUME_REL_CHANGE in geo/constants.py, both ~1e-4): unlike those repairs, the
+            repair volume-conservation gate (compare MAX_REPAIR_VOLUME_REL_CHANGE in geo/constants.py,
+            ~3e-4): unlike that repair, the
             "before" volume here is computed by BRepGProp integrating over the ORIGINAL, still-a-BSpline
             face -- confirmed live, 2026-09-18, real STEP round-trips carry their own ~0.9% numerical-
             quadrature error at that step alone (a Geom_CylindricalSurface's own volume integrates exactly;
