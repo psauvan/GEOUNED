@@ -67,6 +67,32 @@ decided, not ground truth, and the high side of that window is narrow (part2 sit
 Deliberately NOT applied to `Gmerge_coplanar_planes` (1e-6) nor to Gsplit's `volume_tolerance` (1e-6): those confirm an
 (almost) exact operation and stay tight."""
 
+SPLIT_CANDIDATE_VOLUME_REL_TOL = 1.0e-2
+"""`decompose/decom_one_generators.py::generic_split`'s own post-split candidate-acceptance gate: a
+candidate surface's split is only trusted if its pieces sum back to the base fragment's own volume
+within this relative fraction -- otherwise the candidate is discarded as a likely BOPAlgo
+under-separation (real material silently merged away) and the next candidate is tried. Introduced
+2026-09-12 (commit 8149030) hardcoded at `1.0e-4`, later refactored to read `tolerances.
+volume_tolerance` (same value by then) without ever being measured against a genuine, otherwise-
+correct split's own natural volume noise -- confirmed 2026-09-27 to be a real, unmeasured
+regression: `Big_model_reserved/shed_shutter.stp`'s first solid has 3 real, otherwise-correct
+candidate plane splits, each with a stable ~5.5e-4 relative volume excess (reproducible, does not
+shrink at any looser tolerance) -- three orders of magnitude below the genuine BOPAlgo
+under-separation bugs this gate exists to catch (`Big_complex_cell/modelCell_670000.stp`, ~26% and
+~99.93% real volume loss) -- yet every one was rejected at the old, too-tight `1e-4` bound, leaving
+the whole solid permanently unsplit (silently, with only a WARNING-level log line). A 144-file scan
+of `Solidos/test_models` (excluding `Big_model_reserved` and the documented `Mixed/ConeSphere.stp`
+native crash) with default tolerances found ZERO rejection events anywhere in the corpus -- no data
+point exists between this one legitimate-noise sample (5.5e-4) and the two known genuine bugs
+(0.26, 0.9993), so `1.0e-2` was chosen for a roughly symmetric log-scale margin: ~18x above the only
+measured legitimate deviation, ~26x below the smallest known genuine under-separation. Deliberately
+its own constant, not `tolerances.volume_tolerance` (1e-4): that field's other roles (`Gsplit`'s own
+internal tool-removal check, `Gmerge_coplanar_planes`, the repair cascade) all confirm an
+(almost) exact operation and are correctly tight; this one instead decides whether to keep searching
+for a DIFFERENT candidate surface entirely, where the cost of a false rejection (silently giving up
+on decomposing the solid at all) is far higher than the cost of accepting a slightly-noisy but
+genuine split."""
+
 OCCT_FIX_TOLERANCE = 1.0e-6
 """Fixed (never model-scaled) tolerance for native repair/unify calls
 whose own algorithm is confirmed crash-prone when given a loose,

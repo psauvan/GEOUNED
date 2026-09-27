@@ -305,6 +305,94 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **Regression found and fixed, 2026-09-27: `generic_split`'s post-split
+  volume-conservation gate (added 2026-09-12, commit `8149030`) was too
+  tight for a real, otherwise-correct split, silently leaving a solid
+  permanently unsplit.** User-reported symptom:
+  `Big_model_reserved/shed_shutter.stp`'s first solid stopped producing
+  multiple irreducible pieces even though stepping through `generic_split`
+  showed real boolean cuts happening and cut solids being obtained --
+  reproduced identically under both `Options.meta_surfaces=True` and
+  `False`, ruling that feature out immediately. First hypothesis (that
+  this was a side effect of the same session's own large tolerances-
+  renaming/retuning effort) was directly tested and ruled out: at the
+  pre-tolerances-refactor commit `22f0f51`, the exact same "1 piece, all
+  candidates rejected" behavior reproduces with both the old
+  (`volume_tolerance=1e-6`) and new (`1e-4`) default, unchanged -- **per
+  direct user instruction, this was not accepted as "always broken" or
+  pre-existing**: "no, es algo que se ha roto, porque hubo un momento que
+  este solido traducia correctamente. vuelve mas atras en los commit". A
+  manual binary-search bisection (temporary `git worktree`s at successive
+  candidate commits, each tested via the plain `geouned.CadToCsg` public
+  API against the user's own exact settings/tolerances since internal
+  function signatures drift across old commits) narrowed the regression
+  to the exact adjacent-commit boundary `2d16c45` (working, 4 pieces) /
+  `8149030` (broken, 1 piece) -- i.e. `8149030` itself is the culprit.
+  That commit's own message ("large_cell_plane_split: fix a silent
+  BOPAlgo volume loss...") already names the mechanism: it added a
+  post-split check in `decom_one_generators.py::generic_split` --
+  `if not volume_within(piece_sum, orig_vol, tolerances.volume_tolerance):
+  discard the candidate` -- to catch a real, confirmed bug on a
+  DIFFERENT file (`Big_complex_cell/modelCell_670000.stp`, a MultiPlane
+  candidate silently losing ~26% of a fragment's volume to BOPAlgo
+  under-separation) and, per the migration log, a second, earlier case
+  losing ~99.93% of a fragment's volume (2 real tiny slivers replacing
+  nearly the whole base). The `1e-4` relative threshold for this check
+  was chosen directly against that one bug, never measured against a
+  genuinely correct split's own natural volume noise -- confirmed live:
+  `shed_shutter.stp`'s first solid has 3 real, otherwise-correct
+  candidate plane splits, each with a stable ~5.5e-4 relative volume
+  EXCESS (not a deficit -- the opposite sign from the under-separation
+  bugs this gate targets), reproducible and unchanged at any looser
+  tolerance from `1e-3` up to `3e-2` (the accepted split is always the
+  same 4 pieces, summing to the same +5.51e-4 relative excess) -- a
+  genuine, small, inherent BOPAlgo split-tessellation discrepancy for
+  this particular real-world geometry, three orders of magnitude below
+  the two known genuine bugs (0.26, 0.9993) this gate was built to catch.
+  Because this solid's own heal-retry gate
+  (`Gsolid_max_tolerance(solid) > tol_floor and
+  Gsolid_nonmanifold_edge_count(solid) >= 1`) never fires here (this
+  isn't a tolerance-weld case), every one of its 3 candidates being
+  rejected left the solid permanently unsplit with only a WARNING-level
+  log line -- no crash, no test failure, nothing surfacing the problem
+  short of noticing the missing pieces directly.
+  **Measured before fixing** (per this project's own "measure, don't
+  guess" convention): a 144-file scan of `Solidos/test_models` (every
+  folder except `Big_model_reserved`, per standing policy, and excluding
+  the already-documented `Mixed/ConeSphere.stp` native crash) with
+  DEFAULT tolerances found **zero** rejection-warning events anywhere in
+  the existing corpus -- this false positive is specific to
+  `shed_shutter.stp`, and no file provides a data point between the one
+  measured legitimate deviation (5.5e-4) and the two known genuine bugs,
+  so no tighter value could be justified from real data.
+  **Fix**: split a new, dedicated `SPLIT_CANDIDATE_VOLUME_REL_TOL = 1e-2`
+  constant out of `geo/constants.py`, used ONLY at this one
+  candidate-accept/reject site in `generic_split` -- `tolerances.
+  volume_tolerance`'s other roles (`Gsplit`'s own internal tool-removal
+  check, `Gmerge_coplanar_planes`, the repair cascade's volume gates, the
+  top-level "Lost X%" final warning in `split_surfaces`) are all
+  deliberately untouched, since those confirm an (almost) exact operation
+  and are correctly tight; this one instead decides whether to keep
+  searching for a different candidate surface at all, where a false
+  rejection's cost (silently giving up on decomposing the solid
+  entirely) is far higher than accepting a slightly-noisy but genuine
+  split. `1e-2` gives a roughly symmetric log-scale margin: ~18x above
+  the one measured legitimate deviation, ~26x below the smallest known
+  genuine under-separation.
+  **Verified**: `shed_shutter.stp`'s first solid now decomposes into 4
+  pieces (matching the volume-tolerance-loosened experiment used to
+  confirm the diagnosis). Full suites green on all 3 engines after the
+  fix (ocp 298 passed/1 skipped, occ 298 passed/1 skipped, freecad 309
+  passed/14 skipped -- each engine's own established baseline, zero
+  regressions). A before/after differential of the same 144-file corpus
+  scan (`git worktree` at the pre-fix commit vs. the fixed working tree,
+  comparing per-file piece count and total volume) found **zero real
+  differences** anywhere -- confirming the widened threshold changes
+  nothing for any file that was already decomposing correctly, and
+  exists purely to stop rejecting this one previously-silent false
+  positive (and any future file that happens to share this class of
+  small, genuine split noise).
+
 - ~~`AdjacentMultiplanePlanes` needs the same RevCC-to-MultiRoundCorner
   extension~~ -- **done, 2026-09-17** (closes the
   `project_mrc_adjacent_multiplane_pending` memory). Per direct user

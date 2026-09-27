@@ -13,7 +13,7 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
 )
-from ...geo.constants import TOLERANCE_WELD_FLOOR
+from ...geo.constants import SPLIT_CANDIDATE_VOLUME_REL_TOL, TOLERANCE_WELD_FLOOR
 from ...geo.volume_utils import volume_within
 
 logger = logging.getLogger("general_logger")
@@ -148,7 +148,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
             # the split at all.
             piece_sum = sum(abs(p.Volume) for p in comsolid_solids)
             orig_vol = abs(solid.Volume)
-            if orig_vol > 0 and not volume_within(piece_sum, orig_vol, tolerances.volume_tolerance):
+            if orig_vol > 0 and not volume_within(piece_sum, orig_vol, SPLIT_CANDIDATE_VOLUME_REL_TOL):
                 logger.warning(
                     f"Gsplit with a {surf.Type} surface produced {len(comsolid_solids)} piece(s) summing to "
                     f"{piece_sum:.2f}, but the base fragment's own volume is {orig_vol:.2f} -- a likely "
