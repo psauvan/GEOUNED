@@ -750,8 +750,8 @@ class CadToCsg:
             cached_pieces = cache.lookup(namespace, label)
             if cached_pieces is not None:
                 cache.record(namespace, label, cached_pieces)
-                m.set_cad_solid()
                 m.update_solids(cached_pieces)
+                m.set_cad_solid()
                 return
 
         if self.settings.debug:
@@ -772,8 +772,8 @@ class CadToCsg:
             else:
                 comsolid.export_step(str(self.debug_output_folder / f"compSolid_{i}.stp"))
 
-        m.set_cad_solid()
         m.update_solids(comsolid.Solids)
+        m.set_cad_solid()
 
         if usable_label:
             cache.store(namespace, label, comsolid.Solids)

@@ -579,6 +579,133 @@ instruction).
   same numbers as the `gen_plane_cone` fix above, zero regressions from
   adding this fix on top).
 
+- **`generic_split`: `BOPAlgo_Splitter` silently corrupting the base
+  solid's own native shape across repeated "failed" candidate attempts,
+  fixed 2026-09-28 -- root cause of `Mixed/multiplane_add_plane_cyl.stp`
+  losing ~99% of its material under `Options.meta_surfaces=False`
+  (d1suned tally 0.00756).** User-reported: "durante la decomposicion
+  cuando tiene que cortar el plano px=0 debe haber un error y el solido
+  no se corta" -- directly investigated per the user's own request to
+  remove the loop's `try`/`except` and let any real exception surface,
+  which showed NO exception was ever raised: `generic_split`'s
+  candidate-surface loop tried 16 candidates on the solid's 780.39 mm^3
+  fragment, candidate 9 (a real, correct cutting plane) produced 2
+  pieces summing to only 503.97 (not 780.39), correctly rejected by the
+  existing `SPLIT_CANDIDATE_VOLUME_REL_TOL` volume-conservation guard --
+  but no OTHER candidate ever separated the fragment, leaving it
+  permanently unsplit with only a log warning.
+  **Root cause, confirmed by direct instrumentation**: `Gsplit`'s own
+  `base` argument is passed by reference straight into
+  `BOPAlgo_Splitter.AddArgument` -- since `generic_split`'s candidate
+  loop tries this SAME base solid against up to a dozen+ different
+  tool surfaces in sequence (discarding any that don't split it), and
+  OCCT's own BOP algorithm can corrupt a shape's own BRep state as a
+  side effect of merely ATTEMPTING an intersection (even one that
+  ultimately fails to split anything, still 1 output piece), this
+  corruption is cumulative and order-dependent across the WHOLE search,
+  not scoped to one failed attempt. Re-running candidate 9 in ISOLATION
+  (no prior candidates tried) gave the CORRECT 3-piece split (203.97 +
+  300.0 + 276.42 = 780.39 exactly) -- proving the candidate itself was
+  always right, only the corrupted base made it fail later in sequence.
+  A tolerance-only reset (new `Gsolid_set_tolerance`, occ/ocp, via
+  `ShapeFix_ShapeTolerance`, called before every new candidate) was
+  tried FIRST and confirmed INSUFFICIENT by direct instrumentation:
+  candidate 4 (a Plane) raised the base's own max BRep tolerance 5x
+  (1.2e-7 -> 6.0e-7) even though it produced only 1 piece (no real
+  split); resetting the tolerance back before every subsequent candidate
+  kept it pinned at 1.2e-7 throughout, yet candidate 9 STILL misbehaved
+  identically -- and a further check (face/edge/vertex counts, exact
+  vertex-position fingerprints) found NONE of the base's own geometry
+  had changed either, only its `is_valid()` (`BRepCheck_Analyzer`) flag,
+  which flipped `True` -> `False` across the same sequence of "failed"
+  attempts: BOPAlgo had corrupted the shape's own internal
+  parametrization consistency (pcurve/`SameParameter` state), not its
+  tolerance or geometry. **Fix**: reset the tolerance AND re-run the
+  same `.fix()` validity repair `generic_split` already used once at
+  its own top, before EVERY new candidate is tried, not just once.
+  Verified this combination (not tolerance alone) restores the correct
+  3-piece split on the exact same fragment. freecad has no
+  `Gsolid_set_tolerance` (occ/ocp only, guarded by `CAD_ENGINE !=
+  "freecad"`); its own `.fix()` re-run still applies there since it's
+  engine-agnostic.
+  **A second, related bug found investigating the residual gap this
+  fix's own d1suned check left behind** (tally improved to 0.98149 but
+  the written model's own `SD4` reference volume, 794.83, still didn't
+  match the true CAD volume, 786.42 -- ~1.1% off; the user asked
+  directly for the true CAD volume and the written SD4 to be compared,
+  then pointed out d1suned's own tally at NPS 4e6 -- 0.9873 relative to
+  SD4 -- put the REAL, MCNP-traced volume at ~784.75, much closer to
+  the true CAD volume than to SD4, meaning the WRITTEN BOOLEAN
+  DEFINITION was correct and the bug was specifically in how SD4 itself
+  gets computed): `GeounedSolid.update_solids()` (`utils/
+  geouned_classes.py`) computed the new piece list's own total volume
+  into a local `vol` variable but never assigned it to `self.Volume` --
+  a pure oversight, present since this method was written. Separately,
+  `core.py::_decompose_target` (both the cache-hit and the normal-
+  decomposition call sites) called `m.set_cad_solid()` (which
+  recomputes `CADSolid`/`Volume`/`BoundBox` from `self.Solids`) BEFORE
+  `m.update_solids(...)` (which installs the FRESH, correctly-decomposed
+  piece list) -- so `set_cad_solid()` always ran against the OLD,
+  pre-decomposition `self.Solids` reference, which (per the bug above)
+  had just been corrupted in place by `main_split`'s own candidate
+  search (`Gmake_compound` wraps a solid's native shape by reference,
+  never copies it, so `main_split(Gmake_compound(m.Solids), ...)`
+  operates on -- and can corrupt -- the exact same shared native object
+  `m.Solids[0]` still points to). This is NOT scoped to a volume-display
+  cosmetic issue: `self.CADSolid` itself (the real 3D shape other
+  pipeline stages read directly, not just derived scalars) could carry
+  this same corrupted, stale geometry into `build_void`/`cell_definition`
+  (both read `m.CADSolid`) for ANY solid whose own decomposition search
+  ever hit this corruption, not only ones where it happened to show up
+  as a visibly wrong SD4 number.
+  **Fix**: `update_solids()` now also sets `self.Volume`; both call
+  sites in `core.py` reordered to call `update_solids()` (install the
+  fresh pieces) BEFORE `set_cad_solid()` (recompute CADSolid/Volume/
+  BoundBox from them), so every downstream reader always sees geometry
+  derived from the correct, final decomposed pieces, never the stale
+  pre-decomposition original.
+  **Verified together**: `multiplane_add_plane_cyl.stp`'s own d1suned
+  check now shows `SD4` exactly matching the true CAD volume (786.4194
+  both), tally 0.99200 +/-0.44% (1.8 sigma, ordinary MC noise) --
+  0.00756 -> 0.98149 (fix 1 alone, wrong SD4 still) -> 0.99200 with
+  exact SD4 (fix 2 added). Full suites green on all 3 engines after
+  BOTH fixes (ocp 342 passed/2 skipped, occ 342 passed/2 skipped,
+  freecad 310 passed/18 skipped) -- one single access-violation crash
+  and one single `PermissionError` were each seen exactly once across
+  several repeated runs and did NOT reproduce on immediate retry
+  (isolated re-run of the specific failing test passed clean; the
+  `PermissionError` was traced to `decompose_cache/tmp/` file-lock
+  contention from running all 3 engines' suites concurrently against
+  the same repo checkout, not a real regression -- freecad alone, after
+  clearing the stale cache dir, passed clean). A 144-file isolated
+  corpus differential (this commit vs the immediately preceding one, own
+  MCNP-text comparison under the default `Options.meta_surfaces=True`)
+  found 0 DIFF, 136 SAME, and the same 8 known pre-existing CRASH files
+  (unchanged) -- this pair of fixes is inert at the default setting for
+  every file in `Solidos/test_models`, exactly as expected (the
+  corruption mechanism needs a genuinely failed-then-later-succeeding
+  candidate sequence, which the default `meta_surfaces=True` order
+  apparently never triggers for any file in this corpus).
+  **Full `meta_surfaces=False` corpus re-run, 2026-09-28**: besides the
+  targeted `multiplane_add_plane_cyl.stp` fix (moved out of the >3 sigma
+  bucket entirely), 2 files improved as a pure SIDE EFFECT, never
+  specifically targeted: `Complex_cell/modelcell_cut1_1.stp` (was
+  0.95581/16.51 sigma) and `Mixed/rev_pipe.stp` (was 0.99243/4.01
+  sigma, along with its confirmed-duplicate `RoundCorners/rev_pipe.stp`)
+  both moved to within 2 sigma. Overall bucket: 89.3% -> **91.4%**
+  within 2 sigma, beyond-3-sigma files 9 -> 5, 0 lost particles
+  throughout. `RoundCorners/rrc23.stp` and `RoundCorners/comp_RC.stp`
+  (both cells) are essentially unchanged (bit-identical or MC-noise-
+  level). **`Mixed/double_RC.stp` got WORSE**: 1.24915 (76.7 sigma) in
+  the original baseline -> 1.66076 (165.8 sigma) now -- **not yet
+  investigated**: no intermediate data point exists between the already-
+  committed `_is_closed_by_winding` fix and this pair of fixes to
+  attribute which change caused it, or whether it's a real regression
+  from today's work at all rather than something the winding fix itself
+  already introduced under `meta_surfaces=False` (never re-scanned in
+  that specific configuration until now). Flagged for follow-up, not
+  blocking these fixes' own commit per direct user instruction.
+
 - ~~`AdjacentMultiplanePlanes` needs the same RevCC-to-MultiRoundCorner
   extension~~ -- **done, 2026-09-17** (closes the
   `project_mrc_adjacent_multiplane_pending` memory). Per direct user

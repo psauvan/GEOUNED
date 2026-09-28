@@ -6,6 +6,7 @@ import logging
 
 from .generators import get_surfaces
 from ...geo import (
+    CAD_ENGINE,
     GSolid,
     Gheal_topology,
     Gmake_compound,
@@ -88,8 +89,51 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     comsolid_solids = [solid]
     omitfaces = set()
 
+    # BOPAlgo_Splitter.Perform() can corrupt `solid`'s own native shape as a
+    # side effect of merely attempting an intersection, even when the
+    # candidate tool ultimately fails to split it at all (still 1 output
+    # piece) -- since Gsplit's own `base` argument is passed by reference
+    # straight into BOPAlgo_Splitter.AddArgument, this corruption is
+    # cumulative and order-dependent across the WHOLE candidate-surface
+    # search below, not scoped to one failed attempt. Confirmed live on
+    # Mixed/multiplane_add_plane_cyl.stp: an earlier, failed Plane candidate
+    # raised the base fragment's own tolerance 5x (1.2e-7 -> 6.0e-7), and a
+    # LATER candidate that would have split it correctly (3 pieces summing
+    # exactly to the input volume, on a pristine copy) instead
+    # under-separated it (2 pieces, losing a whole 276 mm^3 fragment) once
+    # tried against the now-degraded shape -- the volume-conservation guard
+    # below correctly rejected that wrong split, but no OTHER candidate ever
+    # got a chance to try against a clean base, so the fragment was left
+    # permanently unsplit. A tolerance reset alone (Gsolid_set_tolerance)
+    # was tried and confirmed INSUFFICIENT: instrumented directly, face/
+    # edge/vertex counts and every vertex position stayed bit-identical
+    # across repeated "failed" attempts even with the tolerance reset
+    # applied each time, yet the base's own `is_valid()` (BRepCheck_Analyzer)
+    # flipped True -> False -- BOPAlgo_Splitter had corrupted the shape's
+    # internal parametrization consistency (pcurve/SameParameter state), not
+    # its tolerance or geometry, and that is what made the later candidate
+    # misbehave. Fixed by resetting BOTH the tolerance AND re-running the
+    # same validity fix already used once at the top of this function,
+    # before every new candidate is tried, not just once at the top.
+    # freecad has no equivalent tolerance-reset primitive
+    # (Gsolid_set_tolerance) yet -- occ/ocp only, matching every other
+    # native-tolerance-inspection feature in this cascade; its own `.fix()`
+    # re-run still applies there since it's engine-agnostic.
+    if CAD_ENGINE != "freecad":
+        from ...geo import Gsolid_set_tolerance
+
+        original_tolerance = Gsolid_max_tolerance(solid)
+    else:
+        original_tolerance = None
+
     new_split = False
     for surf in get_surfaces(solid, omitfaces, tolerances, options, meta_surface=options.meta_surfaces):
+        if original_tolerance is not None:
+            Gsolid_set_tolerance(solid, original_tolerance)
+        if not solid.is_valid():
+            fixed = solid.fix(tolerances.fix_tolerance)
+            if fixed.is_valid():
+                solid = fixed
         try:
             # build_surface (Can/RoundCorner/... construction, via
             # get_cell_object) can raise -- e.g. round_corner_region's own

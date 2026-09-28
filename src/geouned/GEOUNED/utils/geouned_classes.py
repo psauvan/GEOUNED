@@ -135,6 +135,7 @@ class GeounedSolid:
         for s in solidList:
             vol += s.Volume
             bbox = bbox.union(s.BoundBox)
+        self.Volume = vol
         self.BoundBox = bbox
 
     def set_cad_solid(self):

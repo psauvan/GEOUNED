@@ -9,9 +9,11 @@ from __future__ import annotations
 from OCP.BRep import BRep_Tool
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+from OCP.ShapeFix import ShapeFix_ShapeTolerance
 from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
+    TopAbs_SHAPE,
     TopAbs_VERTEX,
 )
 from OCP.TopExp import TopExp, TopExp_Explorer
@@ -43,6 +45,32 @@ def Gsolid_max_tolerance(solid: GShape) -> float:
         worst = max(worst, BRep_Tool.Tolerance_s(TopoDS.Vertex(exp.Current())))
         exp.Next()
     return worst
+
+
+def Gsolid_set_tolerance(solid: GShape, value: float) -> None:
+    """Uniformly set every vertex/edge/face tolerance of `solid` to
+    `value`, mutating its own native shape in place (not a copy -- every
+    other reference to the same underlying TopoDS data sees the change
+    too, which is exactly what undoes the mutation this function exists
+    to counter).
+
+    `BOPAlgo_Splitter.Perform()` can raise a shape's own BRep tolerances
+    in place as a side effect of merely attempting an intersection, even
+    when the candidate tool ultimately fails to split it at all (still 1
+    output piece) -- confirmed live on `Mixed/multiplane_add_plane_cyl.stp`:
+    an earlier, failed Plane candidate raised the base fragment's own
+    tolerance 5x (1.2e-7 -> 6.0e-7), and a LATER candidate that would have
+    split it correctly (3 pieces summing exactly to the input volume, on a
+    pristine copy) instead under-separated it (2 pieces, losing a whole
+    276 mm^3 fragment) once tried against the now-degraded shape. Since
+    `Gsplit`'s own `base` argument is passed by reference straight into
+    `BOPAlgo_Splitter.AddArgument`, this degradation is cumulative and
+    order-dependent across the WHOLE candidate-surface search in
+    `generic_split`, not scoped to one failed attempt -- resetting the
+    base solid's own tolerance back to its own pre-search baseline before
+    every new candidate is what actually undoes it.
+    """
+    ShapeFix_ShapeTolerance().SetTolerance(solid.__native__, value, TopAbs_SHAPE)
 
 
 def Gsolid_nonmanifold_edge_count(solid: GShape) -> int:

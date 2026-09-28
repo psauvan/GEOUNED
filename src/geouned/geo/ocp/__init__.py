@@ -89,4 +89,4 @@ from .primitives import (
 )
 from .boolean import Gcommon, Gcut, Gfuse
 from .split import SplitResult, Gsplit
-from .queries import Gdistance, Gin_contact, Gsolid_max_tolerance, Gsolid_nonmanifold_edge_count
+from .queries import Gdistance, Gin_contact, Gsolid_max_tolerance, Gsolid_nonmanifold_edge_count, Gsolid_set_tolerance
