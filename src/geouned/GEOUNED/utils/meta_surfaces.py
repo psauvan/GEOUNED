@@ -274,11 +274,31 @@ def get_tcone_surfaces(cone, solidFaces, *, tolerances):
             return None, None
 
         r = region_sign(cone_shell, s, tolerances=tolerances)
-        surfaces.append((s, r, True))
-        # s_value = 1 if r == "AND" else -1
-        # if s_value != kne_value:
-        #    faceindex.add(s.Index)  # will not split with adjacent surface
-        faceindex.add(s.Index)  # same check as get_can_surfces
+        if r == "OR" and cone.Orientation == "Forward":
+            # Forward cone + OR is not a valid TCone configuration at all
+            # (no combination of AND/OR-with-continuity can represent it)
+            # -- reject the whole TCone, mirroring get_can_surfaces's own
+            # identical rejection for a Forward cylinder.
+            return None, None
+
+        omit = True
+        if r == "AND" and cone.Orientation == "Reversed":
+            # The TCone's "mouth" is open on this end (no real closing
+            # surface AND-bounds the main cone here) -- same open-mouth
+            # continuity conversion as get_can_surfaces (see its own
+            # comment for the full reasoning): `s`'s own natural extension
+            # stands in for the missing closure, using the
+            # opposite-orientation continuity formula. build_tcone_params
+            # already has the matching `if not omit: normal = -normal`
+            # branch to realize this (byte-identical to build_can_params's
+            # own), it just was never reached before this fix, since this
+            # function never produced omit=False nor converted AND to OR.
+            omit = False
+            r = "OR"
+        surfaces.append((s, r, omit))
+
+        if omit:
+            faceindex.add(s.Index)
 
     if len(ext_faces) > 2:
         ext_faces, remove_index = most_outer_faces(cone, ext_faces, tolerances=tolerances)
@@ -286,7 +306,11 @@ def get_tcone_surfaces(cone, solidFaces, *, tolerances):
             if s[0] not in ext_faces:
                 surfaces.remove(s)
                 if s[0].Index in remove_index:
-                    faceindex.remove(s[0].Index)
+                    # s[0].Index was only ever added to faceindex when its
+                    # own `omit` was True (see the open-mouth continuity
+                    # branch above) -- discard rather than remove so a
+                    # never-added (omit=False) face doesn't raise KeyError.
+                    faceindex.discard(s[0].Index)
 
     if len(ext_faces) != 2:
         return None, None

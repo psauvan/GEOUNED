@@ -43,9 +43,8 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
     solid_definition = BoolSequence(operator="OR")
     for basic_solid in meta_obj.Solids:
         comp = simple_solid_definition(basic_solid, Surfaces, meta_surfaces=Surfaces.options.meta_surfaces)
-        # if simplifyComp:
-        # comp.expand_regions_to_boolVar()
-        # comp.simplify()
+        comp.expand_regions_to_boolVar()
+        comp.simplify()
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
 

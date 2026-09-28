@@ -318,7 +318,9 @@ def _oriented_angle_sweep(angle_of, edge, v_from, v_to):
     params = [p0 + (p1 - p0) * k / _WINDING_N_SAMPLES for k in range(_WINDING_N_SAMPLES + 1)]
     if not forward:
         params.reverse()
-    angles = [angle_of(edge.value_at(p)) for p in params]
+    # drop samples that land on the axis itself (angle undefined there,
+    # e.g. an edge running through a cone's own apex) -- see _angle_function
+    angles = [a for p in params if (a := angle_of(edge.value_at(p))) is not None]
     cumulative = 0.0
     for a0, a1 in zip(angles, angles[1:]):
         d = a1 - a0
@@ -364,11 +366,24 @@ def _surface_axis_origin_e1(surf):
 
 
 def _angle_function(axis, origin, e1):
+    """Returns a function mapping a 3D point to its azimuthal angle around
+    `axis` (through `origin`), or None when the point sits on the axis
+    itself (e.g. a cone's own apex) -- there, the perpendicular-to-axis
+    "rel" vector collapses to ~0 and the angle is genuinely undefined, not
+    0 (atan2(0, 0)'s own arbitrary convention). A caller that treated that
+    arbitrary 0 as a real sample would see a spurious jump to/from whatever
+    the true angle is on either side -- exactly what happens walking a
+    closed cone's own boundary through its degenerate apex vertex (the
+    generatrix edges on both sides of the seam approach the apex at their
+    own real, constant angle, but the apex sample itself reads as 0
+    regardless): callers must skip a None sample rather than use it."""
     e2 = axis.cross(e1)
 
     def angle_of(point):
         rel = point - origin
         rel = rel - rel.dot(axis) * axis
+        if rel.length < POINT_POINT_TOL:
+            return None
         return math.atan2(rel.dot(e2), rel.dot(e1))
 
     return angle_of
@@ -479,9 +494,11 @@ def _loop_closes_full_turn(angle_of, oriented_edges):
         return True
 
     points = _loop_sample_points(oriented_edges)
-    if len(points) < 3:
+    # drop samples that land on the axis itself (angle undefined there,
+    # e.g. a cone's own degenerate apex vertex) -- see _angle_function
+    angles = [a for p in points if (a := angle_of(p)) is not None]
+    if len(angles) < 3:
         return False
-    angles = [angle_of(p) for p in points]
 
     n = len(angles)
     deltas = []
@@ -748,10 +765,29 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
         Umin, Umax, ifacemin, ifacemax = face_or_shell.U_parameter_range
         if twoPimod(Umax - Umin) == 0:
             return ([], False) if root else ([], 0.0)
-        emin = extreme_edge(Umin, face_or_shell.Faces[ifacemin])
-        emax = extreme_edge(Umax, face_or_shell.Faces[ifacemax])
         facemin = face_or_shell.Faces[ifacemin]
         facemax = face_or_shell.Faces[ifacemax]
+        # Umin/Umax are expressed in U_parameter_range's own COMMON frame
+        # (re-based onto self.Surface, see ShellFaceGu._U_parameter_faces's
+        # own docstring) so arc_extent can correctly join intervals from
+        # faces whose native OCCT parametrisation has a different U origin
+        # -- but extreme_edge compares against each candidate EDGE's own
+        # LOCAL face.parameter() value, which is still in that face's own
+        # native frame. Passing the common-frame Umin/Umax straight into
+        # extreme_edge(_, facemin/facemax) compares two different frames --
+        # confirmed live, 2026-09-28, Hollow_plates/placa2.stp: a real
+        # boundary edge sitting within ~0.02 rad of facemin's own true
+        # local u0 was scored ~3.1 rad (near exactly pi) away instead,
+        # since the common-frame target (here ~5.68) was compared against
+        # this face's own local u range (~2.54-6.28), silently picking a
+        # wrong, unrelated edge as the chain-continuation boundary. Umin/
+        # Umax are themselves, by construction, exactly facemin's/facemax's
+        # own common-frame cu0/cu1 (arc_extent picks its Umin/Umax from
+        # among the per-face interval endpoints _U_parameter_faces builds),
+        # so the matching LOCAL value is simply that face's own
+        # ParameterRange boundary -- no reverse frame conversion needed.
+        emin = extreme_edge(facemin.ParameterRange[0], facemin)
+        emax = extreme_edge(facemax.ParameterRange[1], facemax)
     else:
         Umin, Umax, _, _ = face_or_shell.ParameterRange
         if twoPimod(Umax - Umin) == 0:
@@ -859,8 +895,23 @@ def gen_plane_cylinder(face_or_shell):
 
     UVNode_min, UVNode_max = get_shell_UV_nodes(face_or_shell)
 
-    Uminr = twoPimod(Umin)
-    Umaxr = twoPimod(Umax)
+    # Umin/Umax are U_parameter_range's own COMMON frame (re-based onto the
+    # shell's own self.Surface so arc_extent can join intervals across
+    # faces with a different native U origin -- see
+    # ShellFaceGu._U_parameter_faces's own docstring), but UVNode_min/
+    # UVNode_max come from get_shell_UV_nodes -> tessellate_face ->
+    # face.getUVNodes(), each face's own LOCAL, native parametrisation --
+    # comparing a common-frame target against local-frame node U values is
+    # the same frame mismatch confirmed and fixed in gen_plane_cone (this
+    # function's own sibling) and in get_join_cone_cyl's extreme_edge calls,
+    # 2026-09-28, Hollow_plates/placa2.stp. Umin/Umax are themselves, by
+    # construction, exactly Faces[ifacemin]'s/Faces[ifacemax]'s own
+    # common-frame cu0/cu1 (arc_extent picks them from among the per-face
+    # interval endpoints _U_parameter_faces builds), so the matching LOCAL
+    # target is simply that face's own ParameterRange boundary -- no
+    # reverse frame conversion needed.
+    Uminr = twoPimod(Faces[ifacemin].ParameterRange[0])
+    Umaxr = twoPimod(Faces[ifacemax].ParameterRange[1])
     # min()-based search, not a hand-rolled "if d < best" loop: UVNode_min/
     # UVNode_max are now guaranteed non-empty (see the fallback above), but
     # a strict-less-than loop starting from a fixed twoPi bound can still
@@ -929,8 +980,27 @@ def gen_plane_cone(face_or_shell):
     # sides of this exact comparison (Uminr/Umaxr) -- this was a plain
     # omission here, not an intentional difference; verified fixed against
     # the real reproduction, not just pattern-matched from the sibling.
-    Uminr = twoPimod(Umin)
-    Umaxr = twoPimod(Umax)
+    #
+    # Umin/Umax themselves are in U_parameter_range's own COMMON frame
+    # (re-based onto the shell's own self.Surface so arc_extent can join
+    # intervals across faces with different native U origins -- see
+    # ShellFaceGu._U_parameter_faces's own docstring), but UVNode_min/
+    # UVNode_max come from get_shell_UV_nodes -> tessellate_face ->
+    # face.getUVNodes(), each face's own LOCAL, native parametrisation --
+    # comparing a common-frame target against local-frame node U values
+    # is the same frame mismatch confirmed in get_join_cone_cyl's own
+    # extreme_edge calls (fixed 2026-09-28, same placa2.stp fixture): the
+    # indmin/indmax search can silently converge on a node roughly pi
+    # radians away from the true boundary instead of the real one,
+    # corrupting V1/V2 and therefore this function's own returned plane
+    # (both its position and its cross-product-derived normal). Umin/Umax
+    # are themselves, by construction, exactly Faces[ifacemin]'s/
+    # Faces[ifacemax]'s own common-frame cu0/cu1 (arc_extent picks them
+    # from among the per-face interval endpoints _U_parameter_faces
+    # builds), so the matching LOCAL target is simply that face's own
+    # ParameterRange boundary -- no reverse frame conversion needed.
+    Uminr = twoPimod(Faces[ifacemin].ParameterRange[0])
+    Umaxr = twoPimod(Faces[ifacemax].ParameterRange[1])
     indmin = min(range(len(UVNode_min)), key=lambda i: abs(twoPimod(UVNode_min[i][0]) - Uminr))
     indmax = min(range(len(UVNode_max)), key=lambda i: abs(twoPimod(UVNode_max[i][0]) - Umaxr))
 

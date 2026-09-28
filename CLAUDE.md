@@ -393,6 +393,192 @@ instruction).
   positive (and any future file that happens to share this class of
   small, genuine split noise).
 
+- **`gen_plane_cone`/`gen_plane_cylinder`: frame-mismatch bug fixed,
+  2026-09-28 -- root cause of `Hollow_plates/placa2.stp` missing ~39% of
+  material (d1suned tally 0.609).** User-reported symptom: the CSG cell
+  definition for this solid's first RevCC-bounded region was missing
+  real material; user explicitly rejected treating it as pre-existing
+  ("no, es algo que se ha roto, porque hubo un momento que este solido
+  traducia correctamente. vuelve mas atras en los commit") and directed
+  a `git worktree`-based binary-search bisection (stable high-level
+  `geouned.CadToCsg` public API only, `freecad` engine, since internal
+  signatures drift across ~578 commits) that narrowed the regression's
+  *symptom* to commit `54eefa5` (the `get_surfaces` cylinder/cone-before-
+  planes reorder) -- but the underlying defect turned out to predate
+  that commit by a wide margin: `54eefa5` only changed which faces end
+  up as RevCC chain segments with a local U-parameter frame origin
+  different from their shell's own common frame, exposing a latent bug
+  rather than introducing one.
+  **Root cause**: `ShellFaceGu.U_parameter_range` (`_U_parameter_faces`
+  in `geometry_gu.py`) re-expresses each constituent face's own U
+  interval into a COMMON reference frame (based on `Faces[0]`'s own
+  classification) so `arc_extent` can join/merge intervals across faces
+  with different native U origins. `gen_plane_cone`
+  (`meta_surfaces_utils.py`, builds a RevCC/TCone segment's own closing
+  plane from two boundary points V1/V2) took this COMMON-frame
+  `Umin`/`Umax` and used it directly to search the LOCAL, per-face
+  tessellated `UVNode` list (`get_shell_UV_nodes`/`face.getUVNodes()`)
+  for the matching point -- a genuine frame mismatch whenever a face's
+  own local U origin differs from the shell's common frame (routine for
+  a real multi-face RevCC chain segment), silently picking the wrong
+  UVNode and therefore the wrong V1/V2, which built a wrongly-placed
+  closing plane. `get_join_cone_cyl`'s own `extreme_edge` calls (used
+  for chain-continuation decisions, not plane construction) had the
+  exact same mismatch -- flagged by direct user diagnosis ("La funcion
+  extreme_edge en get_join_cone_cyl no coge los edges correctos. Creo
+  que ya hemos tenido problemas con esta funcion, no es muy robusta"),
+  confirmed via tracing (3/4 calls picked an edge 0.6-2.8 rad away from
+  the true target) but confirmed NOT to affect placa2's own tally
+  (0.609212 unchanged after fixing this alone -- it only feeds chain-
+  continuation logic, not plane placement).
+  **A wrong hypothesis tried and reverted first**: swapping
+  `gen_plane_cone`'s own `dir2.cross(dir1)` -> `dir1.cross(dir2)` (a
+  plausible-looking cross-product-order asymmetry vs.
+  `gen_plane_cylinder`'s own formula) made the tally WORSE (0.407, not
+  0.609) -- reverted immediately. The cross-product order was never the
+  bug; the real defect was V1/V2 themselves being the wrong points
+  entirely, not merely sign-flipped -- a blanket formula change broke
+  other, previously-correct instances of the same shared function.
+  **Fix** (both `gen_plane_cone` and, by the identical pattern,
+  `gen_plane_cylinder`): use `Faces[ifacemin].ParameterRange[0]` /
+  `Faces[ifacemax].ParameterRange[1]` (each face's own LOCAL boundary,
+  which -- by `U_parameter_range`'s own construction -- is exactly what
+  `Umin`/`Umax` equal in the common frame) instead of the common-frame
+  `Umin`/`Umax` directly, when searching that face's own local UVNode
+  list. **Verified via d1suned**: `placa2.stp` tally 0.60921 -> 0.99855
+  (+/-0.24%, statistically exact).
+  **Side fix found and applied in the same investigation, real but not
+  placa2's cause**: `get_tcone_surfaces` (`meta_surfaces.py`) was
+  missing the same Forward+OR-rejection / Reversed+AND-to-OR-with-
+  continuity "open mouth" handling `get_can_surfaces` already had --
+  added for consistency (mirrors the Can logic exactly); confirmed via
+  `git stash`-based before/after that it changes 3 written terms on
+  `placa2.stp` but leaves its d1suned tally statistically unchanged
+  (0.609 -> 0.609212).
+  **Verified**: full suites green on all 3 engines (ocp 342 passed/2
+  skipped, occ 342 passed/2 skipped, freecad 310 passed/18 skipped --
+  combined with the `_is_closed_by_winding` fix below and the user's own
+  `cell_definition.py` boolean-simplification re-enable, all in the same
+  working tree). A 144-file `Solidos/test_models` differential (full
+  pipeline: decompose + build_solid_definition + build_void + export,
+  comparing WRITTEN MCNP TEXT, not just decomposed-piece volume -- the
+  latter is USELESS for verifying a `build_solid_definition`-stage fix
+  like this one, since it never touches `decompose_solids()`'s own
+  output) found 12 DIFF files (`Hollow_plates/cylcone_exact_placa3_pos`,
+  `placa`, `placa2`, `placa3_axis_aligned`, `placa3_near_origin`,
+  `placa3_real_solid`, `placa3_roundtrip`, `placathin`; `Mixed/ring`,
+  `sleeve`; `RevCC_regression/cyl_cone`; `Reversed_Cyl_Cones/cyl_cone`)
+  and 8 CRASH files, all 8 identical before/after (pre-existing, not
+  caused by this fix -- includes the already-documented
+  `Enclosures/w_encl.stp` load-time bug). Besides `placa2` itself,
+  d1suned-verified: `RevCC_regression/cyl_cone.stp` and
+  `Reversed_Cyl_Cones/cyl_cone.stp` (both directly named after the RevCC
+  chain-join functionality this fix touches) both give tally 0.99654
+  +/-0.29% (1.2 sigma), 0 lost particles, SD4 matches true CAD volume.
+  The remaining 8 DIFF files were checked for decomposed-piece VOLUME
+  conservation only (identical before/after, as expected/uninformative
+  for this stage) -- not individually d1suned-verified.
+
+- **`_is_closed_by_winding`: degenerate-axis-point bug fixed, 2026-09-28
+  -- a genuinely closed cone/cylinder (boundary loop passing through its
+  own axis, e.g. a full cone's apex) could be wrongly classified as NOT
+  closed.** User-reported: on `working_solids/can_cone.stp`, this
+  function returned `False` for a cone face the user confirmed by direct
+  inspection is closed. **Root cause**: `_angle_function`'s own
+  `angle_of(point)` computes `atan2(rel.dot(e2), rel.dot(e1))` where
+  `rel` is the point's position perpendicular to the surface's axis --
+  for a point sitting ON the axis (e.g. a cone's own apex vertex,
+  `rel`'s length ~0), the azimuthal angle is genuinely undefined, but
+  `atan2(0, 0)` silently returns `0.0` by convention, not an error. The
+  standard OCCT topology for a full closed cone is apex vertex + a seam
+  generatrix edge (apex to rim) + the base circle + the seam generatrix
+  back (rim to apex) -- walking this loop's sampled points, the samples
+  AT the degenerate apex all read angle=0.0 (an arbitrary artifact, not
+  a real direction), while the adjacent real samples just off the apex
+  read the generatrix's own true, constant angle (confirmed via a
+  dedicated per-sample trace on `can_cone.stp`: apex samples all read
+  0deg, first real sample off the apex reads 90deg -- a spurious ~90deg
+  "jump" with no physical meaning). `_loop_closes_full_turn`'s own run-
+  accumulation logic (which requires each monotonic-direction run to
+  itself close a whole multiple of 2*pi, correctly needed for a genuine
+  annulus-shaped boundary's top/bottom-rim sense reversal) then glued
+  this artifact jump onto the real, correct 360deg sweep of the base
+  circle, making the combined run read as 450deg (not closing) followed
+  by a stray -90deg leftover run (also not closing) -- so a genuinely
+  closed cone read as open.
+  **Fix**: `_angle_function`'s `angle_of` now returns `None` when the
+  point's perpendicular-to-axis distance is below `POINT_POINT_TOL`
+  (on the axis, angle undefined); both consumers
+  (`_oriented_angle_sweep`'s fast-path single-edge check,
+  `_loop_closes_full_turn`'s general per-sample-point walk) filter out
+  `None` samples before computing angular deltas, instead of treating
+  the arbitrary 0.0 as a real sample. **Verified on `can_cone.stp`**:
+  `_is_closed_by_winding` now returns `True`; the per-edge sweep trace
+  confirms the two generatrix edges now correctly read sweep~0 (constant
+  angle) and the two base-circle-arc edges read 0.5 turn each (summing
+  to the correct full turn), matching the geometry exactly.
+  **Isolated corpus-wide effect** (a dedicated script comparing the OLD
+  vs NEW closure logic directly on every cone/cylinder face of every
+  solid in `Solidos/test_models`, without running the full pipeline --
+  much faster and cleanly decoupled from the user's own, unrelated
+  `cell_definition.py` `comp.expand_regions_to_boolVar()`/`.simplify()`
+  re-enable that was also live in the same working tree): only 4/138
+  files have any face whose closure result changes --
+  `Cans/fwd_can_0.stp`, `fwd_can_1.stp`, `rev_can_0.stp`,
+  `rev_can_1.stp` (2/3 faces each). Of these, only `rev_can_0`/
+  `rev_can_1` change the final WRITTEN MCNP text under
+  `Options.meta_surfaces=True` (the Forward cases build the same final
+  surfaces regardless, via a different branch).
+  **Confirms this was a real, general, previously-hidden GEOUNED bug,
+  not a `meta_surfaces=False`-specific limitation** -- directly
+  motivated by the user's own hypothesis while reviewing a separate
+  `meta_surfaces=False` corpus scan (see
+  `docs/investigations/meta_surfaces_false_corpus_scan_2026-09-28.md`)
+  that found `Cans/rev_can_1.stp` losing 10 particles ("no cell found in
+  subroutine newcel") under `meta_surfaces=False`: **d1suned confirms
+  the fix eliminates this entirely** -- 0 lost particles after (was 10),
+  tally 0.99991 +/-0.15% (0.1 sigma), both individually and re-confirmed
+  in a full 144-file `meta_surfaces=False` corpus re-run (only change
+  from the pre-fix baseline: lost-particle count 1 file -> 0 files;
+  every other bucket -- 89.3% within 2 sigma, 11 marginal, the other 8
+  files beyond 3 sigma -- bit-identical, confirming this fix touches
+  nothing else). Under `Options.meta_surfaces=True` (the default),
+  `rev_can_1.stp`'s own d1suned tally is UNCHANGED by the fix (0.99991
+  both before and after) -- this file's physical result already
+  happened to come out correct there via an incidental alternate
+  construction path, which is exactly why the bug went unnoticed under
+  the default setting: a full 144-file `meta_surfaces=True` corpus
+  re-run with the fix applied reproduces the pre-fix baseline bucket
+  numbers bit-for-bit (93.1% within 2 sigma, same 11 marginal, same 2
+  known `>3 sigma` files, 0 lost particles) -- no visible change at this
+  scan's fidelity, consistent with the fix's benefit being real but
+  invisible for every file in this particular corpus under the default
+  setting.
+  **The other 6 severe new-FAIL files from the same `meta_surfaces=False`
+  scan are CONFIRMED unrelated to this bug** (`Mixed/multiplane_add_plane_cyl.stp`,
+  `Mixed/double_RC.stp`, `RoundCorners/rrc23.stp`,
+  `Complex_cell/modelcell_cut1_1.stp`, `RoundCorners/comp_RC.stp`,
+  `Mixed/rev_pipe.stp`/`RoundCorners/rev_pipe.stp` -- the latter two
+  confirmed byte-identical duplicate STEP files via `sha1sum`, so really
+  6 distinct files, not 7): none appeared in the 4-file isolated-
+  winding-effect list, and all 6 were independently verified CORRECT
+  under `Options.meta_surfaces=True` via d1suned (e.g.
+  `multiplane_add_plane_cyl.stp`'s catastrophic 0.00756 under
+  `meta_surfaces=False` becomes 0.99198 +/-0.44% under `meta_surfaces=True`)
+  -- these are genuinely explained by composite meta-surfaces
+  (Can/TCone/RoundCorner/MultiPlane) being load-bearing for correct
+  bounding in these specific geometries, not pure simplification (the
+  same reasoning already established for RevCC's own exception in
+  `Options.meta_surfaces`'s own entry below), and are NOT a hidden bug
+  that also affects the default `meta_surfaces=True` setting. See
+  `docs/investigations/meta_surfaces_false_corpus_scan_2026-09-28.md`
+  for the full file-by-file writeup, raw d1suned numbers, and this
+  conclusion's own before/after comparison table.
+  **Verified**: full suites green on all 3 engines (ocp 342 passed/2
+  skipped, occ 342 passed/2 skipped, freecad 310 passed/18 skipped --
+  same numbers as the `gen_plane_cone` fix above, zero regressions from
+  adding this fix on top).
+
 - ~~`AdjacentMultiplanePlanes` needs the same RevCC-to-MultiRoundCorner
   extension~~ -- **done, 2026-09-17** (closes the
   `project_mrc_adjacent_multiplane_pending` memory). Per direct user
@@ -4171,6 +4357,14 @@ gaps for whenever it's picked back up:
 - `docs/reports/pyocc_migration_report_{en,es}.pdf` (+ `.html`/`.tex`
   sources) — a written technical report on the FreeCAD -> pyOCC
   migration for external readers.
+- `docs/investigations/meta_surfaces_false_corpus_scan_2026-09-28.md` —
+  first full-corpus d1suned comparison of `Options.meta_surfaces=True`
+  vs `False`: the raw file-by-file failure list, and the conclusion that
+  splits it into one real, shared, now-fixed GEOUNED bug
+  (`_is_closed_by_winding`, see its own "Known open items" entry) vs 6
+  files that are a genuine, unfixed `meta_surfaces=False`-specific
+  limitation (composite meta-surfaces load-bearing for correct bounding
+  in those geometries, not pure simplification).
 
 ## Environment notes
 
