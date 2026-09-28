@@ -69,6 +69,7 @@ from .volume_utils import volume_within
 from .solid_ops import (
     BuildDepth,
     BuildSolidParts,
+    GCompound,
     Gfuse_solids,
     SplitBase,
     SplitSolid,

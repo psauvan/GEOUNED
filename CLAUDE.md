@@ -706,6 +706,149 @@ instruction).
   that specific configuration until now). Flagged for follow-up, not
   blocking these fixes' own commit per direct user instruction.
 
+- **`GCompound`: native `TopoDS_Compound` aggregation of touching solids
+  is unreliable in OCCT -- fixed by replacing it with a pure-Python
+  container, 2026-09-29. Root-causes and closes the `double_RC.stp`
+  regression flagged above, plus `RoundCorners/rrc3.stp` (a NEW
+  regression introduced mid-investigation, also closed by this same
+  fix) and a real, pre-existing bug in `RoundCorners/rrc23.stp` the
+  user found by direct comparison against an independent reference
+  solid.** User-reported: "la definicion booleana de
+  `working_solids/bara.stp`, y de la tercer componente (despues de
+  descomposicion) de `RoundCorners/rrc23.stp` tienen que ser iguales
+  porque son los mismos solidos. Sin embargo, en rrc23 la expresion
+  booleana no es correcta" -- `bara.stp` is a hand-extracted reference
+  solid matching rrc23's own 3rd decomposed piece exactly (same
+  geometry). Confirmed: re-exporting `main_split`'s own `comsolid` to
+  STEP (the `Settings.debug=True` dump the user was comparing against)
+  and reloading it gave that piece the CORRECT volume (235.432606,
+  bit-identical to `bara.stp`) and a 7-term boolean definition matching
+  `bara.stp`'s own -- but the piece's OWN in-memory volume, immediately
+  after `main_split` returns (before any STEP round-trip), was
+  319.208410 with only a 6-term definition (missing one bounding
+  surface) -- an 83.775804 mm^3 discrepancy, and the true CAD volume
+  (via an independent `Gload_step` of `rrc23.stp` itself) confirmed
+  235.432606 was correct, 319.208410 was not.
+  **Root cause, traced through several wrong hypotheses before finding
+  it**: `Gmake_compound` (a bare `TopoDS_Compound` wrap, `builder.Add`
+  per shape, no geometric operation) followed by re-exploring it via
+  `.Solids` (a fresh `TopExp_Explorer` traversal) is NOT a lossless
+  round-trip when the wrapped solids genuinely touch each other (as any
+  set of adjacent decomposed pieces always does) -- `generic_split`'s
+  own returned pieces are reliably correct (confirmed via direct,
+  repeated queries -- individual `.Volume` never lied), but
+  `split_surfaces`'s own `comp = Gmake_compound(solid_components)`
+  followed later by any consumer reading `comp.Solids`/`comp.Volume`
+  could silently misattribute volume between touching neighbors (the
+  ~84 mm^3 moved from one piece to another, the TOTAL staying
+  conserved) or inflate/deflate the aggregate total outright. Confirmed
+  on BOTH `occ` and `ocp` (ruling out a pybind11-vs-SWIG binding bug --
+  this is genuine OCCT kernel behavior) and confirmed non-deterministic
+  in a way that even defeated a first attempted fix: a tolerance-only
+  reset (mirroring the earlier `generic_split` fix above) was tried,
+  then a `.fix()`-every-extracted-piece approach with a same-volume
+  verification-and-fallback safety net -- both APPEARED to fix
+  `rrc23.stp`/`RoundCorners/comp_RC.stp` (whose first solid is the
+  literal same geometry as `rrc23.stp`, per direct user confirmation,
+  and was fixed by the exact same mechanism) when tested in isolation,
+  but running the full corpus surfaced two NEW problems from that same
+  approach: (a) `RoundCorners/rrc3.stp` -- previously fine -- started
+  showing a genuine cross-piece volume-contamination (18 sigma d1suned
+  deviation), confirmed via direct instrumentation to be the SAME
+  wrap+re-extract+fix sequence, run standalone, non-deterministically
+  giving correct results one time and corrupted results another,
+  identically on both engines; (b) `Complex_cell/SCDR_90.stp` -- a
+  previously-successful file -- started crashing outright
+  (`Standard_Failure: "Courbes non jointives"`, the same
+  `ShapeUpgrade_UnifySameDomain` crash class already documented as an
+  accepted permanent limitation for `Mixed/ConeSphere.stp`) once
+  `.fix()` was applied unconditionally to a piece that never needed it.
+  **The real fix, per direct user design instruction**: GEOUNED never
+  actually needs a *real* native compound for this bookkeeping at all
+  -- `main_split`'s own recursively-collected pieces are just a group
+  of independent, irreducible solids to track together (for the cell
+  definition, the void generator, cache storage, a debug STEP dump,
+  ...), never a single fused/merged shape. New `GCompound` class
+  (`geo/solid_ops.py`, exported via `geo/__init__.py` -- the user's own
+  explicit placement choice, "la class Gcompound tiene que ir en geo",
+  since it's a generic, reusable container concept, not something
+  specific to one call site) holds a plain Python list of `GSolid` and
+  computes `.Volume`/`.BoundBox` as a sum/union over each piece's own
+  individually-queried (always reliable) properties, never through a
+  native aggregate operation. `.export_step(filename)` is the one
+  remaining native escape hatch, per the user's own explicit request
+  ("agregale un metodo de export_step si queremos ver el solido. Este
+  metodo junta todos las parte en un step sin juntarlas"): it builds a
+  fresh, one-shot `TopoDS_Compound` purely to serialize the pieces to
+  disk side by side (never fusing them into each other), and that
+  compound is never re-extracted or reused afterward, so it is never
+  exposed to the same corruption.
+  `decompose/decom_one_generators.py::split_surfaces`/`main_split`
+  rewritten to use `GCompound` throughout instead of the wrap-then-
+  reextract-then-fix dance: `split_surfaces` now fixes each of
+  `generic_split`'s own returned pieces directly (`.fix()` wrapped in
+  its own `try`/`except`, keeping the original piece on failure -- the
+  same crash-safety the earlier, now-superseded approach already had),
+  builds a `GCompound` from them directly (no intermediate native wrap
+  at all for the pieces actually returned), and its own "did a fragment
+  fail to resolve to a real solid" diagnostic (a pre-existing,
+  independent concern about `_raw_bop_split`'s own repair cascade
+  leaving a bare Shell/Compound instead of a genuine `TopAbs_SOLID`,
+  unrelated to the volume-corruption bug) now probes each fixed piece
+  in its OWN single-piece native wrap, one at a time -- never bundling
+  several touching pieces into one probe compound, closing off even
+  this diagnostic-only check from the same corruption class (flagged
+  directly by the user reviewing the fix: "no habria que quitar
+  [Gmake_compound] tambien?" -- `Gmake_compound` itself, the raw
+  kernel-wrap primitive, was never the bug and is still used for every
+  genuinely one-shot native need; only the "wrap many touching
+  solids, then trust the aggregate or re-extract" pattern was unsafe).
+  `main_split` now takes a plain list of `GSolid` (never a native
+  compound) and returns a `GCompound`; its one real call site
+  (`core.py::_decompose_target`) simplified to pass `m.Solids` directly
+  (no `Gmake_compound` wrap needed at all for the input side either).
+  `GeounedSolid.set_cad_solid()` (`utils/geouned_classes.py`) still
+  builds a real native compound for `self.CADSolid` (downstream void
+  generation / enclosure containment genuinely need real native
+  geometry for boolean CSG operations) but now computes `.Volume`/
+  `.BoundBox` via the same safe sum/union pattern as `update_solids`,
+  never from the compound's own aggregate properties.
+  **Verified**: `rrc3.stp` gives the correct volume (882.861421,
+  matching an independent `Gload_step`) consistently across repeated
+  runs (previously non-deterministic); `rrc23.stp`'s 3rd piece still
+  matches `bara.stp` exactly (235.432606, 7-term definition);
+  `comp_RC.stp`'s both solids match their true CAD volumes exactly
+  (1014.567394, 1235.432606); `SCDR_90.stp` no longer crashes. d1suned
+  confirms all three real fixtures: `rrc23.stp` 0.91938 (21.4 sigma) ->
+  0.99752 (0.6 sigma); `comp_RC.stp` both cells 0.98084/0.94469 (4.0/
+  15.4 sigma) -> 0.99402/0.99791 (1.25/0.55 sigma); full suites green
+  on all 3 engines (ocp 342 passed/2 skipped, occ 342 passed/2 skipped,
+  freecad 310 passed/18 skipped) both before and after the final
+  per-piece-probe safety refinement. A 144-file isolated corpus
+  differential (vs the immediately preceding commit) found 27 genuine-
+  improvement DIFF files, 108 SAME, and the same known ~8 pre-existing
+  CRASH files with neither `SCDR_90.stp` nor `rrc3.stp` among them.
+  **Full corpus re-run, both `Options.meta_surfaces` settings, timed**:
+  `meta_surfaces=True` 93.1% within 2 sigma (unchanged throughout this
+  whole investigation -- this whole bug class needs a genuinely failed-
+  then-later-succeeding candidate sequence that the default order
+  apparently never triggers in this corpus); `meta_surfaces=False`
+  improved to 93.6% within 2 sigma, with `Mixed/double_RC.stp` (the
+  regression flagged in the previous entry, now explained: same root
+  cause) and `RoundCorners/rrc3.stp` both gone from the failing bucket
+  -- leaving exactly ONE beyond-3-sigma cell in EITHER mode, the same
+  already-understood `RoundCorners/shed_solid.stp` MC-noise case. A
+  188-vs-187 total-cell-count discrepancy between the two modes' own
+  analysis runs was tracked down (per direct user question) to a
+  19-day-old stale `model.mcnp`/`outp` leftover sitting in the
+  `meta_surfaces=True` run directory for `Mixed/SCDR_90_hollow.stp`
+  (which fails to convert under EITHER setting, a known load-time
+  crash) -- not a real difference; deleted, and both modes' own
+  analyses then agreed exactly (187 cells, one shared failing case).
+  d1suned simulation time for the full 142-file corpus: ~1000s per
+  batch (~2000s combined), consistent across repeated timed runs.
+  0 lost particles throughout every check in this whole investigation.
+
 - ~~`AdjacentMultiplanePlanes` needs the same RevCC-to-MultiRoundCorner
   extension~~ -- **done, 2026-09-17** (closes the
   `project_mrc_adjacent_multiplane_pending` memory). Per direct user

@@ -19,6 +19,55 @@ free of an import cycle with `geo/__init__.py`.
 from .constants import DEFAULT_FIX_TOLERANCE, DEGENERATE_SOLID_VOL_AREA_RATIO, FUSE_REFINE_REL_TOL, NUMERIC_DOUBLE_TOL
 
 
+class GCompound:
+    """Lightweight, engine-agnostic container for a group of independent
+    solids -- deliberately NOT a native TopoDS_Compound wrap.
+
+    Confirmed live (RoundCorners/rrc23.stp, rrc3.stp, Options.meta_surfaces=
+    False, on BOTH occ and ocp -- ruling out a binding-specific bug):
+    wrapping several touching solids into a real native compound and
+    reading its own aggregate `.Volume`, or re-extracting `.Solids` from it
+    and rebuilding another compound, is not reliable in OCCT -- the
+    individual pieces' own `.Volume` stays correct throughout, but the
+    compound's own aggregate volume can silently drift (observed both
+    inflated and deflated by the same ~84 mm^3 in different runs of the
+    IDENTICAL code, and once by cross-contaminating two pieces' own volumes
+    with each other while the total stayed conserved). GEOUNED itself never
+    actually needs a real compound for this kind of bookkeeping: a solid's
+    own recursively-decomposed pieces are a container of independent,
+    irreducible solids GEOUNED needs to track as a group (for the cell
+    definition, the void generator, cache storage, ...) -- not a single
+    fused/merged shape. So this class holds them as a plain Python list and
+    computes Volume/BoundBox as a sum/union over the pieces' own (always
+    reliable) individual properties, never through a native aggregate
+    operation. `.export_step()` is the one remaining native escape hatch
+    (debug dumps, or any other "let me look at this solid" use): it builds
+    a fresh, one-shot TopoDS_Compound purely to serialize the pieces to
+    disk side by side, without ever fusing/merging them into each other,
+    and that compound is never re-extracted or reused afterward, so it
+    isn't exposed to the same corruption.
+    """
+
+    def __init__(self, solids):
+        self.Solids = list(solids)
+
+    @property
+    def Volume(self):
+        return sum(s.Volume for s in self.Solids)
+
+    @property
+    def BoundBox(self):
+        bbox = None
+        for s in self.Solids:
+            bbox = s.BoundBox if bbox is None else bbox.union(s.BoundBox)
+        return bbox
+
+    def export_step(self, filename):
+        from . import Gmake_compound
+
+        Gmake_compound(self.Solids).export_step(filename)
+
+
 def Gfuse_solids(parts, tolerances=None):
     """Boolean-union `parts` (a list of `GSolid`) into one `GSolid`, or
     `None` if `parts` is empty.

@@ -7,6 +7,7 @@ import logging
 from .generators import get_surfaces
 from ...geo import (
     CAD_ENGINE,
+    GCompound,
     GSolid,
     Gheal_topology,
     Gmake_compound,
@@ -23,7 +24,21 @@ logger = logging.getLogger("general_logger")
 def split_surfaces(solid, options, tolerances):
 
     solid_components = generic_split(solid, options, tolerances)
-    comp = Gmake_compound(solid_components)
+
+    # `.fix()` can raise a real native crash (Standard_Failure: "Courbes non
+    # jointives", the same ShapeUpgrade_UnifySameDomain crash class already
+    # documented for Mixed/ConeSphere.stp) on a piece that never needed
+    # fixing in the first place -- confirmed live on Complex_cell/SCDR_90.stp.
+    # Keep the original, unfixed piece on that failure rather than let one
+    # auxiliary repair attempt abort an otherwise-fine decomposition.
+    fixed_solids = []
+    for s in solid_components:
+        try:
+            fixed_solids.append(s.fix(tolerances.fix_tolerance))
+        except Exception:
+            fixed_solids.append(s)
+
+    comp = GCompound(fixed_solids)
 
     volratio = (comp.Volume - solid.Volume) / solid.Volume
     if volratio > tolerances.volume_tolerance:
@@ -31,27 +46,28 @@ def split_surfaces(solid, options, tolerances):
 
     # A fragment Gsplit accepted as "sane" (BRepCheck-valid + a real
     # volume, via _finalize_split's own filter) can still fail to
-    # resolve to a genuine TopoDS_Solid once wrapped into `comp`: a
-    # repair step inside _raw_bop_split's cascade (confirmed: Gsliver_
-    # heal's own ShapeUpgrade_UnifySameDomain step) can leave a fragment
-    # as a bare TopoDS_Compound/Shell that is still topologically valid
-    # and still reports a correct .Volume (computed shape-type-
-    # agnostically) -- but contains zero real solid leaves. Such a
-    # fragment silently disappears from `comp.Solids` (which only counts
-    # TopAbs_SOLID nodes, at any depth) with no crash and, critically,
-    # no volume-vs-input mismatch -- the `volratio` check above cannot
-    # see it, since `comp.Volume` already counts its volume regardless
-    # of the wrapper type. Detect it here by comparing fragment counts
-    # before vs after `comp` re-parses its own solid content, and warn
-    # with every fragment's own volume so the missing one can be
-    # identified -- this solid will NOT be part of this cell's boolean
-    # expression, a real, currently-unrepaired gap (see CLAUDE.md).
-    if len(comp.Solids) != len(solid_components):
-        dropped_volume = sum(abs(f.Volume) for f in solid_components) - sum(abs(s.Volume) for s in comp.Solids)
-        fragment_volumes = ", ".join(f"{abs(f.Volume):.2f}" for f in solid_components)
+    # resolve to a genuine TopoDS_Solid: a repair step inside
+    # _raw_bop_split's cascade (confirmed: Gsliver_heal's own
+    # ShapeUpgrade_UnifySameDomain step) can leave a fragment as a bare
+    # TopoDS_Compound/Shell that is still topologically valid and still
+    # reports a correct .Volume (computed shape-type-agnostically) -- but
+    # contains zero real solid leaves. Detected here via a one-shot,
+    # throwaway native wrap+re-extract of EACH piece ALONE (never several
+    # touching pieces together, which is the exact scenario GCompound's
+    # own docstring documents as unreliable) -- so this probe only ever
+    # asks "does this single fragment's own native shape contain a real
+    # TopAbs_SOLID", never anything aggregate, and is never used for the
+    # actual returned pieces/volumes (those come from `fixed_solids`/`comp`
+    # above) -- a fragment that fails this resolves to zero real solid
+    # leaves and will NOT be part of this cell's boolean expression, a
+    # real, currently-unrepaired gap (see CLAUDE.md).
+    dropped = [f for f in fixed_solids if not Gmake_compound([f]).Solids]
+    if dropped:
+        dropped_volume = sum(abs(f.Volume) for f in dropped)
+        fragment_volumes = ", ".join(f"{abs(f.Volume):.2f}" for f in fixed_solids)
         logger.warning(
-            f"generic_split produced {len(solid_components)} fragment(s) "
-            f"(volumes: {fragment_volumes}) but only {len(comp.Solids)} resolved to "
+            f"generic_split produced {len(fixed_solids)} fragment(s) "
+            f"(volumes: {fragment_volumes}) but {len(dropped)} did not resolve to "
             f"a real solid -- {dropped_volume:.2f} of volume silently dropped and "
             "will NOT be considered when building this solid's boolean expression."
         )
@@ -237,16 +253,34 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
             subcomp = generic_split(part, options, tolerances, loop + 1)
             components.extend(subcomp)
     else:
+        # NOTE: an earlier version of this branch unconditionally re-ran
+        # .fix() on every piece here, based on an initial (wrong) diagnosis
+        # of the RoundCorners/rrc23.stp volume-corruption bug -- the real
+        # cause turned out to be in split_surfaces's own Gmake_compound
+        # wrap/re-extract step (see that function's own comment), not here.
+        # Removed: confirmed live on Complex_cell/SCDR_90.stp that an
+        # unconditional .fix() at every recursive leaf can itself trigger a
+        # real native crash (Standard_Failure: "Courbes non jointives",
+        # the same ShapeUpgrade_UnifySameDomain crash class already
+        # documented for Mixed/ConeSphere.stp) on a piece that never needed
+        # fixing in the first place -- strictly more crash-prone than the
+        # single, narrowly-scoped fix in split_surfaces, for no benefit.
         components = comsolid_solids
     return components
 
 
-def main_split(solidShape, options, tolerances):
-    """decompose in basic solids a solid from CAD."""
+def main_split(solids, options, tolerances):
+    """decompose in basic solids a list of solids from CAD.
+
+    `solids` is a plain list of GSolid (the top-level input solids, usually
+    just one) -- never a native compound: see GCompound's own docstring for
+    why this whole pipeline avoids native TopoDS_Compound wrap/re-extract
+    cycles for anything other than a one-shot STEP export.
+    """
     solid_parts = []
 
-    for solid in solidShape.Solids:
+    for solid in solids:
         piece = split_surfaces(solid, options, tolerances)
-        solid_parts.append(piece)
+        solid_parts.extend(piece.Solids)
 
-    return Gmake_compound(solid_parts)
+    return GCompound(solid_parts)

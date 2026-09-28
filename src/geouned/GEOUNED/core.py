@@ -761,7 +761,7 @@ class CadToCsg:
                 m.Solids[0].export_step(str(self.debug_output_folder / f"origSolid_{i}.stp"))
 
         comsolid = main_split(
-            Gmake_compound(m.Solids),
+            m.Solids,
             self.options,
             self.tolerances,
         )

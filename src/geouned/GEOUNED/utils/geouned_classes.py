@@ -139,11 +139,27 @@ class GeounedSolid:
         self.BoundBox = bbox
 
     def set_cad_solid(self):
+        # `self.CADSolid` genuinely needs a real native compound (downstream
+        # consumers -- void generation, enclosure containment -- read it
+        # directly for real boolean CSG operations). Its own aggregate
+        # `.Volume`/`.BoundBox` do NOT: wrapping several touching solids
+        # into a native compound and reading its own aggregate `.Volume` is
+        # not reliable in OCCT (confirmed live, RoundCorners/rrc23.stp and
+        # rrc3.stp -- see `geo.solid_ops.GCompound`'s own docstring for the
+        # full investigation), so compute these the same safe way
+        # `update_solids` already does: sum/union over each piece's own
+        # individually-queried, always-reliable properties, never through
+        # the compound's own aggregate.
         if self.Solids is not None:
             gcompound = Gmake_compound(self.Solids)
             self.CADSolid = gcompound.__native__
-            self.Volume = gcompound.Volume
-            self.BoundBox = gcompound.BoundBox
+            vol = 0
+            bbox = _empty_boundbox()
+            for s in self.Solids:
+                vol += s.Volume
+                bbox = bbox.union(s.BoundBox)
+            self.Volume = vol
+            self.BoundBox = bbox
 
     def optimalBoundingBox(self):
         if self.CADSolid is None:
