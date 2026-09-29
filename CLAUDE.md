@@ -1190,9 +1190,11 @@ instruction).
   288 passed/16 skipped); a 144-file `Solidos/test_models` differential
   (full MCNP-text comparison) -- **0 differences** anywhere (same 4
   known pre-existing failures). A real d1suned check on this exact real
-  solid, under the user's own `meta_surfaces=False` settings, was
-  started by the user directly (not yet reported back as of this
-  commit).
+  solid, under the user's own `meta_surfaces=False` settings, run by
+  the user directly (NPS 1e6): tally 0.99275 +/-0.57% (1.27 sigma from
+  1.0), no lost particles reported -- confirms the fix end to end on
+  the real model, not just the isolated-fragment/cache reproduction
+  used to develop it.
 
 - **Decomposition cache (`Settings.load_from_cache`), implemented
   2026-09-27** -- new feature, not a bug fix: `decompose_solids()` (via
