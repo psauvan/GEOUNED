@@ -755,6 +755,23 @@ def _valid_chain_junction(shared_edge, faceA, faceB, *, tol):
     return True
 
 
+def _touches_face_set(face_or_shell, target_indices, GUFaces) -> int:
+    """Number of DISTINCT boundary edges of `face_or_shell` (its own, or --
+    for a `ShellFaceGu` -- any of its member faces') that are also an edge
+    of some face in `GUFaces` whose `.Index` is in `target_indices`. Plain
+    direct edge `is_same` comparison, no sliver-skip walk (see this
+    function's own call site in `get_join_cone_cyl` for why that walk is
+    unreliable here)."""
+    own_faces = face_or_shell.Faces if type(face_or_shell) is ShellFaceGu else [face_or_shell]
+    target_faces = [f for f in GUFaces if f.Index in target_indices]
+    count = 0
+    for of in own_faces:
+        for e in of.Edges:
+            if any(e.is_same(te) for tf in target_faces for te in tf.Edges):
+                count += 1
+    return count
+
+
 def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances, root=True, wraps=None):
     # `wraps` is this ONE top-level walk's own bookkeeping (fresh per
     # root=True call, threaded unchanged through every recursive one) --
@@ -895,6 +912,30 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                     new_adjacent2, arc2 = get_join_cone_cyl(
                         adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False, wraps
                     )
+
+    if adjacent1_indices is not None and not wraps[0] and _touches_face_set(face_or_shell, adjacent1_indices, GUFaces) >= 2:
+        # Extra closure signal, needed when the simple 2-edge model above
+        # (emin/emax only) misses it: `face_or_shell` genuinely borders
+        # adjacent1's own target shell through more than the one edge
+        # that produced `adjacent1` itself -- a direct, cheap edge check,
+        # bypassing `other_face_edge`'s own sliver-skip walk entirely.
+        # Confirmed live, 2026-09-29 (divertor_cam.stp's STRUCTURAL_PLATE_1
+        # under `Options.meta_surfaces=False`, where the target shell is
+        # fragmented into 4 raw pieces, 2 of them thin slivers): face0
+        # borders 3 different members of the target shell directly, but
+        # `other_face_edge`'s own walk from emax -- treating 2 of those
+        # slivers as "too narrow, walk past them" -- wanders back and
+        # returns face0's OWN starting face as the "found" far face
+        # (a real bug in that walk: it never excludes its own starting
+        # point from being accepted once reached through a sliver chain,
+        # so `adjacent2` ends up pointing at `face_or_shell` itself,
+        # useless for closure detection). A genuinely open chain has
+        # exactly ONE edge touching its own child shell (the one that
+        # found it in the first place); >=2 is the same "both ends meet
+        # the same neighbor" signature the adjacent1/adjacent2 check
+        # above already trusts, just found without relying on emin/emax
+        # being the only 2 relevant edges of `face_or_shell`'s boundary.
+        wraps[0] = True
 
     mp_list = []
     for mp in multiplanes:

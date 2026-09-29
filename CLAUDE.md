@@ -1134,6 +1134,65 @@ instruction).
   and this entry's own two fixes) having closed the real gaps that used
   to separate the two settings' behavior -- no code change made in this
   follow-up, purely a re-verification.
+  **Follow-up, same day: a THIRD, distinct bug in the same closure
+  logic, found by direct user report** -- `closed_set` still came out
+  `False` for the exact same `STRUCTURAL_PLATE_1` solid when run under
+  the user's own real settings (`Options.meta_surfaces=False`,
+  `Settings.load_from_cache=True`, via the real `decompose_cache` at
+  the repo root, `Test RoundCorners/myrun.py`) -- `Big_model_reserved`
+  is excluded from the 144-file corpus scan above, so this specific
+  file was never exercised by that re-verification. Under
+  `meta_surfaces=False` this same solid decomposes differently: the
+  "good" axis's own faces fragment into 4 raw pieces instead of 2, two
+  of them narrow enough to count as slivers by `CharacteristicWidth`.
+  `face0` (the defective-axis cylinder) turns out to have **7** boundary
+  edges here, not the 2 (`Umin`/`Umax`) `get_join_cone_cyl`'s own simple
+  model looks at -- it borders the good-axis shell directly through 3 of
+  those extra edges. Root cause, traced down to a genuine, general bug
+  in `geometry_gu.py::other_face_edge`'s own `skip_slivers=True` walk
+  (used by many callers, not just this one): when it walks PAST a chain
+  of thin sliver faces looking for "the real face beyond them", it never
+  excludes the walk's OWN starting face from being accepted as that
+  "real" result -- confirmed live by a direct recursion trace: from
+  `face0`'s own `emax` edge, the walk passes through 2 slivers (both
+  genuine fragments of the good axis) and its very last hop lands back
+  on `face0` itself (reached through a completely different edge), which
+  passes the "big enough" check trivially (it's the original, large
+  face) and gets returned as `adjacent2` -- useless for closure
+  detection, and exactly why `wraps` (the fix earlier in this same day's
+  entry) never fired: `adjacent2.Index` was `face0`'s own index, not a
+  member of the good-axis shell at all.
+  **Fix**: rather than patch `other_face_edge`'s own general walk (used
+  by several other callers, and demonstrably fragile to the exact
+  iteration order of a sliver's own edge list -- tried and rejected
+  after tracing that naively rejecting the self-match there can just as
+  easily wander into an unrelated PLANE neighbor first, depending on
+  edge order), added a second, independent, LOCAL closure signal in
+  `get_join_cone_cyl` itself: a new `_touches_face_set(face_or_shell,
+  target_indices, GUFaces)` helper counts how many of `face_or_shell`'s
+  OWN boundary edges (all of them, not just `emin`/`emax`) are also an
+  edge of some face already known to belong to `adjacent1`'s own merged
+  target shell -- a plain, direct edge `is_same` check, no sliver-skip
+  walk involved at all. `>= 2` (found via more than just the one edge
+  that already gave us `adjacent1`) is treated the same way the existing
+  `wraps` signal is -- the same "both ends meet the same neighbor"
+  pattern, just discovered without relying on `emin`/`emax` being the
+  only 2 relevant edges of a real face's own boundary. A genuinely open
+  chain only ever touches its own child shell through the one edge that
+  found it in the first place (count of 1), so this doesn't risk a
+  false positive on that case.
+  **Verified**: the real case (`myrun.py`'s own settings, the real
+  cache) now gives `closed_set=True` and no longer raises
+  `build_definition`'s own mismatched-element-count `RuntimeError`; the
+  earlier `meta_surfaces=True` fix and `placa3.step` (the v1-fix
+  regression) both re-confirmed unaffected; full suites green on all 3
+  engines (occ 277 passed/1 skipped, ocp 277 passed/1 skipped, freecad
+  288 passed/16 skipped); a 144-file `Solidos/test_models` differential
+  (full MCNP-text comparison) -- **0 differences** anywhere (same 4
+  known pre-existing failures). A real d1suned check on this exact real
+  solid, under the user's own `meta_surfaces=False` settings, was
+  started by the user directly (not yet reported back as of this
+  commit).
 
 - **Decomposition cache (`Settings.load_from_cache`), implemented
   2026-09-27** -- new feature, not a bug fix: `decompose_solids()` (via
