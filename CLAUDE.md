@@ -1019,6 +1019,122 @@ instruction).
   +/- 0.9 % at NPS 4e6). **Not verified**: the tangent-arc case in those two
   branches has no real fixture.
 
+- **`get_join_cone_cyl`'s `closed_set` + `convex_planes`'s `len<3` branch,
+  fixed 2026-09-29** -- root cause of lost particles on
+  `Big_model_reserved/divertor_cam.stp`'s `STRUCTURAL_PLATE_1#BYZ2PQ_95`
+  solid. User-reported: a real R=2mm cylindrical feature in this solid
+  is split into two half-cylinders whose real axes are offset by
+  ~0.11mm perpendicular to the axis (a genuine defect already present
+  in the SOURCE STEP file, confirmed by loading the solid directly, with
+  no decomposition at all -- both R=2 faces already carry this exact
+  offset there; NOT introduced by GEOUNED's own split/repair cascade).
+  User's own first diagnosis: GEOUNED treats the two half-cylinders as
+  distinct surfaces (correctly -- their axes really don't coincide) and
+  builds two RevCC entries sharing the same additional closing plane
+  with opposite sign, `(c1 p1)(c2 -p1)` -> an unconditional `False`.
+  **Decomposition itself confirmed correct first** (per direct user
+  request, before touching any boolean-definition code): cutting the
+  original 6-face solid with either R=2 cylinder alone, as an infinite
+  Reversed tool, is a 100.0000%-volume-conserving no-op for BOTH
+  cylinders individually; the real decomposition into 2 pieces
+  (356.643666 + 0.443686 mm^3, summing back to the original 357.087352
+  to float precision) is a genuine, separate, volume-exact split -- the
+  0.443686mm^3 piece is the real physical wedge that exists between the
+  two slightly-misaligned axes, not a split artifact. So the bug is
+  entirely downstream, in the boolean CSG definition.
+  **Bug 1, `get_join_cone_cyl`'s own `closed_set`** (`meta_surfaces_utils.py`):
+  the recursive RevCC chain walk (`face0` -> adjacent shell `[3,4]`, the
+  two half-cylinders' own merged partner) DOES correctly find the two
+  segments border each other at BOTH ends (a genuine, degenerate
+  2-member closed ring) -- but `omitFaces` (shared across the WHOLE
+  solid's meta-surface detection, not just this one chain) already
+  marked `[3,4]` consumed after the FIRST junction recursed into it, so
+  the SECOND junction's own `adjacent2.Index not in omitFaces` check
+  silently failed and that closure was never recorded. Summing each
+  segment's own local arc (measured around its own, not-quite-coincident
+  axis) then falls 6.36 degrees short of a full turn (353.64 vs 360,
+  confirmed via direct numeric trace) even though the loop genuinely
+  closes -- `twoPimod`'s own noise tolerance (1e-5 rad) is nowhere near
+  enough to absorb a real few-degree parametrization discrepancy like
+  this. **Fix, v1 (later narrowed, see below)**: a `wraps` flag,
+  set when either `adjacent1`/`adjacent2` points to a face already
+  visited anywhere in the SAME top-level walk; `closed_set = twoPimod(
+  arc_angle) == 0.0 or wraps[0]`. This alone caused a REAL regression on
+  3 previously-passing corpus fixtures (`test_cadtocsg.py`'s
+  `input_step_file27/44/45`, i.e. `DoubleCylinder/placa3.step` and 2
+  others): its own 3 RevCC chains (root -> child -> grandchild, each 3
+  cylcones) have a grandchild whose OTHER end happens to also border the
+  ROOT again -- a real topological adjacency, but NOT a closed loop
+  (raw arc sums 13-56 degrees short of 360, confirmed measured, vs.
+  divertor_cam's genuine 6.36-degree parametrization noise) -- so a bare
+  "already visited anywhere in this walk" signal is not a reliable
+  closure test; it also fires for a long-range, unrelated revisit.
+  **Fix, final**: narrowed to a strictly LOCAL pattern -- `wraps[0]` is
+  only set when adjacent2 resolves to the exact same shell adjacent1
+  JUST recursed into (or vice versa is structurally impossible since
+  adjacent1 is always checked first) -- i.e. THIS node's own two ends
+  both meet the SAME single neighbor, the only shape a genuine
+  degenerate 2-member ring can take. No `visited` set needed any more,
+  just comparing `adjacent2.Index` against `adjacent1`'s own just-merged
+  shell indices.
+  **Bug 2, `convex_planes`'s `len(plane_list) < 3` early return**
+  (`geo/surface_geometry.py`, shared by all 3 engines): ignored its own
+  `closed` parameter entirely, deriving `orientation` from a
+  position/axis heuristic meant for the OPEN-chain case only. For our
+  2-cylcone closed ring, the two segments' own "additional closing
+  planes" (`gen_plane_cylinder`) are forced to be the exact SAME
+  physical plane seen from opposite senses (axis dot = -1.0 exactly,
+  confirmed) -- any real 2-member closed ring has no choice but this,
+  since each segment's own local closing plane is the other segment's
+  own boundary. The heuristic returned `orientation="Forward"`, so
+  `add_reversedCC` computed `plane_region = mult(p1, p2)` = `p1 AND -p1`
+  = an unconditional `False`. **Considered and REJECTED per direct user
+  correction**: skipping the plane combination entirely whenever
+  `closed_set=True` (any number of cylcones) -- wrong in general, per
+  the user's own counterexample: 3 coaxial, tangent cylinders (R1<R2<R3)
+  define `c1*c2*c3` as two regions that DON'T touch (an inner tube and
+  an outer shell); telling them apart still needs the additional planes
+  even though the set is topologically closed. **Fix**: only for
+  `len(plane_list) < 3` (the 2-cylcone case, where "closed" can ONLY
+  mean the degenerate same-plane-both-senses configuration above) does
+  `closed=True` force `orientation="Reversed"` (`add_reversedCC`'s `add`/
+  OR branch instead of `mult`/AND), which correctly reduces `p + (-p)`
+  to an unconditional `True` (no restriction -- exactly right, since a
+  closed 2-member ring has no exposed side left for either plane to
+  bound). The >=3-plane branch (the real angle-sorting algorithm) is
+  untouched, still receiving and using `closed` as before.
+  **Verified**: `divertor_cam.stp`'s isolated fragment -- both pieces'
+  boolean definitions are now non-contradictory
+  (`AND[2 3 4 6 -1]`/`AND[3 5 6 7 -4]`); d1suned (NPS 1e6): tally
+  0.99275 +/-0.57% (1.27 sigma), SD4 exactly matches the true CAD
+  volume (357.0874 mm^3), 0 lost particles (was 3.89/28.9 sigma/10 lost
+  before any fix). Full suites green on all 3 engines after the
+  narrowed fix (occ 277 passed/1 skipped, ocp 277 passed/1 skipped,
+  freecad 288 passed/16 skipped -- including the 3 fixtures the v1 fix
+  had broken). A 143-file `Solidos/test_models` differential (full
+  MCNP-text comparison, current commit vs the fix) -- **0 differences**
+  anywhere (the 4 known pre-existing conversion failures unaffected) --
+  confirming both fixes are inert on the whole existing corpus and only
+  change the one fragment that motivated them.
+  **Follow-up, same day: full corpus re-run under BOTH
+  `Options.meta_surfaces` settings** (144 files, excluding `Big_*`, 8-way
+  parallel conversion + 16-way parallel d1suned, both settings run
+  concurrently) -- the gap between `meta_surfaces=True` and `=False`
+  that the 2026-09-28 investigation (`docs/investigations/
+  meta_surfaces_false_corpus_scan_2026-09-28.md`) had recorded (93.1%
+  vs 89.3% within 2 sigma, 2 vs 9 files beyond 3 sigma, 0 vs 1 file with
+  lost particles) is now **completely closed**: both settings give
+  IDENTICAL results -- 190 tallies, 178 (93.7%) within 2 sigma, 11
+  marginal (same files, same sigma to within rounding -- ordinary MC
+  noise), exactly 1 beyond 3 sigma in EACH (`RoundCorners/shed_solid.stp`,
+  the same already-explained MC-noise-on-a-0.25cm^3-cell case), 0 lost
+  particles in either. Conversion: 144/148 in both, same 4 pre-existing
+  failures as always. Consistent with every fix landed since that
+  earlier scan (`_is_closed_by_winding`, `GCompound`, `gen_plane_cone`,
+  and this entry's own two fixes) having closed the real gaps that used
+  to separate the two settings' behavior -- no code change made in this
+  follow-up, purely a re-verification.
+
 - **Decomposition cache (`Settings.load_from_cache`), implemented
   2026-09-27** -- new feature, not a bug fix: `decompose_solids()` (via
   `main_split`/`generic_split`/`Gsplit`, `decompose/

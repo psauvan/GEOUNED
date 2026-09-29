@@ -722,6 +722,22 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
     orientation = "Forward" if plane_list[0].Surf.Axis.dot(ref) < 0 else "Reversed"
 
     if len(plane_list) < 3:
+        if closed:
+            # A closed 2-member ring's own additional planes are always the
+            # SAME physical plane, seen from its two segments' opposite
+            # senses (a closed chain has no exposed side left for a plane to
+            # bound, so both segments' own local closing plane is forced to
+            # coincide) -- unlike the >=3-plane closed case (e.g. 3 coaxial
+            # tangent cylinders), where the additional planes are still
+            # needed to tell the inner ring apart from the outer region and
+            # genuinely differ from each other. `orientation` here only
+            # ever combines 2 planes, so it must be "Reversed" (OR, via
+            # `add_reversedCC`'s `add`) so that `p + (-p)` reduces to the
+            # unconditional True this degenerate case needs, never
+            # "Forward" (AND), which would reduce `p * (-p)` to an
+            # unconditional False. The position/axis-based heuristic above
+            # is for the open-ring case and doesn't apply here.
+            return True, "Reversed"
         return True, orientation
 
     angles = []

@@ -755,7 +755,28 @@ def _valid_chain_junction(shared_edge, faceA, faceB, *, tol):
     return True
 
 
-def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances, root=True):
+def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances, root=True, wraps=None):
+    # `wraps` is this ONE top-level walk's own bookkeeping (fresh per
+    # root=True call, threaded unchanged through every recursive one) --
+    # set True only by the specific local pattern documented at the
+    # adjacent1/adjacent2 checks below (both of THIS node's own ends
+    # resolving to the SAME single neighbor -- a degenerate 2-member
+    # ring). Deliberately NOT a general "does this walk ever revisit any
+    # already-processed face" signal: confirmed live, 2026-09-29,
+    # `testing/inputSTEP/DoubleCylinder/placa3.step` -- a real, genuinely
+    # OPEN 3-member chain (root -> child -> grandchild) whose own
+    # grandchild's far end happens to also border the ROOT again, purely
+    # incidentally (arc sum real gap: 13-56 degrees, nowhere near a full
+    # turn) -- treating that kind of long-range revisit as closure gave
+    # false positives (`closed_set=True` for a genuinely open chain,
+    # which then fed a wrong "orientation" decision into
+    # `convex_planes`/`add_reversedCC` for an unrelated, real 3-cylcone
+    # case and raised "not convex" for a fixture that used to convert
+    # fine). Only a revisit that happens WITHIN the same call (adjacent2
+    # landing on the exact same shell adjacent1 just resolved to, or vice
+    # versa) is trusted.
+    if wraps is None:
+        wraps = [False]
 
     face_index = list(face_or_shell.Indexes) if type(face_or_shell) is ShellFaceGu else [face_or_shell.Index]
     omitFaces.update(face_index)
@@ -813,12 +834,12 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     new_adjacent1 = []
     new_adjacent2 = []
     arc1 = arc2 = 0
+    adjacent1_indices = None
 
     if adjacent1 is not None:
         if isinstance(adjacent1.Surface, (GCone, GCylinder)):
             if (
-                adjacent1.Index not in omitFaces
-                and adjacent1.Orientation == "Reversed"
+                adjacent1.Orientation == "Reversed"
                 # near-parallel means near-parallel: the two axes must not
                 # be too close to perpendicular. The topological
                 # _valid_chain_junction test alone isn't sufficient --
@@ -832,19 +853,48 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                 and abs(face_or_shell.Surface.Axis.dot(adjacent1.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
                 and _valid_chain_junction(result1[0], result1[1], adjacent1, tol=POINT_POINT_TOL)
             ):
-                adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces, tolerances=tolerances)
-                new_adjacent1, arc1 = get_join_cone_cyl(adjacent1_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
+                if adjacent1.Index not in omitFaces:
+                    adjacent1_shell = merge_same_surface_faces(adjacent1, GUFaces, tolerances=tolerances)
+                    adjacent1_indices = (
+                        set(adjacent1_shell.Indexes) if type(adjacent1_shell) is ShellFaceGu else {adjacent1_shell.Index}
+                    )
+                    new_adjacent1, arc1 = get_join_cone_cyl(
+                        adjacent1_shell, GUFaces, multiplanes, omitFaces, tolerances, False, wraps
+                    )
 
     if adjacent2 is not None:
         if isinstance(adjacent2.Surface, (GCone, GCylinder)):
             if (
-                adjacent2.Index not in omitFaces
-                and adjacent2.Orientation == "Reversed"
+                adjacent2.Orientation == "Reversed"
                 and abs(face_or_shell.Surface.Axis.dot(adjacent2.Surface.Axis)) > NOT_PERPENDICULAR_COS_MIN
                 and _valid_chain_junction(result2[0], result2[1], adjacent2, tol=POINT_POINT_TOL)
             ):
-                adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces, tolerances=tolerances)
-                new_adjacent2, arc2 = get_join_cone_cyl(adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False)
+                if adjacent1_indices is not None and adjacent2.Index in adjacent1_indices:
+                    # THIS node's own two ends both resolve to the exact
+                    # SAME neighbor just consumed by adjacent1 above -- a
+                    # genuine degenerate 2-member closed ring (the chain
+                    # meets itself right here, at this one junction, not
+                    # several levels down through an unrelated ancestor --
+                    # see this function's own module-level comment on
+                    # `wraps` for why that distinction matters). Its arc
+                    # was already counted via arc1; don't recurse again
+                    # (double count / infinite loop), just record the
+                    # closure. Confirmed live, 2026-09-29 (divertor_cam.stp's
+                    # own STRUCTURAL_PLATE_1): two half-cylinders of the
+                    # same radius, coaxial only approximately (their real
+                    # axes differ by a fraction of a mm) meet each OTHER at
+                    # both ends -- summing each segment's own local arc
+                    # (measured around its own, not-quite-coincident axis)
+                    # then falls a few degrees short of a full turn even
+                    # though the loop genuinely closes, so `closed_set`'s
+                    # own final formula must not rely on the arc sum alone
+                    # whenever this happens.
+                    wraps[0] = True
+                elif adjacent2.Index not in omitFaces:
+                    adjacent2_shell = merge_same_surface_faces(adjacent2, GUFaces, tolerances=tolerances)
+                    new_adjacent2, arc2 = get_join_cone_cyl(
+                        adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False, wraps
+                    )
 
     mp_list = []
     for mp in multiplanes:
@@ -876,7 +926,13 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     if not root:
         return joined_faces, arc_angle
     else:
-        closed_set = twoPimod(arc_angle) == 0.0
+        # `wraps[0]` (see the adjacent1/adjacent2 closure comments above)
+        # is the topological signal: the chain met itself, so it IS a
+        # closed loop, even when the arc-angle sum -- each segment's own
+        # local U-extent, measured around its own, not-necessarily-exactly-
+        # coincident axis -- falls short of (or overshoots) a full turn by
+        # more than the numeric noise `twoPimod` already tolerates.
+        closed_set = twoPimod(arc_angle) == 0.0 or wraps[0]
         return joined_faces, closed_set
 
 
