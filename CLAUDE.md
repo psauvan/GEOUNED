@@ -1370,6 +1370,82 @@ instruction).
   1.0), no lost particles reported -- confirms the fix end to end on
   the real model, not just the isolated-fragment/cache reproduction
   used to develop it.
+  **Follow-up, 2026-10-02: `_touches_face_set`'s own multi-member-shell
+  false positive, fixed -- root cause of `Hollow_plates/placa.stp` losing
+  its ability to convert under `Options.meta_surfaces=False`
+  (`RuntimeError: So far geouned handle only convex joined reversed
+  cilinder/cone.`).** User-reported: "pero hubo un momento donde
+  meta_surface True y false traducian bien los mismo modelos" -- directed
+  a `git worktree`-based bisection (4 candidate commits, forced
+  `sys.path`/`sys.modules` reimport per worktree since the pipeline is an
+  editable install) that narrowed the regression to the exact commit that
+  introduced `_touches_face_set` itself (`394e092`, the entry just above
+  this one) -- the commit immediately before it (`94993b1`) converts
+  `placa.stp` cleanly under both settings; `394e092` onward raises under
+  `meta_surfaces=False` only.
+  **Root cause, confirmed via instrumented tracing + direct
+  `contiguous_face` ground truth (not guessed)**: `placa.stp`'s own cone
+  surface is split into 3 raw faces (0, 21, 1 -- a residual same-plane-
+  style boolean-cut fragmentation, the same general class this project's
+  "overlapping coplanar faces"/split-ring entries already document for
+  other surface types). `merge_same_surface_faces` correctly merges 0+21
+  into one 2-member root shell (they ARE mutually contiguous); the chain
+  then explores two DIFFERENT neighbors from its two ends -- a cylinder
+  shell `[20]` from one end, a different cylinder shell `[1]` from the
+  other -- a genuinely OPEN 3-member chain (confirmed:
+  `contiguous_face(face20, face1) = False`, they never touch each
+  other). But `_touches_face_set(face_or_shell=[0,21], target={20})`
+  summed boundary edges over BOTH members of the merged root shell and
+  found `face0` AND `face21` EACH independently border `face20` (a wide
+  common neighbor at the merge seam) -- `>=2`, which the existing
+  `_touches_face_set` logic (correctly validated for its own single-face
+  motivating case, `divertor_cam.stp`'s `STRUCTURAL_PLATE_1`, see the
+  entry above) misread as "both ends of this node meet the same
+  neighbor", wrongly setting `wraps[0]=True` and therefore
+  `closed_set=True` for a chain that was never actually closed.
+  `convex_planes`'s own `len(plane_list) < 3` branch then forced
+  `orientation="Reversed"` (the genuine-2-member-ring case), reducing
+  the 2 segments' own closing planes to an unconditional contradiction
+  and raising "not convex".
+  **Fix**: `_touches_face_set`'s call site now checks `facemin` (the
+  single face whose own `emin` edge is what discovered `adjacent1` in
+  the first place) instead of the whole `face_or_shell`. A real closed
+  2-member ring still trips this (facemin's own OTHER edge borders the
+  same target shell found via emin); the false-positive "two DIFFERENT
+  members of a merged root shell each independently touch the same wide
+  neighbor" pattern no longer does, since only one member's own edges
+  are ever summed.
+  **Verified**: `placa.stp` now converts cleanly under BOTH
+  `meta_surfaces` settings (per direct user instruction, the 3-engine
+  suites and a full corpus differential were skipped this time --
+  tightly scoped to this one call site, touched by nothing else this
+  session -- but the real conversion + a real d1suned check were run):
+  total decomposed-piece volume 4243590.27 (`True`) vs. 4243612.61
+  (`False`) mm^3, ~5.3e-6 relative, the same order of split-tessellation
+  noise already documented elsewhere in this project (e.g. the
+  `shed_shutter.stp`/`SPLIT_CANDIDATE_VOLUME_REL_TOL` entry above), not
+  a correctness concern. d1suned (NPS 1e6, `meta_surfaces=False`,
+  `volSDEF=True`/`dummyMat=True`): tally 0.99921 +/-0.24% (0.3 sigma from
+  1.0), 0 lost particles -- SD4 (4243612.60) vs. the true CAD volume
+  (4243590.27) differs by the same ~5.3e-6 relative noise already seen
+  above, not a new discrepancy.
+  **Full-corpus re-run, same day, both `Options.meta_surfaces` settings**
+  (149 STEP files of `Solidos/test_models`, excluding `Big_*`; 8-way
+  parallel conversion + 16-way parallel d1suned, both settings run
+  concurrently): conversion 145/149 in both (the same 4 known
+  pre-existing failures -- `SCDR_90_piece2`, `modelcell_cut1_v2_piece66`,
+  `ConeSphere.stp`'s native crash, `SCDR_90_hollow` -- unchanged;
+  `Hollow_plates/placa.stp` itself now converts OK under `False` in the
+  full-batch context too, not just the isolated single-file script used
+  to develop the fix). d1suned: **both settings give IDENTICAL results**
+  -- 191 tallies, 179 (93.7%) within 2 sigma, 11 marginal (same files,
+  same sigma to within rounding), exactly 1 beyond 3 sigma in EACH
+  (`RoundCorners/shed_solid.stp`, the same already-explained MC-noise-on-
+  a-0.25cm^3-cell case), 0 lost particles in either -- matching the
+  pattern already established by the `get_join_cone_cyl`/`convex_planes`
+  entry above (both settings converging to identical behavior once their
+  real gaps are closed) and confirming this fix introduces no regression
+  anywhere else in the corpus.
 
 - **Decomposition cache (`Settings.load_from_cache`), implemented
   2026-09-27** -- new feature, not a bug fix: `decompose_solids()` (via

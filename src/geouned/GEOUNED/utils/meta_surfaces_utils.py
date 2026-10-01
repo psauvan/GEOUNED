@@ -913,12 +913,13 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
                         adjacent2_shell, GUFaces, multiplanes, omitFaces, tolerances, False, wraps
                     )
 
-    if adjacent1_indices is not None and not wraps[0] and _touches_face_set(face_or_shell, adjacent1_indices, GUFaces) >= 2:
+    if adjacent1_indices is not None and not wraps[0] and _touches_face_set(facemin, adjacent1_indices, GUFaces) >= 2:
         # Extra closure signal, needed when the simple 2-edge model above
-        # (emin/emax only) misses it: `face_or_shell` genuinely borders
-        # adjacent1's own target shell through more than the one edge
-        # that produced `adjacent1` itself -- a direct, cheap edge check,
-        # bypassing `other_face_edge`'s own sliver-skip walk entirely.
+        # (emin/emax only) misses it: `facemin` (the single face whose own
+        # `emin` edge discovered `adjacent1` in the first place) genuinely
+        # borders adjacent1's own target shell through more than that one
+        # edge -- a direct, cheap edge check, bypassing `other_face_edge`'s
+        # own sliver-skip walk entirely.
         # Confirmed live, 2026-09-29 (divertor_cam.stp's STRUCTURAL_PLATE_1
         # under `Options.meta_surfaces=False`, where the target shell is
         # fragmented into 4 raw pieces, 2 of them thin slivers): face0
@@ -934,7 +935,21 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
         # found it in the first place); >=2 is the same "both ends meet
         # the same neighbor" signature the adjacent1/adjacent2 check
         # above already trusts, just found without relying on emin/emax
-        # being the only 2 relevant edges of `face_or_shell`'s boundary.
+        # being the only 2 relevant edges of `facemin`'s boundary.
+        # Deliberately checked against `facemin` alone, not the whole
+        # `face_or_shell` (which, for a merged multi-face `ShellFaceGu`,
+        # can have SEVERAL members each independently touching the SAME
+        # wide neighbor through their own, unrelated edge -- a benign
+        # "common neighbor at the merge boundary" situation, not a ring
+        # closure). Confirmed live, 2026-10-02 (Hollow_plates/placa.stp
+        # under `Options.meta_surfaces=False`): a 2-member cone shell
+        # [0,21] sits between two DIFFERENT, non-touching cylinders
+        # (face20, face1) -- a genuinely open 3-member chain -- but BOTH
+        # face0 and face21 independently border face20, so summing edges
+        # over the whole shell gave >=2 and wrongly flagged closure.
+        # Checking only `facemin`'s own edges (the one member that
+        # actually found `adjacent1`) avoids this false positive while
+        # preserving the original fix's own single-face motivating case.
         wraps[0] = True
 
     mp_list = []
