@@ -48,6 +48,20 @@ def Gsliver_heal(solid: "GSolid", min_face_width: float = DEFAULT_MIN_FACE_WIDTH
     return None
 
 
+def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
+    """Repair the "overlapping coplanar faces" defect (see
+    `solid_defects.find_overlapping_coplanar_faces`'s own docstring and
+    ``geo.occ.repair.Gtrim_overlapping_coplanar_faces``/``geo.ocp.repair.
+    Gtrim_overlapping_coplanar_faces`` for the algorithm and the verified
+    fixture, ``version1_bug2.stp``).
+
+    ocp/occ only -- a ``ShapeBuild_ReShape`` + ``BRepBuilderAPI_MakeFace``
+    + ``BRepBuilderAPI_Sewing`` pipeline. No FreeCAD ``Part`` equivalent is
+    wired: this is a ``None``-returning stub, same reasoning as
+    `Gcollapse_split_rings`/`Gsliver_heal` above."""
+    return None
+
+
 def Gheal_topology(solid: "GSolid") -> "GSolid | None":
     """Repair a topologically-invalid decomposition fragment via an
     in-memory STEP serialize -> deserialize rebuild (see

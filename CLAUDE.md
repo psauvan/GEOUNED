@@ -305,6 +305,115 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **New CAD-defect class detected and repaired, 2026-10-01: "overlapping
+  coplanar faces" -- a boolean cut landing exactly tangent to a
+  pre-existing surface can leave BOTH the original, untrimmed face AND
+  the cutting tool's own end-cap face present, overlapping, instead of
+  resolving into one correctly-trimmed face (e.g. an annulus) + the
+  hole.** User-reported: on `Solidos/working_solids/version1_bug2.stp`,
+  one of the two planes of the model's first two solids was "not well
+  oriented" under `Options.meta_surfaces=False`.
+  **Root cause, found by direct inspection (not guessing -- see the
+  false paths below for what was tried and rejected first)**: solid0
+  has a coaxial boss+bore feature -- an outer cylinder (R=3.5mm,
+  Forward) and an inner bore (R=2.0mm, Reversed), both starting at the
+  SAME end plane. That end plane carries TWO overlapping, concentric
+  disk faces instead of one annulus: a small disk (R=2.0mm, Forward,
+  area 12.68) sitting entirely inside a large disk (R=3.5mm, Reversed,
+  area 38.84, no inner wire) -- the small disk is the bore's own
+  residual end-cap, left behind uncut because the cut landed exactly
+  tangent to the boss's own end face (the same class of degeneracy this
+  whole project exists to fix, see "Motivating problem" above, just
+  manifesting as a planar duplicate instead of a cylinder/cube-corner
+  tangency). Confirmed via real point-sampling of both solids'
+  interiors (`GSolid.is_inside` on a dense grid): solid0's own material
+  is unambiguously on one side of the plane, solid1's (which shares this
+  exact plane) on the other -- the registry's own sign for this one
+  plane, for solid0, didn't match.
+  **Two false leads investigated and ruled out before the real root
+  cause** (kept here so a future session doesn't re-walk them): (1) a
+  hypothesis that `merge_same_surface_faces`/`gen_plane` was trusting
+  the WRONG member's `Orientation` flag when merging the two coplanar
+  faces -- ruled out once direct tracing showed the two faces are NOT
+  geometrically contiguous (`contiguous_face` returns `False` -- they
+  don't even share a point, confirmed via vertex-distance and curve
+  inspection), so `merge_same_surface_faces` never merges them at all;
+  each independently drives its own `Surfaces.add_plane` call. (2) once
+  that was found, direct instrumentation of `BoolSequence.append`
+  showed the SECOND call's own correctly-computed "-3" contribution gets
+  silently dropped: `BoolSurface` subclasses `int` with
+  `__new__(cls, abs(label))` (its own int/hash identity is always
+  POSITIVE, the real sign lives in a separate `.region` attribute), so
+  `append`'s `isinstance(s, int)` branch sees `3 in self.elements`
+  already True and just `continue`s instead of detecting the
+  contradiction or combining the two conditions -- a real, reproducible
+  mechanism, but a SYMPTOM of the same-plane duplication existing in the
+  first place, not the thing to fix (the user's own direction: "mira
+  primero los planos idx2/idx3" -- look at the geometry itself before
+  the boolean-algebra machinery around it).
+  **Detection**: new `geo/solid_defects.py::find_overlapping_coplanar_faces`
+  -- for every pair of planar faces on the same infinite plane (axes
+  parallel + offset within `max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)`,
+  the same intrinsic-tolerance pattern as `find_short_edges`/
+  `find_split_ring_faces`) that ISN'T already geometrically contiguous,
+  checks whether the smaller one's own boundary (`CenterOfMass` + every
+  outer-wire edge midpoint) projects inside the larger one's trimmed 2D
+  domain (`GFace.is_part_of_domain`, already existing on all 3 engines
+  via `BRepTopAdaptor_FClass2d`). Wired into `check_solid_defects` as a
+  new reason, `"overlapping coplanar faces"`. Verified against the
+  whole `Solidos/test_models` corpus (143 files, excluding `Big_*`/the
+  already-documented `ConeSphere.stp` native crash): **0 false
+  positives** -- this defect signature does not occur anywhere else in
+  the existing corpus.
+  **Repair, `geo/{occ,ocp}/repair.py::Gtrim_overlapping_coplanar_faces`**
+  (freecad: a `None`-returning stub, same precedent as
+  `Gcollapse_split_rings`/`Gsliver_heal`), wired as the FIRST step of
+  `Gcheck_and_repair`'s own cascade. The correct recipe (per direct user
+  instruction, matching exactly where this investigation's own hands-on
+  debugging had independently converged): **the smaller ("phantom")
+  face is not a feature to keep** -- 1) delete it from the solid
+  entirely; 2) remove the larger face and re-add it with the phantom's
+  own boundary wire attached as an inner wire (reversed, the standard
+  hole convention) -- the larger face ends up directly bordering
+  whatever the phantom used to border (here, the bore's own cylindrical
+  wall), exactly as a correctly-resolved boolean cut would have
+  produced; 3) re-sew into a solid (`ShapeBuild_ReShape` does both
+  substitutions in one `Apply`, then `BRepBuilderAPI_Sewing` +
+  `BRepBuilderAPI_MakeSolid` + `ShapeFix_Shape`, the same shape as every
+  other repair in this cascade).
+  **A real false-pass trap found and avoided along the way**: the FIRST
+  attempt (keep the phantom AS ITS OWN face, and ALSO re-trim the larger
+  face into an annulus around it) looked correct at the face level
+  (right area, sometimes `BRepCheck_Analyzer`-valid) but is topologically
+  wrong -- it makes the phantom's own boundary edge shared by 3 faces at
+  once (itself + the new annulus's hole + whatever real feature it
+  already bordered), a non-manifold edge. The resulting solid's native
+  `BRepGProp` volume and an independent Monte-Carlo point-classification
+  check didn't even agree with EACH OTHER on this broken attempt (one
+  read ~90, the other ~127-130, neither matching the true ~97.5) --
+  `BRepCheck_Analyzer` reporting "valid" was a genuine false pass, the
+  same class of lesson this cascade's own `Gdefeature`/
+  `Gcollapse_split_rings` history already documents. Deleting the
+  phantom (not keeping it) is what actually clears the non-manifold edge
+  and restores agreement between the two independent volume checks.
+  **Verified**: on the real fixture, both solids repair to 0 free/
+  non-manifold edges (was 2 non-manifold), volume conserved to ~3e-6
+  relative (97.485023 vs. the original 97.485271; confirmed independently
+  via Monte Carlo, within ~1 sigma of the pre-repair solid's own,
+  likewise Monte-Carlo-confirmed, volume). Full suites green on all 3
+  engines with zero regressions (ocp 203 passed/2 skipped, occ 245
+  passed/1 skipped, freecad 272 passed/16 skipped -- each engine's own
+  established baseline). End-to-end, real d1suned stochastic-volume
+  check (NPS 1e6) on the real fixture's all 3 cells, under BOTH
+  `Options.meta_surfaces` settings: identical tallies either way (cell1
+  1.00947 +/-1.31% / 0.72 sigma, cell2 1.01615 +/-1.29% / 1.25 sigma,
+  cell3 0.98249 +/-1.16% / 1.51 sigma), SD4 matching the true CAD volume
+  in all 3 cells, 0 lost particles, 0 fatal errors in either `outp` --
+  confirming the two settings now produce the identical, physically
+  correct geometry (previously only `meta_surfaces=True`'s own Can-
+  composite detection happened to route around this defect; `False`
+  exposed it directly).
+
 - **Regression found and fixed, 2026-09-27: `generic_split`'s post-split
   volume-conservation gate (added 2026-09-12, commit `8149030`) was too
   tight for a real, otherwise-correct split, silently leaving a solid

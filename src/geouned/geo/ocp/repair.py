@@ -73,6 +73,7 @@ from ..vector_geometry import GVector
 from ..solid_defects import (
     check_solid_defects,
     count_split_ring_pairs,
+    find_overlapping_coplanar_faces,
     find_sliver_faces,
     find_short_edges,
     find_split_ring_faces,
@@ -824,6 +825,114 @@ def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
     return result
 
 
+def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
+    """Repair the "overlapping coplanar faces" defect (see
+    `solid_defects.find_overlapping_coplanar_faces`'s own docstring for
+    the defect itself and its real-fixture signature): a smaller planar
+    patch (`small`) sits entirely inside a larger coplanar face's
+    (`large`) own trimmed domain because `large` is missing the
+    inner-wire hole that should exclude it.
+
+    `small` is NOT a genuine separate feature to keep -- it is the
+    residual "phantom" face left by the boolean cut that should have
+    trimmed `large` into e.g. an annulus in the first place (confirmed
+    empirically: keeping `small` as its own face AND re-trimming `large`
+    around it makes `small`'s own boundary edge shared by 3 faces at
+    once -- `small` itself, `large`'s new hole, and whatever real
+    feature `small` already bordered there, e.g. the bore's own
+    cylindrical wall -- a non-manifold edge, and the resulting solid's
+    volume comes out measurably wrong (confirmed both via the native
+    volume integral AND an independent Monte-Carlo point-classification
+    check -- the two didn't even agree with EACH OTHER on that broken
+    attempt, exposing it as genuinely non-manifold despite
+    `BRepCheck_Analyzer` reporting it "valid"). The real recipe (per
+    direct user instruction, matching what this investigation converged
+    on independently): 1) delete the phantom (`small`) from the solid
+    entirely; 2) remove `large` from the solid and add `small`'s own
+    boundary wire to it as an inner wire (reversed, the standard hole
+    convention) -- `large` ends up directly bordering whatever `small`
+    used to border, exactly as a correctly-resolved boolean cut would
+    have produced; 3) re-sew the result into a solid. Verified on the
+    real fixture: 0 free/non-manifold edges afterward (was 2 non-manifold
+    before, from the 3-way sharing above), volume conserved to ~3e-6
+    relative, confirmed independently via Monte Carlo (within ~1 sigma
+    of the pre-repair solid's own, likewise Monte-Carlo-confirmed,
+    volume).
+
+    `ShapeBuild_ReShape` does both substitutions (`Replace` for `large`,
+    `Remove` for `small`) in one `Apply`, which is then re-sewn and
+    re-solidified exactly like every other repair in this cascade.
+
+    Returns the healed `GSolid` only if it is BRepCheck-valid, conserves
+    volume to `MAX_REPAIR_VOLUME_REL_CHANGE`, AND
+    `find_overlapping_coplanar_faces` no longer finds any of the
+    original pairs (the same "the defect's own fingerprint must
+    strictly decrease" discipline as `Gcollapse_split_rings`'s
+    `count_split_ring_pairs` check); `None` otherwise -- never raises.
+
+    ocp/occ only -- the freecad backend's `Gtrim_overlapping_coplanar_faces`
+    is a `None`-returning stub, matching `Gcollapse_split_rings`/
+    `Gsliver_heal`'s own precedent."""
+    pairs = find_overlapping_coplanar_faces(solid)
+    if not pairs:
+        return None
+
+    try:
+        reshaper = ShapeBuild_ReShape()
+        for small, large in pairs:
+            pos, ax = large.Surface.Position, large.Surface.Axis
+            gpln = gp_Pln(gp_Pnt(pos.x, pos.y, pos.z), gp_Dir(ax.x, ax.y, ax.z))
+            outer_wire = large.outer_wire().__native__
+            hole_wire = TopoDS.Wire(small.outer_wire().__native__.Reversed())
+
+            face_maker = BRepBuilderAPI_MakeFace(gpln, outer_wire, True)
+            face_maker.Add(hole_wire)
+            if not face_maker.IsDone():
+                return None
+            new_face = face_maker.Face()
+            reshaper.Replace(large.__native__, new_face)
+            reshaper.Remove(small.__native__)
+
+        reduced = reshaper.Apply(solid.__native__)
+
+        sewer = BRepBuilderAPI_Sewing(OCCT_FIX_TOLERANCE)
+        explorer = TopExp_Explorer(reduced, TopAbs_FACE)
+        while explorer.More():
+            sewer.Add(explorer.Current())
+            explorer.Next()
+        sewer.Perform()
+        sewed = sewer.SewedShape()
+
+        builder = BRep_Builder()
+        shell = TopoDS_Shell()
+        builder.MakeShell(shell)
+        seen = False
+        face_explorer = TopExp_Explorer(sewed, TopAbs_FACE)
+        while face_explorer.More():
+            builder.Add(shell, TopoDS.Face(face_explorer.Current()))
+            seen = True
+            face_explorer.Next()
+        if not seen:
+            return None
+
+        solid_maker = BRepBuilderAPI_MakeSolid(shell)
+        if not solid_maker.IsDone():
+            return None
+        fixer = ShapeFix_Shape(solid_maker.Solid())
+        fixer.Perform()
+        result = GSolid(fixer.Shape())
+    except Exception:
+        return None
+
+    if not result.is_valid():
+        return None
+    if not volume_within(result.Volume, solid.Volume, MAX_REPAIR_VOLUME_REL_CHANGE):
+        return None
+    if find_overlapping_coplanar_faces(result):
+        return None
+    return result
+
+
 def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
@@ -862,9 +971,20 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     possibly-defective, already-parsed `.Faces`), so the caller never
     needs to re-wrap the result itself. Returns `(solid, False)` -- the
     ORIGINAL, unrepaired `GSolid`, never a partial or fabricated result
-    -- if nothing clears every check."""
+    -- if nothing clears every check.
+
+    `Gtrim_overlapping_coplanar_faces` (the "overlapping coplanar faces"
+    defect, see its own docstring) runs first in the cascade: it targets
+    its own distinct, unambiguous fingerprint, is a pure topology fix
+    (no native-kernel ambiguity like `Gsliver_heal`'s near-pair search),
+    and -- being a plain re-trim, never a sew-driven collapse -- has no
+    interaction with the other 3 repairs' own defect classes."""
     if not check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
         return solid, True
+
+    overlap_trimmed = Gtrim_overlapping_coplanar_faces(solid)
+    if overlap_trimmed is not None:
+        return overlap_trimmed, True
 
     collapsed = Gcollapse_split_rings(solid, tolerances)
     if collapsed is not None:

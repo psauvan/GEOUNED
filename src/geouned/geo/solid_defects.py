@@ -312,6 +312,93 @@ def near_surface_pair(surf_a, surf_b, dist_tol: float) -> float | None:
     return None
 
 
+def _same_infinite_plane(plane_a, plane_b, offset_tol: float) -> bool:
+    """True if `plane_a`/`plane_b` (two GPlane descriptors) describe the
+    exact same infinite plane within `offset_tol`: axes parallel, either
+    sense, within `DEFECT_AXIS_ANGLE`, and the two `Position` points
+    project to (near enough) the same point along that shared axis line.
+
+    Deliberately looser than `POINT_POINT_TOL`: two independently-built
+    Geom_Plane objects meant to represent "the same" analytic plane (one
+    per overlapping residual face, see `find_overlapping_coplanar_faces`)
+    do not round-trip to bit-identical Position/Axis the way a single
+    *shared* point does. Confirmed live on
+    `Solidos/working_solids/version1_bug2.stp`: the real defective pair's
+    own offset is ~3.6e-4mm against that solid's own ~8.6mm BoundBox
+    diagonal -- `offset_tol` is scaled to the solid for exactly this
+    reason, the same `max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)`
+    pattern `find_short_edges`/`find_split_ring_faces` already use."""
+    if not axes_parallel(plane_a.Axis, plane_b.Axis, DEFECT_AXIS_ANGLE):
+        return False
+    offset = plane_b.Position - plane_a.Position
+    return abs(offset.dot(plane_a.Axis)) <= offset_tol
+
+
+def _face_boundary_inside_domain(small, large) -> bool:
+    """True if `small`'s own CenterOfMass and every outer-wire edge
+    midpoint, projected onto `large`'s own surface, fall inside
+    `large`'s trimmed 2D domain -- i.e. `small` is a self-contained
+    patch sitting entirely within the region `large`'s own face already
+    claims, not merely touching or partially overlapping it.
+
+    Duck-typed on `GFace.CenterOfMass` / `.outer_wire()` / `GEdge.
+    ParameterRange` / `.value_at` / `GFace.Surface.parameter` /
+    `GFace.is_part_of_domain` -- identical across all 3 engines, no
+    native calls of its own."""
+    probes = [small.CenterOfMass]
+    for edge in small.outer_wire().Edges:
+        p0, p1 = edge.ParameterRange
+        probes.append(edge.value_at(0.5 * (p0 + p1)))
+    for point in probes:
+        u, v = large.Surface.parameter(point)
+        if not large.is_part_of_domain(u, v):
+            return False
+    return True
+
+
+def find_overlapping_coplanar_faces(solid, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
+    """Pairs `(small, large)` of planar faces on `solid`'s own boundary
+    that lie on the exact SAME infinite plane but are two independent,
+    OVERLAPPING patches -- `small`'s own boundary sits entirely inside
+    `large`'s own trimmed 2D domain -- instead of one correctly-trimmed
+    face (e.g. an annulus) and the hole it should have.
+
+    The same residual-boolean-cut-at-a-tangency signature this whole
+    project exists to fix (see CLAUDE.md's "Motivating problem"),
+    manifesting here as two concentric/overlapping planar patches rather
+    than a thin riser band (`find_split_ring_faces`'s own defect family):
+    a cutting tool's own end face landed exactly tangent to a
+    pre-existing surface, and the BOP left the original face's full
+    extent AND the tool's own end-cap face both present, uncut, instead
+    of resolving into one trimmed face (an annulus) + the hole.
+
+    Confirmed live, `Solidos/working_solids/version1_bug2.stp` solid0: a
+    R=2mm disk (Forward) sitting entirely inside a R=3.5mm disk
+    (Reversed, no inner wire) -- the shared end face of a coaxial
+    boss+bore feature.
+
+    Returns each matching pair once, ordered (smaller-area, larger-area);
+    empty list if none found (including when `solid.BoundBox.
+    DiagonalLength <= 0`). Duck-typed on `GSolid.Faces` / `GFace`
+    (`.Surface` a `GPlane`, `.Area`, `.CenterOfMass`, `.outer_wire()`,
+    `.is_part_of_domain`) -- identical across all 3 engines, no native
+    calls of its own."""
+    diag = solid.BoundBox.DiagonalLength
+    if diag <= 0.0:
+        return []
+    offset_tol = max(diag * rel_tol, MIN_SLIVER_EDGE_LENGTH)
+    planes = [f for f in solid.Faces if type(f.Surface).__name__ == "GPlane"]
+    pairs = []
+    for i, fa in enumerate(planes):
+        for fb in planes[i + 1 :]:
+            if not _same_infinite_plane(fa.Surface, fb.Surface, offset_tol):
+                continue
+            small, large = (fa, fb) if fa.Area <= fb.Area else (fb, fa)
+            if _face_boundary_inside_domain(small, large):
+                pairs.append((small, large))
+    return pairs
+
+
 def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL, min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> list:
     """Run every known corrupted/degenerate-geometry check against a
     loaded solid and return the reasons it currently fails (empty list
@@ -341,6 +428,13 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_
         edge-repair function and re-widen this check (option 2 in that
         discussion); until then this stays face-anchored.
 
+      - two independent, overlapping coplanar planar faces
+        (``find_overlapping_coplanar_faces``) -- a residual boolean-cut
+        artifact where a face's own missing inner-wire hole leaves it
+        overlapping a smaller, separate coplanar patch instead of being
+        correctly trimmed into e.g. an annulus (confirmed live,
+        Solidos/working_solids/version1_bug2.stp).
+
     Takes raw tolerance values, not a `Tolerances` object -- this file
     has no dependency on anything outside `geo`, GEOUNED's own
     `Tolerances` class included; callers read
@@ -352,4 +446,6 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_
     short_edge_faces = find_short_edges(solid, sliver_edge_rel_tol)
     if any(getattr(face, "CharacteristicWidth", float("inf")) < min_face_width for face in short_edge_faces):
         reasons.append("degenerate/sliver geometry")
+    if find_overlapping_coplanar_faces(solid, sliver_edge_rel_tol):
+        reasons.append("overlapping coplanar faces")
     return reasons

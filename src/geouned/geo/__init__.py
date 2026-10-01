@@ -60,6 +60,7 @@ from .surface_geometry import (
 )
 from .solid_defects import (
     count_split_ring_pairs,
+    find_overlapping_coplanar_faces,
     find_short_edges,
     find_split_ring_faces,
     near_surface_pair,
@@ -142,6 +143,7 @@ if _engine == "occ":
         Gspline_surface,
         Gsplit,
         Gsubstitute_spline_quadrics,
+        Gtrim_overlapping_coplanar_faces,
         kernel_version,
         pick_outer_wire,
         to_native_matrix,
@@ -210,6 +212,7 @@ elif _engine == "ocp":
         Gspline_surface,
         Gsplit,
         Gsubstitute_spline_quadrics,
+        Gtrim_overlapping_coplanar_faces,
         kernel_version,
         pick_outer_wire,
         to_native_matrix,
@@ -272,6 +275,7 @@ else:
         Gsolid_nonmanifold_edge_count,
         Gspline_surface,
         Gsplit,
+        Gtrim_overlapping_coplanar_faces,
         kernel_version,
         pick_outer_wire,
         to_native_matrix,

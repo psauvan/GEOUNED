@@ -60,6 +60,7 @@ from .repair import (
     Gmerge_coplanar_planes,
     Gsliver_heal,
     Gspline_surface,
+    Gtrim_overlapping_coplanar_faces,
 )
 from .io import Gexport_binary, Gexport_step, Gfirst_shell, Gload_and_process_step, Gload_binary, Gload_step, Gload_step_labels
 from .primitives import (
