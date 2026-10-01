@@ -38,6 +38,40 @@ from .cell_definition_functions import (
 logger = logging.getLogger("general_logger")
 
 
+def _check_new_basic_surface_term(region, seen_labels):
+    """Raise if `region` (a `BoolSurface` returned by one of
+    `Surfaces.add_plane`/`add_cylinder`/`add_elliptic_cylinder`/
+    `add_cone`/`add_sphere`/`add_torus`) references the SAME registry
+    surface label as an earlier face of the SAME solid in
+    `simple_solid_definition`'s own per-face loop, with the OPPOSITE
+    sense (`region.reverse`).
+
+    A repeat with the SAME sense is harmless and legitimate -- e.g. two
+    separate, non-contiguous wall segments of one real cylinder split by
+    an unrelated feature (confirmed live, `testing/inputSTEP/BC.stp`:
+    two faces of the same cylinder, both `AND[9]`/`reverse=False`,
+    correctly deduped to the same `BoolSurface` and silently absorbed as
+    a no-op by `BoolSequence.append` -- exactly as intended, not a bug).
+    A repeat with the OPPOSITE sense is the real defect signature this
+    check exists for (see this function's own top-of-body comment):
+    `BoolSurface`'s own int identity is the registry label, not an
+    oriented condition, so `append` can't tell that case apart from the
+    harmless one above and would silently drop the contradiction instead
+    of raising it."""
+    label = abs(int(region))
+    reverse = region.reverse
+    if label in seen_labels and seen_labels[label] != reverse:
+        raise RuntimeError(
+            f"simple_solid_definition: surface {label} was already contributed as a top-level "
+            "AND term by another face of this solid, with the OPPOSITE sense -- BoolSurface's "
+            "own int identity is the registry label, not an oriented condition, so "
+            "BoolSequence.append would silently drop this second, contradictory contribution "
+            "instead of raising it (see CLAUDE.md's 'overlapping coplanar faces' entry). An "
+            "irreducible solid should never reach this."
+        )
+    seen_labels[label] = reverse
+
+
 def build_definition(meta_obj, Surfaces, simplifyComp=True):
 
     solid_definition = BoolSequence(operator="OR")
@@ -53,6 +87,33 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
 
 def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
     component_definition = BoolSequence(operator="AND")
+    # `merge_same_surface_faces` (below) consolidates every face of a
+    # solid that is geometrically CONTIGUOUS with `face` and shares its
+    # same analytic surface, before this loop's own basic-surface
+    # branches ever run -- but two SEPARATE, non-contiguous faces of the
+    # same overall surface (e.g. two wall segments of one real cylinder,
+    # split by an unrelated slot/hole) are a perfectly normal, common
+    # case, not a defect: `Surfaces.add_plane`/`add_cylinder`/etc.
+    # correctly dedupe them to the SAME registry label and sign, and
+    # `BoolSequence.append` correctly no-ops the second, identical
+    # contribution (confirmed live, `testing/inputSTEP/BC.stp`).
+    # The genuinely-never-supposed-to-happen case, per direct user
+    # confirmation, is specifically the OPPOSITE sense: by construction,
+    # an irreducible solid can never have two distinct faces of the same
+    # analytic surface with opposite orientation. If it ever does (as
+    # the "overlapping coplanar faces" CAD defect did before its own
+    # repair, see CLAUDE.md), `BoolSurface`'s own int identity (the
+    # registry label, abs(label) -- not an oriented condition, confirmed
+    # 2026-10-01) means `BoolSequence.append` would silently DROP the
+    # contradictory second contribution instead of raising it, quietly
+    # handing back a cell definition missing a real bounding condition.
+    # `_seen_basic_surfaces` (label -> the sense first seen) turns that
+    # into a loud failure instead. Composite meta-surfaces (Can/TCone/
+    # RoundCorner/MultiPlane/RevCC) are NOT tracked here: those can
+    # legitimately collapse to an unconditional True (e.g. a closed
+    # 2-cylcone RevCC ring, see CLAUDE.md's own `convex_planes` entry)
+    # for reasons that have nothing to do with this check.
+    _seen_basic_surfaces = {}
 
     solid_gu = GU.SolidGu(solid.Solids[0], tolerances=Surfaces.tolerances)
     # A genuinely small decomposed piece (e.g. residual sliver-adjacent
@@ -181,6 +242,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         if isinstance(face.Surface, GU.GPlane):
             plane = gen_plane(face)
             plane_region = Surfaces.add_plane(plane, True)
+            _check_new_basic_surface_term(plane_region, _seen_basic_surfaces)
             component_definition.append(plane_region)
 
         elif isinstance(face.Surface, GU.GCylinder):
@@ -191,6 +253,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             cylinderOnly = gen_cylinder(face)
             cylinder = GeounedSurface(("Cylinder", (cylinderOnly, None), face.Orientation))
             cylinder_region = Surfaces.add_cylinder(cylinder)
+            _check_new_basic_surface_term(cylinder_region, _seen_basic_surfaces)
             component_definition.append(cylinder_region)
 
         elif isinstance(face.Surface, GU.GEllipticCylinder):
@@ -201,6 +264,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
             ellipticCylinderOnly = gen_elliptic_cylinder(face)
             ellipticCylinder = GeounedSurface(("EllipticCylinder", (ellipticCylinderOnly, None), face.Orientation))
             elliptic_cylinder_region = Surfaces.add_elliptic_cylinder(ellipticCylinder)
+            _check_new_basic_surface_term(elliptic_cylinder_region, _seen_basic_surfaces)
             component_definition.append(elliptic_cylinder_region)
 
         elif isinstance(face.Surface, GU.GCone):
@@ -214,6 +278,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
             cone = GeounedSurface(("Cone", (coneOnly, apexPlane, None), face.Orientation))
             cone_region = Surfaces.add_cone(cone)
+            _check_new_basic_surface_term(cone_region, _seen_basic_surfaces)
             component_definition.append(cone_region)
 
         elif isinstance(face.Surface, GU.GSphere):
@@ -225,6 +290,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
             sphere = GeounedSurface(("Sphere", (sphereOnly, plane), face.Orientation))
             sphere_region = Surfaces.add_sphere(sphere)
+            _check_new_basic_surface_term(sphere_region, _seen_basic_surfaces)
             component_definition.append(sphere_region)
 
         elif isinstance(face.Surface, GU.GTorus):
@@ -267,6 +333,7 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
 
                 torus = GeounedSurface(("Torus", (torusOnly, Uplanes, Vsurface, Vconfig), face_orientation, degenerated))
                 torus_region = Surfaces.add_torus(torus)
+                _check_new_basic_surface_term(torus_region, _seen_basic_surfaces)
                 component_definition.append(torus_region)
             else:
                 logger.info("Only Torus with axis along X, Y, Z axis can be reproduced")

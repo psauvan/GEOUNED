@@ -413,6 +413,72 @@ instruction).
   correct geometry (previously only `meta_surfaces=True`'s own Can-
   composite detection happened to route around this defect; `False`
   exposed it directly).
+  **Follow-up, 2026-10-01/02: a real, independent latent bug in
+  `BoolSequence.append`/`BoolSurface` found while investigating the
+  above, deliberately left unfixed -- a loud diagnostic added instead,
+  per direct user instruction.** `BoolSurface` (the signed-region
+  wrapper every `Surfaces.add_plane`/`add_cylinder`/`add_cone`/
+  `add_sphere`/`add_torus` returns) subclasses `int` with
+  `__new__(cls, abs(label))` -- its own `int`/`hash`/`==` identity is
+  ALWAYS the registry label's absolute value, never signed; the real
+  sense lives in a separate `.region`/`.reverse` attribute.
+  `BoolSequence.append`'s plain-int branch (`if s in self.elements:
+  continue; elif -s in self.elements: <raise a contradiction>`) relies
+  on `==`/`in` to tell "already present" apart from "opposite sign,
+  should be a contradiction" -- but for two `BoolSurface` instances
+  referencing the SAME label with OPPOSITE sense, both `s` and `-s`
+  compare equal to the same stored int, so the FIRST branch
+  (`continue`) always fires, silently dropping the genuinely
+  contradictory second contribution instead of ever reaching the
+  contradiction branch. Confirmed in total isolation, decoupled from
+  the rest of the pipeline (`BoolSurface(3) == BoolSurface(-3)` is
+  `True`).
+  **Per direct user clarification, this is NOT a bug in `BoolSurface`
+  itself**: its own int identity is deliberately just the registry
+  LABEL, not an oriented condition -- and by construction, an
+  irreducible solid can never have two distinct faces of the same
+  analytic surface with opposite orientation (which is exactly why this
+  was never seen before the "overlapping coplanar faces" defect above,
+  the first and only known case that violates this invariant). Per the
+  user's own explicit instruction ("yo no tocaria nada... solo pondria
+  algo de informacion o algun warning o runtime error"), `BoolSequence`/
+  `BoolSurface` themselves -- historically fragile, load-bearing core
+  machinery -- are deliberately left untouched; only a diagnostic was
+  added.
+  **Fix**: `cell_definition.py::simple_solid_definition` now tracks
+  `_seen_basic_surfaces` (registry label -> the sense first seen) across
+  its own per-face loop's 6 basic-surface branches (plane/cylinder/
+  elliptic-cylinder/cone/sphere/torus) via a small
+  `_check_new_basic_surface_term` helper, and raises `RuntimeError`
+  immediately if the SAME label is ever contributed again with the
+  OPPOSITE sense -- turning a future silent, incomplete cell definition
+  into a loud, immediate failure instead. Deliberately narrow in scope:
+  - Composite meta-surfaces (Can/TCone/RoundCorner/MultiPlane/RevCC) are
+    NOT tracked -- a first attempt that compared the FINAL
+    `component_definition.elements` count against a running tally of
+    every append (composites included) false-positived on
+    `testing/inputSTEP/BC.stp` and 10 other real fixtures: a composite
+    region can legitimately collapse to an unconditional `True` (e.g. a
+    closed 2-cylcone RevCC ring, see this file's own `convex_planes`
+    entry) via `BoolSequence.append`'s OTHER, correctly-working
+    `isinstance(s.elements, bool)` branch -- a real simplification, not
+    this bug.
+  - A repeat with the SAME sense is explicitly allowed, not flagged: a
+    real, common, legitimate case (confirmed live on `BC.stp`: two
+    separate, non-contiguous wall segments of one real cylinder, split
+    by an unrelated slot, both correctly dedupe to the identical
+    `BoolSurface` and get silently absorbed as a harmless no-op by
+    `append` -- not a defect). Only the OPPOSITE-sense repeat, which
+    `append` cannot safely absorb, is the user's own stated
+    never-happens invariant and raises.
+  **Verified**: full suites green on all 3 engines with zero
+  regressions (ocp 203 passed/2 skipped, occ 245 passed/1 skipped,
+  freecad 272 passed/16 skipped -- unchanged from the baseline just
+  above). A 148-file `Solidos/test_models` scan (decompose +
+  build_solid_definition, every file except `Big_*`/`ConeSphere.stp`):
+  **0 files trigger the new check** -- confirms it is a purely inert
+  diagnostic addition on the whole existing corpus, exactly as expected
+  (the invariant genuinely always holds there).
 
 - **Regression found and fixed, 2026-09-27: `generic_split`'s post-split
   volume-conservation gate (added 2026-09-12, commit `8149030`) was too
