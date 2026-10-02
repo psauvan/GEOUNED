@@ -492,6 +492,18 @@ DEFECT_AXIS_ANGLE = math.acos(1.0 - 1.0e-5)
 # default gave here before.
 SPLINE_PLANARITY_ANGLE = 1.0e-3
 
+# sin(angle) gate for "are these two edge directions collinear", used by
+# `Gtrim_overlapping_coplanar_faces`'s boundary-touching-pair repair to
+# confirm `large`'s own side edge is really a collinear superset of
+# `small`'s own corresponding side edge before trimming it. The two
+# directions are each derived from a pair of STEP vertex coordinates
+# (6-decimal precision), so even a genuinely collinear pair shows a real
+# sin(angle) of order 1e-5 here (measured live, struct_plate2.stp's own
+# piece8 fixture: 1.6e-5 and 8.5e-6) -- a margin comfortably above that
+# noise while staying far below any genuinely non-collinear angle (which
+# would read in the 0.1-1 range, i.e. several degrees or more).
+COLLINEAR_SIN_TOL = 1.0e-3
+
 # Reference volume (mm^3) of every RELATIVE volume comparison: `abs(a - b) <= tol * max(|reference|, VOLUME_REF)`. Below it a
 # relative test is meaningless, so the tolerance becomes the absolute `tol * VOLUME_REF`. It is a characteristic SCALE, not a
 # threshold (contrast Tolerances.min_solid_volume, which decides whether a piece is worth keeping) and it must not be tied to

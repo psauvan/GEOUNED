@@ -479,6 +479,122 @@ instruction).
   **0 files trigger the new check** -- confirms it is a purely inert
   diagnostic addition on the whole existing corpus, exactly as expected
   (the invariant genuinely always holds there).
+  **Follow-up, 2026-10-02: a SECOND real sub-case of this same defect,
+  only triggered by GEOUNED's OWN decomposition (never present in the
+  source STEP file), found and fixed -- root cause of lost particles on
+  `Solidos/working_solids/struct_plate2.stp` under
+  `Options.meta_surfaces=False`.** User-reported: a real solid lost
+  particles (d1suned: 10 lost, tally 0.914) and "geouned hace cosas
+  raras con los planos" (GEOUNED does strange things with the planes).
+  **Bisection first, per direct user request** ("pruebas con commit
+  anteriores... ver si es una regresion"): the written MCNP text is
+  byte-identical from the commit that introduced `Options.meta_surfaces`
+  (`fd4d1e1`) all the way to HEAD -- not a regression, present for the
+  whole lifetime of the `meta_surfaces=False` feature. Also confirmed
+  `meta_surfaces=True` converts this exact solid perfectly (0 lost, tally
+  0.9957) -- specific to `False`.
+  **Isolating the real cause, per direct user instruction** ("descompon
+  el solido... y para cada solido irreducible haces una conversion y
+  miras cual pierde particulas"): decomposed the solid into its 9
+  irreducible pieces (`Gexport_step` on each `GSolid`), converted each
+  standalone -- 8/9 converted perfectly; `piece8` (the one non-box-shaped
+  piece, 7 faces) **failed to even LOAD** at all
+  (`load_step_file(corrupted_solids="remove")` silently dropped it).
+  `check_solid_defects(piece8)` returned `['overlapping coplanar
+  faces']` -- the EXACT SAME defect class as the entry above, but on a
+  piece `generic_split`'s own recursive decomposition created FRESH:
+  confirmed via `check_solid_defects` on the TRUE original, undecomposed
+  solid (15 faces) -- **0 defects there**. `Gcheck_and_repair`'s own
+  load-time cascade therefore never gets a chance to catch or fix this
+  specific occurrence; it only exists after decomposition.
+  **The repair from the entry above failed for this specific pair**
+  (`Gtrim_overlapping_coplanar_faces` returned `None`): per direct user
+  insight ("la cara fantasma... tiene asociado un edge real que los liga
+  al solido. Y este edge es el que falta a la cara real"), mapped which
+  OTHER real faces of `piece8` border each edge of `small`/`large` --
+  confirmed `small` and `large` share exactly **1 real edge**
+  (`GEdge.IsSame`, not just geometric coincidence) along one whole side,
+  not 0 as in the entry above's own fixture (`version1_bug2.stp`, a
+  strictly-interior disk-in-annulus case) -- `small` TOUCHES `large`'s
+  own boundary instead of sitting inside it, so the "add an inner-wire
+  hole" construction is geometrically invalid for this shape (confirmed:
+  the new face comes back `BRepCheck`-invalid at construction, before
+  any sewing). Direct point-sampling (`is_inside` on both sides of
+  `small`'s own surface, at its centroid and all 4 corners) confirmed
+  the SAME "no material on either side" signature as a genuine phantom
+  face, both on `piece8` and on the TRUE original solid -- the same
+  general, surface-type-agnostic verification this project has used
+  before for an analogous cylinder case, per direct user suggestion
+  ("¿Se puede verificar esta propiedad de forma facil?").
+  **Fix, `_trim_edge_for_boundary_touching_pair`** (new helper, both
+  `geo/{occ,ocp}/repair.py`): when `small`/`large` share exactly one
+  real edge, `large`'s own 2 edges adjacent to it are collinear
+  SUPERSETS of `small`'s own 2 corresponding edges (which are already
+  correctly connected to `small`'s real neighbor faces) -- trim `large`'s
+  2 edges down to `small`'s own far endpoint (reusing `small`'s own
+  edges directly, not rebuilding them) and assemble a single new outer
+  wire with no hole at all. Two real implementation pitfalls found and
+  fixed along the way (both confirmed via direct instrumentation, not
+  guessed):
+  1. A naive absolute cross-product-length collinearity gate was too
+     tight -- two edges that ARE genuinely collinear still show a real
+     `sin(angle)` of ~1-2e-5 here, since both directions are derived
+     from STEP vertex coordinates (6-decimal precision). Fixed with a
+     proper relative `sin(angle)` comparison against a new
+     `COLLINEAR_SIN_TOL = 1e-3` constant (`geo/constants.py`) -- a
+     margin comfortably above the measured real noise, far below any
+     genuinely non-collinear angle.
+  2. Building the 2 new trimmed edges from fresh `gp_Pnt`-based
+     endpoints (numerically close to, but not the SAME object as, the
+     real vertices of the reused edges) left the resulting wire
+     DISCONNECTED -- `BRepBuilderAPI_MakeWire.Add()` only bridges exact
+     vertex identity, not near-coincident coordinates. Fixed by reusing
+     the real `TopoDS_Vertex` objects directly (`_native_vertices`/
+     `_other_vertex` now return the native vertex, not just its
+     coordinates). A SECOND, related pitfall: `BRepBuilderAPI_MakeWire.Add()`
+     only connects a new edge to the wire's CURRENT open end -- it does
+     not defer and retry an edge added out of order, silently DROPPING
+     it instead (confirmed live: feeding the 4 replacement edges in
+     discovery order left one disconnected, producing a near-zero-area
+     face). Fixed with a new `_order_wire_edges` helper that topologically
+     sorts the edge set into a connectivity-respecting sequence before
+     feeding them to `MakeWire`.
+  **A second, separate wiring gap**: even with the repair itself fixed,
+  the real end-to-end pipeline still produced the SAME broken output,
+  because `decompose/decom_one_generators.py::split_surfaces` -- the
+  function that actually produces `piece8` during real decomposition --
+  only ever called `.fix()` (a plain `ShapeFix_Shape` pass) on each
+  returned piece, never the overlapping-coplanar-faces check+repair at
+  all. Fixed: `split_surfaces` now also checks
+  `find_overlapping_coplanar_faces`/calls `Gtrim_overlapping_coplanar_faces`
+  on each piece right after `.fix()`, wrapped in the same crash-safety
+  `try`/`except` discipline already established there (never let an
+  auxiliary repair attempt abort an otherwise-fine decomposition; keep
+  the original piece if the repair isn't possible).
+  **Verified**: `piece8` now repairs cleanly (volume 2303.99995 vs.
+  original 2304.00074, ~3.4e-7 relative, 0 remaining defects, valid).
+  `struct_plate2.stp` end to end, both engines: written cell definition
+  identical between `occ` and `ocp`; d1suned (NPS 1e6) on both: **0 lost
+  particles** (was 10), tally **0.99571 +/-0.59%** (0.7 sigma) -- matches
+  `meta_surfaces=True`'s own tally (0.995706) exactly, confirming both
+  settings now agree. Per direct user instruction, the 3-engine suites
+  and a corpus differential were skipped for the FIRST (version1_bug2.stp)
+  entry above but run in full for this follow-up: `tests/geo` +
+  `test_cadtocsg.py` + `test_csgtocad.py` green on both occ/ocp (261
+  passed/1 skipped each, `test_freecad_impl.py` excluded via
+  `--ignore` -- an unrelated, pre-existing FreeCAD/pyOCC DLL-conflict
+  during collection on this machine, not a regression). A dedicated
+  149-file `Solidos/test_models` differential (decompose only, under
+  `meta_surfaces=False` specifically -- the setting this fix's own new
+  code path actually exercises -- comparing piece count, total volume,
+  and remaining-defect count per file, `git worktree` at the pre-fix
+  commit vs. the fixed working tree) -- **0 differences anywhere**, and
+  `remaining_defects` is 0 for all 145 files that convert either way --
+  confirming this defect sub-case does not occur anywhere in the
+  existing `test_models` corpus (specific to `struct_plate2.stp`, not
+  yet added to that corpus) and the fix is purely additive.
+  freecad is untouched (its own `Gtrim_overlapping_coplanar_faces` stays
+  a `None`-returning stub, same precedent as the entry above).
 
 - **Regression found and fixed, 2026-09-27: `generic_split`'s post-split
   volume-conservation gate (added 2026-09-12, commit `8149030`) was too

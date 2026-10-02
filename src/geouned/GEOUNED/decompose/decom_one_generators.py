@@ -14,8 +14,10 @@ from ...geo import (
     Gsolid_max_tolerance,
     Gsolid_nonmanifold_edge_count,
     Gsplit,
+    Gtrim_overlapping_coplanar_faces,
 )
 from ...geo.constants import SPLIT_CANDIDATE_VOLUME_REL_TOL, TOLERANCE_WELD_FLOOR
+from ...geo.solid_defects import find_overlapping_coplanar_faces
 from ...geo.volume_utils import volume_within
 
 logger = logging.getLogger("general_logger")
@@ -34,9 +36,32 @@ def split_surfaces(solid, options, tolerances):
     fixed_solids = []
     for s in solid_components:
         try:
-            fixed_solids.append(s.fix(tolerances.fix_tolerance))
+            s = s.fix(tolerances.fix_tolerance)
         except Exception:
-            fixed_solids.append(s)
+            pass
+        # A boolean cut landing exactly tangent to a pre-existing surface
+        # can leave a residual "phantom" face duplicating part of a real
+        # neighboring face -- `generic_split`'s own recursive cuts can
+        # create this defect fresh, on a piece that never had it at load
+        # time (confirmed live, struct_plate2.stp's own piece8: 0 defects
+        # on the original, undecomposed solid; the defect only appears
+        # after decomposition splits it), so the load-time repair cascade
+        # (`Gcheck_and_repair`) never gets a chance to catch it -- it has
+        # to be checked again here, on each piece this function itself
+        # produces. Same crash-safety discipline as `.fix()` just above:
+        # never let an auxiliary repair attempt abort an otherwise-fine
+        # decomposition, and keep the original piece if the repair isn't
+        # possible (`Gtrim_overlapping_coplanar_faces` already returns
+        # `None` rather than raising in that case, but the whole check is
+        # still wrapped defensively).
+        try:
+            if find_overlapping_coplanar_faces(s):
+                repaired = Gtrim_overlapping_coplanar_faces(s)
+                if repaired is not None:
+                    s = repaired
+        except Exception:
+            pass
+        fixed_solids.append(s)
 
     comp = GCompound(fixed_solids)
 

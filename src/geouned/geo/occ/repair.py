@@ -68,6 +68,7 @@ from OCC.Core.TopExp import (
 )
 from OCC.Core.TopoDS import (
     TopoDS_Shell,
+    TopoDS_Vertex,
     topods,
 )
 from OCC.Core.TopTools import (
@@ -85,6 +86,7 @@ from ..solid_defects import (
     near_surface_pair,
 )
 from ..constants import (
+    COLLINEAR_SIN_TOL,
     FACE_CONSTRUCTION_TOL,
     FINITE_DIFF_STEP,
     MAX_REPAIR_VOLUME_REL_CHANGE,
@@ -95,7 +97,7 @@ from ..constants import (
 )
 from ..io_utils import suppress_native_stdout
 from ..surface_geometry import is_same_plane_surface
-from .topology import GFace, GPlane, GSolid, Gclassify_surface
+from .topology import GEdge, GFace, GPlane, GSolid, Gclassify_surface
 from .boolean import _exploded_solids
 from ._native_utils import _volume_props
 
@@ -766,6 +768,171 @@ def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
     return result
 
 
+def _shared_edges(face_a: "GFace", face_b: "GFace") -> list:
+    """Native edges that are the literal SAME `TopoDS_Edge` (by
+    reference, `IsSame`) in both faces' own outer wires -- i.e. a real,
+    already-existing topological edge connecting the two faces, not
+    just a geometric coincidence."""
+    shared = []
+    for ea in face_a.Edges:
+        for eb in face_b.Edges:
+            if ea.is_same(eb):
+                shared.append(ea.__native__)
+    return shared
+
+
+def _native_vertices(edge: "GEdge") -> "tuple | None":
+    """The edge's own 2 real `TopoDS_Vertex` objects (not just their
+    coordinates) -- needed so a newly-built replacement edge can share
+    the EXACT same vertex object as the edges it connects to, rather
+    than a numerically-close-but-distinct one (which `BRepBuilderAPI_
+    MakeWire` does not bridge -- confirmed live, struct_plate2.stp's
+    own piece8: a wire built from coordinate-only `gp_Pnt` endpoints
+    left one of 4 edges disconnected, silently producing a near-zero-
+    area face instead of the intended quadrilateral)."""
+    v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+    topexp.Vertices(edge.__native__, v1, v2)
+    if v1.IsNull() or v2.IsNull():
+        return None
+    return (v1, v2)
+
+
+def _vertex_point(vertex: "TopoDS_Vertex") -> GVector:
+    p = BRep_Tool.Pnt(vertex)
+    return GVector(p.X(), p.Y(), p.Z())
+
+
+def _other_vertex(edge: "GEdge", known: GVector, tol: float = POINT_POINT_TOL) -> "TopoDS_Vertex | None":
+    """The edge's own real `TopoDS_Vertex` that is NOT (within `tol`)
+    `known`; `None` unless exactly one of the edge's 2 vertices matches
+    `known` (so the edge genuinely touches it, and the result is
+    unambiguous)."""
+    native_verts = _native_vertices(edge)
+    if native_verts is None:
+        return None
+    near, far = [], []
+    for v in native_verts:
+        (near if (_vertex_point(v) - known).length < tol else far).append(v)
+    if len(near) != 1 or len(far) != 1:
+        return None
+    return far[0]
+
+
+def _order_wire_edges(edges: list) -> "list | None":
+    """Reorder a set of native edges, assumed to form exactly one simple
+    closed loop, into a connectivity-respecting sequence. Needed because
+    `BRepBuilderAPI_MakeWire.Add()` only connects a new edge to the
+    CURRENT open end of the wire being built so far -- it does not defer
+    and retry an edge that doesn't connect yet, it just silently drops
+    it (confirmed live, struct_plate2.stp's own piece8: feeding its 4
+    replacement edges in the order they were discovered left one
+    disconnected, producing a near-zero-area face instead of the
+    intended quadrilateral). `None` if the edges don't actually form a
+    single closed loop (never guesses past that)."""
+    remaining = list(edges)
+    if not remaining:
+        return None
+
+    def endpoints(e):
+        v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+        topexp.Vertices(e, v1, v2)
+        return v1, v2
+
+    ordered = [remaining.pop(0)]
+    _, end_v = endpoints(ordered[0])
+    end_pt = _vertex_point(end_v)
+    while remaining:
+        for i, e in enumerate(remaining):
+            v1, v2 = endpoints(e)
+            if (_vertex_point(v1) - end_pt).length < POINT_POINT_TOL:
+                ordered.append(e)
+                end_pt = _vertex_point(v2)
+                remaining.pop(i)
+                break
+            if (_vertex_point(v2) - end_pt).length < POINT_POINT_TOL:
+                ordered.append(e)
+                end_pt = _vertex_point(v1)
+                remaining.pop(i)
+                break
+        else:
+            return None  # no remaining edge connects -- not a single closed loop
+    return ordered
+
+
+def _trim_edge_for_boundary_touching_pair(small: "GFace", large: "GFace", shared_native_edge) -> "list | None":
+    """Build the replacement wire edges for `large` when `small` (the
+    phantom) shares a REAL edge with `large` instead of sitting
+    strictly inside it (see `Gtrim_overlapping_coplanar_faces`'s own
+    docstring for the two cases). `small`'s own two side edges and
+    `large`'s own two side edges, at EACH endpoint of the shared edge,
+    are collinear -- `small`'s own side edge is the short, correctly-
+    connected inner portion (already bordering `small`'s own real
+    neighbor faces) and `large`'s own side edge is the too-long
+    superset running past it. Returns the new wire's edges (2 freshly
+    trimmed + `small`'s own far edge(s), reused as-is + `large`'s own
+    unaffected far edge(s), reused as-is), or `None` if the geometry
+    doesn't match this specific, verified pattern (handled this way so
+    an unexpected configuration falls back to `None` -- never guesses).
+    """
+    shared_verts = [v for v in GEdge(shared_native_edge).Vertexes]
+    if len(shared_verts) != 2:
+        return None
+    v0, v1 = shared_verts[0], shared_verts[-1]
+
+    small_other = [e for e in small.Edges if not e.__native__.IsSame(shared_native_edge)]
+    large_other = [e for e in large.Edges if not e.__native__.IsSame(shared_native_edge)]
+
+    new_edges = []
+    consumed_small = set()
+    consumed_large = set()
+    for v in (v0, v1):
+        large_adj = next((e for e in large_other if _other_vertex(e, v) is not None), None)
+        small_adj = next((e for e in small_other if _other_vertex(e, v) is not None), None)
+        if large_adj is None or small_adj is None:
+            return None
+        far_large = _other_vertex(large_adj, v)
+        far_small = _other_vertex(small_adj, v)
+        if far_large is None or far_small is None:
+            return None
+
+        far_large_pt = _vertex_point(far_large)
+        far_small_pt = _vertex_point(far_small)
+        direction_large = far_large_pt - v
+        direction_small = far_small_pt - v
+        if direction_large.length < POINT_POINT_TOL or direction_small.length < POINT_POINT_TOL:
+            return None
+        # sin(angle) between the two directions; STEP vertex coordinates
+        # are only stored to ~6 decimals, so two edges that are really
+        # collinear still show a sin(angle) of order 1e-5 here -- a
+        # pure absolute cross-product-length gate (scaled by only one
+        # of the two lengths) is too tight for that noise. COLLINEAR_SIN_TOL
+        # is a generous margin above the measured real noise (~1-2e-5)
+        # while staying far below any genuinely non-collinear angle.
+        sin_angle = direction_large.cross(direction_small).length / (direction_large.length * direction_small.length)
+        if sin_angle > COLLINEAR_SIN_TOL:
+            return None  # not collinear -- not the pattern this function handles
+        if direction_small.length >= direction_large.length:
+            return None  # small's own far point must lie strictly inside large's own span
+
+        # Reuse the REAL vertex objects (far_small, far_large), not fresh
+        # gp_Pnt-based ones, so the new edge shares exact topological
+        # identity with the edges it must connect to in the new wire --
+        # confirmed live this is load-bearing: a coordinate-only rebuild
+        # left one of 4 edges disconnected (see _native_vertices' own
+        # docstring).
+        new_edges.append(BRepBuilderAPI_MakeEdge(far_small, far_large).Edge())
+        consumed_small.add(id(small_adj.__native__))
+        consumed_large.add(id(large_adj.__native__))
+
+    for e in small_other:
+        if id(e.__native__) not in consumed_small:
+            new_edges.append(e.__native__)
+    for e in large_other:
+        if id(e.__native__) not in consumed_large:
+            new_edges.append(e.__native__)
+    return new_edges
+
+
 def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
     """Repair the "overlapping coplanar faces" defect (see
     `solid_defects.find_overlapping_coplanar_faces`'s own docstring for
@@ -811,6 +978,22 @@ def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
     strictly decrease" discipline as `Gcollapse_split_rings`'s
     `count_split_ring_pairs` check); `None` otherwise -- never raises.
 
+    A SECOND real sub-case (found 2026-10-02, `struct_plate2.stp`'s own
+    decomposed piece8): `small` can instead share a REAL edge with
+    `large` -- it touches `large`'s own outer boundary along one side
+    rather than sitting strictly inside it (confirmed live: a direct
+    point-sampling check found NO material on either side of `small`'s
+    own surface, same signature as the strictly-interior case, so it is
+    equally a phantom -- just a different boundary shape). The "add a
+    hole" construction below requires the inner wire to be strictly
+    interior, so it raises/produces an invalid face for this case
+    instead. Handled by `_trim_edge_for_boundary_touching_pair`: `large`'s
+    own two edges adjacent to the shared edge are collinear supersets of
+    `small`'s own two corresponding edges (which are already correctly
+    connected to `small`'s real neighbor faces) -- trim them down to
+    `small`'s own far endpoint and reuse `small`'s own remaining edges
+    directly, producing a single new outer wire with no hole at all.
+
     ocp/occ only -- the freecad backend's `Gtrim_overlapping_coplanar_faces`
     is a `None`-returning stub, matching `Gcollapse_split_rings`/
     `Gsliver_heal`'s own precedent."""
@@ -823,14 +1006,36 @@ def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
         for small, large in pairs:
             pos, ax = large.Surface.Position, large.Surface.Axis
             gpln = gp_Pln(gp_Pnt(pos.x, pos.y, pos.z), gp_Dir(ax.x, ax.y, ax.z))
-            outer_wire = large.outer_wire().__native__
-            hole_wire = topods.Wire(small.outer_wire().__native__.Reversed())
 
-            face_maker = BRepBuilderAPI_MakeFace(gpln, outer_wire, True)
-            face_maker.Add(hole_wire)
-            if not face_maker.IsDone():
-                return None
-            new_face = face_maker.Face()
+            shared = _shared_edges(small, large)
+            if not shared:
+                outer_wire = large.outer_wire().__native__
+                hole_wire = topods.Wire(small.outer_wire().__native__.Reversed())
+
+                face_maker = BRepBuilderAPI_MakeFace(gpln, outer_wire, True)
+                face_maker.Add(hole_wire)
+                if not face_maker.IsDone():
+                    return None
+                new_face = face_maker.Face()
+            elif len(shared) == 1:
+                new_edges = _trim_edge_for_boundary_touching_pair(small, large, shared[0])
+                if new_edges is None:
+                    return None
+                ordered_edges = _order_wire_edges(new_edges)
+                if ordered_edges is None:
+                    return None
+                wire_maker = BRepBuilderAPI_MakeWire()
+                for e in ordered_edges:
+                    wire_maker.Add(e)
+                if not wire_maker.IsDone():
+                    return None
+                face_maker = BRepBuilderAPI_MakeFace(gpln, wire_maker.Wire(), True)
+                if not face_maker.IsDone():
+                    return None
+                new_face = face_maker.Face()
+            else:
+                return None  # a chain of >1 shared edges isn't a verified case yet
+
             reshaper.Replace(large.__native__, new_face)
             reshaper.Remove(small.__native__)
 
