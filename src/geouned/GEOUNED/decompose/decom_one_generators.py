@@ -15,6 +15,7 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
     Gtrim_overlapping_coplanar_faces,
+    merge_sliver_pieces,
 )
 from ...geo.constants import SPLIT_CANDIDATE_VOLUME_REL_TOL, TOLERANCE_WELD_FLOOR
 from ...geo.solid_defects import find_overlapping_coplanar_faces
@@ -62,6 +63,17 @@ def split_surfaces(solid, options, tolerances):
         except Exception:
             pass
         fixed_solids.append(s)
+
+    # A thin sliver that survived Gsplit's own repair cascade (see
+    # merge_sliver_pieces's own docstring, geo/solid_ops.py) is its own
+    # genuinely separate, valid solid -- Gsliver_heal declines to touch
+    # it (not a redundant coplanar face WITHIN one piece), so it is still
+    # present here, in the FULL list of this solid's final irreducible
+    # pieces. Eliminate it now, by fusing it into whichever real
+    # neighbor it is still in contact with, rather than letting it become
+    # its own separate cell with a face no MCNP/OpenMC boolean definition
+    # can ever meaningfully bound.
+    fixed_solids = merge_sliver_pieces(fixed_solids, tolerances)
 
     comp = GCompound(fixed_solids)
 

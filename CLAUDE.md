@@ -305,6 +305,150 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **New post-decomposition repair, `merge_sliver_pieces` (`geo/solid_ops.py`),
+  2026-10-04: a decomposed solid's own final irreducible piece list can
+  contain a genuine, tiny thin-wedge "sliver" solid that is not a
+  BOPAlgo_Splitter tolerance bug, but a real (if tiny) geometric
+  imprecision in the SOURCE CAD -- eliminated by fusing it into its true
+  neighbor.** User-reported: `Solidos/working_solids/struct_plate3.stp`'s
+  4th solid left "superficies sueltas" (loose surfaces not belonging to
+  any solid) after decomposition, losing MCNP particles (d1suned: 10
+  lost, all crossing one specific surface).
+  **Root cause, confirmed by direct measurement (per direct user request
+  to determine whether this came from the solid's own imprecision or
+  from a BOPAlgo_Splitter tolerance misconfiguration, not guessed)**:
+  the TRUE, undecomposed solid (24 faces) has zero sliver defects by
+  every existing check (`check_solid_defects`, `find_short_edges`,
+  `find_sliver_faces`; smallest real `CharacteristicWidth` 2.83mm) --
+  the thin fragments are created ENTIRELY by decomposition itself,
+  never present in the source geometry as a defect. But the source
+  solid DOES carry a genuine, small, real geometric discrepancy: at
+  Z~278.4826338, several faces (`face1`/`face9`/`face12`) are exactly
+  Z-aligned (axis `(0,0,-1)` to float precision) while another real face
+  at the SAME nominal height (`face19`) is tilted ~0.00094 rad (~0.054
+  deg) off pure Z -- not float noise, a real STEP-precision imprecision.
+  Over that face's own ~6mm extent this produces a real gap of
+  `6mm * sin(0.00094 rad) ~ 0.0056mm`, matching the measured critical
+  gap width almost exactly. When `generic_split`'s candidate search
+  builds an EXACT cutting plane from the perfectly-flat faces and that
+  plane's own recursive application eventually meets this tilted real
+  boundary, `BOPAlgo_Splitter` correctly computes the tiny resulting gap
+  as its own genuine, valid, separate microscopic solid -- confirmed by
+  directly sweeping the native `FuzzyValue` on the exact captured
+  base+tool shapes in isolation: the sliver persists up to `FuzzyValue
+  =1e-3`, and raising it further passes through a genuinely UNSTABLE,
+  BRepCheck-INVALID intermediate regime (`0.003`: 2 solids, one invalid,
+  real volume loss) before settling into a clean 2-piece merge at
+  `>=0.004-0.007`. **Conclusion, confirmed with the user before
+  proceeding**: `BOPAlgo_Splitter` itself is doing its job correctly
+  (the gap IS real); this is not a kernel-tolerance problem to fix at
+  that layer (a global `split_tolerance` bump was independently
+  confirmed unsafe earlier in this same investigation -- it passes
+  through that same unstable zone for OTHER, unrelated cuts in the
+  model) -- per direct user instruction, the fix belongs one layer up:
+  once a solid is fully decomposed, identify any piece that is itself a
+  thin-sliver artifact and eliminate it by merging into its real
+  neighbor.
+  **First implementation attempt, rejected on the user's own
+  clarification**: an escalating `FuzzyValue` retry ladder INSIDE
+  `_raw_bop_split` (reusing the exact native-sweep mechanism above,
+  gated to fire only when the raw BOP result contains a sliver). Per
+  direct user correction ("el valor del fuzzy no tiene que intervenir
+  dentro de la tolerancia del BOPAlgo_Splitter... debe intervenir en una
+  capa superior cuando el solido ha sido completamente decompuesto"),
+  this was reverted entirely before landing -- the fuzzy/closeness
+  decision belongs at the POST-decomposition piece-list level, never
+  inside the native split call itself.
+  **Final design, `merge_sliver_pieces(pieces, tolerances)`
+  (`geo/solid_ops.py`, engine-agnostic, called once from
+  `decom_one_generators.py::split_surfaces` right after a solid's own
+  final piece list (`fixed_solids`) is assembled, before `GCompound`)**:
+  (1) identify sliver pieces via `_is_sliver_solid` -- a WHOLE-SOLID
+  `abs(Volume)/Area < SLIVER_SOLID_VOL_AREA_RATIO` (new constant,
+  `geo/constants.py`, `5e-2`); (2) for each sliver, find its best real
+  neighbor among the NON-sliver pieces via `_shared_face_area` (sum of
+  `min(fa.Area, fb.Area)` over every face pair in real contact at
+  `NUMERIC_TOL` -- tight, since pieces from one BOP call are an exact,
+  gapless partition and share a literal zero-gap boundary face with
+  their true sibling); (3) fuse each sliver into its chosen neighbor
+  ONCE via the existing `Gfuse_solids`, in a single, non-cascading pass
+  (several slivers sharing the same neighbor are fused together in one
+  call; a freshly-fused result is never re-examined for new slivers).
+  **Two real bugs found and fixed while developing this, both via
+  direct measurement, neither guessed**:
+  1. A first, ITERATIVE version (re-checking a freshly-fused result for
+     more slivers and merging again until none remain) catastrophically
+     over-merged: on `struct_plate3.stp` it collapsed 9 pieces down to
+     1, losing ~1044 mm^3 and producing a self-contradictory boolean
+     cell definition downstream. Root cause: a solid's own large
+     "envelope" piece can be in real contact with almost every other
+     piece of the same decomposition (confirmed: one piece touched 8/8
+     others) -- once pulled into any merge, the fused mega-piece
+     inherits ALL of that piece's own contacts, snowballing. Fixed by
+     the single-pass, best-neighbor-by-shared-face-area design above
+     (no re-examination of a fused result, ever).
+  2. The sliver-DETECTION criterion itself was first `find_sliver_faces`
+     (a per-FACE `CharacteristicWidth` check, reused from elsewhere in
+     the repair cascade) -- confirmed WRONG via a real corpus
+     regression: `Complex_cell/SCDR_90.stp` (a long-documented,
+     historically fragile fixture) has a real, substantial 133000 mm^3
+     piece that merely carries 2 individually-thin FACES (each under
+     `Tolerances.min_face_width`) while being nowhere near a thin solid
+     overall (`Volume/Area` = 6.9) -- the per-face criterion wrongly
+     flagged it as a sliver, and fusing it away produced a
+     self-contradictory (`comp.elements = False`) cell definition,
+     raising `build_definition`'s own "has a boolean value" sanity
+     check. Measured every confirmed TRUE sliver found so far
+     (`struct_plate3.stp`'s 3, `Mixed/ring.stp`'s 3, `RoundCorners/
+     rc16.stp`'s 1, `RoundCorners/rc11.stp`'s 1): `Volume/Area` ranges
+     1.6e-3 to 2.3e-2, a ~300x-clean gap below SCDR_90's own 6.9 --
+     fixed by replacing the per-face check with the whole-solid
+     `_is_sliver_solid` ratio test described above (threshold `5e-2`,
+     comfortably inside that measured gap).
+  **Verified**: `struct_plate3.stp` solid3 now decomposes to 6 pieces
+  (was 9, 3 genuine slivers merged), volume conserved to ~2.6e-5
+  relative; full real conversion (`geo.run()` + `export_csg(volSDEF=
+  True, dummyMat=True)`) + d1suned (NPS 1e6): **0 lost particles**
+  (was 10) across the WHOLE model, all 4 cells' tallies within 1.7
+  sigma of 1.0 (cell4, the previously-broken one: `1.02308 +/- 1.35%`),
+  identical on both `occ` and `ocp` (bit-identical piece volumes).
+  Full suites green on all 3 engines after the fix (ocp 277 passed/1
+  skipped, occ 277 passed/1 skipped, freecad 288 passed/14 skipped --
+  each engine's own established baseline, zero regressions). A 149-file
+  `Solidos/test_models` differential (`git stash`-based before/after,
+  decompose + build_solid_definition, BOTH `Options.meta_surfaces`
+  settings) found exactly 3 real differences, all genuine, correctly-
+  merged sliver eliminations with volume conserved to <=4.5e-6 relative
+  and no `ok`-status change anywhere in the corpus (confirms the
+  SCDR_90-class regression is closed, corpus-wide, not just for that one
+  file): `Mixed/ring.stp` (20->17 pieces), `RoundCorners/rc16.stp`
+  (7->6), `RoundCorners/rc11.stp` (4->3, meta_surfaces=False only --
+  caught only by the corrected whole-solid criterion, confirming it is
+  strictly MORE accurate than the superseded per-face one, not just
+  safer). d1suned on `rc11.stp` directly: tally `0.99169 +/- 0.63%`
+  (1.3 sigma), 0 lost particles, SD4 exact match. The 4 already-known
+  pre-existing corpus failures (`SCDR_90_piece2`, `modelcell_cut1_v2_
+  piece66`, `ConeSphere.stp`'s native crash, `SCDR_90_hollow`) are
+  unaffected.
+  **Full-corpus d1suned re-run, same day, both `Options.meta_surfaces`
+  settings** (149 files of `Solidos/test_models`, excluding `Big_*`;
+  8-way parallel conversion + 16-way parallel d1suned, both settings
+  run concurrently, via the existing `SolidTestMCNP/scripts/
+  run_all_conversions_ocp_{,nometa_}parallel.py` + `run_test_models_ocp_
+  {,nometa_}d1suned.sh` + `analyze_test_models_ocp{,_nometa}.py`
+  pipeline): conversion 149/153 in both (same 4 known pre-existing
+  failures, unaffected); d1suned gives **IDENTICAL buckets in both
+  settings** -- 203 solid-cell tallies, 191 (94.1%) within 2 sigma, 11
+  marginal (same files, same sigma to within rounding), exactly 1 beyond
+  3 sigma in EACH (`RoundCorners/shed_solid.stp`, the same already-
+  explained MC-noise-on-a-0.25cm^3-cell case documented elsewhere in
+  this file), **0 lost particles in either** (154/154 files) --
+  confirming `merge_sliver_pieces` is a zero-regression addition across
+  the whole existing corpus, not just the 3 files the earlier
+  differential scan flagged, and that `meta_surfaces=True`/`False`
+  continue to agree exactly, matching this project's own established
+  pattern once a real gap between the two settings is closed.
+
 - **New CAD-defect class detected and repaired, 2026-10-01: "overlapping
   coplanar faces" -- a boolean cut landing exactly tangent to a
   pre-existing surface can leave BOTH the original, untrimmed face AND

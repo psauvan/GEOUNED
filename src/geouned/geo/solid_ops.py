@@ -16,7 +16,14 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
-from .constants import DEFAULT_FIX_TOLERANCE, DEGENERATE_SOLID_VOL_AREA_RATIO, FUSE_REFINE_REL_TOL, NUMERIC_DOUBLE_TOL
+from .constants import (
+    DEFAULT_FIX_TOLERANCE,
+    DEGENERATE_SOLID_VOL_AREA_RATIO,
+    FUSE_REFINE_REL_TOL,
+    NUMERIC_DOUBLE_TOL,
+    NUMERIC_TOL,
+    SLIVER_SOLID_VOL_AREA_RATIO,
+)
 
 
 class GCompound:
@@ -160,6 +167,131 @@ def Gfuse_solids(parts, tolerances=None):
     if gsolid.Volume < 0:
         gsolid = gsolid.reverse()
     return gsolid
+
+
+def _shared_face_area(sliver, candidate, tolerance) -> float:
+    """Sum of `min(fa.Area, fb.Area)` over every pair of faces (one from
+    `sliver`, one from `candidate`) that are in real contact at
+    `tolerance` -- an approximation of how much boundary area the two
+    solids genuinely share, used by `merge_sliver_pieces` to tell a
+    sliver's TRUE split-sibling (which shares one large, exact face with
+    it -- the real cut cross-section) apart from a piece it merely
+    happens to touch at an unrelated edge or corner (a small or zero
+    shared area). `tolerance` should be tight (NUMERIC_TOL-scale): the
+    pieces of one BOPAlgo_Splitter call are an exact, gapless partition
+    of their own base fragment, so a sliver and its real neighbor already
+    share a literal, zero-gap boundary face -- a loose tolerance here
+    would instead register every merely-nearby piece as a "shared face"
+    candidate too."""
+    from . import Gin_contact
+
+    total = 0.0
+    for fa in sliver.Faces:
+        for fb in candidate.Faces:
+            if Gin_contact(fa, fb, tolerance):
+                total += min(fa.Area, fb.Area)
+    return total
+
+
+def _is_sliver_solid(piece) -> bool:
+    """True if `piece`, as a WHOLE solid, is a thin-wedge artifact --
+    `abs(Volume) / Area < SLIVER_SOLID_VOL_AREA_RATIO`. Deliberately NOT
+    `find_sliver_faces` (a per-FACE `CharacteristicWidth` check): confirmed
+    live, 2026-10-04 (`Complex_cell/SCDR_90.stp`), that the latter is the
+    wrong signal for "should this piece be eliminated" -- a real,
+    substantial 133000 mm^3 piece can carry 2 individually-thin FACES
+    (e.g. a genuine narrow rib/wall) while being nowhere near a thin solid
+    overall (its own Volume/Area ratio there was 6.9, vs. 1.6e-3-2.3e-2
+    for every confirmed true sliver measured so far) -- fusing that piece
+    away as a "sliver" produced a self-contradictory boolean cell
+    definition downstream. See `SLIVER_SOLID_VOL_AREA_RATIO`'s own
+    docstring for the measured margin on both sides."""
+    try:
+        area = piece.Area
+    except Exception:
+        return False
+    if area == 0:
+        return False
+    return abs(piece.Volume) / area < SLIVER_SOLID_VOL_AREA_RATIO
+
+
+def merge_sliver_pieces(pieces, tolerances):
+    """Once a solid has been fully decomposed into its final irreducible
+    pieces, eliminate any genuine thin-sliver piece that survived the
+    whole `Gsplit` repair cascade by fusing it into whichever OTHER piece
+    shares the most real boundary area with it -- its true split-sibling.
+
+    Root cause this exists for (confirmed live, 2026-10-04,
+    `struct_plate3.stp` solid3 -- see CLAUDE.md): the SOURCE solid itself
+    carries a small, genuine geometric imprecision (e.g. one nominally
+    flat face tilted ~0.001 rad from the rest of the model's own exactly
+    coplanar faces at the same nominal height) -- not a BOPAlgo_Splitter
+    tolerance misconfiguration, confirmed by sweeping `FuzzyValue`
+    natively and finding a genuinely unstable, BRepCheck-INVALID
+    intermediate regime right at the critical gap width, so adjusting it
+    there is not a safe fix and would also affect every other, unrelated
+    candidate cut tried against the same base fragment. When a candidate
+    cutting plane (built from the "good", exactly-flat faces) ends up
+    cutting across that tiny real discrepancy, BOPAlgo_Splitter correctly
+    computes the resulting sub-mm gap as its own genuine, valid, separate
+    microscopic solid -- the kernel did its job; the defect is the source
+    solid's own imprecision. `_raw_bop_split`'s own `Gsliver_heal` step
+    already tries to absorb a thin face WITHIN one piece (a redundant/
+    defeaturable coplanar face on an otherwise normal solid) -- but a
+    sliver that is its own wholly separate solid, bounded by real faces
+    on every side, is not that kind of defect, and `Gsliver_heal`
+    correctly declines it (returns None), leaving the sliver as its own
+    final piece -- which is what left a cell in the MCNP/OpenMC output
+    with no sensible boolean definition (lost particles).
+
+    A single, non-cascading pass, by design: picking a sliver's merge
+    partner by solid-to-solid contact alone (even at a tight tolerance)
+    is not enough -- a solid with many faces (e.g. the model's own outer
+    envelope piece) can be in real contact with almost every other piece
+    of the same decomposed solid, so iteratively re-checking a freshly
+    fused result for more sliver faces and merging again can snowball
+    into absorbing the ENTIRE decomposition into one piece (confirmed
+    live: an earlier, iterative version of this function collapsed
+    `struct_plate3.stp` solid3 from 9 pieces down to 1, losing ~1044 mm^3
+    and producing an internally-contradictory cell definition downstream
+    -- see CLAUDE.md). Instead: every sliver detected in the ORIGINAL
+    piece list is matched, once, against its own best (largest shared
+    boundary area, via `_shared_face_area`) neighbor among the
+    NON-sliver pieces; several slivers sharing the same neighbor are
+    fused into it together, in one `Gfuse_solids` call. The merged
+    result is never itself re-examined for new sliver faces.
+
+    Returns a (possibly shorter) list of GSolid: a non-sliver piece with
+    no sliver merged into it is returned unchanged; a sliver with no
+    real (`_shared_face_area > 0`) neighbor among the non-sliver pieces
+    is also kept unchanged (nothing sensible to merge it into)."""
+    slivers = [p for p in pieces if _is_sliver_solid(p)]
+    if not slivers:
+        return list(pieces)
+    non_slivers = [p for p in pieces if p not in slivers]
+
+    groups: dict[int, list] = {}
+    unmatched = []
+    for sliver in slivers:
+        best_idx, best_area = None, 0.0
+        for idx, candidate in enumerate(non_slivers):
+            area = _shared_face_area(sliver, candidate, NUMERIC_TOL)
+            if area > best_area:
+                best_idx, best_area = idx, area
+        if best_idx is None:
+            unmatched.append(sliver)
+        else:
+            groups.setdefault(best_idx, []).append(sliver)
+
+    result = []
+    for idx, candidate in enumerate(non_slivers):
+        if idx in groups:
+            fused = Gfuse_solids([candidate] + groups[idx], tolerances)
+            result.append(fused if fused is not None else candidate)
+        else:
+            result.append(candidate)
+    result.extend(unmatched)
+    return result
 
 
 # ---------------------------------------------------------------------------

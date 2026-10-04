@@ -174,6 +174,27 @@ surface is not a fragment the decomposition should keep. Companion of
 `DEFAULT_MIN_SOLID_VOLUME`; both from the historical
 `decom_utils_generator.valid_solid` (`Vol_area_ratio = 1e-3`)."""
 
+SLIVER_SOLID_VOL_AREA_RATIO = 5.0e-2
+"""Volume/Area ratio (mm) below which `merge_sliver_pieces` (`geo/solid_ops.py`)
+treats a WHOLE decomposed piece as a genuine thin-sliver solid to eliminate --
+a looser threshold than `DEGENERATE_SOLID_VOL_AREA_RATIO`'s own 1e-3 (which
+decides whether to reject a fragment as not even a real piece at all), tuned
+instead for "is this piece itself a thin wedge artifact from the source
+solid's own small geometric imprecision" (see `merge_sliver_pieces`'s own
+docstring and CLAUDE.md's 2026-10-04 `struct_plate3.stp` entry).
+
+Deliberately a WHOLE-SOLID ratio, not `find_sliver_faces`'s per-FACE
+CharacteristicWidth check: confirmed live that the latter is the wrong
+signal here -- a real, substantial 133000 mm^3 piece of `Complex_cell/
+SCDR_90.stp` merely has 2 individually-thin FACES (each well under
+`Tolerances.min_face_width`) while being nowhere near a thin solid overall
+(its own Volume/Area ratio is 6.9) -- fusing it away as a "sliver" produced
+a self-contradictory (`False`) boolean cell definition. Measured true
+slivers (`struct_plate3.stp`, `Mixed/ring.stp`, `RoundCorners/rc16.stp`)
+range 1.6e-3 to 2.3e-2; this value sits above that whole range (>=2x the
+highest measured true positive) and far below SCDR_90's own 6.9 mm
+(>=130x), a wide, clean margin either way."""
+
 PRE_REPAIR_MIN_VOLUME = 1.0e-5
 """Absolute volume floor (mm^3) for an intermediate solid COMPONENT during a
 split -- e.g. `remove_tools_from_raw_solids`' own "is the tool volume
