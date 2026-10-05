@@ -193,7 +193,7 @@ def _shared_face_area(sliver, candidate, tolerance) -> float:
     return total
 
 
-def _is_sliver_solid(piece) -> bool:
+def is_sliver_solid(piece) -> bool:
     """True if `piece`, as a WHOLE solid, is a thin-wedge artifact --
     `abs(Volume) / Area < SLIVER_SOLID_VOL_AREA_RATIO`. Deliberately NOT
     `find_sliver_faces` (a per-FACE `CharacteristicWidth` check): confirmed
@@ -205,7 +205,13 @@ def _is_sliver_solid(piece) -> bool:
     for every confirmed true sliver measured so far) -- fusing that piece
     away as a "sliver" produced a self-contradictory boolean cell
     definition downstream. See `SLIVER_SOLID_VOL_AREA_RATIO`'s own
-    docstring for the measured margin on both sides."""
+    docstring for the measured margin on both sides.
+
+    Promoted from a `solid_ops`-private helper to a public one, 2026-10-05,
+    once `generic_split`'s own candidate loop (`decom_one_generators.py`)
+    became a second real caller -- see that call site's own comment for
+    why a candidate split producing mostly sliver debris must be read the
+    same way merge_sliver_pieces itself already does."""
     try:
         area = piece.Area
     except Exception:
@@ -265,7 +271,7 @@ def merge_sliver_pieces(pieces, tolerances):
     no sliver merged into it is returned unchanged; a sliver with no
     real (`_shared_face_area > 0`) neighbor among the non-sliver pieces
     is also kept unchanged (nothing sensible to merge it into)."""
-    slivers = [p for p in pieces if _is_sliver_solid(p)]
+    slivers = [p for p in pieces if is_sliver_solid(p)]
     if not slivers:
         return list(pieces)
     non_slivers = [p for p in pieces if p not in slivers]

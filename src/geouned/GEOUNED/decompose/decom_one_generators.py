@@ -15,6 +15,7 @@ from ...geo import (
     Gsolid_nonmanifold_edge_count,
     Gsplit,
     Gtrim_overlapping_coplanar_faces,
+    is_sliver_solid,
     merge_sliver_pieces,
 )
 from ...geo.constants import SPLIT_CANDIDATE_VOLUME_REL_TOL, TOLERANCE_WELD_FLOOR
@@ -179,8 +180,51 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     else:
         original_tolerance = None
 
+    # Candidate-surface detection (cutting planes, MultiPlane/Can/TCone/
+    # RoundCorner masters, ...) must judge a face's own min_area/
+    # min_face_width against THIS solid's own scale, exactly like
+    # cell_definition.py::simple_solid_definition's own scaled_tolerances
+    # -- otherwise the same face can be read as a genuine feature at the
+    # cell-definition stage (scaled) but as a sliver here (unscaled),
+    # confirmed live on Solidos/working_solids/clamp.stp's solid0: two
+    # real, 0.081mm-wide corner-forming planes (CharacteristicWidth
+    # 0.081115) sit strictly between the default min_face_width=0.1 and
+    # this solid's own scaled 0.068 -- eligible_plane/order_plane_face
+    # read them as slivers here (unscaled tolerances), while
+    # cell_definition.py's own get_multiplanes (scaled) correctly reads
+    # them as real geometry. The `Gsplit`/`build_surface`/`solid.fix()`
+    # calls below keep the ORIGINAL, unscaled `tolerances` -- those are
+    # kernel-operation precision (split/fix tolerance), not surface-size
+    # classification, and scaling them down for a small fragment is not
+    # the concern this scaling exists for.
+    scaled_tolerances = tolerances.scaled(solid.Volume)
+
     new_split = False
-    for surf in get_surfaces(solid, omitfaces, tolerances, options, meta_surface=options.meta_surfaces):
+    # The first candidate that successfully splits `solid` is not
+    # necessarily the BEST one: a candidate tried early (per the
+    # established cylinder/cone-before-plane ordering) can "win" by
+    # carving off only sliver-sized debris from what is still, in
+    # substance, a single real piece, while a LATER candidate -- tried
+    # only if this one is rejected -- can give a genuinely clean,
+    # multi-piece split instead. Confirmed live, 2026-10-05, on
+    # Solidos/working_solids/clamp.stp's solid0: an R=5.25 cylinder
+    # candidate "succeeds" first, splitting off two 0.0837 mm^3 wedges
+    # that merge_sliver_pieces (see its own docstring) then fuses right
+    # back -- but a real, 0.081 mm-wide corner-forming plane, tried much
+    # later (ranked low by cutting_face_number), gives a genuinely clean
+    # 3-piece split (188.74 + 62.95 + 62.95 mm^3, none of them slivers)
+    # that was never reached because the cylinder candidate already broke
+    # this loop. Per direct user instruction, merge_sliver_pieces exists
+    # for the case the SOURCE solid itself has a genuine, unavoidable
+    # geometric imprecision that forces a sliver fragment no matter which
+    # candidate is used (see struct_plate3.stp, CLAUDE.md) -- it is a
+    # last resort, not something a candidate should be allowed to trigger
+    # just by being tried first. `fallback_solids` remembers the first
+    # sliver-producing split found (in case nothing better ever turns
+    # up); only a split leaving >=2 genuinely non-sliver pieces is
+    # accepted immediately.
+    fallback_solids = None
+    for surf in get_surfaces(solid, omitfaces, scaled_tolerances, options, meta_surface=options.meta_surfaces):
         if original_tolerance is not None:
             Gsolid_set_tolerance(solid, original_tolerance)
         if not solid.is_valid():
@@ -254,6 +298,20 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                 )
                 comsolid_solids = [solid]
                 continue
+
+            non_sliver_pieces = [p for p in comsolid_solids if not is_sliver_solid(p)]
+            if len(non_sliver_pieces) <= 1:
+                # At most one of the returned pieces is genuinely real --
+                # the rest are the same class of thin-wedge artifact
+                # merge_sliver_pieces exists to fuse back later. Keep this
+                # as a fallback (only used if the whole candidate search
+                # below never finds anything better), but don't treat it
+                # as a win: trying the next candidate instead.
+                if fallback_solids is None:
+                    fallback_solids = comsolid_solids
+                comsolid_solids = [solid]
+                continue
+
             new_split = True
             break
 
@@ -283,6 +341,16 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                     return generic_split(rebuilt, options, tolerances, loop, healed=True)
                 except Exception:
                     logger.info("STEP round-trip heal retry failed; keeping the original fragment")
+
+    if not new_split and fallback_solids is not None:
+        # Nothing cleaner ever turned up (and the tolerance-weld heal
+        # retry above either didn't apply or didn't help either) -- this
+        # solid genuinely needs a sliver-producing split to decompose at
+        # all, matching struct_plate3.stp's own real, unavoidable
+        # source-CAD imprecision (see merge_sliver_pieces's own docstring).
+        # Only now is that candidate accepted.
+        comsolid_solids = fallback_solids
+        new_split = True
 
     if new_split:
         components = []

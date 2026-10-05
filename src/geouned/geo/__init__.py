@@ -76,6 +76,7 @@ from .solid_ops import (
     SplitSolid,
     filterparts,
     getPart,
+    is_sliver_solid,
     joinBase,
     merge_sliver_pieces,
     space_decomposition,

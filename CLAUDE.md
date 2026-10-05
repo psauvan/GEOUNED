@@ -305,6 +305,124 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`generic_split`: a decomposition-stage tolerance mismatch and a
+  "first successful candidate wins" search both fixed, 2026-10-05/06 --
+  root cause of `Solidos/working_solids/clamp.stp`'s solid0 losing more
+  than half its volume under `Options.meta_surfaces=False`.**
+  User-reported: d1suned showed the first solid's own written cell
+  definition missing more than half its true volume. User's own
+  diagnosis, given step by step during the investigation: "el corte por
+  un plano de 0.03 mm2 no se realiza" (the cut by a 0.03mm^2 plane isn't
+  performed) but "en la definicion de la celda si esta identificado"
+  (the plane IS identified in the cell definition) -- and, once the
+  mechanism below was traced, a direct correction when the first
+  proposed fix treated these faces as slivers to filter out: "esta caras
+  son reales no son sliver. Es una parte de las dos plano que forman una
+  esquina" (these faces are real, not slivers -- they're part of the two
+  planes forming a corner).
+  **Bug 1, a tolerance-scaling mismatch between decomposition and cell
+  definition.** `cell_definition.py::simple_solid_definition` has always
+  computed `scaled_tolerances = Surfaces.tolerances.scaled(solid_gu.
+  Volume)` per solid (see `Tolerances.scaled()`'s own docstring) before
+  judging a face's `min_face_width` -- but `core.py`'s own call into
+  decomposition (`main_split(m.Solids, self.options, self.tolerances)`)
+  passed the plain, UNSCALED `self.tolerances` straight through
+  `split_surfaces`/`generic_split`/`get_surfaces`, reaching every
+  candidate-detection sliver check (`order_plane_face`, `eligible_plane`,
+  `cylinder_generator`, `cone_generator`) unscaled. Measured directly on
+  clamp.stp's solid0 (Volume=314.645980mm^3): 2 real, genuine corner-
+  forming planes have `CharacteristicWidth=0.081115`, sitting strictly
+  between the default `min_face_width=0.1` (decomposition's own,
+  unscaled view: sliver) and this solid's own scaled `0.068015`
+  (cell_definition's view: real geometry) -- the exact same face read as
+  two different things by the two stages. **Fix**: `generic_split` now
+  computes its own `scaled_tolerances = tolerances.scaled(solid.Volume)`
+  (recomputed fresh at every recursive call, against whatever fragment
+  is being decomposed at that level) and passes it into `get_surfaces`
+  for all candidate-detection purposes; `Gsplit`/`build_surface`/
+  `solid.fix()` keep the original, unscaled `tolerances` (kernel-
+  operation precision, not surface-size classification -- a deliberately
+  different role, not touched).
+  **Bug 2, the real root cause: `generic_split` accepted the FIRST
+  candidate that technically split the solid, even when it was worse
+  than a later, untried one.** Fixing bug 1 alone made the plane
+  eligible as a candidate but changed nothing in the final output: traced
+  directly (mon­key­patched `Gsplit`), a cylinder candidate (one of 2
+  R=5.25 features) "succeeds" first (per the established, corpus-
+  measured cylinder/cone-before-plane ordering), splitting off two
+  0.0837mm^3 wedges that `merge_sliver_pieces` (see its own docstring)
+  then fuses right back into the original 16-face solid -- a correct
+  reconstruction, but one that leaves the two real corner planes to be
+  processed individually, each contributing an unrestricted, global AND
+  term to the cell's own flat definition, which is what clips away the
+  real material. Confirmed by direct, isolated construction: cutting the
+  TRUE, undecomposed solid with either corner plane's own infinite
+  extension (built the same way `plane_generator` does, from the face's
+  own `Surface.Axis`/`CenterOfMass`) gives a clean, genuine 3-piece split
+  (188.74 + 62.95 + 62.95mm^3, none of them slivers) -- but this
+  candidate is ranked last by `cutting_face_number` (fewest adjacent
+  planes) and is never reached, because the cylinder candidate already
+  broke the search loop first. **Per direct user instruction** ("en
+  regla general yo haria el merge_sliver_piece solo si el solido real
+  restante necesita estas piezas para ser un solido valido... la
+  conservacion de volumen si no es muy grande es secundario"):
+  `generic_split`'s per-candidate loop now distinguishes 3 outcomes for
+  a `len(comsolid_solids) > 1` result (after the existing
+  `SPLIT_CANDIDATE_VOLUME_REL_TOL` volume-conservation check): a split
+  leaving >=2 genuinely non-sliver pieces (`is_sliver_solid`, promoted
+  from a `solid_ops`-private helper to a public one since this is now a
+  second real caller) is accepted immediately, exactly as before; a
+  split leaving <=1 non-sliver piece is NOT accepted -- it's remembered
+  as `fallback_solids` (the first one found) and the search keeps trying
+  OTHER candidates instead; only once the WHOLE candidate generator (and
+  the existing tolerance-weld STEP-heal retry) is exhausted without ever
+  finding a clean split does the function fall back to accepting
+  `fallback_solids`, matching the ORIGINAL behavior for a solid that
+  genuinely has no better option (e.g. `struct_plate3.stp`'s own real
+  source-CAD imprecision, see `merge_sliver_pieces`'s own entry below --
+  this is the case the user's own "only if the real solid needs these
+  pieces" rule describes). A candidate split with a MIX of >=2 real
+  pieces AND >=1 sliver is treated as the clean case (accepted
+  immediately, not deferred) -- confirmed by a dedicated corpus
+  instrumentation pass (every real `Gsplit` call across the whole
+  153-file corpus, both `meta_surfaces` settings, 8394 calls total) that
+  this exact pattern occurs in precisely 3 places, all already-known,
+  already-validated `merge_sliver_pieces` fixtures
+  (`struct_plate3.stp`/`rc11.stp`/`rc16.stp`), confirmed inert by the
+  differential below.
+  **Verified**: Monte Carlo point-sampling (200000 samples, true `GSolid.
+  is_inside` vs. the written MCNP boolean expression hand-evaluated at
+  the same points) on clamp.stp's solid0 under `meta_surfaces=False`:
+  before the fix, >50% of the true volume fell outside the written cell;
+  after, `true-but-not-cell1` and `cell1-but-not-true` are both down to
+  1 sample out of 200000 (pure sampling-boundary noise) -- the written
+  definition (now a genuine 3-term OR, `AND(1,2,3,4,5,6,-7,8) OR
+  AND(1,5,6,9,10,11,-12,7) OR AND(3,5,6,10,-12,13,14,7)`, 14 surfaces, no
+  MultiPlane involved) exactly matches the true CAD volume (0.314646 ==
+  0.315811 estimated both ways, identically). `tests/geo` +
+  `test_cadtocsg.py` green on ocp (203 passed/2 skipped, zero
+  regressions). A 153-file `Solidos/test_models` differential (`git
+  stash`-based before/after, decompose only, BOTH `Options.meta_surfaces`
+  settings, 306 file/setting combinations): **1 real difference** --
+  `Mixed/struct_plate3.stp`'s own solid4 (same 6 pieces, same face counts,
+  one piece's volume shifts by ~7e-6 relative, 1048.3458 -> 1048.3386 --
+  the same order of BOPAlgo split-tessellation noise already documented
+  elsewhere in this project, e.g. `shed_shutter.stp`'s own
+  `SPLIT_CANDIDATE_VOLUME_REL_TOL` entry below) -- and the same 8
+  already-known pre-existing crash files (`ConeSphere.stp`,
+  `SCDR_90_piece2`, `modelcell_cut1_v2_piece66`, `SCDR_90_hollow`,
+  unchanged in both before/after). A dedicated corpus-wide instrumentation
+  pass tallying every real `Gsplit` call's outcome (`none`/`clean_multi`/
+  `fallback_1real`/`mixed`, see above) found only 6 `fallback_1real`
+  events total across the whole corpus, of which only `struct_plate3.stp`
+  produces any visible difference at all (the negligible one above) --
+  confirming the new search-before-accepting-a-sliver-split logic is
+  almost entirely inert on the existing corpus and exists specifically
+  for cases like clamp.stp that this corpus doesn't otherwise contain.
+  occ/freecad suites not re-run this session (ocp-only change in scope,
+  same precedent as several other recent single-session fixes in this
+  file).
+
 - **`get_join_cone_cyl` (`meta_surfaces_utils.py`) marked a face as
   consumed (`omitFaces`) BEFORE checking whether it would actually
   build any RevCC chain for it, fixed 2026-10-05 -- root cause of lost
