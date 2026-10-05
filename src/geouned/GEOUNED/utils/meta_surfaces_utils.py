@@ -795,8 +795,28 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
     if wraps is None:
         wraps = [False]
 
+    # `omitFaces.update(face_index)` is deliberately NOT done here, before
+    # the two `twoPimod(Umax - Umin) == 0` early-returns just below --
+    # confirmed live, 2026-10-05, `struct_plate4_comp.stp` solid1 under
+    # `Options.meta_surfaces=False`: this raw U-range closure check is
+    # cruder than (and can disagree with) `is_closed_cylinder_cone`'s own
+    # winding-based test that this function's caller already used to
+    # decide this face is genuinely OPEN and worth trying a RevCC chain
+    # for in the first place (`Umax-Umin` measured exactly `2*pi` here --
+    # a real face whose raw parameter range spans the full period even
+    # though its actual boundary loop does not close, the same class of
+    # degenerate-point winding artifact `_is_closed_by_winding` was fixed
+    # for elsewhere, just not re-applied to this cruder check). Marking
+    # the face as consumed BEFORE this early return meant a face this
+    # function declined to build any composite for was still silently
+    # dropped from the solid's own final boolean definition by the
+    # caller's main per-face loop (`iface in omitFaces: continue`) -- not
+    # just missing the extra RevCC closing plane, missing ENTIRELY, which
+    # is what actually lost MCNP particles. Moved to right after both
+    # early-return checks, so a face this function bails out on early is
+    # left untouched for the caller's own basic Cylinder/Cone branch to
+    # pick up instead.
     face_index = list(face_or_shell.Indexes) if type(face_or_shell) is ShellFaceGu else [face_or_shell.Index]
-    omitFaces.update(face_index)
     joined_faces = []
     arc_angle = 0.0
     if type(face_or_shell) is ShellFaceGu:
@@ -834,6 +854,11 @@ def get_join_cone_cyl(face_or_shell, GUFaces, multiplanes, omitFaces, tolerances
         facemax = face_or_shell
         emin = extreme_edge(Umin, face_or_shell)
         emax = extreme_edge(Umax, face_or_shell)
+
+    # Neither early-return above fired -- this face/shell is genuinely
+    # being processed into a (potential) RevCC chain from here on, so it
+    # is now safe to mark it consumed.
+    omitFaces.update(face_index)
     arc_angle = Umax - Umin if Umax > Umin else Umax - Umin + twoPi
     if arc_angle > math.pi:
         arc_angle = twoPi - arc_angle

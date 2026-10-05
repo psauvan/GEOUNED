@@ -305,6 +305,78 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`get_join_cone_cyl` (`meta_surfaces_utils.py`) marked a face as
+  consumed (`omitFaces`) BEFORE checking whether it would actually
+  build any RevCC chain for it, fixed 2026-10-05 -- root cause of lost
+  particles on `Solidos/working_solids/struct_plate4_comp.stp`'s 2nd
+  solid.** User-reported: this solid's own written cell definition was
+  completely missing one of its own real faces -- the exterior of a rod
+  (R=2mm cylinder) that solid1 shares with solid0 -- even though the
+  face is genuinely part of solid1's own geometry (confirmed directly:
+  `has_R2_cylinder=True` on the piece, `get_reversed_cone_cylinder`
+  reports 0 chains found, yet the face's own index still ends up in
+  `omitFaces`).
+  **Root cause, confirmed by direct instrumentation (not guessed)**:
+  `get_join_cone_cyl`'s own first 2 lines used to be
+  `face_index = ...; omitFaces.update(face_index)`, run UNCONDITIONALLY
+  before either of the function's own 2 early-return checks
+  (`twoPimod(Umax - Umin) == 0`, once for a merged `ShellFaceGu`, once
+  for a bare face). Measured directly on the real fixture: the face's
+  own raw U-parameter range is EXACTLY `2*pi` (`Umax-Umin=6.283185`,
+  `twoPimod(...)=0.0`), so this cruder, purely-U-range-based check fires
+  and the function returns `([], False)` immediately -- but
+  `get_reversed_cone_cylinder`'s own CALLER had already separately
+  confirmed `is_closed_cylinder_cone(revcc_shell)` is `False` for this
+  SAME face (the winding-based closure test, the same family as the
+  already-documented `_is_closed_by_winding` fix elsewhere in this
+  file) before ever calling into `get_join_cone_cyl` at all -- the two
+  closure signals genuinely disagree for this face (a real U-range-
+  spans-the-full-period artifact that the more careful winding test
+  does NOT consider a closed loop). Because `omitFaces.update(face_index)`
+  had already run before this disagreement surfaced, the face was left
+  permanently marked "already handled" even though `get_join_cone_cyl`
+  built no composite, no closing plane, and no fallback basic surface
+  for it -- `simple_solid_definition`'s own main per-face loop
+  (`if iface in omitFaces: continue`) then skipped it entirely, so
+  NOTHING (not even the plain `Cylinder` branch) was ever written for
+  this face.
+  **Fix**: moved `omitFaces.update(face_index)` to right after BOTH
+  early-return checks, so a face/shell this function bails out on
+  early (for either reason) is left untouched for the caller's own
+  basic Cylinder/Cone branch to pick up instead -- confirmed nothing
+  between the old and new call sites reads `omitFaces` (`extreme_edge`/
+  `other_face_edge` take no such argument), so this is a pure
+  reordering with no other side effect. For this specific fixture, the
+  face's own U-range being genuinely the full `2*pi` means the plain
+  `Cylinder` branch (`gen_cylinder`, no extra plane) is itself exactly
+  correct -- an azimuthally-complete cylindrical surface needs no extra
+  bounding condition regardless of which closure test is used, matching
+  `simple_solid_definition`'s own existing Cylinder-branch comment
+  ("closed reversed orientation doesn't need additional plane").
+  **Verified**: `struct_plate4_comp.stp` solid1's own written definition
+  gained exactly the one missing term (the shared cylinder's registry
+  surface, `1`): `OR[AND[4 5 6 7 8 9 10]]` -> `OR[AND[1 4 5 6 7 8 9 10]]`,
+  identical under both `Options.meta_surfaces` settings (RevCC always
+  runs regardless). Full real conversion (`geo.run()` +
+  `export_csg(volSDEF=True, dummyMat=True)`) + d1suned (NPS 1e6,
+  `meta_surfaces=False`): **0 lost particles**, cell1 `0.97122 +/-1.32%`
+  (2.18 sigma), cell2 (the previously-broken one) `0.99040 +/-0.58%`
+  (1.65 sigma), SD4 exactly matches both cells' true CAD volumes. Full
+  suites green on all 3 engines (ocp 279 passed/1 skipped, occ 279
+  passed/1 skipped, freecad 290 passed/14 skipped -- each engine's own
+  established baseline, zero regressions). A 153-file `Solidos/
+  test_models` differential (`git stash`-based before/after, decompose +
+  build_solid_definition, comparing per-solid piece count/volume AND
+  the total AND-term count across every written cell definition, BOTH
+  `Options.meta_surfaces` settings) found **0 differences anywhere** --
+  this exact disagreement (raw U-range exactly `2*pi` while the winding
+  test says open) never occurs elsewhere in the existing corpus, so the
+  fix is purely additive for this one new fixture, not a behavior
+  change for any file already in `test_models`. The 4 already-known
+  pre-existing corpus failures (`SCDR_90_piece2`, `modelcell_cut1_v2_
+  piece66`, `ConeSphere.stp`'s native crash, `SCDR_90_hollow`) are
+  unaffected.
+
 - **New post-decomposition repair, `merge_sliver_pieces` (`geo/solid_ops.py`),
   2026-10-04: a decomposed solid's own final irreducible piece list can
   contain a genuine, tiny thin-wedge "sliver" solid that is not a
