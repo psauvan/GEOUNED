@@ -1322,11 +1322,10 @@ class MetaSurfacesDict(dict):
         components = {}
 
         if len(cylcones) == 1:
-            s_region, p_region, comp = self._reversedCC_component(cylcones[0])
+            cylkne_region, add_plane_region, comp = self._reversedCC_component(cylcones[0])
             components.update(comp)
-            reversedCC_region = s_region * p_region
         else:
-            plane_region = None
+            add_plane_region = None
             cylkne_region = None
             if cylcones[0].Type == "Cylinder":
                 axis = cylcones[0].Surf.Cylinder.Surf.Axis
@@ -1358,18 +1357,15 @@ class MetaSurfacesDict(dict):
                 for cc in cylcones:
                     s_region, p_region, comp = self._reversedCC_component(cc)
                     components.update(comp)
-                    plane_region = BoolSurface.mult(plane_region, p_region)
+                    add_plane_region = BoolSurface.mult(add_plane_region, p_region)
                     cylkne_region = BoolSurface.mult(cylkne_region, s_region)
-                reversedCC_region = plane_region * cylkne_region
             else:
                 for cc in cylcones:
                     s_region, p_region, comp = self._reversedCC_component(cc)
                     components.update(comp)
-                    plane_region = BoolSurface.add(plane_region, p_region)
+                    add_plane_region = BoolSurface.add(add_plane_region, p_region)
                     cylkne_region = BoolSurface.mult(cylkne_region, s_region)
-                reversedCC_region = plane_region * cylkne_region
-
-
+   
         # A MultiPlane can make the irreducible solid non-convex -- exactly
         # the configuration where the RevCC's own additional plane, correct
         # only locally near its own cylinder/cone, must not act as an
@@ -1392,7 +1388,10 @@ class MetaSurfacesDict(dict):
                 components[abs(pid)] = mpp
                 multiplane_region = BoolSurface.mult(multiplane_region, -BoolSurface(0, pid))
             multiplane_set_region = BoolSurface.add(multiplane_set_region, multiplane_region)
-        reversedCC_region = BoolSurface.add(reversedCC_region, multiplane_set_region)
+        
+        plane_region = BoolSurface.add(add_plane_region, multiplane_set_region)
+        plane_region.region.simplify()
+        reversedCC_region = plane_region * cylkne_region
 
         add_cc = True
         for cs_surf in self["RevCC"]:

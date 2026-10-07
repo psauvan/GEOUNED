@@ -305,6 +305,97 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`add_reversedCC` (`geouned_classes.py::MetaSurfacesDict`): the
+  MultiPlane escape was OR'd onto the WHOLE RevCC region instead of
+  only its own additional-plane term, fixed 2026-10-07 -- root cause of
+  `Solidos/working_solids/clamp.stp`'s solid0 (the same `CLAMP_PIPE`
+  fixture as the `generic_split` fix just below) overshooting its true
+  volume by ~29% under the DEFAULT `Options.meta_surfaces=True`, for a
+  real solid embedded in `Big_model_reserved/divertor_cam.stp` (cell
+  1032, label `CLAMP_PIPE#CT5YLJ_11`).
+  **Found via a real-world regression report**: the user compared
+  `divertor_cam.stp`'s own d1suned tally for this cell between an older
+  and the current GEOUNED code (both at `meta_surfaces=True`, the
+  user's own real `myrun.py` settings): old code gave `1.08767`, new
+  code `1.42194` -- clearly worse, not noise, with the written `SD4`
+  (declared/true CAD volume) identical both times. The user's own
+  direct report that this persisted even with `Settings.load_from_cache
+  =False` ruled out a stale-cache explanation.
+  **Isolated to a minimal, fully reproducible case**: standalone
+  `clamp.stp` (no cache, no void generation, no `#1521` complement from
+  the bigger assembly) -- `geo.run()` alone under the default
+  `meta_surfaces=True` already reproduces it. Monte Carlo
+  (`GSolid.is_inside` vs. the hand-evaluated written cell, 200000
+  samples in the padded bbox): true volume 0.314646 cm^3, written cell1
+  0.406455 cm^3, `cell1 but NOT true` = 0.090653 cm^3 (9522/200000
+  samples, `true but NOT cell1` only 1 -- pure sampling noise) -- a
+  real, substantial excess, not a precision artifact of the solid's own
+  large real-world coordinates (confirmed: `clamp.stp` itself is
+  already at these same large coordinates, X~726/Y~-480 cm, standalone;
+  moving to/from a bigger assembly changes nothing).
+  **Root cause**: `solid0`'s two R=5.25mm cylindrical faces (MCNP
+  surfaces `6`/`8`) are genuine, load-bearing lateral boundaries
+  spanning the solid's ENTIRE Z-height (confirmed via direct face
+  inspection: `bbZ=[257.9149,262.9149]`, the solid's own full Z-range) --
+  not an open/partial feature needing a bound only near one end. But
+  the written definition's RevCC escape groups, `(-4:6 7)`/`(-4:8 9)`,
+  said: below the closing-plane threshold (`z<=259.915`, literal `-4`),
+  skip BOTH the cylinder (6/8) and its closing plane (7/9) entirely --
+  letting in everything inside the outer envelope with no cylinder
+  bound at all in that z-band. Traced to `add_reversedCC`'s own final
+  combination: `reversedCC_region = (plane_region * cylkne_region) OR
+  multiplane_set_region` -- the MultiPlane-adjacency escape
+  (`multiplane_set_region`, meant per the function's own comment to
+  relax only the RevCC's "additional plane", since that plane is
+  "correct only locally near its own cylinder/cone") was OR'd onto the
+  WHOLE region (plane AND cylinder/cone together), so firing the escape
+  dropped the cylinder/cone bound (`cylkne_region`) too, not just the
+  plane.
+  **Fix**: move the OR inside, so the escape only ever relaxes the
+  plane term: `plane_region = add_plane_region OR multiplane_set_region`
+  (renamed from the reused `plane_region` name to `add_plane_region`
+  while accumulating per-segment contributions, to stop shadowing the
+  final combined name), then `reversedCC_region = plane_region *
+  cylkne_region` -- computed ONCE, after the MultiPlane block, instead
+  of once inside the `len(cylcones)==1`/`else` branches (now building
+  only `cylkne_region`/`add_plane_region`) and once more combined with
+  the escape. `plane_region.region.simplify()` added before the final
+  product, matching the simplification the pre-existing (commented-out,
+  dead) Forward-orientation draft already did for its own analogous
+  `surf_region` before combining.
+  **Verified**: Monte Carlo on the exact same standalone-fixture export
+  after the fix -- `cell1 but NOT true` and `true but NOT cell1` both
+  drop to 1/200000 (pure sampling-boundary noise), exact match. Full
+  suites green on all 3 engines, zero regressions (ocp 261 passed/1
+  skipped, occ 261 passed, freecad 272 passed/14 skipped -- each
+  engine's own established baseline). The user independently ran the
+  real `ocp` conversion + d1suned stochastic-volume check against the
+  usual `Solidos/test_models` corpus list with this fix applied and
+  confirmed it passes.
+  **Full-corpus re-run, same day, both `Options.meta_surfaces` settings**
+  (154 files of `Solidos/test_models`, excluding `Big_*`; 8-way parallel
+  conversion + 16-way parallel d1suned, both settings run concurrently,
+  via the existing `run_all_conversions_ocp_{,nometa_}parallel.py` +
+  `run_test_models_ocp_{,nometa_}d1suned.sh` +
+  `analyze_test_models_ocp{,_nometa}.py` pipeline): conversion 150/154
+  in both (same 4 known pre-existing failures --
+  `Decomposed_SCDR_90_piece2`, `Decomposed_modelcell_cut1_v2_piece66`,
+  `Mixed_ConeSphere`'s native crash, `Mixed_SCDR_90_hollow` --
+  unaffected). d1suned gives **IDENTICAL buckets in both settings**:
+  205 solid-cell tallies, 193 (94.1%) within 2 sigma, 11 marginal (same
+  files, same sigma to within rounding), exactly 1 beyond 3 sigma in
+  EACH (`RoundCorners/shed_solid.stp`, the same already-explained
+  MC-noise-on-a-small-cell case documented elsewhere in this file), 0
+  lost particles in either -- confirming this fix is a zero-regression,
+  corpus-wide correct change, and that `meta_surfaces=True`/`False`
+  continue to agree exactly once a real gap between the two settings is
+  closed, matching this project's own established pattern (see the
+  `get_join_cone_cyl`/`convex_planes` and `GCompound` entries elsewhere
+  in this file for the same convergence after their own fixes).
+  `Reversed_Cyl_Cones/clamp.stp` (the fixture directly exercising this
+  bug) converts and passes cleanly in both settings, appearing in
+  neither the marginal nor the failing list.
+
 - **`generic_split`: a decomposition-stage tolerance mismatch and a
   "first successful candidate wins" search both fixed, 2026-10-05/06 --
   root cause of `Solidos/working_solids/clamp.stp`'s solid0 losing more
