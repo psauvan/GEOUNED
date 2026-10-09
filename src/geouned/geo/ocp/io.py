@@ -10,13 +10,14 @@ from __future__ import annotations
 from OCP.BOPAlgo import BOPAlgo_Splitter
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.IFSelect import IFSelect_RetDone
+from OCP.ShapeBuild import ShapeBuild_ReShape
 from OCP.ShapeFix import ShapeFix_Shape
 from OCP.STEPControl import (
     STEPControl_AsIs,
     STEPControl_Reader,
     STEPControl_Writer,
 )
-from OCP.TopAbs import TopAbs_SOLID
+from OCP.TopAbs import TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 from ..io_utils import (
@@ -25,9 +26,52 @@ from ..io_utils import (
 )
 from .topology import GEdge, GFace, GShape, GShell, GSolid
 from .repair import Gcheck_and_repair, Gspline_surface
+from .open_solid_repair import _repair_open_solid
 from .spline_quadrics import Gsubstitute_spline_quadrics
 from ._native_utils import _native_fix
 from ..constants import DEFAULT_FIX_TOLERANCE
+
+
+def _promote_open_shells(shape, tolerances):
+    """Scan `shape` for any free-standing `TopAbs_SHELL` (one not already
+    nested inside a `TopAbs_SOLID` -- the 3-argument `TopExp_Explorer`
+    form's own `ToAvoid` parameter skips every shell already inside a
+    solid subtree for free) and attempt `_repair_open_solid` on each,
+    substituting the result back into the shape tree in place via
+    `ShapeBuild_ReShape`. Once promoted, the new solid is
+    indistinguishable from any other -- every downstream
+    `TopExp_Explorer(shape, TopAbs_SOLID)` traversal (here, in
+    `Gload_step_labels`'s own `count_solids`, in GEOUNED's own
+    `load_cad` loop) just finds it like any ordinary solid, with no
+    special-casing needed anywhere else. A shell that fails to repair
+    is left untouched -- the existing "0 solids found" / corrupted-
+    solid handling downstream is unaffected, exactly as if this
+    function had never run. Returns `shape` itself, unchanged, if
+    nothing needed promoting (the overwhelmingly common case -- this
+    function is cheap to call unconditionally: a well-formed STEP file
+    has no free-standing shells at all, so the explorer loop below
+    simply finds nothing and returns immediately).
+
+    Must be called from BOTH `Gload_and_process_step` (the real,
+    GEOUNED-facing load path) and `Gload_step_labels` (which re-reads
+    the same file independently via its own XCAF document) -- these two
+    functions' own solid COUNTS must stay positionally aligned (see
+    `Gload_step_labels`'s own docstring), so a shell promoted in one but
+    not the other would desynchronize them. `Gload_step` itself (the
+    plain, no-repair loading primitive used by tests/GEOReverse) is
+    deliberately NOT touched -- see its own docstring for why it stays
+    exactly as-is."""
+    reshaper = ShapeBuild_ReShape()
+    changed = False
+    explorer = TopExp_Explorer(shape, TopAbs_SHELL, TopAbs_SOLID)
+    while explorer.More():
+        shell = TopoDS.Shell(explorer.Current())
+        repaired = _repair_open_solid(shell, tolerances)
+        if repaired is not None:
+            reshaper.Replace(shell, repaired)
+            changed = True
+        explorer.Next()
+    return reshaper.Apply(shape) if changed else shape
 
 
 def _export_shapes_step(native_shapes: list, filename: str) -> None:
@@ -222,6 +266,7 @@ def Gload_and_process_step(filename: str, tolerances) -> "tuple[list[GSolid | No
         raise RuntimeError(f"STEP read failed for {filename} (status={status})")
     reader.TransferRoots()
     shape = reader.OneShape()
+    shape = _promote_open_shells(shape, tolerances)
     gsolids = []
     corrupted_indices = []
     spline_indices = []
@@ -299,6 +344,14 @@ def Gload_step_labels(filename: str) -> list[GLabelNode]:
     nodes: list[GLabelNode] = []
 
     def count_solids(shape) -> int:
+        # Promoted here too, not just in Gload_and_process_step: this
+        # function's own job is purely to keep the returned node list's
+        # own n_solids count positionally aligned with what that OTHER
+        # function will separately count from its own, independently-
+        # read copy of the same file -- a free-standing shell promoted
+        # in one but not the other would desynchronize them (see
+        # `_promote_open_shells`'s own docstring).
+        shape = _promote_open_shells(shape, None)
         n = 0
         exp = TopExp_Explorer(shape, TopAbs_SOLID)
         while exp.More():

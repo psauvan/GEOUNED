@@ -3,12 +3,13 @@
 #
 import logging
 import math
-from ...geo.constants import POINT_POINT_TOL, SQUARED_LENGTH_TOL_E8
+from ...geo.constants import PARAM_ANGLE_TOL, POINT_POINT_TOL, SQUARED_LENGTH_TOL_E8
+from .data_constants import twoPi
 
 logger = logging.getLogger("general_logger")
 
 from ...boolean_utils.boolean_function import BoolVariable
-from .geometry_gu import ShellFaceGu
+from .geometry_gu import ShellFaceGu, is_same_surface
 from .geouned_classes import GeounedSurface
 from .meta_surfaces import multiplane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces, get_revConeCyl_surfaces
 from .meta_surfaces_utils import (
@@ -165,6 +166,33 @@ def get_roundCorner(solidFaces, cornerface_index=None, solid=None, *, tolerances
         return corner_list, cornerface_index
 
 
+def _raw_u_full_turn(shape):
+    """Whether `shape`'s own raw U-parameter span is a full turn --
+    the same formula `is_closed_cylinder_cone` itself uses as its
+    fallback for a single `GFace`, called directly here instead,
+    bypassing `_is_closed_by_winding`'s own prior check.
+
+    `_is_closed_by_winding` walks a face's real boundary loop and can
+    legitimately disagree with the raw parametrization (that's its own
+    purpose -- a face whose *parameter domain* spans a full turn isn't
+    always a genuine closed revolution, e.g. a non-rectangular trim
+    within that domain). But for deciding whether some OTHER,
+    disjoint face already closes off this same analytic surface
+    elsewhere in the solid (`get_reversed_cone_cylinder`'s own
+    disjoint-closed-counterpart check), the raw span is the more
+    reliable signal: confirmed live, Big_model_reserved/divertor_cam.stp's
+    FLANGE_FMU_DIV#BYZ2KS_31 piece0, 2026-10-07 -- a genuinely
+    full-circle R=2mm cylinder face (raw U span exactly 2*pi) still read
+    as `_is_closed_by_winding`-"not closed", which let a disjoint,
+    real-but-tiny (0.32mm^2) arc of the SAME cylinder elsewhere in the
+    solid wrongly trigger its own RevCC construction instead of being
+    recognized as redundant with the already-closed main face."""
+    if type(shape) is ShellFaceGu:
+        return is_closed_cylinder_cone(shape)
+    umin, umax, vmin, vmax = shape.ParameterRange
+    return umax - umin > twoPi - PARAM_ANGLE_TOL
+
+
 def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_index=None):
     if conecylface_index is None:
         conecylface_index = set()
@@ -180,6 +208,39 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
             if f.Orientation == "Reversed":
                 revcc_shell = merge_same_surface_faces(f, solidFaces, tolerances=tolerances)
                 if is_closed_cylinder_cone(revcc_shell):
+                    continue
+                # The solid can carry two genuinely disjoint (not
+                # physically connected) face groups on the exact same
+                # analytic cylinder/cone surface -- e.g. a surface reused
+                # at two different extents of the part -- one open, one
+                # closed. A closed group needs no additional plane at
+                # all (see this function's own Cylinder/Cone branch
+                # comment in cell_definition.py: "closed reversed
+                # orientation doesn't need additional plane"); the open
+                # group here has no way to tell that its own cylinder is
+                # already fully, correctly bounded elsewhere by that
+                # closed group, so building a RevCC closing plane for it
+                # produces a plane that cuts the solid in the wrong
+                # place entirely (confirmed live, Big_model_reserved/
+                # divertor_cam.stp's own FLANGE_FMU_DIV#BYZ2KS_31 piece0,
+                # 2026-10-07: a R=2mm pin-hole cylinder has one closed
+                # loop and one disjoint open arc on the same surface).
+                # The closed group always takes priority: skip RevCC
+                # construction for the open one entirely and omit its
+                # own faces, exactly like an already-handled face.
+                revcc_indexes = revcc_shell.Indexes if type(revcc_shell) is ShellFaceGu else {f.Index}
+                has_disjoint_closed_counterpart = False
+                for g in solidFaces:
+                    if g.Index in revcc_indexes:
+                        continue
+                    if not is_same_surface(f.Surface, g.Surface, tolerances=tolerances):
+                        continue
+                    other_shell = merge_same_surface_faces(g, solidFaces, tolerances=tolerances)
+                    if _raw_u_full_turn(other_shell):
+                        has_disjoint_closed_counterpart = True
+                        break
+                if has_disjoint_closed_counterpart:
+                    conecylface_index.update(revcc_indexes)
                     continue
                 rcc, closed_set = get_revConeCyl_surfaces(revcc_shell, solidFaces, multiplanes, conecylface_index, tolerances)
                 if rcc:

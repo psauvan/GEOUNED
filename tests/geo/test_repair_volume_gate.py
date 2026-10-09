@@ -7,7 +7,11 @@ SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "geouned"
 
 
 def test_every_healing_repair_shares_one_volume_gate():
-    assert constants.MAX_REPAIR_VOLUME_REL_CHANGE == 3.0e-4
+    # Raised 2026-10-07 (3.0e-4 -> 4.0e-4): EC_SUPPORT#BYZ2TW_41 piece0's own
+    # STEP round-trip volume drift (3.5e-4 relative) needed Gheal_topology to
+    # actually accept the rebuild, within the gate's own documented safe
+    # window of (2.0e-4, 5.18e-4).
+    assert constants.MAX_REPAIR_VOLUME_REL_CHANGE == 4.0e-4
     # the four per-repair constants (1e-2, 3e-4, 5e-4, 1e-3) are gone
     for old in ("MAX_DEFEATURE_VOLUME_REL_CHANGE", "MAX_SPLIT_RING_VOLUME_REL_CHANGE", "MAX_SLIVER_HEAL_VOLUME_REL_CHANGE", "MAX_HEAL_TOPOLOGY_VOLUME_REL_CHANGE"):
         assert not hasattr(constants, old), old

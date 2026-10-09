@@ -47,10 +47,10 @@ comfortably above the ~1e-15 floating-point noise floor -- 1e-9 keeps
 6 orders of magnitude of margin on the noise side and 5 on the real-
 defect side."""
 
-MAX_REPAIR_VOLUME_REL_CHANGE = 3.0e-4
+MAX_REPAIR_VOLUME_REL_CHANGE = 4.0e-4
 """Volume-conservation gate shared by every HEALING repair -- `Gdefeature`, `Gcollapse_split_rings`, `Gsliver_heal`,
 `Gheal_topology`, `_close_open_solid` and `_repair_non_manifold_solid`'s separate-components pass: a repaired solid is only
-trusted if `|dV| / max(|V|, 1) <= 3e-4`. Valid topology alone is NOT enough (a repair can come back BRepCheck-valid and
+trusted if `|dV| / max(|V|, 1) <= 4e-4`. Valid topology alone is NOT enough (a repair can come back BRepCheck-valid and
 still lose or invent material, or distort a real neighbouring surface).
 
 One value since 2026-09-19 (it used to be 1e-2, 3e-4, 5e-4 and 1e-3, one per repair). Measured over the 143 test_models files
@@ -63,6 +63,17 @@ plus the 30 working_solids fixtures, the relative volume change of every repair 
   - Gheal_topology, open-solid repair, non-manifold reconstruction: <= 2e-5, more than 10x below the gate.
 Any value in (2.0e-4, 5.18e-4) keeps every measured decision. Caveats: "accepted"/"rejected" is what the previous gates
 decided, not ground truth, and the high side of that window is narrow (part2 sits 3.5% above the old 5e-4).
+
+Raised 3.0e-4 -> 4.0e-4, 2026-10-07, once `Gheal_topology` gained a second, genuinely different use
+(`_raw_bop_split`'s own anomalous-split retry, see that function's docstring): re-serializing a solid
+that is ALREADY `BRepCheck`-valid (not repairing a broken one) still carries real STEP round-trip
+numerical noise of its own, unmasked by any other error source -- measured directly on
+`Big_model_reserved/divertor_cam.stp`'s own `EC_SUPPORT#BYZ2TW_41` piece0 (a real decomposition
+fragment, 4251.30mm^3): round-trip volume 4252.79mm^3, dV=3.5e-4 relative, a previously-unmeasured
+scenario this gate's own 2026-09-19 measurement pass never exercised (every prior Gheal_topology
+measurement was on a genuinely-broken fragment, where drift stays <=2e-5). 4.0e-4 keeps every one of
+the measurements above correctly classified while accepting this new, legitimate case too -- still
+comfortably inside the documented (2.0e-4, 5.18e-4) safe window.
 
 Deliberately NOT applied to `Gmerge_coplanar_planes` (1e-6) nor to Gsplit's `volume_tolerance` (1e-6): those confirm an
 (almost) exact operation and stay tight."""
@@ -454,14 +465,67 @@ BRep-kernel operation, own constant" rule as `GEOM_PROP_TOL`. Split out of `KERN
 # POINT_CLASSIFY_TOL (BRepTopAdaptor_FClass2d/BRepClass3d_SolidClassifier/freecad's own isInside)
 # above -- same value (1e-7), two genuinely different OCCT operations.
 
-TOLERANCE_WELD_FLOOR = 1.0e-3
-"""`decom_one_generators.py::generic_split`'s own minimum floor (`max(50 * tolerances.
-split_tolerance, TOLERANCE_WELD_FLOOR)`) for detecting a BOPAlgo tolerance-weld symptom: a
-fragment's own edge/vertex tolerances (`Gsolid_max_tolerance`) inflated far above the split
-tolerance, together with non-manifold edges, signals a near-tangent junction the split papered
-over rather than resolved (see the function's own inline comment for the full account). Split out
-of `KERNEL_TOL_E3` 2026-09-23 (same value, renamed) -- its own dedicated, already-well-documented
-role, the last surviving member of the former `KERNEL_TOL_E*` family."""
+STUCK_FRAGMENT_PROBE_GRID = 3
+"""`decom_one_generators.py::_face_anchored_points`'s own per-face, per-parametric-axis grid
+resolution (so `STUCK_FRAGMENT_PROBE_GRID ** 2` candidate (u, v) samples per face, before the
+`is_part_of_domain` filter) -- used to independently verify (via `GSolid.is_inside`, never
+BOPAlgo_Splitter itself) whether a real candidate tool that failed to split a stuck fragment
+actually should have.
+
+A uniform-random-BoundBox sampling design (with an early-exit optimization once a candidate shows
+enough evidence) was tried first, 2026-10-09, and worked, but at a real, measured cost: BC.stp's
+own motivating second stuck fragment has only a ~0.5-1.6% `is_inside`-over-BoundBox hit rate, so
+accumulating even `STUCK_FRAGMENT_PROBE_MIN_COUNT` points on each side needed on the order of 1000
+draws, each itself a real `BRepClass3d_SolidClassifier` query against a complex multi-face
+fragment -- 4.37s for this one fragment's own gate check, out of this mechanism's own ~15.5s total
+overhead for that decomposition.
+
+Face-anchored sampling (`_face_anchored_points`, reusing `GSolid.find_interior_point`'s own
+already-benchmarked "probe inward from each face along its inward normal" strategy, generalized
+to a small grid per face instead of stopping at the first point) replaces it entirely: every
+candidate point starts ON real material's own boundary, so the fraction that need to be discarded
+is far smaller, and the whole mechanism's own cost for this exact fragment dropped to ~0.6s (over
+an order of magnitude) -- see `FACE_PROBE_BISECTION_STEPS`'s own docstring for the one real design
+mistake found and corrected while building this (a single small fixed inward offset, instead of
+`find_interior_point`'s own bisection from a meaningful length scale, looked like it made
+face-anchoring unreliable when it was actually just testing the wrong distance). A 3x3 grid per
+face reproduced both real fixtures this mechanism was built against
+(Big_model_reserved/divertor_cam.stp's own EC_SUPPORT#BYZ2TW_41 piece0, and BC.stp's own second,
+independent stuck-but-fixable fragment); not tuned against a broader false-positive/negative
+sweep, revisit if a real corpus case needs a finer grid."""
+
+FACE_PROBE_BISECTION_STEPS = 12
+"""`decom_one_generators.py::_face_anchored_points`'s own bisection depth, matching
+`GSolid.find_interior_point`'s own already-proven value exactly (same role: walk inward from a
+real boundary point along its own normal, starting at half the solid's characteristic length
+`0.5 * Volume ** (1/3)` and halving each step, keeping the first -- i.e. largest -- distance that
+lands back inside via a real `is_inside` call).
+
+A single small, FIXED inward offset (not a bisection search at all) was tried first, 2026-10-09,
+and wrongly looked like proof that face-anchored sampling itself was unreliable for a genuinely
+thin/sparse fragment: it found real material at only ~3% of BC.stp's own motivating second
+fragment's candidate grid points, at every fixed distance tried from 1e-3mm up to 100mm, and even
+a dozen further randomly-DIRECTED (not just +/- the face normal) probes from the same boundary
+point found nothing within 5mm. The real mistake was testing distances in isolation rather than
+searching a RANGE anchored to the solid's own scale: `0.5 * Volume ** (1/3)` for this fragment
+(~755130mm^3) is ~45mm, and the large, ad-hoc fixed offsets tried (up to 100mm) were checked on
+only ONE hand-picked grid point/face, not across all of them -- a single face can genuinely be
+locally thin/concave along its own normal while the fragment's OTHER faces are not, so one face's
+own failure at every offset does not generalize. Re-running the bisection search (this constant's
+own value) across every face's own grid raised the hit rate to ~11% on the exact same fragment and
+recovered the correct material-on-both-sides signal for its own real Plane candidate -- confirming
+`GSolid.find_interior_point`'s own established technique (not a new, speculative one) was the
+right fix all along, as directly pointed out on review: a real face's own inward normal direction
+always has material immediately past it, by definition of what a boundary face is; the question is
+only how far in that direction a tiny numerical probe needs to look before landing cleanly inside
+rather than exactly astride the boundary."""
+
+STUCK_FRAGMENT_PROBE_MIN_COUNT = 5
+"""Paired with `STUCK_FRAGMENT_PROBE_GRID`: the minimum number of genuinely-inside, face-anchored
+sample points required on EACH side of a candidate tool before concluding real material exists on
+both sides (i.e. the candidate should have split the fragment). A pragmatic floor against pure
+sampling noise, not a statistically derived value -- see
+`_some_real_candidate_should_have_split`'s own docstring."""
 
 EDGE_PROJECTION_TOL = 1.0e-8
 """`GEdge.is_inside(point, tolerance)`'s own tolerance at its one real call site

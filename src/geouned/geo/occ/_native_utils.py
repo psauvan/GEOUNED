@@ -25,6 +25,8 @@ from OCC.Core.gp import (
 )
 from OCC.Core.ShapeFix import ShapeFix_Shape
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+from OCC.Core.TopAbs import TopAbs_SOLID
+from OCC.Core.TopExp import TopExp_Explorer
 from ..vector_geometry import (
     GBoundBox,
     GMatrix,
@@ -181,11 +183,23 @@ def _native_fix(native, tolerance: float):
         unify = ShapeUpgrade_UnifySameDomain(native, True, True, True)
         unify.Build()
         unified = unify.Shape()
-        if BRepCheck_Analyzer(unified).IsValid():
+        # ShapeUpgrade_UnifySameDomain can degrade a genuine TopoDS_Solid
+        # to a bare TopoDS_Shell that stays BRepCheck-valid (closed) but
+        # is never re-wrapped as a solid -- the same class of bug
+        # repair.py's Gsliver_heal/Gcollapse_split_rings/
+        # Gtrim_overlapping_coplanar_faces guard against (confirmed live
+        # on the ocp engine, Big_model_reserved/divertor_cam.stp's own
+        # STRUCTURAL_PLATE_2#BYZ2RP_31 solid, 2026-10-07). Reject the
+        # unify result rather than silently return a Shell as "the
+        # native solid" -- fall through to the untouched original.
+        if BRepCheck_Analyzer(unified).IsValid() and TopExp_Explorer(unified, TopAbs_SOLID).More():
             return unified
     fixer = ShapeFix_Shape(BRepBuilderAPI_Copy(native).Shape())
     fixer.SetPrecision(tolerance)
     fixer.Perform()
-    return fixer.Shape()
+    fixed = fixer.Shape()
+    if TopExp_Explorer(fixed, TopAbs_SOLID).More():
+        return fixed
+    return native
 
 

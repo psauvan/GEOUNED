@@ -12,13 +12,18 @@ from ...geo import (
     Gheal_topology,
     Gmake_compound,
     Gsolid_max_tolerance,
-    Gsolid_nonmanifold_edge_count,
     Gsplit,
     Gtrim_overlapping_coplanar_faces,
     is_sliver_solid,
     merge_sliver_pieces,
 )
-from ...geo.constants import SPLIT_CANDIDATE_VOLUME_REL_TOL, TOLERANCE_WELD_FLOOR
+from ...geo.constants import (
+    FACE_PROBE_BISECTION_STEPS,
+    NUMERIC_DOUBLE_TOL,
+    SPLIT_CANDIDATE_VOLUME_REL_TOL,
+    STUCK_FRAGMENT_PROBE_GRID,
+    STUCK_FRAGMENT_PROBE_MIN_COUNT,
+)
 from ...geo.solid_defects import find_overlapping_coplanar_faces
 from ...geo.volume_utils import volume_within
 
@@ -111,6 +116,173 @@ def split_surfaces(solid, options, tolerances):
         )
 
     return comp
+
+
+def _tool_classifier(surf):
+    """A `point -> bool` callable for `surf`'s own already-built
+    `.shape`, used by `_some_real_candidate_should_have_split` to decide
+    which side of this real candidate a sampled point falls on.
+
+    NOT simply `GSolid(surf.shape).is_inside(point)` for every type: a
+    "Plane" candidate's own `.shape` (`GeounedSurface.build_surface`,
+    `self.shape = makePlane(...)`) is literally just the bare plane FACE
+    itself (`self.shell = self.shape`, the same object) -- zero
+    enclosed volume, one face. `BRepClass3d_SolidClassifier` on a shape
+    like that cannot ever report a point as genuinely "inside" (there is
+    no interior to be inside of), so naively reusing `is_inside` here
+    silently makes every Plane candidate read as 0 points on one side
+    regardless of the real geometry -- confirmed live, 2026-10-09: this
+    masked the real anomaly on Big_model_reserved/divertor_cam.stp's own
+    EC_SUPPORT#BYZ2TW_41 piece0 (whose own genuine candidate is a
+    Plane), and happened to still give the (coincidentally) correct
+    "one-sided" answer on testing/inputSTEP/BC.stp's own Plane
+    candidates only because that fragment is genuinely irreducible
+    anyway. Cylinder/Cone/Sphere/Torus and the composite Can/TCone/
+    RoundCorner/MultiRoundCorner/MultiPlane types all build a real,
+    closed solid for `.shape` (confirmed by direct inspection of each
+    branch in `geouned_classes.py::GeounedSurface.build_surface` and, for
+    MultiPlane, `build_shape_functions.py::makeMultiPlanes`'s own
+    `Gmake_solid(Gmake_shell(cutfaces))`), so `is_inside` is correct for
+    every one of them -- only Plane needs the direct half-space formula
+    instead."""
+    if surf.Type == "Plane":
+        position = surf.Surf.Position
+        axis = surf.Surf.Axis
+        return lambda p: (p - position).dot(axis) > 0
+    tool_solid = GSolid(surf.shape)
+    return lambda p: tool_solid.is_inside(p)
+
+
+def _face_anchored_points(solid):
+    """Points genuinely inside `solid`, anchored to `solid`'s own real
+    faces -- the same "probe inward from each face along its inward
+    normal" strategy `GSolid.find_interior_point` already uses and has
+    already benchmarked against sampling/octree alternatives (see that
+    method's own docstring), generalized here to collect MANY such
+    points (a small grid per face) instead of stopping at the first one.
+
+    For each face, a `STUCK_FRAGMENT_PROBE_GRID` x `STUCK_FRAGMENT_PROBE_GRID`
+    grid of (u, v) samples across its own `ParameterRange` gives a
+    candidate point (`value_at`) and the face's own normal there
+    (`normal_at`); `is_part_of_domain` discards a grid point outside the
+    face's real trimmed boundary (`ParameterRange` is only the
+    rectangle, not the trim); `orientation_outward` decides which sign
+    of the normal points OUT of the material, computed once per face
+    (not per grid point -- a face's own orientation is a single,
+    solid-wide property). Each kept point is then walked inward along
+    that direction via `find_interior_point`'s own bisection (start at
+    half the solid's own characteristic length, `0.5 * Volume ** (1/3)`,
+    then halve up to `FACE_PROBE_BISECTION_STEPS` times, keeping the
+    FIRST, i.e. largest, distance that lands inside) rather than a
+    single small fixed offset.
+
+    A single small fixed offset was tried first, 2026-10-09, and
+    rejected: it found real material at only ~3% of BC.stp's own
+    motivating second fragment's grid points (6-8 of ~130 passing
+    `is_part_of_domain`), wrongly suggesting face-anchored sampling was
+    fundamentally unreliable for this kind of thin/sparse composite
+    shape -- but the actual problem was testing the wrong length scale,
+    not the method itself: a probe this close to a real boundary point
+    can be exactly at the floating-point edge of a thin wedge or a
+    concave corner, landing just outside instead of just inside, while
+    a MEANINGFUL distance along the exact same direction (this
+    fragment's own characteristic length is ~45mm, not a sub-millimeter
+    epsilon) reliably lands in real material -- confirmed directly:
+    bisecting from that scale raised the hit rate to ~11% (28 of ~130)
+    on the exact same fragment and faces, recovering the correct
+    material-on-both-sides signal for its own real Plane candidate.
+    Every resulting point is still confirmed via a real `is_inside`
+    call at each bisection step, so an occasional genuine miss (all 12
+    halvings exhausted without finding material -- a face whose own
+    local neighborhood really is too thin or concave for this strategy)
+    is simply dropped, never silently trusted."""
+    length0 = 0.5 * abs(solid.Volume) ** (1.0 / 3.0)
+    points = []
+    for face in solid.Faces:
+        try:
+            outward = face.orientation_outward(solid)
+        except Exception:
+            continue
+        u_min, u_max, v_min, v_max = face.ParameterRange
+        for iu in range(STUCK_FRAGMENT_PROBE_GRID):
+            u = u_min + (u_max - u_min) * (iu + 0.5) / STUCK_FRAGMENT_PROBE_GRID
+            for iv in range(STUCK_FRAGMENT_PROBE_GRID):
+                v = v_min + (v_max - v_min) * (iv + 0.5) / STUCK_FRAGMENT_PROBE_GRID
+                try:
+                    if not face.is_part_of_domain(u, v):
+                        continue
+                    point = face.value_at(u, v)
+                    normal = face.normal_at(u, v)
+                except Exception:
+                    continue
+                inward = -normal if outward else normal
+                d = length0
+                for _ in range(FACE_PROBE_BISECTION_STEPS):
+                    d *= 0.5
+                    p = point + inward * d
+                    if solid.is_inside(p):
+                        points.append(p)
+                        break
+    return points
+
+
+def _some_real_candidate_should_have_split(solid, surfaces):
+    """Independent, geometric ground truth for "did at least one of the
+    REAL candidates `generic_split` just exhausted genuinely divide
+    `solid`'s own material, even though BOPAlgo_Splitter reported no
+    split for every one of them" -- the signal that decides whether a
+    STEP round-trip heal-and-retry is actually warranted for a stuck
+    fragment, replacing the former tolerance-inflation-based guess.
+
+    Confirmed by direct measurement, 2026-10-09, that tolerance alone
+    cannot answer this: a genuinely stuck-but-CORRECT (nothing to fix)
+    fragment of testing/inputSTEP/BC.stp carried a native BRep tolerance
+    of 8.67mm -- two orders of magnitude ABOVE the inflated 0.075mm
+    tolerance of Big_model_reserved/divertor_cam.stp's own genuinely
+    BROKEN EC_SUPPORT#BYZ2TW_41 piece0 -- so no threshold on
+    Gsolid_max_tolerance can separate the two cases; nor can the
+    SameParameter/SameRange BRep consistency flags (both clean on the
+    broken fragment too), nor whether the tolerance is spread uniformly
+    across every vertex/edge or only some (a genuinely fine fragment of
+    Hollow_plates/placa.stp showed the exact same partial, non-uniform
+    pattern), nor a direct geometric check for an actual near-tangent
+    OTHER face close to the worst vertex (none found, 34mm away, on the
+    broken fragment -- the inflation is not a measurable local
+    tangency). Only asking the geometry itself, independently of
+    BOPAlgo_Splitter, resolved this: for each real candidate surface
+    already tried and rejected, check whether real material sits on
+    BOTH sides of that candidate at the face-anchored points
+    `_face_anchored_points` collects (via `is_inside`'s own
+    BRepClass3d_SolidClassifier, unrelated to the boolean-split
+    machinery that might be wrong), classified via `_tool_classifier`
+    (see its own docstring for why a Plane candidate needs a direct
+    half-space test rather than `is_inside` on its own bare-face
+    `.shape`). Verified on cell1182's own broken fragment: all 3 of its
+    real candidates (confirmed directly to cleanly split a fresh copy of
+    the same solid) show material on both sides; verified on every
+    stuck fragment across BC.stp's own WHOLE decomposition (19
+    fragments, both under meta_surfaces=True and False): zero show
+    material on both sides for any of their own real candidates --
+    correctly never triggering this retry for solids that are
+    genuinely, correctly irreducible.
+
+    `surfaces` is the plain list of real `GeounedSurface` candidates to
+    test against `solid` -- generic_split's own caller rebuilds this
+    list fresh from get_surfaces() against whichever exact `solid` is
+    being checked (see its own call site for why a fresh rebuild, not
+    the original candidate loop's own tools, is required)."""
+    if not surfaces:
+        return False
+    points = _face_anchored_points(solid)
+    if not points:
+        return False
+    for surf in surfaces:
+        classify = _tool_classifier(surf)
+        in_n = sum(1 for p in points if classify(p))
+        out_n = len(points) - in_n
+        if in_n >= STUCK_FRAGMENT_PROBE_MIN_COUNT and out_n >= STUCK_FRAGMENT_PROBE_MIN_COUNT:
+            return True
+    return False
 
 
 def generic_split(solid, options, tolerances, loop=0, healed=False):
@@ -315,24 +487,96 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
             new_split = True
             break
 
-    # No candidate surface separated this fragment. A near-tangent BOPAlgo
-    # weld can leave a split result BRepCheck-valid yet joined at a
-    # junction it papered over rather than resolved -- the signature is
-    # (a) edge/vertex tolerances inflated far above split_tolerance (e.g.
-    # 0.075 mm vs 1e-4) AND (b) non-manifold edges (shared by != 2 faces).
-    # A STEP round-trip (Gheal_topology) rebuilds every face from its clean
-    # analytic description, dropping the inflated tolerance and the
-    # tolerance-artifact free edges so an ordinary split then separates it;
-    # .fix()/.refine() do not. Try it once, only when the fragment is
-    # genuinely stuck and carries both parts of that signature -- degenerate
-    # tori (huge tolerance, 0 free edges) and sew-repaired shells do not
-    # qualify, so the common path pays nothing. Confirmed on
-    # RevCC_regression/Big_one_cell__modelCell_670000__solid0_piece52: a
-    # 5406 mm^3 fused wedge -> [816.5, 4590.0].
+    # No candidate surface separated this fragment -- every real tool was
+    # genuinely tried and failed. This alone does NOT mean the fragment
+    # needs repair: it is also the ordinary, correct signature of a
+    # genuinely irreducible solid, and the two cases are NOT
+    # distinguishable from tolerance/validity state alone (see
+    # _some_real_candidate_should_have_split's own docstring for the
+    # measurements that ruled out tolerance magnitude, SameParameter/
+    # SameRange, tolerance-distribution uniformity, and a direct
+    # geometric near-tangency search). Only retry with a STEP round-trip
+    # heal when an INDEPENDENT geometric check confirms at least one of
+    # the real candidates just tried genuinely should have split this
+    # fragment's own material -- never pre-emptively, and never on every
+    # successfully-split piece either (both tried and rejected: the
+    # former crashes OCCT natively on fragments that never needed it --
+    # testing/inputSTEP/BC.stp's own stuck-but-correct fragments -- the
+    # latter perturbs geometry that was already fine and reactivates an
+    # unrelated, already-fixed RevCC closure false positive on
+    # Hollow_plates/placa.stp). `.fix()` first, matching split_surfaces's
+    # own final pass on every OTHER returned piece: skipping it leaves a
+    # fragment at its raw, as-split state, whose own STEP round-trip can
+    # drift just outside MAX_REPAIR_VOLUME_REL_CHANGE (measured directly,
+    # 4.52e-4 relative) so Gheal_topology silently rejects the rebuild;
+    # .fix() alone already reduces it to the same, cleaner form
+    # split_surfaces's own pass would produce, whose own round-trip drifts
+    # only 3.50e-4 -- comfortably inside the existing gate. Confirmed on
+    # RevCC_regression/Big_one_cell__modelCell_670000__solid0_piece52 (the
+    # original tolerance-weld fixture this mechanism was first built for)
+    # and on Big_model_reserved/divertor_cam.stp's own EC_SUPPORT#BYZ2TW_41
+    # piece0 (the fragment with no non-manifold edges that the former,
+    # narrower tolerance+non-manifold signature could never reach at all).
     if not new_split and not healed:
-        tol_floor = max(50.0 * tolerances.split_tolerance, TOLERANCE_WELD_FLOOR)
-        if Gsolid_max_tolerance(solid) > tol_floor and Gsolid_nonmanifold_edge_count(solid) >= 1:
-            rebuilt = Gheal_topology(solid)
+        try:
+            fixed = solid.fix(tolerances.fix_tolerance)
+        except Exception:
+            fixed = solid
+        # .fix() is a no-op for the large majority of genuinely-stuck
+        # fragments (measured directly, 2026-10-09, on
+        # testing/inputSTEP/BC.stp's own 15 stuck fragments: 14/15 come
+        # back with the exact same face count and volume) -- and when it
+        # changes nothing, there is no reason to expect get_surfaces() to
+        # offer a different candidate set either, so the expensive part
+        # below (rebuilding every real candidate's own native shape AND
+        # the point-sampling check) is skipped entirely for those. This
+        # is what actually keeps this whole mechanism's average cost low
+        # -- confirmed this alone brings testing/inputSTEP/BC.stp's own
+        # decomposition time back down from 69.7s (every stuck fragment
+        # paying the full rebuild+sample cost) to 23.6s -- a real
+        # remaining gap over this file's own pre-this-feature baseline
+        # (8.3s), but legitimate: the one fragment .fix() DOES change
+        # (29->28 faces) genuinely resolves into further real pieces
+        # (11->14 final pieces total) via this exact mechanism, with the
+        # file's own true-vs-decomposed volume match IMPROVING (3.19e-3
+        # -> 1.44e-3 relative) alongside it, not a sign of wasted work.
+        fix_changed_something = len(fixed.Faces) != len(solid.Faces) or not volume_within(
+            fixed.Volume, solid.Volume, NUMERIC_DOUBLE_TOL
+        )
+        if fix_changed_something:
+            # Rebuild the real candidate list against the FIXED geometry,
+            # not the stale `tried_tools` collected before .fix() ran --
+            # .fix()'s own face-merging (e.g. 11->7 faces on
+            # Big_model_reserved/divertor_cam.stp's own
+            # EC_SUPPORT#BYZ2TW_41 piece0) can be exactly what exposes the
+            # one candidate that should split this fragment:
+            # get_surfaces() generates candidates from the CURRENT face
+            # structure, so a candidate collected against the unfixed
+            # solid is simply not the same tool. Confirmed live: testing
+            # `tried_tools` (pre-fix) against `solid` (pre-fix) found no
+            # anomaly here even though the real, correct candidate
+            # exists -- it only forms once get_surfaces() sees the fixed,
+            # merged faces.
+            fresh_tools = []
+            # A fresh, empty omitfaces: the stale set (populated against
+            # the UNFIXED solid's own face indices during the candidate
+            # loop above) is meaningless here -- .fix() can renumber/
+            # merge faces, so the same integer index refers to a
+            # different face (or none) in `fixed`. Confirmed live:
+            # reusing the stale set left only 4 fresh candidates instead
+            # of the expected full set, silently excluding the genuine
+            # one.
+            for surf in get_surfaces(fixed, set(), scaled_tolerances, options, meta_surface=options.meta_surfaces):
+                try:
+                    surf.build_surface(bbox, tolerances, forward=True)
+                except Exception:
+                    continue
+                if surf.shape is not None:
+                    fresh_tools.append(surf)
+        else:
+            fresh_tools = []
+        if fresh_tools and _some_real_candidate_should_have_split(fixed, fresh_tools):
+            rebuilt = Gheal_topology(fixed)
             if rebuilt is not None:
                 try:
                     # The heal is opportunistic: if the rebuilt solid trips

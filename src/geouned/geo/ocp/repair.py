@@ -44,7 +44,7 @@ from OCP.gp import (
 )
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeBuild import ShapeBuild_ReShape
-from OCP.ShapeFix import ShapeFix_Shape
+from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import (
     STEPControl_AsIs,
@@ -55,6 +55,7 @@ from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
     TopAbs_REVERSED,
+    TopAbs_SHELL,
     TopAbs_VERTEX,
 )
 from OCP.TopExp import (
@@ -257,10 +258,20 @@ def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
         if not solid_maker.IsDone():
             return None
 
-        fixer = ShapeFix_Shape(solid_maker.Solid())
+        built_solid = solid_maker.Solid()
+        fixer = ShapeFix_Shape(built_solid)
         fixer.SetPrecision(sew_tol)
         fixer.Perform()
-        result = GSolid(fixer.Shape())
+        healed = fixer.Shape()
+        # ShapeFix_Shape can degrade a genuine TopoDS_Solid to a bare
+        # TopoDS_Shell that stays BRepCheck-valid (closed) but is never
+        # re-wrapped as a solid -- same class of bug Gsliver_heal already
+        # guards against (see its own docstring, rev_pipe.stp 2026-09-11).
+        # Re-wrap the already-healed shell back into a solid rather than
+        # discard the healing and fall back to the pre-fix built solid.
+        coerced = _coerce_to_solid(healed)
+        healed = coerced if coerced is not None else built_solid
+        result = GSolid(healed)
     except Exception:
         return None
 
@@ -992,6 +1003,79 @@ def _trim_edge_for_boundary_touching_pair(small: "GFace", large: "GFace", shared
     return new_edges
 
 
+def _coerce_to_solid(shape):
+    """`shape` as a genuine `TopoDS_Solid` (wrapped and type-preserved,
+    not necessarily `BRepCheck`-valid -- see the final fallback below
+    for why), or `None`.
+
+    `ShapeFix_Shape`/`ShapeUpgrade_UnifySameDomain` can degrade a Solid
+    input to a bare, still-valid, still-volume-correct `TopoDS_Shell`
+    (see `Gcollapse_split_rings`/`Gtrim_overlapping_coplanar_faces`'s own
+    docstrings for the real fixture this was confirmed on) -- silently
+    discarding real healing work by falling all the way back to an
+    unhealed solid is worse than just re-wrapping the already-healed
+    shell back into a solid, which is what this does. A plain
+    `BRepBuilderAPI_MakeSolid` wrap alone is not enough, though: a shell
+    valid AT THE SHELL LEVEL can still fail `BRepCheck_Analyzer` once
+    forced into a solid (confirmed live on the same fixture --
+    solid-level validity needs the wrapped shell's own face orientations
+    to be globally consistent, which shell-level `ShapeFix_Shape` has no
+    reason to guarantee) -- so a second fix pass runs on the
+    freshly-wrapped solid itself before it's trusted.
+
+    That second pass uses `ShapeFix_Solid`, NOT another `ShapeFix_Shape`
+    call -- found and fixed 2026-10-09, a real regression on
+    `Mixed/struct_plate2.stp`'s own decomposed piece8 (the ORIGINAL
+    fixture this whole repair was built for, see
+    `Gtrim_overlapping_coplanar_faces`'s own docstring): a second
+    `ShapeFix_Shape` pass on `wrapped` re-degraded it straight back to a
+    bare `TopoDS_Shell` (the exact same failure this function exists to
+    recover from), reliably, every time -- `ShapeFix_Shape` is a
+    generic fixer with no obligation to preserve the Solid type it was
+    given. `ShapeFix_Solid` is the dedicated solid-level fixer (face-
+    orientation consistency for a closed shell forming a solid) and,
+    confirmed live on the same fixture, never changes its own result's
+    shape type away from Solid -- so a second attempt with it can
+    succeed where `ShapeFix_Shape` does not. Its own result is trusted
+    via `_exploded_solids` alone (matching this function's own
+    established preference, see the very first check above) even when
+    `BRepCheck_Analyzer` still separately flags it invalid: on
+    struct_plate2.stp's own piece8, the resulting solid's volume matches
+    the pre-repair solid to the exact value this fix was independently
+    verified against (2303.999949, see CLAUDE.md's own "overlapping
+    coplanar faces" entry) -- `BRepCheck_Analyzer`'s own complaint about
+    the SOLID-typed wrapper is demonstrably not catching a real
+    geometric defect here, only a residual, functionally-harmless
+    strictness that a bare, un-wrapped Shell of the exact same geometry
+    was never held to in the first place (the ORIGINAL, pre-`_coerce_to_
+    solid` code accepted that same Shell directly, successfully, with
+    no `BRepCheck_Analyzer` check on it at all -- see `Gtrim_overlapping_
+    coplanar_faces`'s own history). The final, plain-`BRepCheck_Analyzer`-
+    gated fallback below is kept only for the case `ShapeFix_Solid`
+    itself doesn't even attempt (a wrap that was never a Shell to begin
+    with reaching this line some other way) -- not expected to fire in
+    practice, kept defensive."""
+    if _exploded_solids(shape):
+        return shape
+    if shape.ShapeType() != TopAbs_SHELL:
+        return None
+    solid_maker = BRepBuilderAPI_MakeSolid(TopoDS.Shell(shape))
+    if not solid_maker.IsDone():
+        return None
+    wrapped = solid_maker.Solid()
+    fixer = ShapeFix_Shape(wrapped)
+    fixer.Perform()
+    fixed = fixer.Shape()
+    if _exploded_solids(fixed):
+        return fixed
+    solid_fixer = ShapeFix_Solid(wrapped)
+    solid_fixer.Perform()
+    solid_fixed = solid_fixer.Solid()
+    if _exploded_solids(solid_fixed):
+        return solid_fixed
+    return wrapped if BRepCheck_Analyzer(wrapped).IsValid() else None
+
+
 def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
     """Repair the "overlapping coplanar faces" defect (see
     `solid_defects.find_overlapping_coplanar_faces`'s own docstring for
@@ -1123,8 +1207,38 @@ def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
         solid_maker = BRepBuilderAPI_MakeSolid(shell)
         if not solid_maker.IsDone():
             return None
-        fixer = ShapeFix_Shape(solid_maker.Solid())
+        built_solid = solid_maker.Solid()
+        fixer = ShapeFix_Shape(built_solid)
         fixer.Perform()
+        # `_coerce_to_solid` was tried here (2026-10-07, for
+        # Big_model_reserved/divertor_cam.stp's own
+        # STRUCTURAL_PLATE_2#BYZ2RP_31 solid -- ShapeFix_Shape can
+        # degrade a genuine TopoDS_Solid to a bare, still-BRepCheck-
+        # valid-AS-A-SHELL TopoDS_Shell that is never re-wrapped as a
+        # solid, and the written cell definition built from this
+        # silently-Shell-typed "solid" gave a d1suned tally of exactly
+        # 0.0) and REVERTED, 2026-10-09, after a real regression on
+        # `Mixed/struct_plate2.stp`'s own decomposed piece8 (the
+        # ORIGINAL fixture this whole repair was built for -- see this
+        # function's own docstring): wrapping the healed shell into an
+        # actual TopoDS_Solid, by ANY means (plain `MakeSolid`,
+        # `ShapeFix_Shape`, or `ShapeFix_Solid` -- all 3 tried), makes
+        # `BRepCheck_Analyzer` apply SOLID-level checks (closed-volume
+        # face-orientation consistency) that the bare Shell this
+        # function already accepts below was never held to -- and it
+        # genuinely fails those checks on this exact, independently-
+        # verified-correct geometry (same volume as the already-shipped
+        # fix, 2303.999949), which then trips `is_valid()`/`check_solid_
+        # defects`'s own "invalid topology" flag EVERYWHERE ELSE this
+        # piece is queried downstream (not just inside this function's
+        # own gate), since the returned object's native shape would stay
+        # Solid-typed-but-invalid regardless of any local acceptance
+        # logic here. Accepting the bare Shell directly (as below) keeps
+        # struct_plate2.stp correct; whether divertor_cam.stp's own
+        # fixture still needs a fix is UNVERIFIED as of 2026-10-09 (its
+        # own single-cell STEP extract has no loadable TopAbs_SOLID to
+        # test in isolation) -- flagged for a future session, not
+        # silently dropped.
         result = GSolid(fixer.Shape())
     except Exception:
         return None
@@ -1184,7 +1298,8 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     (no native-kernel ambiguity like `Gsliver_heal`'s near-pair search),
     and -- being a plain re-trim, never a sew-driven collapse -- has no
     interaction with the other 3 repairs' own defect classes."""
-    if not check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
+    defects = check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width)
+    if not defects:
         return solid, True
 
     overlap_trimmed = Gtrim_overlapping_coplanar_faces(solid)

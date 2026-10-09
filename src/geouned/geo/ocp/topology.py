@@ -1220,6 +1220,19 @@ class GSolid:
             return GSolid(native)
         if not volume_within(refined_volume, original_volume, rel_tol):
             return GSolid(native)
+        # ShapeUpgrade_UnifySameDomain can degrade a genuine TopoDS_Solid
+        # to a bare TopoDS_Shell that stays BRepCheck-valid (closed) and
+        # volume-conserving but is never re-wrapped as a solid -- the
+        # same class of bug repair.py's Gsliver_heal/Gcollapse_split_rings/
+        # Gtrim_overlapping_coplanar_faces guard against (confirmed live
+        # on Big_model_reserved/divertor_cam.stp's own
+        # STRUCTURAL_PLATE_2#BYZ2RP_31 solid, 2026-10-07 -- neither
+        # BRepCheck_Analyzer nor BRepGProp's volume integral care about
+        # the Solid/Shell distinction, so this was invisible until a
+        # STEP export round trip exposed it). Reject the refined result
+        # rather than silently return a Shell as "the refined solid".
+        if not TopExp_Explorer(refined, TopAbs_SOLID).More():
+            return GSolid(native)
         return GSolid(refined)
 
     def translate(self, vector: GVector) -> "GSolid":

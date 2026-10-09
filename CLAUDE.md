@@ -305,6 +305,273 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **Three independent bugs found and fixed, 2026-10-07/09, all surfaced
+  while debugging `Big_model_reserved/divertor_cam.stp` (the user's own
+  real production model): a stuck-fragment heal-retry false-negative
+  (`EC_SUPPORT#BYZ2TW_41`), a disjoint-closed/open-RevCC misclassification
+  (`FLANGE_FMU_DIV#BYZ2KS_31`), and a load-time open-shell failure
+  (`STRUCTURAL_PLATE_2#BYZ2RP_31`).** All 3 fixtures are real,
+  independent solids embedded in the same large assembly; none of the 3
+  fixes depends on another, they just happened to be found in sequence
+  while triaging one model.
+
+  **A) `EC_SUPPORT#BYZ2TW_41` piece0 -- the tolerance+non-manifold-edge
+  heal-retry heuristic in `generic_split` replaced entirely by an
+  independent geometric ground-truth check, `_some_real_candidate_
+  should_have_split`.** Symptom: this fragment's own candidate search
+  exhausted every real candidate surface (a genuine, material-dividing
+  Plane among them) with `BOPAlgo_Splitter` reporting no split for any
+  of them, even though a fresh, STEP-round-tripped copy of the exact
+  same solid splits cleanly on the first candidate tried --
+  `BRepCheck_Analyzer` reports `base_native` valid throughout, so
+  nothing flags the corruption directly.
+  **Root cause, `_raw_bop_split` (`geo/{occ,ocp}/split.py`)**: like the
+  already-documented `multiplane_add_plane_cyl.stp` bug (see this same
+  file's "`generic_split`: `BOPAlgo_Splitter` silently corrupting..."
+  entry, 2026-09-28), `base_native` accumulates BOPAlgo-internal
+  corruption across REPEATED candidate attempts against the same
+  fragment during `generic_split`'s own recursive search -- but this
+  time with none of that earlier fix's own signature (no non-manifold
+  edges, a native BRep tolerance of only 8.67mm... which turned out to
+  be a red herring too, see below). Fixed: `_raw_bop_split` now
+  distinguishes a genuine no-op (exactly 1 valid piece whose volume
+  matches `base_native`'s own) from 3 anomalous signatures
+  (`splitter.HasErrors()`; BOP returning 0 pieces; or exactly 1 piece
+  that is either `BRepCheck`-invalid or volume-mismatched) and, only on
+  an anomaly, retries once against a `Gheal_topology`-rebuilt (STEP
+  round-tripped) copy of `base_native` -- `repaired_any`/`base_native`
+  updated only if that retry itself comes back clean with >=2 pieces.
+  **A second, separate layer of the same corruption**: `GSolid.refine()`
+  (`geo/{occ,ocp}/topology.py`) and `_native_fix` (`geo/{occ,ocp}/
+  _native_utils.py`) both call `ShapeUpgrade_UnifySameDomain`/
+  `ShapeFix_Shape`, either of which can silently degrade a genuine
+  `TopoDS_Solid` to a bare `TopoDS_Shell` that still reads `BRepCheck`-
+  valid (closed, volume-correct) but is never re-wrapped as a solid --
+  confirmed live on `STRUCTURAL_PLATE_2#BYZ2RP_31` (fixture C below,
+  same investigation). Both functions now reject such a result (`not
+  TopExp_Explorer(result, TopAbs_SOLID).More()`) and fall through to the
+  untouched original/no-op instead of silently handing back a
+  Solid-shaped variable that is actually a Shell underneath.
+  **`MAX_REPAIR_VOLUME_REL_CHANGE` raised `3.0e-4` -> `4.0e-4`**: once
+  `Gheal_topology` started being used for this genuinely-different
+  purpose (re-serializing an already-valid solid to shake loose a BOP
+  corruption, not repairing a broken one), its own STEP round-trip noise
+  on `EC_SUPPORT#BYZ2TW_41` piece0 (4251.30mm^3 -> 4252.79mm^3, dV=3.5e-4
+  relative) sat outside the gate's old value -- a scenario the
+  2026-09-19 measurement pass never exercised (every prior
+  `Gheal_topology` case was on a genuinely-broken fragment, drift
+  <=2e-5). `4.0e-4` keeps every one of that pass's own measured
+  decisions correctly classified (documented safe window `(2.0e-4,
+  5.18e-4)`) while accepting this new, legitimate case too.
+  **The heal-retry TRIGGER condition itself replaced, not just tuned**:
+  the former signature (`Gsolid_max_tolerance(solid) > tol_floor and
+  Gsolid_nonmanifold_edge_count(solid) >= 1`, `TOLERANCE_WELD_FLOOR`)
+  could not distinguish this fragment from a genuinely, correctly
+  irreducible one -- measured directly: a stuck-but-CORRECT fragment of
+  `testing/inputSTEP/BC.stp` carries a native tolerance of 8.67mm, two
+  orders of magnitude ABOVE this genuinely-broken fragment's own
+  0.075mm, and neither `SameParameter`/`SameRange` flags nor
+  tolerance-distribution uniformity nor a direct near-tangency search
+  separated the two cases either. Replaced with
+  `_some_real_candidate_should_have_split(solid, surfaces)`
+  (`decompose/decom_one_generators.py`): independent of `BOPAlgo_
+  Splitter` entirely, it asks the geometry itself whether real material
+  sits on BOTH sides of each already-tried-and-rejected candidate, via
+  `GSolid.is_inside` at a set of points anchored to the fragment's own
+  real faces (`_face_anchored_points`, reusing `GSolid.
+  find_interior_point`'s own established "probe inward along the face's
+  own normal, bisecting from half the solid's characteristic length"
+  technique, generalized to a `STUCK_FRAGMENT_PROBE_GRID`x`STUCK_
+  FRAGMENT_PROBE_GRID` grid per face instead of one point) and
+  `_tool_classifier` (a direct half-space formula for a bare-face Plane
+  candidate -- `GSolid(surf.shape).is_inside` is meaningless for a
+  zero-volume face -- `is_inside` directly for every other, real-solid
+  candidate type).
+  **A real design mistake made and corrected while building this**: a
+  first version of `_face_anchored_points` used a single small FIXED
+  inward offset instead of a bisection search, and found real material
+  at only ~3% of BC.stp's own motivating fragment's grid points at every
+  offset from 1e-3mm to 100mm, wrongly suggesting the whole face-
+  anchored approach was unreliable for thin/sparse geometry -- the
+  actual bug was testing distances in isolation rather than bisecting
+  from a MEANINGFUL length scale (this fragment's own characteristic
+  length is ~45mm, not a sub-millimeter epsilon); switching to
+  `find_interior_point`'s own proven bisection (`FACE_PROBE_BISECTION_
+  STEPS = 12`) raised the hit rate to ~11% and recovered the correct
+  on-both-sides signal.
+  **Performance**: `generic_split` now runs `.fix()` first and compares
+  face-count/volume before paying for the expensive rebuild-candidates-
+  plus-sample-points check at all -- confirmed `.fix()` is a no-op for
+  14/15 of BC.stp's own stuck fragments, bringing this file's whole
+  decomposition time from a naive 69.7s (every stuck fragment paying
+  full cost) down to 23.6s, against an 8.3s pre-this-feature baseline --
+  the remaining gap is legitimate: the one fragment `.fix()` DOES change
+  (29->28 faces) genuinely resolves into further real pieces (11->14)
+  through this exact mechanism, with the file's own true-vs-decomposed
+  volume match improving (3.19e-3 -> 1.44e-3 relative) alongside it.
+  When `.fix()` does change something, the candidate list is rebuilt
+  fresh against the FIXED geometry with a fresh, empty `omitfaces` (the
+  stale set/indices from before `.fix()` are meaningless once face
+  indices have been renumbered/merged) -- confirmed live this is
+  required: testing the stale candidates against the fixed solid misses
+  the real anomaly entirely.
+  **Verified**: `_some_real_candidate_should_have_split` confirmed
+  `True` for `EC_SUPPORT#BYZ2TW_41` piece0's own Plane candidate (and
+  for the original `RevCC_regression/Big_one_cell__modelCell_670000__
+  solid0_piece52` tolerance-weld fixture this mechanism was first built
+  for), and confirmed `False` for all of `BC.stp`'s own 19 stuck
+  fragments across both `meta_surfaces` settings -- never triggering the
+  retry for a solid that is genuinely, correctly irreducible. Full ocp
+  suite green (342 passed/2 skipped, re-run twice); occ suite green
+  (342 passed/2 skipped, re-run twice, one intermittent native crash in
+  `decompose_cache.py::store` during a combined run matched the
+  ALREADY-DOCUMENTED, known-intermittent crash from this file's own
+  "every cache read/write in DecomposeCache made defensive" entry --
+  confirmed unrelated by a clean immediate re-run). `Solidos/test_models`
+  corpus conversion: 152/156, same 4 pre-existing known failures
+  (`Decomposed_SCDR_90_piece2`, `Decomposed_modelcell_cut1_v2_piece66`,
+  `Mixed_ConeSphere` native crash, `Mixed_SCDR_90_hollow`), unaffected.
+
+  **B) `FLANGE_FMU_DIV#BYZ2KS_31` piece0 -- a genuinely disjoint closed
+  and open face group on the SAME analytic cylinder surface, with the
+  open group wrongly building its own RevCC closing plane.** A R=2mm
+  pin-hole cylinder reused at two different, physically disconnected
+  extents of the part has one fully-closed loop (needs no RevCC bound
+  at all, per `simple_solid_definition`'s own established "closed
+  reversed orientation doesn't need additional plane" rule) and one
+  disjoint, real-but-tiny (0.32mm^2) open arc elsewhere in the solid --
+  `get_reversed_cone_cylinder` had no way to know its own open arc's
+  cylinder was already fully bounded elsewhere by the closed group, so
+  it built a RevCC closing plane for the open arc that cuts the solid in
+  the wrong place entirely. Fixed (`GEOUNED/utils/functions.py`): a new
+  `_raw_u_full_turn(shape)` helper (the same raw-U-span-vs-`twoPi`
+  formula `is_closed_cylinder_cone` already uses as its own single-face
+  fallback, called directly here instead of going through `_is_closed_
+  by_winding`'s stricter boundary-loop walk, which can legitimately
+  disagree with the raw parametrization for a non-rectangular trim --
+  but for this "does some OTHER, disjoint face already close this same
+  surface" question, the raw span is the more reliable signal).
+  `get_reversed_cone_cylinder` now searches `solidFaces` for any other
+  face on the same analytic surface (`is_same_surface`) whose own merged
+  shell satisfies `_raw_u_full_turn`; if found, the open group's own
+  RevCC construction is skipped entirely and its faces are omitted, same
+  as an already-handled face.
+  **Verified**: confirmed live on the real fixture; combined with fixture
+  A's full suite + corpus verification above (same working tree, same
+  session).
+
+  **C) `STRUCTURAL_PLATE_2#BYZ2RP_31` -- a bare `OPEN_SHELL` (0
+  `TopAbs_SOLID`) on STEP read, previously an unrecoverable
+  `RuntimeError`, now repaired generically at load time via a new
+  open-shell-promotion pass and a new "retrace spike" repair cause.**
+  User-reported: loading this solid raised "no solid selected for
+  translation" (the message itself improved in the same investigation,
+  `core.py`: both this case and "spline surfaces found in an enclosure
+  solid" now raise a real `RuntimeError` with a diagnostic message
+  instead of a bare `print()`+`exit()`, which is what let this surface
+  as a reportable bug in the first place instead of a silent process
+  exit).
+  **First fix attempt, tried and REVERTED**: added `_coerce_to_solid`
+  (`geo/{occ,ocp}/repair.py`) to `Gtrim_overlapping_coplanar_faces`,
+  forcibly wrapping its own healed-Shell result into a `TopoDS_Solid`.
+  This looked right in isolation (fixed a d1suned tally of exactly `0.0`
+  on this fixture) but is the WRONG layer: it operates only inside one
+  specific, already-running repair, far too late and too narrowly, and
+  it caused a real regression on `Mixed/struct_plate2.stp`'s own
+  decomposed piece8 (the ORIGINAL fixture `Gtrim_overlapping_coplanar_
+  faces` was built for, see this file's own "overlapping coplanar
+  faces"/"a SECOND real sub-case" entries) -- `BRepCheck_Analyzer`
+  applies genuinely stricter SOLID-level checks (closed-volume
+  face-orientation consistency) that the bare Shell this function
+  already, correctly, accepted was never held to, and this exact,
+  independently-verified-correct geometry (same volume, 2303.999949)
+  fails those stricter checks even after trying all 3 reasonable
+  recovery techniques (`BRepBuilderAPI_MakeSolid` alone, a second
+  `ShapeFix_Shape` pass, `ShapeFix_Solid`) -- any Solid-typed-but-
+  BRepCheck-invalid wrapper then trips `is_valid()`/`check_solid_
+  defects` everywhere else this piece is queried downstream, not just
+  inside this one function's own gate. **Reverted**: `Gtrim_overlapping_
+  coplanar_faces` now matches HEAD's original behavior exactly (accepts
+  the healed result whether Shell or Solid, no coercion) -- struct_
+  plate2.stp confirmed correct again. `_coerce_to_solid` itself (still
+  used by `Gcollapse_split_rings`, which was never reported broken by
+  it) was kept, with a `ShapeFix_Solid` fallback ADDED as a second
+  recovery attempt (found, in the same investigation, to succeed where
+  a second `ShapeFix_Shape` pass reliably re-degrades straight back to a
+  bare Shell) -- used only there, not reinstated in `Gtrim_overlapping_
+  coplanar_faces`.
+  **Real root cause and correct fix, per direct user correction**: the
+  user pointed out that for an OPEN, non-watertight Shell, point-
+  sampling for "material on one side" is meaningless by definition (a
+  Shell isn't filled with anything) -- the right question is whether
+  every non-degenerate edge of every face is shared with another face.
+  Investigating `STRUCTURAL_PLATE_2#BYZ2RP_31`'s own free edges this way
+  found a new, general CAD-defect signature: a **"retrace spike"** --
+  two free edges sharing exactly one vertex, both extending from it in
+  the SAME direction (collinear, not a genuine polygon corner), the
+  signature of a boolean cut landing exactly tangent to a pre-existing
+  boundary and leaving a residual edge that retraces part of its own
+  neighbor's span instead of stopping there. A genuine seam edge on the
+  solid's own periodic cylindrical face (`face0`, U-periodic, confirmed
+  via `BRepGProp.LinearProperties_s`'s own curve-integrated length,
+  18.85mm -- the true circumference, not a degenerate zero-length
+  artifact as first, wrongly, measured via plain endpoint-to-endpoint
+  distance) was investigated as a possible contributing cause via the
+  established duplicate-seam-pcurve fix (`spline_quadrics.py::
+  _substitute_face_surface`) and confirmed, empirically, to make NO
+  difference to the repair outcome either way -- left deliberately
+  unfixed here, a real but unrelated, already-understood issue.
+  **Detection + repair** (`geo/{occ,ocp}/open_solid_repair.py`, a third
+  registry cause alongside the existing `split_duplicate_seam`/
+  `missing_sliver_strip`): `_match_retrace_spike` requires the collinear
+  pair to additionally share the SAME host face (`_single_host_face`) --
+  collinear edges on DIFFERENT faces meeting at a shared vertex is a
+  perfectly legitimate straight corner, not a defect (a real false-match
+  found and fixed during development). `_rebuild_face_without_spike`
+  trims the host face's own spike by rebuilding only the ONE wire that
+  contains it and re-adding every OTHER wire of that face UNCHANGED -- a
+  real bug found and fixed: an earlier version only ever processed the
+  FIRST wire found, silently dropping a real inner-hole wire shared with
+  a third face, which left that wire's own edges newly free after the
+  "fix". `_close_retrace_spike` trims all spikes via `ShapeBuild_
+  ReShape`, re-sews, rebuilds the solid, and applies one extra
+  `ShapeFix_Shape` pass when `BRepCheck_Analyzer` still flags it invalid
+  even with 0 free edges left (a face-parametrization residue, not a
+  topology gap) -- volume conserved to ~1.165e-07 relative, far inside
+  even the strict shared `MAX_REPAIR_VOLUME_REL_CHANGE` gate (no
+  dedicated looser constant needed, one was tried and removed once this
+  fix made the real measured drift negligible).
+  **Pipeline wiring, per direct user instruction** ("la conversion de
+  shell a solido se tiene que hacer justo despues de la lectura del
+  step... así un vez convertido entra en el flujo normal de un solido
+  cualquiera"): new `_promote_open_shells(shape, tolerances)`
+  (`geo/{occ,ocp}/io.py`) scans for any free-standing `TopAbs_SHELL` not
+  already nested inside a `TopAbs_SOLID` (`TopExp_Explorer(shape,
+  TopAbs_SHELL, TopAbs_SOLID)`), attempts `_repair_open_solid` on each,
+  and substitutes the result back into the shape tree in place via
+  `ShapeBuild_ReShape` -- so every downstream `TopExp_Explorer(shape,
+  TopAbs_SOLID)` traversal picks it up like any other ordinary solid,
+  with no special-casing anywhere else in the pipeline. Called from BOTH
+  `Gload_and_process_step` (right after `reader.OneShape()`) AND
+  `Gload_step_labels`'s own `count_solids` helper, to preserve the
+  long-established positional-alignment contract between these two
+  independently-reading functions (and `Gload_and_process_step` itself)
+  -- a promoted-but-not-counted (or vice versa) shell would desynchronize
+  solid ordering across the whole load path. `Gload_step` itself (the
+  separate "plain primitive, no repair" function used by tests/
+  GEOReverse) deliberately left untouched, matching its own established
+  contract.
+  **Verified**: the real fixture loads successfully end to end through
+  `core.py::load_step_file` -> `decompose_solids()` on both occ and ocp,
+  decomposing to 4 valid pieces with volume conserved to ~1.165e-07
+  relative -- a materially better outcome than `_coerce_to_solid` ever
+  achieved, since no real geometry is discarded. Full ocp + occ suites
+  green (342 passed/2 skipped each, combined with fixtures A/B's own
+  verification above). `struct_plate2.stp` re-confirmed correct under
+  `meta_surfaces=False` via a full corpus d1suned re-run (`meta_surfaces=
+  True`/`False` identical again, matching this project's own established
+  "both settings converge once a real gap is closed" pattern).
+
 - **`add_reversedCC` (`geouned_classes.py::MetaSurfacesDict`): the
   MultiPlane escape was OR'd onto the WHOLE RevCC region instead of
   only its own additional-plane term, fixed 2026-10-07 -- root cause of

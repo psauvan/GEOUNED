@@ -377,12 +377,14 @@ class CadToCsg:
 
         for m in reversed(self.enclosure_list):
             if m.Solids is None:
-                print("stop because spline surfaces found in enclosure solid")
-                exit()
+                raise RuntimeError("Stopped: spline surfaces found in an enclosure solid.")
 
         if len(self.meta_list) == 0:
-            print("no solid selected for translation")
-            exit()
+            raise RuntimeError(
+                "No solid selected for translation: the STEP file produced an empty solid list "
+                "(e.g. no TopAbs_SOLID found when reading the file -- check whether the file's own "
+                "shape is an open shell rather than a closed solid)."
+            )
 
         for m in reversed(self.meta_list):
             if m.Solids is None:

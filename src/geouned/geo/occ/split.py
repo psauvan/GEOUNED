@@ -46,6 +46,16 @@ class SplitResult:
     dropped_no_solid: tuple = ()
 
 
+def _run_splitter(base_native, tool_native, split_tolerance):
+    splitter = BOPAlgo_Splitter()
+    splitter.AddArgument(base_native)
+    splitter.AddTool(tool_native)
+    if split_tolerance > 0:
+        splitter.SetFuzzyValue(split_tolerance)
+    splitter.Perform()
+    return splitter
+
+
 def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tuple[list, bool]:
     """The actual BOPAlgo_Splitter call plus non-manifold repair, factored
     out of Gsplit so `_try_coaxial_cone_split`'s own internal retry (on a
@@ -53,21 +63,64 @@ def _raw_bop_split(base_native, tool_native, split_tolerance, tolerances) -> tup
     through Gsplit's own coaxial-cone fallback. Returns (native_solids,
     repaired_any). If BOP finds nothing at all, or every repair attempt
     fails to produce more than one real piece, returns ([base_native],
-    False) -- the tool did not usefully split the solid."""
-    splitter = BOPAlgo_Splitter()
-    splitter.AddArgument(base_native)
-    splitter.AddTool(tool_native)
-    if split_tolerance > 0:
-        splitter.SetFuzzyValue(split_tolerance)
-    splitter.Perform()
+    False) -- the tool did not usefully split the solid.
+
+    `base_native` itself can carry accumulated BOPAlgo corruption from
+    EARLIER candidate attempts tried against the same fragment during
+    `generic_split`'s own recursive search (confirmed live on the `ocp`
+    engine, Big_model_reserved/divertor_cam.stp's own EC_SUPPORT#BYZ2TW_41
+    piece0, 2026-10-07 -- see `geo/ocp/split.py`'s own docstring for the
+    full investigation; ported here unchanged, same mechanism, same
+    engine-independent OCCT-kernel root cause). `BRepCheck_Analyzer` does
+    not catch this -- `base_native` reports valid throughout.
+
+    Retrying every failed cut against a healed copy would be far too
+    slow: the large majority of candidates `generic_split` tries
+    *correctly* come back as a single, unchanged, valid solid, because
+    their own surface genuinely does not pass through the fragment at
+    all (an exterior face whose own plane only touches the fragment at
+    its own boundary) -- that is not a failure to retry, it is the
+    right answer. The real failures are each distinguishable from that
+    correct "no-op" outcome cheaply, with no reconstruction:
+    `splitter.HasErrors()` was `True` (a hard kernel error, not just
+    "0 pieces"); or BOP returned exactly 1 piece that was itself
+    BRepCheck-invalid; or BOP returned exactly 1 piece whose volume did
+    not match `base_native`'s own (a silently-dropped second fragment).
+    A genuine no-op always comes back as exactly 1 *valid* piece whose
+    volume *is* `base_native`'s own, so only these 3 anomalous
+    signatures ever trigger the retry below."""
+    splitter = _run_splitter(base_native, tool_native, split_tolerance)
     raw_solids = _exploded_solids(splitter.Shape())
+    base_volume = abs(_volume_props(base_native).Mass())
+
+    anomalous = splitter.HasErrors()
+    if not anomalous:
+        if len(raw_solids) != 1:
+            anomalous = len(raw_solids) == 0
+        else:
+            single_volume = abs(_volume_props(raw_solids[0]).Mass())
+            anomalous = not BRepCheck_Analyzer(raw_solids[0]).IsValid() or not volume_within(
+                single_volume, base_volume, tolerances.volume_tolerance
+            )
+
+    retried_after_heal = False
+    if anomalous:
+        healed_base = Gheal_topology(GSolid(base_native))
+        if healed_base is not None:
+            retry_splitter = _run_splitter(healed_base.__native__, tool_native, split_tolerance)
+            retry_raw_solids = _exploded_solids(retry_splitter.Shape())
+            if not retry_splitter.HasErrors() and len(retry_raw_solids) >= 2:
+                splitter = retry_splitter
+                raw_solids = retry_raw_solids
+                base_native = healed_base.__native__
+                retried_after_heal = True
 
     if not raw_solids:
         return [base_native], False
 
     raw_solids = remove_tools_from_raw_solids(raw_solids, base_native, tool_native, tolerances)
 
-    repaired_any = False
+    repaired_any = retried_after_heal
     final_native_solids = []
     for s in raw_solids:
         # Phantom cut ("corte fantasma"): the solid is really >= 2 regions

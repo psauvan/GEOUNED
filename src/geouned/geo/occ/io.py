@@ -14,6 +14,7 @@ from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCC.Core.BRepCheck import BRepCheck_Analyzer
 from OCC.Core.BRepExtrema import BRepExtrema_DistShapeShape
 from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.ShapeBuild import ShapeBuild_ReShape
 from OCC.Core.ShapeFix import ShapeFix_Shape
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCC.Core.STEPControl import (
@@ -21,7 +22,7 @@ from OCC.Core.STEPControl import (
     STEPControl_Reader,
     STEPControl_Writer,
 )
-from OCC.Core.TopAbs import TopAbs_SOLID
+from OCC.Core.TopAbs import TopAbs_SHELL, TopAbs_SOLID
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from ..io_utils import (
@@ -30,9 +31,31 @@ from ..io_utils import (
 )
 from .topology import GEdge, GFace, GShape, GShell, GSolid
 from .repair import Gcheck_and_repair, Gspline_surface
+from .open_solid_repair import _repair_open_solid
 from .spline_quadrics import Gsubstitute_spline_quadrics
 from ._native_utils import _native_fix
 from ..constants import DEFAULT_FIX_TOLERANCE
+
+
+def _promote_open_shells(shape, tolerances):
+    """Scan `shape` for any free-standing `TopAbs_SHELL` (one not already
+    nested inside a `TopAbs_SOLID`) and attempt `_repair_open_solid` on
+    each, substituting the result back into the shape tree in place via
+    `ShapeBuild_ReShape` -- see geo/ocp/io.py's own docstring for the
+    full account (both `Gload_and_process_step` and
+    `Gload_step_labels` must call this, to stay positionally aligned;
+    `Gload_step` itself is deliberately left untouched)."""
+    reshaper = ShapeBuild_ReShape()
+    changed = False
+    explorer = TopExp_Explorer(shape, TopAbs_SHELL, TopAbs_SOLID)
+    while explorer.More():
+        shell = topods.Shell(explorer.Current())
+        repaired = _repair_open_solid(shell, tolerances)
+        if repaired is not None:
+            reshaper.Replace(shell, repaired)
+            changed = True
+        explorer.Next()
+    return reshaper.Apply(shape) if changed else shape
 
 
 def _export_shapes_step(native_shapes: list, filename: str) -> None:
@@ -219,6 +242,7 @@ def Gload_and_process_step(filename: str, tolerances) -> "tuple":
         raise RuntimeError(f"STEP read failed for {filename} (status={status})")
     reader.TransferRoots()
     shape = reader.OneShape()
+    shape = _promote_open_shells(shape, tolerances)
     gsolids = []
     corrupted_indices = []
     spline_indices = []
@@ -282,6 +306,13 @@ def Gload_step_labels(filename: str) -> list[GLabelNode]:
     nodes: list[GLabelNode] = []
 
     def count_solids(shape) -> int:
+        # Promoted here too, not just in Gload_and_process_step: this
+        # function's own job is purely to keep the returned node list's
+        # own n_solids count positionally aligned with what that OTHER
+        # function will separately count from its own, independently-
+        # read copy of the same file (see `_promote_open_shells`'s own
+        # docstring).
+        shape = _promote_open_shells(shape, None)
         n = 0
         exp = TopExp_Explorer(shape, TopAbs_SOLID)
         while exp.More():
