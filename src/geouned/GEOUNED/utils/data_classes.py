@@ -89,6 +89,17 @@ class Options:
             (see `simple_solid_definition`'s own `Cylinder`/`Cone` branch
             comments), so turning it off would change more than just how
             large the written definition is. Defaults to True.
+        mosaic_surface (bool, optional): whether decomposition and cell
+            definition additionally detect "mosaic" meta-surfaces -- a
+            group of near-planar cylindrical faces (own U-parameter span
+            below `Tolerances.mosaic_du_max`) that share an edge with
+            each other, approximating what would otherwise be a single
+            flat facet. Only consulted when `meta_surfaces` is also
+            True (mosaic detection is additive on top of the existing
+            Can/TCone/RoundCorner/MultiPlane cascade, tried right after
+            MultiPlane -- see `decompose/generators.py::get_surfaces`).
+            Defaults to False: design-only as of 2026-10-09, phase 1
+            (cylindrical faces only; a later phase adds torus/cone).
     """
 
     def __init__(
@@ -107,6 +118,7 @@ class Options:
         n_thread: int = 1,
         cut_large_cell: int = 1_000_000_000,
         meta_surfaces: bool = True,
+        mosaic_surface: bool = False,
     ):
 
         self.forceCylinder = forceCylinder
@@ -125,6 +137,7 @@ class Options:
         self.n_thread = n_thread
         self.cut_large_cell = cut_large_cell
         self.meta_surfaces = meta_surfaces
+        self.mosaic_surface = mosaic_surface
 
     @property
     def forceCylinder(self):
@@ -272,6 +285,16 @@ class Options:
             raise TypeError(f"geouned.Options.meta_surfaces should be a bool, not a {type(value)}")
         self._meta_surfaces = value
 
+    @property
+    def mosaic_surface(self):
+        return self._mosaic_surface
+
+    @mosaic_surface.setter
+    def mosaic_surface(self, value: bool):
+        if not isinstance(value, bool):
+            raise TypeError(f"geouned.Options.mosaic_surface should be a bool, not a {type(value)}")
+        self._mosaic_surface = value
+
 
 class Tolerances(GeoTolerances):
     """A class for containing tolerances values
@@ -372,6 +395,12 @@ class Tolerances(GeoTolerances):
             substitution mechanism genuinely going wrong (which produces drastically larger errors --
             10-100%, not fractions of a percent -- confirmed via the same investigation's false-positive
             testing), just calibrated to the noise floor this specific "before" measurement actually has.
+        mosaic_du_max (float, optional): decompose/generators.py::next_mosaic's own "near-planar"
+            threshold -- a cylindrical face qualifies as a candidate mosaic member only if its own
+            U-parameter span (du = ParameterRange[1] - ParameterRange[0], the angular extent around the
+            cylinder's own axis) is below this value (radians). Only consulted when
+            `Options.mosaic_surface` is True. Defaults to 0.5 -- a starting, not-yet-measured value per
+            direct user instruction (2026-10-09); revisit once real fixtures exist.
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -411,6 +440,7 @@ class Tolerances(GeoTolerances):
         volume_tolerance: float = 1.0e-4,
         spline_quadric_fit_rel_tol: float = 1.0e-6,
         spline_quadric_volume_rel_tol: float = 2.0e-2,
+        mosaic_du_max: float = 0.5,
     ):
 
         super().__init__(
@@ -442,6 +472,7 @@ class Tolerances(GeoTolerances):
         self.add_pln_angle = add_pln_angle
         self.spline_quadric_fit_rel_tol = spline_quadric_fit_rel_tol
         self.spline_quadric_volume_rel_tol = spline_quadric_volume_rel_tol
+        self.mosaic_du_max = mosaic_du_max
 
     @property
     def relativeTol(self):

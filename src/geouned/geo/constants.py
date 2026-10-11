@@ -604,3 +604,12 @@ VOLUME_REF = 1.0
 # is written unconditionally at the end of any fully successful decomposition run regardless of this flag; this
 # only controls the granular, crash-recoverable staging during the run itself.
 TMP_CACHE = True
+
+# meta_surfaces.py::mosaic()'s own "do these two cylindrical faces actually form a mosaic" gate, 2026-10-10, per
+# direct user instruction: the angle between the two candidate faces' own surface normals (radial direction,
+# geo.surface_geometry.axes_same_direction), each evaluated AT A POINT OF THE SHARED EDGE, must be below this
+# value for the pair to be accepted at all -- a large angle there is a real fold/crease, not the near-continuous,
+# near-flat transition a mosaic pair is meant to approximate. A constant, not a Tolerances field. Fixed at 0.30
+# rad (~17.2 degrees), not yet measured against a real fixture.
+MOSAIC_NORMAL_ANGLE_MAX = 0.30
+
