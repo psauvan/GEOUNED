@@ -568,8 +568,6 @@ class MultiPlanesParams:
         return outstr
 
 
-
-
 class CanParams:
     def __init__(self, params):
         self.Cylinder = params[0]

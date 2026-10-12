@@ -217,15 +217,17 @@ def next_mosaic_plane(solidFaces, tolerances):
     and the produced plane will split the sloid in two parts, reinitializating the surface selection process."""
 
     for f in solidFaces:
-        if not isinstance(f.Surface, GCylinder, GCone, GTorus):
+        if not isinstance(f.Surface, (GCylinder, GCone, GTorus)):
             continue
-        found = mosaic_plane(f, solidFaces, tolerances)
-        if found is None:
+        params = mosaic_plane(f, solidFaces, tolerances)
+        if params is None:
             continue
-        position, normal, dim1, dim2 = found
-
-        return GeounedSurface(("Plane", (position, normal, dim1, dim2)))
-
+        if len(params) == 1:
+            return GeounedSurface(("Plane", params[0]))
+        else:
+            plane_list = [GeounedSurface(("Plane", p)) for p in params]
+            mp_params = (plane_list, [], [])
+            return  GeounedSurface(("MultiPlane", mp_params))
 
 def next_Can(solid, canface_index, *, tolerances):
     """identify and return all can type in the solid."""

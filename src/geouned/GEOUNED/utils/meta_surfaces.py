@@ -1,9 +1,8 @@
-from geouned.geo.freecad.topology import GCone
 
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import twoPimod
 from .geometry_gu import other_face_edge
-from ...geo import GLine, GCircle, GEllipse, GPlane, GCylinder, GTorus, Gclassify_curve
+from ...geo import GLine, GCircle, GEllipse, GPlane, GCylinder, GCone, GTorus, Gclassify_curve
 from .geometry_gu import ShellFaceGu, is_same_surface
 from .meta_surfaces_utils import (
     cyl_plane_region_conf,
@@ -80,7 +79,7 @@ def multiplane(master_plane, planes, plane_index, tolerances=None):
     return multiplane_list
 
 
-def _cylinder_radial_at(cylinder, point):
+def _face_normal_at(face, point):
     """The radial (surface-normal) direction of `cylinder` (a
     GCylinder) at `point` -- projects out the axial component of
     (point - Center) and normalizes what's left. Deliberately
@@ -89,9 +88,8 @@ def _cylinder_radial_at(cylinder, point):
     orientation): only the LINE through this direction matters for
     mosaic()'s own plane construction below, not which way it happens
     to point."""
-    rel = point - cylinder.Center
-    radial = rel - rel.dot(cylinder.Axis) * cylinder.Axis
-    return radial.normalized()
+    u,v = face.parameter(point)
+    return face.normal_at(u,v)
 
 
 def _edge_plane(edge, curve):
@@ -130,7 +128,7 @@ def mosaic_plane(master_face, solid_faces, tolerances=None):
             continue
         touching_edge, _, adjacent_face = result
         
-        if not isinstance(adjacent_face, GCylinder, GCone, GTorus):
+        if not isinstance(adjacent_face.Surface, (GCylinder, GCone, GTorus)):
             continue
 
         # The two faces can't be two fragments of the very same analytic
@@ -151,14 +149,14 @@ def mosaic_plane(master_face, solid_faces, tolerances=None):
         # check applies the same way regardless of the edge's own curve
         # type.
         edge_point = 0.5 * (touching_edge.Vertexes[0] + touching_edge.Vertexes[1])
-        n1 = _cylinder_radial_at(master_face.Surface, edge_point)
-        n2 = _cylinder_radial_at(adjacent_face.Surface, edge_point)
+        n1 = _face_normal_at(master_face, edge_point)
+        n2 = _face_normal_at(adjacent_face, edge_point)
         if not axes_same_direction(n1, n2, MOSAIC_NORMAL_ANGLE_MAX):
             continue
 
         curve = touching_edge.Curve
         if type(curve) is GLine:
-            surf_normal = _cylinder_radial_at(master_face.Surface, curve.Position)
+            surf_normal = _face_normal_at(master_face, curve.Position)
             curve_direction = (touching_edge.Vertexes[1] - touching_edge.Vertexes[0]).normalized()
             plane_normal = curve_direction.cross(surf_normal)
             if plane_normal.length < NUMERIC_DOUBLE_TOL:
@@ -172,20 +170,14 @@ def mosaic_plane(master_face, solid_faces, tolerances=None):
         else:
             continue
 
-        candidate_planes.append(((position, normal, 1.0, 1.0),curve))
+        if normal.dot(master_face.CenterOfMass - position) > 0:
+            normal = -normal    
+        candidate_planes.append((position, normal, 1.0, 1.0))
 
     if len(candidate_planes) == 0:
         return None
-    elif len(candidate_planes) == 1:
-        return candidate_planes[0][0]
-    else:
-        # Return the plane associted to line only if there is no other curve type
-        for plane,curve in candidate_planes:
-            if type(curve) is GLine:
-                continue
-            else:
-                return plane
-        return plane
+    else :
+        return candidate_planes
 
 def multiplane_old(p, planes, *, tolerances):
     """Found planes adjacent to "p". Region delimited by plane is concanve."""
