@@ -9,6 +9,7 @@ alongside its freecad/occ siblings of the same name.
 from __future__ import annotations
 
 import OCP
+
 from OCP.Bnd import Bnd_Box
 from OCP.BRep import BRep_Tool
 from OCP.BRepBndLib import BRepBndLib
