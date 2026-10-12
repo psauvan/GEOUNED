@@ -1,3 +1,5 @@
+from geouned.geo.freecad.topology import GCone
+
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import twoPimod
 from .geometry_gu import other_face_edge
@@ -119,88 +121,23 @@ def _edge_plane(edge, curve):
     position = 0.5 * (edge.Vertexes[1] + edge.Vertexes[0])
     return position, normal
 
+def mosaic_plane(master_face, solid_faces, tolerances=None):
 
-def cylinder_mosaic(master_face, candidate_faces, tolerances=None):
-    """Found ONE near-planar cylindrical face adjacent to "master_face"
-    (shares an edge with it) among `candidate_faces` -- decompose/
-    generators.py::next_mosaic_plane's own pre-filtered "near-planar
-    cylinder" list, see its own docstring for the du < Tolerances.
-    mosaic_du_max criterion. Stops at the first pair found, 2026-10-10
-    per direct user instruction -- no recursive chain-walk (unlike
-    multiplane() above): for now a mosaic is just a pair, not an
-    arbitrarily long chain. A candidate adjacent face is further
-    rejected (keep searching master_face's other edges) if it is a
-    fragment of the SAME analytic cylinder as master_face
-    (is_same_cylinder_surface), or unless its own surface normal, at a
-    point of the shared edge, is within MOSAIC_NORMAL_ANGLE_MAX of
-    master_face's own -- see that constant's own docstring.
-
-    What actually matters, per the same instruction, is the EDGE that
-    separates the two cylinders, and specifically the "Plane"
-    GeounedSurface params -- (position, normal, dim1, dim2) -- built
-    from it, since the pair itself (which two faces it came from) isn't
-    needed for anything once that plane exists: a plane separating two
-    real faces of the solid is, by construction, guaranteed to actually
-    cut it into more than one piece, so there's nothing further to
-    verify or carry forward about the originating faces (per direct
-    user instruction, 2026-10-10). The edge's own curve is classified
-    (Gclassify_curve, already cached as GEdge.Curve) and, assuming it is
-    a planar (2D) curve -- the only case handled so far, 2026-10-10,
-    per direct user instruction ("por ahora vamos a suponer que el edge
-    de los cilindros esta en 2D") -- the plane is built as:
-    - GLine: the plane containing the line AND perpendicular to
-      master_face's own surface normal at a point of the edge
-      (_cylinder_radial_at above) -- per direct user instruction,
-      2026-10-10, replacing an earlier, rejected formula (perpendicular
-      to the plane formed by the two cylinder axes instead), which
-      conflicts with this one in general (a straight edge shared by two
-      circular cylinders is necessarily a ruling of both, so parallel
-      to both axes -- the axes-plane's own normal and the surface's
-      radial direction at the edge then both lie in the single plane
-      perpendicular to that shared direction, where "perpendicular to
-      X" picks out a unique line for each -- the two formulas only
-      agree when those two reference directions happen to be parallel,
-      not in general). The normal of a plane containing a given line,
-      and itself perpendicular to a given direction that direction
-      itself lies in, is exactly line_direction x that_direction
-      (satisfies both constraints: dot with the line direction is 0,
-      so the line lies in the plane; dot with the surface normal is 0,
-      so the surface normal itself lies in the plane too).
-    - any other planar edge (GCircle/GEllipse always; a GBSpline only
-      if _edge_is_planar/spline_2D confirms it -- a planar curve isn't
-      restricted to those two analytic types) -- see _edge_plane()'s
-      own docstring for how its plane is recovered in each case.
-    A genuinely non-planar edge (or a degenerate one _edge_plane can't
-    resolve) is not yet handled -- keeps searching the master face's
-    other edges rather than guessing; per direct user instruction, the
-    non-planar case (checking whether the edge instead lies on a
-    cylindrical/conical/toroidal surface) is deferred to a later step.
-
-    Returns (position, normal, dim1, dim2, edge_direction) or None.
-    (position, normal, dim1, dim2) are the found plane's own "Plane"
-    GeounedSurface params (dim1/dim2 are unused placeholders, matching
-    large_cell_plane_split's own synthetic-plane convention -- neither
-    PlaneParams nor build_surface's own Plane branch reads them).
-    `normal` is, by construction, always perpendicular to the cylinder
-    surface's own radial normal at the shared edge (see the GLine
-    branch above). edge_direction is the shared edge's own direction
-    (Vertexes[1] - Vertexes[0], normalized) when the GLine branch above
-    built the plane, None otherwise (e.g. the GCircle/GEllipse/planar-
-    GBSpline branch, which has no single edge direction of its own) --
-    decompose/generators.py::next_mosaic_plane's own "snap to a nearby
-    real plane" step (ADJUST_MOSAIC_PLANE) needs this, see its own
-    comment for the exact formula."""
+    candidate_planes = []
     for e in master_face.OuterWire.Edges:
-        result = other_face_edge(e, master_face, candidate_faces, outer_only=True, skip_slivers=True, tolerances=tolerances)
+        result = other_face_edge(e, master_face, solid_faces, outer_only=True, skip_slivers=True, tolerances=tolerances)
         if result is None:
             continue
         touching_edge, _, adjacent_face = result
+        
+        if not isinstance(adjacent_face, GCylinder, GCone, GTorus):
+            continue
 
         # The two faces can't be two fragments of the very same analytic
         # cylinder (e.g. split apart by an earlier boolean cut) -- that
         # is one surface, not two distinct near-planar facets meeting at
         # a mosaic (per direct user instruction, 2026-10-10).
-        if is_same_cylinder_surface(master_face.Surface, adjacent_face.Surface, tolerances):
+        if is_same_surface(master_face.Surface, adjacent_face.Surface, tolerances):
             continue
 
         # The two faces only genuinely form a mosaic (a near-continuous,
@@ -235,76 +172,20 @@ def cylinder_mosaic(master_face, candidate_faces, tolerances=None):
         else:
             continue
 
-        return position, normal, 1.0, 1.0
+        candidate_planes.append(((position, normal, 1.0, 1.0),curve))
 
-    return None
-
-
-def _same_torus_axis(torus_1, torus_2, tolerances):
-    """True if two tori share the same revolution axis LINE -- direction
-    within tolerances.tor_angle (either way), center within tolerances.
-    tor_distance -- regardless of their own major/minor radii. This is
-    the "mosaic torus" pairing condition (per direct user instruction,
-    2026-10-11: "dos toros mosaicos son dos toros que comparten el mismo
-    eje"), deliberately weaker than is_same_torus_surface (which also
-    requires matching radii, i.e. being the exact same analytic
-    surface -- still excluded separately in torus_mosaic() below, as
-    its own, distinct check)."""
-    if not axes_parallel(torus_1.Axis, torus_2.Axis, tolerances.tor_angle):
-        return False
-    return (torus_1.Center - torus_2.Center).length <= tolerances.tor_distance
-
-
-def torus_mosaic(master_face, candidate_faces, tolerances=None):
-    """Found ONE torus face adjacent to "master_face" (shares an edge
-    with it) among `candidate_faces` -- decompose/generators.py::
-    next_torus_mosaic_plane's own candidate list, every GTorus face of
-    the solid with NO near-planar/angular-span filter at all (per
-    direct user instruction, 2026-10-11: "para los toros no hay
-    condicion de que la diferencia angular en u o v sea pequena" --
-    unlike mosaic()'s own near-planar-cylinder candidate list).
-
-    Mirrors mosaic()'s own overall structure (walk master_face's outer
-    wire edges via other_face_edge, stop at the first valid pair found,
-    no recursive chain-walk), with two differences, both per the same
-    instruction:
-    - the pairing condition is "the two tori share the same revolution
-      axis" (_same_torus_axis above) instead of mosaic()'s own surface-
-      normal-closeness-at-the-edge check -- still excludes a candidate
-      that is a fragment of the exact same analytic torus as
-      master_face (is_same_torus_surface), the same general "two mosaic
-      faces can't be the same surface" rule mosaic() enforces for
-      cylinders via is_same_cylinder_surface.
-    - the cutting plane itself is simply the plane PERPENDICULAR TO
-      THAT SHARED AXIS that CONTAINS the shared edge (per direct user
-      instruction, 2026-10-11: "el plano mosaico de corte [es] un plano
-      perpendicular al eje que contiene el edge") -- the shared axis
-      direction is the plane's own normal, a point of the edge (its own
-      midpoint) is the position. No edge-curve classification needed at
-      all, unlike mosaic()'s own GLine/GCircle/GEllipse/GBSpline
-      branches.
-
-    Returns the found plane's own (position, normal, dim1, dim2) params
-    (dim1/dim2 unused placeholders, same convention as mosaic()'s own
-    return) or None."""
-    for e in master_face.OuterWire.Edges:
-        result = other_face_edge(e, master_face, candidate_faces, outer_only=True, skip_slivers=True, tolerances=tolerances)
-        if result is None:
-            continue
-        touching_edge, _, adjacent_face = result
-        
-        if _edge_is_planar(touching_edge):
-            if is_same_torus_surface(master_face.Surface, adjacent_face.Surface, tolerances):
+    if len(candidate_planes) == 0:
+        return None
+    elif len(candidate_planes) == 1:
+        return candidate_planes[0][0]
+    else:
+        # Return the plane associted to line only if there is no other curve type
+        for plane,curve in candidate_planes:
+            if type(curve) is GLine:
                 continue
-            if not _same_torus_axis(master_face.Surface, adjacent_face.Surface, tolerances):
-                continue
-
-            position = 0.5 * (touching_edge.Vertexes[0] + touching_edge.Vertexes[1])
-            normal = master_face.Surface.Axis
-            return position, normal, 1.0, 1.0
-
-    return None
-
+            else:
+                return plane
+        return plane
 
 def multiplane_old(p, planes, *, tolerances):
     """Found planes adjacent to "p". Region delimited by plane is concanve."""

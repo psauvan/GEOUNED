@@ -1,5 +1,5 @@
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.meta_surfaces import multiplane, cylinder_mosaic, torus_mosaic, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces
+from ..utils.meta_surfaces import multiplane, mosaic_plane, get_can_surfaces, get_tcone_surfaces, get_roundcorner_surfaces
 from ..utils.meta_surfaces_utils import no_convex, remove_twice_parallel, eligible_plane
 
 from ..utils.functions import (
@@ -32,12 +32,9 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
             # no loop here: next_cyl_mosaic_plane/next_torus_mosaic_plane each
             # return at most a single cutting plane (the first valid mosaic
             # pair found), not a generator -- see their own docstrings.
-            cyl_mosaic_plane = next_cyl_mosaic_plane(solid_GU.Faces, omitfaces, tolerances)
-            if cyl_mosaic_plane is not None:
-                yield cyl_mosaic_plane
-            torus_plane = next_torus_mosaic_plane(solid_GU.Faces, omitfaces, tolerances)
-            if torus_plane is not None:
-                yield torus_plane
+            plane = next_mosaic_plane(solid_GU.Faces, tolerances)
+            if plane is not None:
+                yield plane
 
         for can in next_Can(solid_GU, omitfaces, tolerances=tolerances):
             yield can
@@ -213,68 +210,16 @@ def next_multiplanes(solidFaces, plane_index_set, tolerances=None):
                     plane_index_set.add(pp.Index)
                 yield mp
 
+def next_mosaic_plane(solidFaces, tolerances):
+    """identify and return the cutting planes found between near-tangent
+    quadric faces of the solid.
+    Mosaic plane doesn't need omit_faces because it is the first surface selection function,
+    and the produced plane will split the sloid in two parts, reinitializating the surface selection process."""
 
-def next_cyl_mosaic_plane(solidFaces, mosaicface_index, tolerances):
-    """identify and return the cutting planes found between near-planar
-    cylindrical faces of the solid.
-
-    Design, 2026-10-09/10 (phase 1, per direct user instruction): for
-    each near-planar cylindrical face -- own U-parameter span du =
-    ParameterRange[1] - ParameterRange[0] below tolerances.
-    mosaic_du_max -- mosaic() looks for one other such face sharing an
-    edge with it, and, from that shared edge (assumed planar for now,
-    per direct user instruction), builds a "Plane" GeounedSurface
-    directly -- not a composite "Mosaic" surface of its own, and
-    without keeping track of which two faces it came from: that plane
-    is, by construction, guaranteed to split the solid into more than
-    one piece (it separates two of its own real faces), so there is
-    nothing else about the pair worth keeping (per direct user
-    instruction, 2026-10-10). No dedup against a face already used by
-    an earlier pair either -- finding the same plane twice from either
-    cylinder is harmless (generic_split's own candidate search already
-    tolerates retrying an equivalent cut). A future phase extends the
-    candidate predicate to near-planar torus/cone faces too."""
-    cylinders = []
     for f in solidFaces:
-        if f.Index in mosaicface_index:
+        if not isinstance(f.Surface, GCylinder, GCone, GTorus):
             continue
-        if not isinstance(f.Surface, GCylinder):
-            continue
-        umin, umax, _, _ = f.ParameterRange
-        if umax - umin >= tolerances.mosaic_du_max:
-            continue
-        cylinders.append(f)
-
-    for c in cylinders:
-        found = cylinder_mosaic(c, cylinders, tolerances)
-        if found is None:
-            continue
-        position, normal, dim1, dim2 = found
-
-        return GeounedSurface(("Plane", (position, normal, dim1, dim2)))
-
-
-def next_torus_mosaic_plane(solidFaces, mosaicface_index, tolerances):
-    """identify and return the cutting plane found between two mosaic
-    tori of the solid -- same model as next_cyl_mosaic_plane above
-    (see its own docstring), per direct user instruction, 2026-10-11,
-    with the differences torus_mosaic() itself documents: no near-
-    planar/angular-span candidate filter at all (every GTorus face of
-    the solid is a candidate -- "para los toros no hay condicion de que
-    la diferencia angular en u o v sea pequena"), the pairing condition
-    is "the two tori share the same revolution axis" instead of a
-    surface-normal-closeness check, and the cutting plane is the plane
-    perpendicular to that shared axis containing the shared edge."""
-    tori = []
-    for f in solidFaces:
-        if f.Index in mosaicface_index:
-            continue
-        if not isinstance(f.Surface, GTorus):
-            continue
-        tori.append(f)
-
-    for t in tori:
-        found = torus_mosaic(t, tori, tolerances)
+        found = mosaic_plane(f, solidFaces, tolerances)
         if found is None:
             continue
         position, normal, dim1, dim2 = found
