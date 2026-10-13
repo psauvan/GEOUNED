@@ -76,6 +76,7 @@ from OCP.TopoDS import (
 )
 from ..vector_geometry import (
     GBoundBox,
+    GMatrix,
     GVector,
 )
 from ..surface_geometry import (
@@ -617,9 +618,23 @@ class GEdge:
         first, last = BRep_Tool.Range_s(native)
         self.ParameterRange = (first, last)
         self.Orientation = _orientation_str(native)
-        edge_props = _linear_props(native)
-        self.Length = edge_props.Mass()
-        self.MatrixOfInertia = _to_gmatrix_3x3(edge_props.MatrixOfInertia())
+        if BRep_Tool.Degenerated_s(native):
+            # A degenerate edge (a topological placeholder for a single
+            # point -- e.g. a cone apex or a pole) has no real linear
+            # extent, so computing one via BRepGProp.LinearProperties_s
+            # is not just unnecessary, it can crash natively: confirmed
+            # live, 2026-10-11, ITER-TOKAMAK_comp/blkt_torus.stp -- a
+            # degenerate edge left with a corrupted ~546mm native
+            # tolerance by an earlier Gsliver_heal/ShapeUpgrade_
+            # UnifySameDomain face-merge triggered an access violation
+            # here. Skip the native query entirely and report a zero
+            # length/inertia directly instead.
+            self.Length = 0.0
+            self.MatrixOfInertia = GMatrix(*([0.0] * 16))
+        else:
+            edge_props = _linear_props(native)
+            self.Length = edge_props.Mass()
+            self.MatrixOfInertia = _to_gmatrix_3x3(edge_props.MatrixOfInertia())
 
     def value_at(self, u: float) -> GVector:
         adaptor = BRepAdaptor_Curve(self.__native__)

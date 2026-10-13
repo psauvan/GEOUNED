@@ -305,6 +305,153 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **Four real bugs found and fixed in `Gsubstitute_spline_quadrics`
+  (`geo/{occ,ocp}/spline_quadrics.py`), 2026-10-12 -- root cause of
+  `ITER-TOKAMAK_comp/inout_RC.stp` crashing with "Spline surface
+  detected" during decomposition.** Surfaced while verifying the
+  `ITER-TOKAMAK_comp` corpus batch (`Settings.debug=True`,
+  `Options.meta_surfaces=True`): 7/9 models converted cleanly, 2 failed
+  (`blkt_torus.stp`, fixed separately the same day -- see the native
+  access-violation entry below; and `inout_RC.stp`, this entry).
+  **Mechanism**: a degenerate-torus cutting tool built by
+  `Gmake_torus_elliptic` (`GeounedSurface.build_surface()`'s own Torus
+  branch) has a genuine `GeomAbs_SurfaceOfRevolution` face (an exact
+  `Geom_Ellipse`/`Geom_Circle` profile revolved) that `Gclassify_surface`
+  doesn't recognize; after the boolean cut, the result fragment inherits
+  a face of the same native type, which later made
+  `cutting_face_number` raise "Spline surface detected" the first time
+  that fragment's own candidate surfaces were searched.
+  `Gsubstitute_spline_quadrics` already existed for this (see the
+  "Spline-vs-quadric identification" entry under "Shared /
+  cross-cutting" below) and was wired into `generic_split`
+  (`decompose/decom_one_generators.py`, right after the existing
+  `is_valid()`/`.fix()` repair block) to try the substitution once,
+  opportunistically, before a fragment is used as a candidate source --
+  but it failed on all 3 of this fixture's own affected fragments at
+  first, surfacing 4 independent bugs in the substitution machinery
+  itself:
+  1. **A whole-curve pcurve projection silently picking the wrong (u,v)
+     branch on a self-intersecting torus.** A degenerate (self-
+     intersecting) torus has MULTIPLE valid (u,v) preimages for points
+     in some 3D regions (the tube folds back on itself), so
+     `GeomProjLib.Curve2d_s`/`geomprojlib.Curve2d`'s own one-shot
+     whole-curve projection can silently latch onto the wrong branch for
+     one edge while getting its neighbors right -- confirmed directly:
+     one boundary edge came back at v~276.8deg while every other edge/
+     interior sample point of the same face landed at v~18-30deg (the
+     correct range), silently bounding a region ~5x larger than the real
+     face (31495mm^2 -> 158568mm^2), caught only by the whole-solid
+     volume-conservation check (10.3x off), not by `BRepCheck_Analyzer`
+     (still reported valid). **Fix**: new `_project_curve_2d` (both
+     engines) samples `n=20` points along the edge's own 3D curve and
+     inverts each one individually via `ShapeAnalysis_Surface.
+     ValueOfUV`/seeded `NextValueOfUV` (a local Newton step from the
+     immediately preceding point's own (u,v), which can't jump branches
+     the way a fresh whole-curve search can), then interpolates a
+     `Geom2d_BSplineCurve` through the resulting points
+     (`Geom2dAPI_Interpolate`). Replaces the old projection call at
+     `_substitute_face_surface`'s one call site, both engines.
+  2. **The generic sample+fit converging to the wrong torus parameters
+     on a face whose own trimmed domain samples too narrow a region of
+     the same degenerate surface.** A sibling face of the identical
+     torus (confirmed matching major_radius=3400.96/minor_radius=
+     5544.00 exactly) fit correctly via the generic sample+LM-fit path;
+     this one's own narrow (u,v) domain (near the degenerate torus's own
+     self-intersection locus) gave the LM fit an ill-conditioned
+     numerical Jacobian, converging to residual ~4.5 (nowhere close to
+     any reasonable tolerance) against all 3 of sphere/cylinder/torus.
+     **Fix**: new `_detect_revolution_profile_torus` (both engines),
+     tried first inside `_detect_quadric`, exact and sampling-free: when
+     a `GeomAbs_SurfaceOfRevolution` face's own basis (profile) curve is
+     EXACTLY a circle (a real `Geom_Circle`, or a `Geom_Ellipse`
+     degenerated to one, `MajorRadius == MinorRadius`) lying in a plane
+     that contains the revolution axis, the swept surface is exactly a
+     torus -- center/axis/major_radius/minor_radius are read directly
+     from the native profile + axis instead of ever sampling the face.
+  3. **A periodic-unwrap regression fix #1 itself introduced**, caught
+     by the existing `test_substitute_spline_cylinder`/
+     `test_substitute_spline_torus` regressing (losing ~67% of the
+     solid's own volume). `ShapeAnalysis_Surface.ValueOfUV`/
+     `NextValueOfUV` always return a (u,v) wrapped back into the
+     surface's own base period range, never a continuously-extended
+     one -- for a FULL seam edge of a plain (non-degenerate) periodic
+     surface (e.g. a whole cylinder's own 2*pi circular edge), the very
+     first sample can land at the far end of the period (u=2*pi) just as
+     validly as the near end (u=0, the same 3D point either way), and
+     every subsequent `NextValueOfUV` call kept snapping back into
+     [0, 2*pi) instead of continuing past it -- confirmed live: sampled
+     U sequence 6.283, 1.257, 2.513, 3.770, 5.027, 6.283 (a huge,
+     non-monotonic jump between the first two samples, not the smooth
+     monotonic sweep the true boundary curve actually traces). **Fix**:
+     `_project_curve_2d` now unwraps each new sample relative to the
+     immediately preceding one (add/subtract whichever of the new
+     surface's own U/V periods, if periodic in that direction, brings
+     the new value within half a period of the previous one) before
+     using it both for the interpolation table and as the next seed --
+     the degenerate-torus case this function was built for is unaffected
+     (its own problematic edges never approached a full-period
+     wraparound).
+  4. **`_detect_revolution_profile_torus` not unwrapping a
+     `Geom_TrimmedCurve` wrapping the real circular profile curve.**
+     Found live on the real fixture's own 3rd affected fragment: it
+     still failed with `detected=None` even after fixes 1-3, but
+     re-exporting that exact fragment to STEP and reloading it made
+     detection succeed -- the live (non-round-tripped) face's own basis
+     curve was a `Geom_TrimmedCurve` wrapping the real `Geom_Ellipse`,
+     which the exact-recognition check didn't unwrap before testing
+     `isinstance(basis, Geom_Circle/Geom_Ellipse)`; a STEP round-trip
+     happened to simplify this away, hiding the gap. **Fix**: unwrap
+     `Geom_TrimmedCurve.BasisCurve()` before the circle/ellipse check, in
+     both engines (`occ` via its own `_downcast` helper -- pythonocc-
+     core's `DownCast` raises `TypeError`/`SystemError` on a type
+     mismatch instead of returning `None` like OCP's does, confirmed
+     live -- `ocp` via a plain `isinstance` check, since OCP's own
+     `BRep_Tool`/`Geom_*` bindings already report the real concrete
+     runtime type directly, unlike pythonocc-core's base-class-handle
+     convention).
+  **Verified**: all 12 of `inout_RC.stp`'s own affected fragments now
+  resolve (confirmed via a live trace instrumenting every
+  `Gsubstitute_spline_quadrics` call during a real `decompose_solids()`
+  run), and the whole file converts end to end (decompose +
+  build_solid_definition + build_void + export_csg) with the real batch
+  settings (`Settings.debug=True`, `voidGen=True`,
+  `Options.meta_surfaces=True`) -- previously a hard crash. Full
+  `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` green on both
+  occ/ocp (261 passed/1 skipped each, zero regressions -- including the
+  2 tests that caught bug 3 above mid-fix). **Not yet investigated**: a
+  real d1suned run (NPS default, MCNP) on the converted result still
+  loses 10 particles ("no cell found") -- a separate boundary/adjacency
+  gap in the written cell definition, unrelated to the spline-detection
+  work above (which only fixes decomposition succeeding without
+  raising, not the correctness of the resulting boolean definition).
+  Per direct user instruction, not pursued further this session.
+  freecad has no equivalent (occ/ocp only, matching every other
+  spline-quadric feature).
+
+- **Native access violation on a degenerate edge with a corrupted
+  tolerance, fixed 2026-10-11 -- root cause of
+  `ITER-TOKAMAK_comp/blkt_torus.stp` crashing OCCT outright during
+  decomposition.** Surfaced in the same `ITER-TOKAMAK_comp` corpus batch
+  as the `inout_RC.stp` entry above. `GEdge.__init__` (`geo/{occ,ocp}/
+  topology.py`) called `BRepGProp.LinearProperties_s`/
+  `_linear_props` unconditionally on every edge to compute its own
+  `Length`/`MatrixOfInertia` -- but a degenerate edge (a topological
+  placeholder for a single point, e.g. a cone apex or a pole) has no
+  real linear extent, and one left with a corrupted, absurdly large
+  native tolerance (546mm, confirmed via a fresh STEP round-trip reload)
+  by an earlier `Gsliver_heal`/`ShapeUpgrade_UnifySameDomain` face-merge
+  crashed this native call outright (an access violation, uncatchable by
+  a plain `try`/`except` -- root-caused via `faulthandler` plus a
+  crash-resistant file-logging trace that exported each candidate healed
+  shape right before `GSolid()` construction, isolating the exact
+  3-face candidate that crashed). **Fix**: `GEdge.__init__` now checks
+  `BRep_Tool.Degenerated_s`/`Degenerated` first and skips the native
+  query entirely for a degenerate edge, reporting a zero length/inertia
+  directly instead. **Verified**: full suites green on both engines
+  (245 passed/1 skipped each); `blkt_torus.stp` re-converted + ran
+  d1suned successfully end to end (16/16 tallies within 2 sigma, 0 lost
+  particles, 0 fatal errors -- previously a hard crash).
+
 - **Three independent bugs found and fixed, 2026-10-07/09, all surfaced
   while debugging `Big_model_reserved/divertor_cam.stp` (the user's own
   real production model): a stuck-fragment heal-retry false-negative

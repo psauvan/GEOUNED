@@ -12,11 +12,15 @@ from ...geo import (
     Gheal_topology,
     Gmake_compound,
     Gsolid_max_tolerance,
+    Gspline_surface,
     Gsplit,
     Gtrim_overlapping_coplanar_faces,
     is_sliver_solid,
     merge_sliver_pieces,
 )
+
+if CAD_ENGINE != "freecad":
+    from ...geo import Gsubstitute_spline_quadrics
 from ...geo.constants import (
     FACE_PROBE_BISECTION_STEPS,
     NUMERIC_DOUBLE_TOL,
@@ -308,6 +312,47 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
         fixed = solid.fix(tolerances.fix_tolerance)
         if fixed.is_valid():
             solid = fixed
+
+    # A fragment can inherit an unclassifiable face from a cutting TOOL
+    # used to split it earlier in this same recursion -- confirmed live,
+    # 2026-10-12, ITER-TOKAMAK_comp/inout_RC.stp: a degenerate-torus
+    # cutting tool built by Gmake_torus_elliptic (GeounedSurface.
+    # build_surface's own Torus branch) has a genuine GeomAbs_
+    # SurfaceOfRevolution face (an exact Geom_Ellipse/Geom_Circle profile
+    # revolved) that Gclassify_surface doesn't recognize; after the
+    # boolean cut, the result fragment inherits a face of the same
+    # native type (its own basis curve re-approximated to a BSpline by
+    # the cut itself), which later made cutting_face_number raise
+    # "Spline surface detected" the first time this fragment's own
+    # candidate surfaces were searched. Try the substitution once,
+    # opportunistically, before this fragment is used as a candidate
+    # source at all; keep the original fragment untouched if the attempt
+    # doesn't fully resolve it (same all-or-nothing contract as
+    # Gsubstitute_spline_quadrics's own load-time use). Four real bugs in
+    # Gsubstitute_spline_quadrics itself were found and fixed chasing
+    # this exact fixture's own 12 affected fragments (see geo/{occ,ocp}/
+    # spline_quadrics.py's own docstrings): a whole-curve pcurve
+    # projection silently picking the wrong (u,v) branch on a
+    # self-intersecting torus; the generic sample+fit converging to the
+    # wrong torus parameters on a face whose own trimmed domain samples
+    # too narrow a region of the same degenerate surface (fixed by
+    # `_detect_revolution_profile_torus`'s exact, sampling-free
+    # recognition for a SurfaceOfRevolution with a circular profile); a
+    # periodic-unwrap regression the first fix introduced for a plain,
+    # non-degenerate full seam edge; and `_detect_revolution_profile_
+    # torus` itself not unwrapping a `Geom_TrimmedCurve` wrapping the
+    # real circular profile curve. All 12 of this fixture's own affected
+    # fragments now resolve correctly, and the whole file converts end
+    # to end (decompose + build_solid_definition + build_void +
+    # export_csg) -- a real d1suned run on the result still loses 10
+    # particles, a separate, not-yet-investigated boundary/adjacency gap
+    # in the written cell definition, unrelated to spline detection
+    # itself. freecad has no equivalent (occ/ocp only, matching every
+    # other spline-quadric feature).
+    if CAD_ENGINE != "freecad" and Gspline_surface(solid.__native__):
+        substituted, resolved = Gsubstitute_spline_quadrics(solid, tolerances)
+        if resolved:
+            solid = substituted
 
     bbox = solid.BoundBox
     bbox = bbox.enlarged(10)

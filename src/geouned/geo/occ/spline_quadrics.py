@@ -1,12 +1,15 @@
 """
 geo/occ/spline_quadrics.py
 
-Detect a BSplineSurface face that is secretly a cylinder, sphere, or
-torus (within tolerance) and substitute the exact analytic surface for
-it in the native solid -- so `Gclassify_surface` processes it like any
-other analytic face instead of `Gspline_surface` flagging the whole
-solid as unsupported ("has a spline") and having it removed/halted at
-load time.
+Detect a BSplineSurface or SurfaceOfRevolution face that is secretly a
+cylinder, sphere, or torus (within tolerance) and substitute the exact
+analytic surface for it in the native solid -- so `Gclassify_surface`
+processes it like any other analytic face instead of `Gspline_surface`
+flagging the whole solid as unsupported ("has a spline") and having it
+removed/halted at load time (or, for a fragment created mid-
+decomposition rather than at load, raising "Spline surface detected" --
+see `decompose/decom_one_generators.py::generic_split`'s own call site,
+added 2026-10-12).
 
 Investigation and full methodology: CLAUDE.md's "Known open items" ->
 "Shared / cross-cutting" -> "Spline-vs-quadric identification" entry
@@ -31,9 +34,22 @@ is implemented here:
 - Substitution: `BRep_Builder.UpdateFace` alone leaves the solid
   `BRepCheck`-invalid (the face's edges still carry pcurve
   representations for the OLD surface) -- every edge needs a rebuilt
-  pcurve too (`GeomProjLib.Curve2d`, or a hand-built `Geom2d_Line` for a
-  degenerate pole/apex edge, whose 3D curve is null and can't be
-  projected), followed by `BRepLib.SameParameter` + `ShapeFix_Face`.
+  pcurve too (`_project_curve_2d`'s own seeded, point-by-point
+  `ShapeAnalysis_Surface.NextValueOfUV` walk -- NOT a single whole-curve
+  `geomprojlib.Curve2d` call, which can silently pick the wrong (u,v)
+  branch on a self-intersecting/degenerate torus, see that function's
+  own docstring -- or a hand-built `Geom2d_Line` for a degenerate
+  pole/apex edge, whose 3D curve is null and can't be projected),
+  followed by `BRepLib.SameParameter` + `ShapeFix_Face`.
+- A `SurfaceOfRevolution` face whose basis (profile) curve is EXACTLY a
+  circle (a real `Geom_Circle`, or a `Geom_Ellipse` with
+  `MajorRadius == MinorRadius`) lying in a plane containing the
+  revolution axis is recognized as an exact torus directly from its
+  native parameters, bypassing the sample+fit below entirely -- see
+  `_detect_revolution_profile_torus`'s own docstring (added 2026-10-12,
+  for a case where the generic fit converges to the wrong answer on a
+  face whose own trimmed domain samples too narrow a region of a
+  degenerate torus).
 - **Cone is deliberately NOT attempted here.** The exact same recipe
   leaves a cone face `BRepCheck_UnorientableShape` for reasons not yet
   root-caused (see the CLAUDE.md entry for the full investigation, both
@@ -58,26 +74,33 @@ import numpy as np
 
 from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRep import BRep_Builder, BRep_Tool
-from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
+from OCC.Core.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCC.Core.BRepCheck import BRepCheck_Analyzer
 from OCC.Core.BRepLib import breplib
 from OCC.Core.Geom import (
+    Geom_Circle,
     Geom_CylindricalSurface,
+    Geom_Ellipse,
     Geom_SphericalSurface,
+    Geom_SurfaceOfRevolution,
     Geom_ToroidalSurface,
+    Geom_TrimmedCurve,
 )
 from OCC.Core.Geom2d import Geom2d_Curve, Geom2d_Line
-from OCC.Core.GeomAbs import GeomAbs_BSplineSurface
+from OCC.Core.Geom2dAPI import Geom2dAPI_Interpolate
+from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_SurfaceOfRevolution
 from OCC.Core.GeomLProp import GeomLProp_SLProps
-from OCC.Core.GeomProjLib import geomprojlib
 from OCC.Core.gp import gp_Ax3, gp_Dir, gp_Dir2d, gp_Pnt, gp_Pnt2d, gp_Vec2d
 from OCC.Core.ShapeAnalysis import ShapeAnalysis_Surface
 from OCC.Core.ShapeFix import ShapeFix_Face
+from OCC.Core.TColgp import TColgp_HArray1OfPnt2d
+from OCC.Core.TColStd import TColStd_HArray1OfReal
 from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer, topexp
 from OCC.Core.TopoDS import topods
+from ..constants import NUMERIC_DOUBLE_TOL
 from ._native_utils import _volume_props
 from .topology import GSolid, Gclassify_surface
 
@@ -238,10 +261,120 @@ def _fit_torus(pts: np.ndarray):
     return {"center": center, "axis": axis, "major_radius": major_radius, "minor_radius": minor_radius}, residual
 
 
+def _downcast(klass, handle):
+    """`klass.DownCast(handle)`, but returns `None` on a type mismatch
+    instead of raising -- pythonocc-core's own `DownCast` raises
+    `TypeError`/`SystemError` rather than returning `None`, unlike OCP's
+    (confirmed live, 2026-10-12)."""
+    try:
+        result = klass.DownCast(handle)
+    except Exception:
+        return None
+    return result if result is not None else None
+
+
+def _detect_revolution_profile_torus(face):
+    """Exact recognition, no sampling, no fit: when `face`'s own native
+    surface is a `Geom_SurfaceOfRevolution` whose basis (profile) curve
+    is EXACTLY a circle -- a real `Geom_Circle`, or a `Geom_Ellipse`
+    degenerated to one (`MajorRadius == MinorRadius`) -- lying in a
+    plane that CONTAINS the revolution axis, the swept surface is
+    exactly a torus: read center/axis/major_radius/minor_radius directly
+    from the native profile + axis instead of sampling the face and
+    running the generic sphere/cylinder/torus fits below.
+
+    Found live, 2026-10-12, ITER-TOKAMAK_comp/inout_RC.stp (ocp first,
+    ported here unchanged): a fragment's second unclassified face
+    carries exactly this representation (an EXACT `Geom_Ellipse` basis
+    curve with `MajorRadius == MinorRadius`, i.e. a circle, in a plane
+    containing the revolution axis) -- but the generic sample+fit in
+    `_detect_quadric` converges to the WRONG torus parameters for it
+    (residual ~4.5, nowhere close to any reasonable tolerance): its own
+    trimmed (u,v) domain only samples points from a narrow region near
+    the degenerate torus's own self-intersection locus, where the LM
+    fit's numerical Jacobian is ill-conditioned. A sibling face of the
+    SAME solid (a BSpline-approximated copy of the identical surface,
+    confirmed by direct inspection to have matching major_radius=3400.96
+    /minor_radius=5544.00) already fits correctly via the generic path
+    -- confirming both faces really are the same degenerate torus, and
+    that the generic fit's failure here is a numerical artifact of this
+    one face's own narrow sample domain, not a sign the surface itself
+    is something else. This exact path exists so a face doesn't depend
+    on the numeric fit succeeding when the native geometry already
+    states the answer exactly.
+
+    Returns `(params, 0.0)` (a zero residual -- this is read off exactly,
+    not fit) or `None` if the basis curve isn't an exact circle, or its
+    plane doesn't contain the revolution axis.
+
+    Note (pythonocc-specific): `BRep_Tool.Surface`/`Curve` return the
+    generic base-class handle type (`Geom_Surface`/`Geom_Curve`), never
+    the concrete subtype directly (unlike OCP, which reports the real
+    runtime type) -- a real `DownCast` call is required. Unlike OCP's
+    own `DownCast` (which returns `None` on a type mismatch), pythonocc-
+    core's raises `TypeError`/`SystemError` instead -- confirmed live,
+    2026-10-12 -- so `_downcast` below wraps every attempt in its own
+    `try`/`except`."""
+    surf = BRep_Tool.Surface(face)
+    rev = _downcast(Geom_SurfaceOfRevolution, surf)
+    if rev is None:
+        return None
+    basis = rev.BasisCurve()
+    # the profile curve is routinely wrapped in a Geom_TrimmedCurve
+    # (confirmed live, 2026-10-12, ocp first, ported here unchanged) --
+    # unwrap to the real circle/ellipse underneath before checking its
+    # type.
+    trimmed = _downcast(Geom_TrimmedCurve, basis)
+    if trimmed is not None:
+        basis = trimmed.BasisCurve()
+    circle = _downcast(Geom_Circle, basis)
+    ellipse = _downcast(Geom_Ellipse, basis) if circle is None else None
+    if circle is not None:
+        radius = circle.Radius()
+        circle_center = circle.Location()
+        circle_normal = circle.Axis().Direction()
+    elif ellipse is not None:
+        major, minor = ellipse.MajorRadius(), ellipse.MinorRadius()
+        if abs(major - minor) > NUMERIC_DOUBLE_TOL * max(major, minor, 1.0):
+            return None  # a genuine (non-circular) ellipse profile -- not this case
+        radius = 0.5 * (major + minor)
+        circle_center = ellipse.Location()
+        circle_normal = ellipse.Axis().Direction()
+    else:
+        return None
+
+    axis_dir = rev.Direction()
+    # the circle's own plane must CONTAIN the revolution axis direction,
+    # i.e. the circle's plane normal must be perpendicular to it.
+    if abs(circle_normal.Dot(axis_dir)) > NUMERIC_DOUBLE_TOL:
+        return None
+
+    axis_loc = np.array([rev.Location().X(), rev.Location().Y(), rev.Location().Z()])
+    axis = np.array([axis_dir.X(), axis_dir.Y(), axis_dir.Z()])
+    axis = axis / np.linalg.norm(axis)
+    center = np.array([circle_center.X(), circle_center.Y(), circle_center.Z()])
+    v = center - axis_loc
+    foot = axis_loc + (v @ axis) * axis
+    major_radius = float(np.linalg.norm(center - foot))
+    minor_radius = float(radius)
+    if major_radius <= 0.0 or minor_radius <= 0.0:
+        return None
+    return {"center": foot, "axis": axis, "major_radius": major_radius, "minor_radius": minor_radius}, 0.0
+
+
 def _detect_quadric(face, fit_tol: float):
     """Returns `(kind, params)` for the first of sphere/cylinder/torus
     (in that priority -- see module docstring) whose fit residual is
-    below `fit_tol`, or `None` if none of the 3 match well enough."""
+    below `fit_tol`, or `None` if none of the 3 match well enough.
+
+    Tries the exact, sampling-free `_detect_revolution_profile_torus`
+    first (2026-10-12) -- when it applies, it is both cheaper and
+    immune to the numerical-fit failure mode documented in its own
+    docstring."""
+    exact = _detect_revolution_profile_torus(face)
+    if exact is not None:
+        return "torus", exact[0]
+
     pts, nrms = _sample_face(face)
     if len(pts) < 10:
         return None
@@ -255,7 +388,20 @@ def _detect_quadric(face, fit_tol: float):
         return "cylinder", params
 
     params, residual = _fit_torus(pts)
-    if residual < fit_tol and 0.0 < params["minor_radius"] < params["major_radius"]:
+    # minor_radius >= major_radius is a genuine DEGENERATE (self-
+    # intersecting) torus, not a fit failure -- confirmed live,
+    # 2026-10-12, ITER-TOKAMAK_comp/inout_RC.stp: a face inherited from a
+    # Gmake_torus_elliptic-built degenerate-torus cutting tool (whose own
+    # exact Geom_Ellipse/Geom_Circle profile gets re-approximated to a
+    # BSpline by the boolean cut that uses it) fits a torus to ~1e-13
+    # relative residual with major_radius=3988/minor_radius=5030.
+    # Geom_ToroidalSurface itself accepts this combination directly (it's
+    # the SURFACE substituted onto one already-trimmed face, not a new
+    # solid -- the single-sheet/outer-vs-inner ambiguity only matters
+    # when building a fresh closed solid from the whole surface, which
+    # this substitution never does). Only true non-physical fits (a
+    # non-positive radius) are rejected.
+    if residual < fit_tol and params["major_radius"] > 0.0 and params["minor_radius"] > 0.0:
         return "torus", params
 
     return None
@@ -273,6 +419,74 @@ def _build_native_surface(kind: str, params: dict):
             params["minor_radius"],
         )
     raise ValueError(kind)
+
+
+def _project_curve_2d(edge, first, last, new_surf, n: int = 20):
+    """Project `edge`'s own 3D curve onto `new_surf` as a 2D pcurve --
+    NOT via `geomprojlib.Curve2d` (its single, whole-curve projection
+    call is unreliable on a self-intersecting/degenerate surface, see
+    below), but by sampling `n` points along the edge and inverting each
+    one individually, seeded from the previous point's own (u,v) via
+    `ShapeAnalysis_Surface.NextValueOfUV` (a local Newton step from a
+    known-good neighbour, rather than restarting fresh each time) --
+    then interpolating a `Geom2d_BSplineCurve` through them
+    (`Geom2dAPI_Interpolate`, parametrized by the SAME 3D curve
+    parameters so `breplib.SameParameter` afterward is consistent).
+
+    Found live, 2026-10-12, ITER-TOKAMAK_comp/inout_RC.stp (ocp first,
+    ported here unchanged -- see `geo/ocp/spline_quadrics.py`'s own
+    identical docstring): a degenerate (self-intersecting) torus has
+    MULTIPLE valid (u,v) preimages for points in some 3D regions (the
+    tube folds back on itself), so a whole-curve projection can silently
+    latch onto the WRONG branch for one edge while getting its neighbors
+    right -- confirmed directly on this exact fixture under `ocp`. The
+    seeded, point-by-point walk here cannot jump branches the same way:
+    each step's own search starts from the immediately preceding
+    point's real (u,v), which is always much closer to the correct next
+    value than to the wrong branch.
+
+    Periodic unwrap (real regression found and fixed, 2026-10-12, ocp
+    first -- see `geo/ocp/spline_quadrics.py`'s own identical docstring
+    for the full symptom/root-cause writeup, ported here unchanged):
+    `ValueOfUV`/`NextValueOfUV` always return a (u,v) wrapped back into
+    the surface's own base period range -- for a FULL seam edge of a
+    plain periodic surface (e.g. a whole cylinder's own 2*pi circular
+    edge), this breaks continuity between samples (confirmed live:
+    `test_substitute_spline_cylinder` regressed, losing ~67% of the
+    solid's own volume). Fixed by unwrapping each new sample relative to
+    the immediately preceding one before using it both for the
+    interpolation table and as the next seed."""
+    sa = ShapeAnalysis_Surface(new_surf)
+    adaptor = BRepAdaptor_Curve(edge)
+    pts2d = TColgp_HArray1OfPnt2d(1, n + 1)
+    params = TColStd_HArray1OfReal(1, n + 1)
+    u_period = new_surf.UPeriod() if new_surf.IsUPeriodic() else None
+    v_period = new_surf.VPeriod() if new_surf.IsVPeriodic() else None
+    uv_prev = None
+    for k in range(n + 1):
+        t = first + (last - first) * k / n
+        point = adaptor.Value(t)
+        uv = sa.ValueOfUV(point, 1e-6) if uv_prev is None else sa.NextValueOfUV(uv_prev, point, 1e-6, -1.0)
+        x, y = uv.X(), uv.Y()
+        if uv_prev is not None:
+            if u_period:
+                dx = x - uv_prev.X()
+                if dx > u_period / 2:
+                    x -= u_period
+                elif dx < -u_period / 2:
+                    x += u_period
+            if v_period:
+                dy = y - uv_prev.Y()
+                if dy > v_period / 2:
+                    y -= v_period
+                elif dy < -v_period / 2:
+                    y += v_period
+        uv_prev = gp_Pnt2d(x, y)
+        pts2d.SetValue(k + 1, uv_prev)
+        params.SetValue(k + 1, t)
+    interpolator = Geom2dAPI_Interpolate(pts2d, params, False, 1e-7)
+    interpolator.Perform()
+    return interpolator.Curve()
 
 
 def _substitute_face_surface(face, new_surf) -> None:
@@ -332,8 +546,7 @@ def _substitute_face_surface(face, new_surf) -> None:
             continue
         handled.append(edge)
         first, last = BRep_Tool.Range(edge)
-        curve, _, _ = BRep_Tool.Curve(edge)
-        pcurve = geomprojlib.Curve2d(curve, first, last, new_surf)
+        pcurve = _project_curve_2d(edge, first, last, new_surf)
         duplicate = any(e.IsSame(edge) and e is not edge for e in all_edges)
         if duplicate:
             # pythonocc-core's own Geom2d_Curve.Translated() is bound at
@@ -351,12 +564,25 @@ def _substitute_face_surface(face, new_surf) -> None:
     ShapeFix_Face(face).Perform()
 
 
+_SUPPORTED_UNCLASSIFIED_TYPES = (GeomAbs_BSplineSurface, GeomAbs_SurfaceOfRevolution)
+
+
 def Gsubstitute_spline_quadrics(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     """See module docstring. Returns `(solid, False)` unchanged unless
-    EVERY unsupported face in it is a BSplineSurface that resolves to a
-    valid cylinder/sphere/torus substitution -- never a partially-
-    substituted result. Only called when `Gspline_surface(solid.
-    __native__)` is already known True."""
+    EVERY unsupported face in it is a BSplineSurface OR SurfaceOfRevolution
+    that resolves to a valid cylinder/sphere/torus substitution -- never a
+    partially-substituted result. Only called when `Gspline_surface(solid.
+    __native__)` is already known True.
+
+    SurfaceOfRevolution added 2026-10-12: a degenerate-torus cutting tool
+    built by `Gmake_torus_elliptic` (an exact revolution of a real
+    `Geom_Ellipse`/`Geom_Circle` profile) can leave a boolean-cut result
+    fragment with an inherited face of this native type whose own basis
+    curve has been re-approximated to a BSpline by the cut itself --
+    `Gclassify_surface` doesn't recognize either representation, but the
+    sampling+fit detection below works identically regardless of what the
+    native basis curve actually is (it never reads it, only sampled
+    points/normals), so widening this gate costs nothing extra."""
     native_copy = BRepBuilderAPI_Copy(solid.__native__).Shape()
     original_volume = abs(_volume_props(solid.__native__).Mass())
 
@@ -367,8 +593,8 @@ def Gsubstitute_spline_quadrics(solid: "GSolid", tolerances) -> "tuple[GSolid, b
     for face in _faces_of(native_copy):
         if Gclassify_surface(face) is not None:
             continue
-        if BRepAdaptor_Surface(face, True).GetType() != GeomAbs_BSplineSurface:
-            # some other unsupported type (Bezier, revolution, ...) --
+        if BRepAdaptor_Surface(face, True).GetType() not in _SUPPORTED_UNCLASSIFIED_TYPES:
+            # some other unsupported type (Bezier, extrusion, ...) --
             # not attempted, falls through to the existing policy.
             return solid, False
         fit_tol = fit_rel_tol * _face_diagonal(face)
