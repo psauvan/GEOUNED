@@ -115,7 +115,6 @@ from ..constants import (
     NUMERIC_TOL,
     POINT_CLASSIFY_TOL,
     SURFACE_INTERSECT_TOL,
-    UNIFY_PREHEAL_TOLERANCE_FLOOR,
     VOLUME_MIN_E8,
 )
 from ..volume_utils import volume_within
@@ -1223,27 +1222,8 @@ class GSolid:
         (matching the sibling occ/freecad implementations' own equally
         broad catches for this exact function) and treated the same way
         as the volume-mismatch case: fall back to the untouched original
-        shape.
-
-        Pre-heal gate (2026-10-14, see `UNIFY_PREHEAL_TOLERANCE_FLOOR`'s
-        own docstring for the full `origSolid_539.stp` finding): when
-        this solid carries an inflated BRep tolerance (a BOPAlgo
-        tangent-junction weld, the same signature `generic_split`'s own
-        heal-retry already recognizes elsewhere), `unify.Build()` is run
-        against a `Gheal_topology`-healed copy instead of the raw
-        original -- cheap insurance against the exact same
-        uncatchable-native-crash class already documented above for
-        `ConeSphere.stp`, just a different trigger."""
-        source_native = self.__native__
-        from .queries import Gsolid_max_tolerance
-
-        if Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR:
-            from .repair import Gheal_topology
-
-            healed = Gheal_topology(self)
-            if healed is not None:
-                source_native = healed.__native__
-        native = source_native
+        shape."""
+        native = self.__native__
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
         unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)

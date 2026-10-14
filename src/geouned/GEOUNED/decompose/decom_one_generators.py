@@ -23,7 +23,6 @@ if CAD_ENGINE != "freecad":
     from ...geo import Gsubstitute_spline_quadrics
 from ...geo.constants import (
     FACE_PROBE_BISECTION_STEPS,
-    MAX_REPAIR_VOLUME_REL_CHANGE,
     NUMERIC_DOUBLE_TOL,
     SPLIT_CANDIDATE_VOLUME_REL_TOL,
     STUCK_FRAGMENT_PROBE_GRID,
@@ -48,22 +47,7 @@ def split_surfaces(solid, options, tolerances):
     fixed_solids = []
     for s in solid_components:
         try:
-            fixed_s = s.fix(tolerances.fix_tolerance)
-            # Same corruption class as generic_split's own two .fix()
-            # call sites (see _fix_result_is_sane's own docstring) --
-            # confirmed live, 2026-10-13, Mixed/base_all8_to_cylinder.
-            # stp: generic_split can legitimately return a tiny,
-            # inverted-orientation-but-structurally-sane sliver (a prior
-            # .fix() call already flipped its sign while keeping it
-            # BRepCheck-valid), and re-running .fix() on THAT here, a
-            # second time with no sanity check at all, collapsed it to a
-            # single 0-wire face with Volume~6.7e166 -- silently
-            # accepted (no exception raised) and propagated all the way
-            # into set_cad_solid()/optimalBoundingBox(), which then
-            # crashed void generation's own Gmake_box with an "Infinite
-            # parameter" domain error, far downstream of the real cause.
-            if _fix_result_is_sane(fixed_s, s.Volume):
-                s = fixed_s
+            s = s.fix(tolerances.fix_tolerance)
         except Exception:
             pass
         # A boolean cut landing exactly tangent to a pre-existing surface
@@ -305,35 +289,6 @@ def _some_real_candidate_should_have_split(solid, surfaces):
     return False
 
 
-def _fix_result_is_sane(fixed, reference_volume) -> bool:
-    """`GSolid.fix()` (`ShapeFix_Shape`/`ShapeUpgrade_UnifySameDomain`) can
-    report a repaired solid as `BRepCheck`-valid while actually producing
-    nonsense -- confirmed live, 2026-10-13, `Mixed/base_all8_to_cylinder.
-    stp`: a tiny, genuinely-invalid 3-face sliver fragment
-    (Volume=+0.7495, is_valid=False) that `generic_split`'s own top-of-
-    function `.fix()` turned into a topologically-valid but INVERTED-
-    orientation solid (Volume=-0.7495, is_valid=True, same magnitude --
-    `is_valid()` alone doesn't check orientation sign) -- which then, a
-    few lines later, got handed BACK into `.fix()` a second time
-    (the "did .fix() change something, try fresh candidates" retry
-    below) and came back completely degenerate: 3 faces collapsed into 1
-    with 0 wires, Area~1.2e101, Volume~6.7e166 -- `ShapeUpgrade_
-    UnifySameDomain` merging coaxial cylindrical faces whose normals are
-    all backwards from a prior inversion. Neither corruption was caught
-    by `is_valid()` itself, matching this project's own repeatedly-
-    documented "BRepCheck_Analyzer reporting valid is a false pass"
-    lesson elsewhere in this cascade. Checks the two cheap, specific
-    signatures of this corruption class: every face keeps at least one
-    real wire, and the repaired solid's own volume MAGNITUDE (not signed
-    value -- a correct repair can legitimately flip orientation/sign,
-    just never balloon or collapse its magnitude) stays within the same
-    relative-change gate every other repair in this cascade already uses
-    for "did this repair conserve the real geometry"."""
-    if any(len(f.wires()) == 0 for f in fixed.Faces):
-        return False
-    return volume_within(abs(fixed.Volume), abs(reference_volume), MAX_REPAIR_VOLUME_REL_CHANGE)
-
-
 def generic_split(solid, options, tolerances, loop=0, healed=False):
     # Heal a BRepCheck-invalid decomposition fragment before splitting it
     # further (or returning it as a final piece). BOPAlgo_Splitter can
@@ -355,7 +310,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # the normal path is untouched.
     if not solid.is_valid():
         fixed = solid.fix(tolerances.fix_tolerance)
-        if fixed.is_valid() and _fix_result_is_sane(fixed, solid.Volume):
+        if fixed.is_valid():
             solid = fixed
 
     # A fragment can inherit an unclassifiable face from a cutting TOOL
@@ -630,10 +585,9 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
         # (11->14 final pieces total) via this exact mechanism, with the
         # file's own true-vs-decomposed volume match IMPROVING (3.19e-3
         # -> 1.44e-3 relative) alongside it, not a sign of wasted work.
-        fix_changed_something = (
-            len(fixed.Faces) != len(solid.Faces)
-            or not volume_within(fixed.Volume, solid.Volume, NUMERIC_DOUBLE_TOL)
-        ) and _fix_result_is_sane(fixed, solid.Volume)
+        fix_changed_something = len(fixed.Faces) != len(solid.Faces) or not volume_within(
+            fixed.Volume, solid.Volume, NUMERIC_DOUBLE_TOL
+        )
         if fix_changed_something:
             # Rebuild the real candidate list against the FIXED geometry,
             # not the stale `tried_tools` collected before .fix() ran --
