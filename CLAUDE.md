@@ -305,6 +305,179 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`GSolid.refine()` (occ/ocp) now pre-heals a shape with an inflated
+  BRep tolerance before calling `ShapeUpgrade_UnifySameDomain.Build()`,
+  fixed 2026-10-14 -- root cause of `GEOUNED_mateo/envelope_structure/
+  debug/origSolid_539.stp` stopping during decomposition with no error
+  message at all (a native access violation, which Windows reports as
+  exit code `-1073741819`/`0xC0000005` -- not a Python exception, so
+  nothing is ever printed).** User-reported: the conversion "se para en
+  la decomposicion sin ningun mensaje de error" (stops during
+  decomposition with no error message).
+  **Root-caused via `faulthandler.dump_traceback_later` (a periodic
+  stack dump, not just the usual crash-handler hook, since the failure
+  mode wasn't yet known to be a hang vs. a hard crash)**: the exact
+  crash site is `GSolid.refine()` (`geo/{occ,ocp}/topology.py`), called
+  from `Gfuse_solids` (`geo/solid_ops.py`), called from
+  `build_complex_shape`/`makeRoundCorner` while building a RoundCorner
+  composite meta-surface's own CAD shape during `generic_split`'s
+  candidate construction -- the exact same `ShapeUpgrade_UnifySameDomain`
+  access-violation crash CLASS this function's own docstring already
+  extensively documents as an accepted permanent limitation for
+  `Mixed/ConeSphere.stp` (confirmed still unaffected/unchanged by this
+  fix, re-tested directly -- a genuinely different trigger, not the same
+  bug). Reproduces identically under BOTH occ and ocp (exit code
+  `-1073741819` either way); not yet tested under freecad (its own
+  `.refine()` uses `Part.Shape.removeSplitter()`, a different native
+  operation with no history of this crash class -- per the existing
+  ConeSphere.stp precedent, expected to be unaffected, not verified this
+  session).
+  **Found the trigger by exporting the EXACT crashing shape to STEP
+  right before the call that crashes** (a monkeypatched `GSolid.refine`
+  writing the shape to disk immediately before `unify.Build()`, since a
+  native access violation gives no chance to react afterward) and
+  inspecting it in isolation: the shape carries 2 non-degenerate edges
+  with `BRep_Tool.Tolerance_s` = 19.07mm (a clean solid sits at
+  ~1e-6..1e-5mm) -- the exact "BOPAlgo papered a near-tangent junction
+  over with inflated tolerance" signature `Gsolid_max_tolerance`'s own
+  docstring already names (the same one `generic_split`'s own
+  tolerance-weld heal-retry elsewhere in this cascade reads). Confirmed
+  directly: re-loading that EXACT exported STEP file and calling
+  `unify.Build()` on the freshly-reloaded copy (bit-identical geometry,
+  just re-serialized) succeeds cleanly -- the same STEP-round-trip
+  healing effect this project has repeatedly relied on elsewhere
+  (`Gheal_topology`), just never wired into `.refine()`'s own call site
+  before.
+  **Fix**: new `UNIFY_PREHEAL_TOLERANCE_FLOOR = 1.0e-3` constant
+  (`geo/constants.py`, reusing the historical value from the now-retired
+  `TOLERANCE_WELD_FLOOR` split-retry mechanism this exact signature was
+  first measured for -- see the "EC_SUPPORT#BYZ2TW_41" entry below --
+  not re-measured from scratch, since a false positive here only costs
+  one harmless extra STEP round-trip rather than a wrong geometric
+  decision). `GSolid.refine()` (both engines) now checks
+  `Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR` first;
+  when true, it runs `Gheal_topology` (the existing in-memory STEP
+  round-trip repair, already gated on `BRepCheck_Analyzer` validity +
+  `MAX_REPAIR_VOLUME_REL_CHANGE` volume conservation before accepting
+  its own result) and feeds `unify.Build()` the healed copy instead of
+  the raw original. Both `Gsolid_max_tolerance` (`geo/{occ,ocp}/
+  queries.py`) and `Gheal_topology` (`geo/{occ,ocp}/repair.py`) are
+  imported function-locally inside `refine()` to avoid a module-import
+  cycle (`queries.py`/`repair.py` both already import from `topology.py`
+  at their own top level).
+  **Verified**: `origSolid_539.stp` now converts end to end (decompose +
+  build_solid_definition + build_void + export_csg) on both occ/ocp --
+  previously a hard crash on either. `Mixed/ConeSphere.stp` re-tested
+  directly and confirmed still crashes identically (unaffected, as
+  expected -- its own trigger is a different signature). Full
+  `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` green on both
+  occ/ocp (261 passed/1 skipped each, zero regressions -- `.refine()` is
+  exercised by many existing fixtures, e.g. every RoundCorner-composite
+  construction, so this is real coverage of the gate's own "mostly a
+  no-op" branch, not just the one new fixture). **Not done this
+  session**: a dedicated `Solidos/test_models` corpus differential scan
+  specifically for this change (the full pytest suites already exercise
+  `.refine()` broadly with zero behavior change observed, and the gate's
+  own cost on a false positive is bounded and already independently
+  verified via `Gheal_topology`'s own volume/validity guard, so this was
+  judged sufficient for a single-session fix -- flagged here in case a
+  future corpus-wide regression needs re-checking this entry first).
+
+- **Three stacked `.fix()` call sites in the decomposition recursion
+  (`decom_one_generators.py`) silently accepting a corrupted
+  `ShapeFix_Shape`/`ShapeUpgrade_UnifySameDomain` repair, fixed
+  2026-10-13 -- root cause of `Mixed/base_all8_to_cylinder.stp` failing
+  to convert (first with a load-time "Spline surfaces" rejection, then,
+  once that was separately fixed this same investigation, with an
+  `AttributeError: 'NoneType' object has no attribute 'Edges'` during
+  decomposition, then with `OCP.Standard.Standard_DomainError:
+  BRep_Builder::Infinite parameter` during void generation).**
+  User-reported: "normalmente en este modelo no debe quedar spline, y
+  habiamos hecho unas modificaciones para que geouned pudiera manejar
+  spline" -- the file is named for exactly that: a genuine spline-
+  shaped face GEOUNED should substitute away via `Gsubstitute_spline_
+  quadrics` (see the "Spline-vs-quadric identification" entry below),
+  leaving nothing for `cutting_face_number`'s own "Spline surface
+  detected" check to ever trip on.
+  **Bisected against the pre-session baseline** (`git worktree` at
+  commit `89e1316`, the commit immediately before this same day's own
+  `inout_RC.stp` spline-substitution fixes): at that baseline, loading
+  this file already printed "Warning, following solids have Spline
+  surfaces: 0" and exited -- confirming the file's own spline
+  substitution was ALREADY failing before this session touched
+  anything, and that today's earlier `Gsubstitute_spline_quadrics` fixes
+  (the `_project_curve_2d`/`_detect_revolution_profile_torus`/
+  `Geom_TrimmedCurve`-unwrap work, see the entry below) incidentally
+  fixed THIS file's own load-time substitution too (confirmed: loading
+  with the current code gives `corrupted: [] spline: []`, every face
+  already a real Plane/Cylinder/Torus) -- but doing so, for the first
+  time, let this file reach FAR deeper into decomposition than it ever
+  had before, immediately surfacing a second, completely unrelated bug
+  class that nothing had ever exercised on this file until now.
+  **Root cause, traced via a live instrumented decomposition trace
+  (monkeypatching `generic_split` and adding temporary diagnostic prints
+  directly in the source, each reverted once the root cause was found)**:
+  a genuinely tiny, degenerate 3-face sliver fragment (3 coaxial
+  cylindrical faces, Volume=+0.7495mm^3, `is_valid()==False`) reaches
+  `generic_split`'s own top-of-function repair block
+  (`if not solid.is_valid(): fixed = solid.fix(tolerances.fix_tolerance);
+  if fixed.is_valid(): solid = fixed`) -- `ShapeFix_Shape` reports the
+  REPAIRED solid `BRepCheck`-valid, but has silently INVERTED its
+  orientation (Volume=-0.7495mm^3, same magnitude, wrong sign --
+  `is_valid()` never checks orientation/volume sign at all), and the
+  unconditional `if fixed.is_valid(): solid = fixed` accepts it with no
+  further check. This inverted-but-structurally-sane fragment then hits
+  a SECOND `.fix()` call deeper in the same function (the "did .fix()
+  change something, rebuild candidates" tolerance-weld retry block) --
+  re-running `ShapeFix_Shape`/`ShapeUpgrade_UnifySameDomain` on an
+  ALREADY-inverted 3-coaxial-cylinder sliver collapses it into genuine
+  garbage: 1 face, 0 wires, Area~1.2e101, Volume~6.7e166 -- again
+  reported as "changed something" (`fix_changed_something`, based only
+  on face-count/volume-equality, not sanity) and, in this second call
+  site, used directly to rebuild the candidate-surface search, which is
+  what raised the `OuterWire`/`NoneType` `AttributeError` the moment
+  `cks_bound_planes` tried to read the 0-wire face's own boundary.
+  Separately, a THIRD, independent `.fix()` call site --
+  `split_surfaces`'s own unconditional per-piece healing pass, applied
+  to every final leaf `generic_split` returns, AFTER the two sites above
+  were already fixed -- re-corrupted the (by then correctly rejected,
+  still-sane, inverted) 3-face sliver the SAME way, with no sanity check
+  of its own either: this is what actually ended up inside `m.Solids`
+  and, much later, inside `set_cad_solid()`'s own native compound,
+  giving `optimalBoundingBox()`'s own `BRepBndLib.AddOptimal_s` an
+  unmeshable piece that made it return the OCCT `Precision::Infinite()`
+  sentinel (1e100) on every axis -- which is what `Gmake_box` (void
+  generation's own starting universe box) rejected as "Infinite
+  parameter", many stages removed from the real cause.
+  **Fix**: a single new `_fix_result_is_sane(fixed, reference_volume)`
+  helper (checks that no face of `fixed` has 0 wires, and that
+  `abs(fixed.Volume)` stays within the cascade's own existing
+  `MAX_REPAIR_VOLUME_REL_CHANGE` relative gate of `abs(reference_volume)`
+  -- deliberately comparing MAGNITUDES, not signed values, since a
+  correct repair can legitimately flip orientation, just never balloon
+  or collapse its actual size) is now checked at all 3 `.fix()` call
+  sites before trusting the result: the top-of-function repair-if-
+  invalid block, the tolerance-weld retry's own `fix_changed_something`
+  decision (ANDed into the existing face-count/volume-equality check,
+  so a genuinely garbage "change" no longer triggers the candidate
+  rebuild), and `split_surfaces`'s own per-leaf healing pass. A fix that
+  fails the sanity check is simply not adopted -- the original,
+  unfixed-but-already-sane fragment is kept, matching every other
+  repair in this cascade's own established "never let an auxiliary
+  repair step make things worse than not trying" discipline.
+  **Verified**: `base_all8_to_cylinder.stp` now converts end to end
+  (decompose + build_solid_definition + build_void + export_csg) under
+  the user's own real script (`Test RoundCorners/myrun.py`, real
+  settings: `voidGen=True`, `minVoidSize=100`, `pln_distance=1e-2`,
+  `min_area=0.01`) -- previously failing at 3 different, increasingly
+  deep stages in sequence. Full `tests/geo` + `test_cadtocsg.py` +
+  `test_csgtocad.py` green on both occ/ocp (261 passed/1 skipped each,
+  zero regressions) -- `freecad` not re-run this session (pytest isn't
+  installed in FreeCAD 1.1's own bundled interpreter in this
+  environment), but the fix is pure Python over the same `GSolid.fix()`/
+  `.wires()`/`.Faces`/`.Volume` surface all 3 engines already expose
+  identically, with no engine-specific branching.
+
 - **Four real bugs found and fixed in `Gsubstitute_spline_quadrics`
   (`geo/{occ,ocp}/spline_quadrics.py`), 2026-10-12 -- root cause of
   `ITER-TOKAMAK_comp/inout_RC.stp` crashing with "Spline surface

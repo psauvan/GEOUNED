@@ -47,6 +47,36 @@ comfortably above the ~1e-15 floating-point noise floor -- 1e-9 keeps
 6 orders of magnitude of margin on the noise side and 5 on the real-
 defect side."""
 
+UNIFY_PREHEAL_TOLERANCE_FLOOR = 1.0e-3
+"""`GSolid.refine()`'s own pre-check (occ/ocp only) before calling
+`ShapeUpgrade_UnifySameDomain.Build()`: if `Gsolid_max_tolerance(self)`
+exceeds this floor, the shape is pre-healed via a `Gheal_topology` STEP
+round-trip first, and `unify.Build()` runs against the healed copy
+instead of the original.
+
+Found live, 2026-10-14, `GEOUNED_mateo/envelope_structure/debug/
+origSolid_539.stp`: a RoundCorner composite's own `Gfuse_solids()` ->
+`.refine()` call crashed OCCT outright (a native access violation, not
+a catchable Python exception -- the SAME crash CLASS already documented
+in `.refine()`'s own docstring for `Mixed/ConeSphere.stp`, just a
+different fixture/trigger) on a fused shape carrying 2 edges at
+tolerance=19.07mm (a clean solid sits at ~1e-6..1e-5mm) -- confirmed by
+exporting the EXACT crashing shape to STEP right before the crash and
+re-loading it in isolation: `unify.Build()` on the freshly-reloaded copy
+(bit-identical geometry, just re-serialized) succeeds cleanly. Same
+underlying signature `Gsolid_max_tolerance`'s own docstring already
+names ("BOPAlgo papered a near-tangent junction over with inflated
+tolerance instead of separating it"), reused here as a pre-emptive
+safety gate rather than a split-retry trigger -- a false positive here
+only costs one harmless extra STEP round-trip (`Gheal_topology` already
+rejects its own result if it isn't `BRepCheck`-valid and volume-
+conserving, falling back to the untouched original), never a wrong
+geometric decision, so the value is deliberately set low (reusing the
+historical `TOLERANCE_WELD_FLOOR` value from the now-retired
+split-retry mechanism this same signature was first measured for, see
+`decom_one_generators.py`'s own "EC_SUPPORT#BYZ2TW_41" CLAUDE.md entry)
+rather than re-measured from scratch."""
+
 MAX_REPAIR_VOLUME_REL_CHANGE = 4.0e-4
 """Volume-conservation gate shared by every HEALING repair -- `Gdefeature`, `Gcollapse_split_rings`, `Gsliver_heal`,
 `Gheal_topology`, `_close_open_solid` and `_repair_non_manifold_solid`'s separate-components pass: a repaired solid is only

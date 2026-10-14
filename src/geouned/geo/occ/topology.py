@@ -114,6 +114,7 @@ from ..constants import (
     NUMERIC_TOL,
     POINT_CLASSIFY_TOL,
     SURFACE_INTERSECT_TOL,
+    UNIFY_PREHEAL_TOLERANCE_FLOOR,
     VOLUME_MIN_E8,
 )
 from ..volume_utils import volume_within
@@ -1208,8 +1209,28 @@ class GSolid:
         RuntimeError, with the real exception name only embedded in the
         message text -- so this catches RuntimeError broadly; the only
         OCCT call in this block is unify.Build() itself, so there's
-        nothing else in scope this could mask."""
-        native = self.__native__
+        nothing else in scope this could mask.
+
+        Pre-heal gate (2026-10-14, see `UNIFY_PREHEAL_TOLERANCE_FLOOR`'s
+        own docstring for the full `origSolid_539.stp` finding, ocp
+        first, ported here unchanged): when this solid carries an
+        inflated BRep tolerance (a BOPAlgo tangent-junction weld, the
+        same signature `generic_split`'s own heal-retry already
+        recognizes elsewhere), `unify.Build()` is run against a
+        `Gheal_topology`-healed copy instead of the raw original --
+        cheap insurance against the exact same uncatchable-native-crash
+        class already documented above for `ConeSphere.stp`, just a
+        different trigger."""
+        source_native = self.__native__
+        from .queries import Gsolid_max_tolerance
+
+        if Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR:
+            from .repair import Gheal_topology
+
+            healed = Gheal_topology(self)
+            if healed is not None:
+                source_native = healed.__native__
+        native = source_native
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
         unify = ShapeUpgrade_UnifySameDomain(copy, True, True, True)
