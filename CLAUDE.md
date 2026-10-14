@@ -305,6 +305,116 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`GSolid.refine()` (occ/ocp) gained a SECOND, independent pre-heal
+  trigger, 2026-10-14 -- a plane face carrying a native OCCT degenerate
+  edge, fixed via the new `find_degenerate_plane_faces` detector
+  (`geo/solid_defects.py`) -- root cause of
+  `GEOUNED_mateo/envelope_structure/envelope_structure.stp` stopping
+  during decomposition with no error message at solid index 1197 (same
+  symptom class as `origSolid_539.stp` just below, but a genuinely
+  different trigger the existing tolerance-floor pre-heal does not
+  catch).** User-reported: the same "se para en la decomposicion sin
+  ningun mensaje de error" symptom as `origSolid_539.stp`, this time on
+  the full, real assembly, reaching solid 1196 before stopping at 1197;
+  the user also reported that re-launching with
+  `Settings.load_from_cache=True` restarted decomposition from solid 0
+  instead of resuming -- that second issue is a SEPARATE, still-open bug
+  (see "Known open items" -> Shared/cross-cutting or a future entry; not
+  investigated this session, this entry is the 1197 crash only).
+  **Cheap, cost-effective reproduction, per direct user instruction**
+  ("prueba cargando solo unos solidos antes del 1197 ... y intenta hacer
+  la conversion a ver si funciona" -- after a direct correction ruling
+  out an initial, wrong hypothesis that the `mosaic_surface` branch was
+  simply missing this session's earlier commits): rather than running
+  the full ~1385-solid model or testing solid 1197 in total isolation
+  (which reproduces NOTHING -- confirmed live, a single-solid load
+  succeeds cleanly on both the fixed and unfixed code, since the crash
+  depends on native OCCT kernel state accumulated across several
+  PRECEDING real solids, not on solid 1197's own geometry in a vacuum),
+  a small window of 8 consecutive real solids (indices 1190-1197,
+  trimmed in-place from the fully-loaded `meta_list` the same way
+  `skip_solids` does internally) reproduces the exact crash in ~40
+  seconds.
+  **First checked and ruled out**: the already-committed
+  `UNIFY_PREHEAL_TOLERANCE_FLOOR` pre-heal (the `origSolid_539.stp` fix
+  just below) does NOT resolve this crash -- confirmed by re-running the
+  same windowed reproduction on the branch containing that fix; it
+  crashes identically, at the same call site
+  (`geo/ocp/topology.py::GSolid.refine()`, inside `unify.Build()`, via
+  the same `Gfuse_solids` -> `build_complex_shape` -> `makeRoundCorner`
+  chain), because the crashing shape's own `Gsolid_max_tolerance` is
+  `8.8e-6` -- nowhere near the `1e-3` floor.
+  **Confirmed also unaffected under `freecad`**: the identical 8-solid
+  window converts cleanly end to end under `GEOUNED_CAD_ENGINE=freecad`
+  (its own `Gsolid.refine()` uses `Part.Shape.removeSplitter()`, a
+  different native operation with no history of this crash class,
+  matching the already-documented `ConeSphere.stp` precedent).
+  **Root-caused via a lossless binary round-trip + flag/face
+  bisection, each step isolated in its own subprocess so one crash never
+  aborts the investigation**: exporting the exact crashing shape to STEP
+  and reloading it "fixes" it (confirmed: `unify.Build()` succeeds
+  cleanly on the reloaded 7-face copy) -- but that round-trip itself
+  (via the STEP reader's own healing) hides the real defect, the same
+  way it already does for the tolerance-weld case. Re-exporting via
+  `Gexport_binary`/`Gload_binary` (OCCT's own native `BinTools`
+  serialization, already used by the decompose cache, confirmed lossless
+  -- no reader-side healing) preserves the exact 9-face crashing shape,
+  giving a standalone, pipeline-free reproduction. Testing each of
+  `ShapeUpgrade_UnifySameDomain`'s 3 boolean flags individually (in
+  separate subprocess invocations, since an access violation cannot be
+  caught and would otherwise kill the whole investigation) isolated the
+  crash to `UnifyFaces=True` specifically -- `UnifyEdges`/
+  `ConcatBSplines` alone never crash, consistent with `UnifyFaces`
+  already being documented elsewhere in this same function's docstring
+  as a confirmed, independent native-crash source (`ConeSphere.stp`).
+  Bisecting the 9 faces themselves (removing one, then systematic
+  subsets, then narrowing a crashing 4-face subset down further, each
+  trial a fresh subprocess against the binary-serialized shape) found
+  the minimal crashing case: just 2 of the 9 faces, both planar, both on
+  the exact SAME infinite plane (`is_same_plane_surface` confirmed
+  `True`), areas 91.06mm^2 and 277757.66mm^2 -- plain coplanar
+  NEIGHBORS, not one nested inside the other's domain (so
+  `find_overlapping_coplanar_faces` correctly does not flag this; nor
+  does `find_sliver_faces`, since neither face's own
+  `CharacteristicWidth` is below `Tolerances.min_face_width`). Direct
+  inspection of the smaller face's own 3 boundary edges found the real
+  signature: one of them is a genuine, OCCT-native-marked degenerate
+  edge (`BRep_Tool.Degenerated_s` returns `True`, both its vertices at
+  the identical point) -- the standard OCCT convention for a surface's
+  own singular point (a sphere/cone/torus pole), which a PLANE never
+  legitimately has. `ShapeUpgrade_UnifySameDomain`'s `UnifyFaces=True`
+  pass crashes natively when asked to consider merging this
+  pole-carrying-but-poleless-surface-type face with its coplanar
+  neighbor.
+  **Fix**: new `find_degenerate_plane_faces(solid)` (`geo/
+  solid_defects.py`, pure Python, duck-typed on `GFace.Surface`/
+  `GFace.Edges`/`GEdge.Length`, identical across all 3 engines -- reuses
+  the exact `edge.Length < DEGENERATE_EDGE_LENGTH_FLOOR` convention
+  `GEdge.__init__` already established for reporting a degenerate
+  edge's length as exactly `0.0`) flags any planar face carrying such an
+  edge. `GSolid.refine()` (both occ/ocp) now checks this SECOND signature
+  independently of (not instead of) the existing tolerance-floor check
+  -- confirmed the two occur independently (a 1450-call scan of the
+  whole window found the new signature firing exactly twice: once on a
+  shape that ALSO had an inflated tolerance, already safely pre-healed
+  either way, and once uniquely on the actual crashing shape with no
+  inflated tolerance at all) -- and runs the same already-established
+  `Gheal_topology` STEP-round-trip pre-heal when it fires.
+  **Verified**: the exact windowed reproduction (indices 1190-1197) now
+  completes cleanly end to end on both occ/ocp (previously a hard crash
+  on both). Full `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py`
+  green on both engines (ocp 219 passed/2 skipped, occ 261 passed, each
+  engine's own exercised subset -- `test_freecad_impl.py` excluded on
+  both per the standing, pre-existing FreeCAD/pyOCC DLL-conflict-on-
+  collection issue; `test_ocp_impl.py` additionally excluded under occ,
+  since OCP itself isn't installed in `pyoccenv`), zero regressions.
+  **Not done this session**: the full `envelope_structure.stp` model has
+  not been converted end to end past this point (only the 8-solid
+  window around the fix); a dedicated `Solidos/test_models` corpus
+  differential scan for this specific change; and the separate
+  `load_from_cache=True`-restarts-from-solid-0 bug the user also
+  reported on this same model remains completely uninvestigated.
+
 - **`GSolid.refine()` (occ/ocp) now pre-heals a shape with an inflated
   BRep tolerance before calling `ShapeUpgrade_UnifySameDomain.Build()`,
   fixed 2026-10-14 -- root cause of `GEOUNED_mateo/envelope_structure/

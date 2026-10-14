@@ -137,6 +137,54 @@ def find_short_edges(solid, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> lis
     return flagged
 
 
+def find_degenerate_plane_faces(solid) -> list:
+    """Planar faces of `solid` that carry a native OCCT *degenerate*
+    edge (``edge.Length < DEGENERATE_EDGE_LENGTH_FLOOR`` -- the same
+    convention `GEdge.__init__` already uses to report a degenerate
+    edge's length as exactly 0.0 rather than querying it natively, see
+    that constructor's own docstring).
+
+    A degenerate edge is OCCT's own topological placeholder for a
+    surface's singular point -- the pole of a closed sphere/cone/torus,
+    where the surface parametrization collapses to a single point.
+    `find_short_edges` deliberately excludes such edges (below
+    `DEGENERATE_EDGE_LENGTH_FLOOR`) as a legitimate, expected feature of
+    those surface types. A PLANE has no singular point at all, so a
+    degenerate edge on a plane is never legitimate -- it is itself the
+    defect signature, not something to filter out.
+
+    Confirmed live, 2026-10-14, `GEOUNED_mateo/envelope_structure/
+    envelope_structure.stp` solid index 1197 (reached through a RoundCorner
+    composite surface's own `Gfuse_solids` call, during `generic_split`'s
+    recursion): a 9-face fragment carries 2 tiny (91mm^2) planar faces,
+    each with its own degenerate edge, bisected down to a minimal 2-face
+    reproduction (just the 2 faces sharing this plane) that reliably
+    crashes `ShapeUpgrade_UnifySameDomain`'s `UnifyFaces=True` pass
+    (and only that one of its 3 boolean flags -- `UnifyEdges`/
+    `ConcatBSplines` alone never crash) with an uncatchable native access
+    violation. Neither `find_overlapping_coplanar_faces` (the 2 faces
+    are plain neighbors, not one nested inside the other's domain) nor
+    `find_sliver_faces` (their own `CharacteristicWidth` isn't below
+    `Tolerances.min_face_width`) catches this signature -- hence this
+    dedicated check. See `GSolid.refine()`'s own pre-heal gate
+    (`geo/{occ,ocp}/topology.py`) for where this is used to decide
+    whether to STEP-round-trip-heal a shape before the same crash-prone
+    call.
+
+    Returns each offending face once; empty list if none found. Pure
+    Python, duck-typed on `GFace.Surface`/`GFace.Edges`/`GEdge.Length`
+    -- identical across all 3 engines, no native calls of its own."""
+    flagged = []
+    for face in solid.Faces:
+        if type(face.Surface).__name__ != "GPlane":
+            continue
+        for edge in face.Edges:
+            if edge.Length < DEGENERATE_EDGE_LENGTH_FLOOR:
+                flagged.append(face)
+                break
+    return flagged
+
+
 _SPLIT_RING_SURFACE_TYPES = ("GCylinder", "GCone", "GSphere", "GTorus")
 
 

@@ -1220,11 +1220,30 @@ class GSolid:
         `Gheal_topology`-healed copy instead of the raw original --
         cheap insurance against the exact same uncatchable-native-crash
         class already documented above for `ConeSphere.stp`, just a
-        different trigger."""
+        different trigger.
+
+        Second pre-heal signature (2026-10-14, see
+        `find_degenerate_plane_faces`'s own docstring for the full
+        `envelope_structure.stp` solid-1197 finding, ocp first, ported
+        here unchanged): a plane face carrying a native OCCT
+        *degenerate* edge is never legitimate (a plane has no singular
+        point for such an edge to represent) and was confirmed, by
+        direct bisection down to a minimal 2-face reproduction, to crash
+        this same `UnifyFaces=True` pass even with an unremarkable (not
+        inflated) BRep tolerance -- the tolerance-floor check above does
+        not catch it. Checked independently of (not instead of) the
+        tolerance floor, since the two signatures were confirmed to
+        occur independently of each other."""
         source_native = self.__native__
         from .queries import Gsolid_max_tolerance
 
-        if Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR:
+        needs_preheal = Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR
+        if not needs_preheal:
+            from ..solid_defects import find_degenerate_plane_faces
+
+            needs_preheal = bool(find_degenerate_plane_faces(self))
+
+        if needs_preheal:
             from .repair import Gheal_topology
 
             healed = Gheal_topology(self)
