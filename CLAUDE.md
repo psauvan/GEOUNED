@@ -305,6 +305,92 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`Gfuse_solids` (`geo/solid_ops.py`) could leave a face whose
+  `Surface` is `None` behind, fixed 2026-10-15 -- root cause of
+  `simple_solid_definition` crashing with a bare `KeyError:
+  <class 'NoneType'>` inside `merge_same_surface_faces`/`is_same_surface`,
+  on a solid built from `GEOUNED_mateo/envelope_structure/debug/
+  origSolid_141.stp`.** User-reported: "en la parte de merge_sliver_piece
+  de la linea 102 de split_surface, la funcion devuelve un solido cuyas
+  caras tienen superficie que tiene None type" -- a direct pointer at
+  `decom_one_generators.py::split_surfaces`'s own `merge_sliver_pieces`
+  call site.
+  **Root cause, confirmed by direct instrumentation of `merge_sliver_
+  pieces` (not guessed)**: `split_surfaces` hands it exactly 2 pieces for
+  this solid -- a real 122-million-mm^3 body and a genuine 712.5mm^3
+  sliver (`is_sliver_solid` true, `Volume/Area` well below
+  `SLIVER_SOLID_VOL_AREA_RATIO`) -- neither of which has any `None`-
+  surface face on its own. `merge_sliver_pieces` fuses the sliver into
+  its real neighbor via `Gfuse_solids`, and THAT fused result comes back
+  with 4 faces (areas 647995/383902/4.09/2.04 mm^2) whose native surface
+  type is `GeomAbs_SurfaceOfRevolution` -- `Gclassify_surface` doesn't
+  recognize this type (only Plane/Cylinder/Cone/Sphere/Torus), so
+  `GFace.Surface` is `None` for all 4. Confirmed via a lossless
+  `Gexport_binary`/`Gload_binary` round-trip of both input pieces plus a
+  standalone `Gfuse_solids` call in isolation: `Gfuse_solids`'s own final
+  `refine()` step (`ShapeUpgrade_UnifySameDomain`, `rel_tol=
+  FUSE_REFINE_REL_TOL`) merges/rebuilds a tangent seam between the
+  sliver's own geometry and its neighbor into a generalized revolution
+  surface instead of simplifying it back to one of the 5 recognized
+  analytic types -- the exact same `GeomAbs_SurfaceOfRevolution`-after-a-
+  native-merge signature already documented for `Gsubstitute_spline_
+  quadrics` (built for a degenerate-torus cutting tool's own boolean-cut
+  fragments, see the "Four real bugs found and fixed in
+  `Gsubstitute_spline_quadrics`" entry below) -- just triggered by an
+  ordinary fuse this time, not a cut.
+  **A second, independent bug found and fixed while verifying the
+  obvious fix (calling `Gsubstitute_spline_quadrics` on the fuse
+  result)**: `_project_curve_2d` (`geo/{occ,ocp}/spline_quadrics.py`)
+  raised `Standard_ConstructionError` from `Geom2dAPI_Interpolate` on one
+  of the 2 tiny (4.09/2.04mm^2) faces -- confirmed via direct
+  instrumentation: one of that face's own edges has a parameter range of
+  only `1.3e-6`, several orders of magnitude below anything the
+  function's own `n=20`-point sampling was ever designed for, so nearly
+  all 21 sampled (u,v) points land on top of each other -- a dataset
+  `Geom2dAPI_Interpolate` correctly refuses to fit a smooth curve
+  through. Not a true OCCT-degenerate edge (`BRep_Tool.Degenerated_s` is
+  `False`), just pathologically short -- the function's own EXISTING
+  special case for a real degenerate edge (a hand-built `Geom2d_Line`
+  through the vertex) doesn't trigger for it.
+  **Fix 1**: `_project_curve_2d` now catches that construction failure
+  and retries with just the 2 endpoint samples (immune to the
+  "many near-duplicate interior points" failure mode, and geometrically
+  indistinguishable from the full fit over a span this negligible); if
+  even THAT fails (the two endpoints themselves coincide), falls back to
+  the same hand-built `Geom2d_Line` pattern the real-degenerate-edge case
+  already uses. Pure exception handling, no change to the already-
+  working, non-degenerate sampling path.
+  **Fix 2**: `Gfuse_solids` (`geo/solid_ops.py`) now runs this same
+  opportunistic substitution itself, right after its own `refine()` call:
+  when the fused-and-refined result has exactly 1 solid and still
+  carries an unsupported face (`Gspline_surface(gsolid.__native__)`),
+  and a real `tolerances` was passed in, it tries `Gsubstitute_spline_
+  quadrics` and adopts the result only if every unsupported face
+  resolved. Guarded by `CAD_ENGINE != "freecad"` (no such function
+  there) and wrapped in the same "never let an auxiliary repair step
+  abort an otherwise-fine operation" `try`/`except` this whole project
+  uses everywhere else for this class of safety net -- a function-local
+  import, matching this file's own established "no import cycle with
+  `geo/__init__.py`" convention. Placed in `Gfuse_solids` itself (not
+  just `merge_sliver_pieces`'s own call site) since the defect is a
+  property of `refine()`'s own native behavior, not of any one caller --
+  every other `Gfuse_solids` call site (e.g.
+  `build_shape_functions.py::build_complex_shape`'s composite
+  meta-surface construction) benefits the same way.
+  **Verified**: the real fixture (`origSolid_141.stp`, via the user's own
+  `Test RoundCorners/myrun.py`, real settings) now runs end to end
+  (`geo.run()` + `export_csg`) with no crash -- previously a hard
+  `KeyError` during `build_solid_definition`. Full `tests/geo` +
+  `test_cadtocsg.py` + `test_csgtocad.py` green on all 3 engines (ocp 219
+  passed/2 skipped, occ 261 passed, freecad 272 passed/14 skipped),
+  zero regressions. **Not done this session**: a dedicated `Solidos/
+  test_models` corpus differential scan for this specific change (the
+  trigger condition -- a fuse result still carrying an unsupported
+  surface after `refine()` -- is rare enough that no existing test
+  fixture happens to exercise it, so this is additive-only as far as the
+  test suite can show; a corpus-wide scan would confirm it never fires
+  elsewhere, not yet run).
+
 - **`GSolid.refine()` (occ/ocp) gained a SECOND, independent pre-heal
   trigger, 2026-10-14 -- a plane face carrying a native OCCT degenerate
   edge, fixed via the new `find_degenerate_plane_faces` detector

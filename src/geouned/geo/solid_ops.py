@@ -164,6 +164,35 @@ def Gfuse_solids(parts, tolerances=None):
         except Exception:
             pass
 
+    # `refine()`'s own ShapeUpgrade_UnifySameDomain pass (just above) can
+    # leave a face whose native surface is a generic GeomAbs_
+    # SurfaceOfRevolution (or BSpline) that is secretly one of the 5
+    # analytic types -- Gclassify_surface reports it as `None`, which a
+    # downstream face-identity check (e.g. `is_same_surface`) then
+    # crashes on with a bare KeyError. Confirmed live, 2026-10-15,
+    # envelope_structure.stp solid 1197's own merge_sliver_pieces call: a
+    # 712mm^3 sliver fused into its real neighbor left 4 faces this way,
+    # all of which turned out to be real torus patches (the rounded
+    # tangent blend the fuse+refine created). Try the same opportunistic
+    # substitution the load-time/post-split repair cascades already use
+    # elsewhere; never let this auxiliary step abort an otherwise-fine
+    # fuse (freecad has no `Gsubstitute_spline_quadrics` at all, and a
+    # bare `tolerances=None` caller -- GEOReverse sometimes passes this --
+    # has no fit/volume tolerance to run it with, so both are skipped).
+    if tolerances is not None and len(gsolid.Solids) == 1:
+        try:
+            from . import CAD_ENGINE
+
+            if CAD_ENGINE != "freecad":
+                from . import Gspline_surface, Gsubstitute_spline_quadrics
+
+                if Gspline_surface(gsolid.__native__):
+                    substituted, resolved = Gsubstitute_spline_quadrics(gsolid, tolerances)
+                    if resolved:
+                        gsolid = substituted
+        except Exception:
+            pass
+
     if gsolid.Volume < 0:
         gsolid = gsolid.reverse()
     return gsolid

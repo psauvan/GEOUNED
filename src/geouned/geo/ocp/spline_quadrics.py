@@ -434,9 +434,45 @@ def _project_curve_2d(edge, first, last, new_surf, n: int = 20):
         uv_prev = gp_Pnt2d(x, y)
         pts2d.SetValue(k + 1, uv_prev)
         params.SetValue(k + 1, t)
-    interpolator = Geom2dAPI_Interpolate(pts2d, params, False, 1e-7)
-    interpolator.Perform()
-    return interpolator.Curve()
+    try:
+        interpolator = Geom2dAPI_Interpolate(pts2d, params, False, 1e-7)
+        interpolator.Perform()
+        return interpolator.Curve()
+    except Exception:
+        # A pathologically short edge (its own 3D parameter range
+        # collapsing to a near-zero span, e.g. a tiny sliver face left
+        # behind by a fuse+refine) samples down to numerically duplicate
+        # 2D points at every one of the n+1 steps above -- not a true
+        # OCCT-degenerate edge (BRep_Tool.Degenerated_s is False), just
+        # too short for a smooth multi-point fit, which
+        # Geom2dAPI_Interpolate rejects outright (Standard_
+        # ConstructionError). Confirmed live, 2026-10-15,
+        # envelope_structure.stp solid 1197's own 4mm^2 fragment (a
+        # sliver merged into its neighbor by `merge_sliver_pieces`):
+        # one edge's own parameter range is ~1.3e-6, several orders of
+        # magnitude below anything the n+1 sampling above was ever
+        # designed for. Retry with just the two ENDPOINT samples --
+        # over a span this negligible any real curvature is
+        # immaterial, and a 2-point interpolation is immune to the
+        # "many near-duplicate interior points" failure mode.
+        pts2d_2 = TColgp_HArray1OfPnt2d(1, 2)
+        params_2 = TColStd_HArray1OfReal(1, 2)
+        pts2d_2.SetValue(1, pts2d.Value(1))
+        pts2d_2.SetValue(2, pts2d.Value(n + 1))
+        params_2.SetValue(1, params.Value(1))
+        params_2.SetValue(2, params.Value(n + 1))
+        try:
+            interpolator = Geom2dAPI_Interpolate(pts2d_2, params_2, False, 1e-7)
+            interpolator.Perform()
+            return interpolator.Curve()
+        except Exception:
+            # Even the two endpoints themselves coincide (a genuinely
+            # degenerate span) -- fall back to the same hand-built
+            # Geom2d_Line pattern _substitute_face_surface already uses
+            # for a native-degenerate edge (an arbitrary direction, since
+            # the edge's own real 3D extent is negligible either way).
+            p0 = pts2d.Value(1)
+            return Geom2d_Line(p0, gp_Dir2d(1, 0))
 
 
 def _substitute_face_surface(face, new_surf) -> None:
