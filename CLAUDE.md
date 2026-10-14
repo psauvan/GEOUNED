@@ -305,6 +305,84 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`GSolid.refine()` (occ/ocp) now pre-heals a shape with an inflated
+  BRep tolerance before calling `ShapeUpgrade_UnifySameDomain.Build()`,
+  fixed 2026-10-14 -- root cause of `GEOUNED_mateo/envelope_structure/
+  debug/origSolid_539.stp` stopping during decomposition with no error
+  message at all (a native access violation, which Windows reports as
+  exit code `-1073741819`/`0xC0000005` -- not a Python exception, so
+  nothing is ever printed).** User-reported: the conversion "se para en
+  la decomposicion sin ningun mensaje de error" (stops during
+  decomposition with no error message).
+  **Root-caused via `faulthandler.dump_traceback_later` (a periodic
+  stack dump, not just the usual crash-handler hook, since the failure
+  mode wasn't yet known to be a hang vs. a hard crash)**: the exact
+  crash site is `GSolid.refine()` (`geo/{occ,ocp}/topology.py`), called
+  from `Gfuse_solids` (`geo/solid_ops.py`), called from
+  `build_complex_shape`/`makeRoundCorner` while building a RoundCorner
+  composite meta-surface's own CAD shape during `generic_split`'s
+  candidate construction -- the exact same `ShapeUpgrade_UnifySameDomain`
+  access-violation crash CLASS this function's own docstring already
+  extensively documents as an accepted permanent limitation for
+  `Mixed/ConeSphere.stp` (confirmed still unaffected/unchanged by this
+  fix, re-tested directly -- a genuinely different trigger, not the same
+  bug). Reproduces identically under BOTH occ and ocp (exit code
+  `-1073741819` either way); not yet tested under freecad (its own
+  `.refine()` uses `Part.Shape.removeSplitter()`, a different native
+  operation with no history of this crash class -- per the existing
+  ConeSphere.stp precedent, expected to be unaffected, not verified this
+  session).
+  **Found the trigger by exporting the EXACT crashing shape to STEP
+  right before the call that crashes** (a monkeypatched `GSolid.refine`
+  writing the shape to disk immediately before `unify.Build()`, since a
+  native access violation gives no chance to react afterward) and
+  inspecting it in isolation: the shape carries 2 non-degenerate edges
+  with `BRep_Tool.Tolerance_s` = 19.07mm (a clean solid sits at
+  ~1e-6..1e-5mm) -- the exact "BOPAlgo papered a near-tangent junction
+  over with inflated tolerance" signature `Gsolid_max_tolerance`'s own
+  docstring already names (the same one `generic_split`'s own
+  tolerance-weld heal-retry elsewhere in this cascade reads). Confirmed
+  directly: re-loading that EXACT exported STEP file and calling
+  `unify.Build()` on the freshly-reloaded copy (bit-identical geometry,
+  just re-serialized) succeeds cleanly -- the same STEP-round-trip
+  healing effect this project has repeatedly relied on elsewhere
+  (`Gheal_topology`), just never wired into `.refine()`'s own call site
+  before.
+  **Fix**: new `UNIFY_PREHEAL_TOLERANCE_FLOOR = 1.0e-3` constant
+  (`geo/constants.py`, reusing the historical value from the now-retired
+  `TOLERANCE_WELD_FLOOR` split-retry mechanism this exact signature was
+  first measured for -- see the "EC_SUPPORT#BYZ2TW_41" entry below --
+  not re-measured from scratch, since a false positive here only costs
+  one harmless extra STEP round-trip rather than a wrong geometric
+  decision). `GSolid.refine()` (both engines) now checks
+  `Gsolid_max_tolerance(self) > UNIFY_PREHEAL_TOLERANCE_FLOOR` first;
+  when true, it runs `Gheal_topology` (the existing in-memory STEP
+  round-trip repair, already gated on `BRepCheck_Analyzer` validity +
+  `MAX_REPAIR_VOLUME_REL_CHANGE` volume conservation before accepting
+  its own result) and feeds `unify.Build()` the healed copy instead of
+  the raw original. Both `Gsolid_max_tolerance` (`geo/{occ,ocp}/
+  queries.py`) and `Gheal_topology` (`geo/{occ,ocp}/repair.py`) are
+  imported function-locally inside `refine()` to avoid a module-import
+  cycle (`queries.py`/`repair.py` both already import from `topology.py`
+  at their own top level).
+  **Verified**: `origSolid_539.stp` now converts end to end (decompose +
+  build_solid_definition + build_void + export_csg) on both occ/ocp --
+  previously a hard crash on either. `Mixed/ConeSphere.stp` re-tested
+  directly and confirmed still crashes identically (unaffected, as
+  expected -- its own trigger is a different signature). Full
+  `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` green on both
+  occ/ocp (261 passed/1 skipped each, zero regressions -- `.refine()` is
+  exercised by many existing fixtures, e.g. every RoundCorner-composite
+  construction, so this is real coverage of the gate's own "mostly a
+  no-op" branch, not just the one new fixture). **Not done this
+  session**: a dedicated `Solidos/test_models` corpus differential scan
+  specifically for this change (the full pytest suites already exercise
+  `.refine()` broadly with zero behavior change observed, and the gate's
+  own cost on a false positive is bounded and already independently
+  verified via `Gheal_topology`'s own volume/validity guard, so this was
+  judged sufficient for a single-session fix -- flagged here in case a
+  future corpus-wide regression needs re-checking this entry first).
+
 - **Three stacked `.fix()` call sites in the decomposition recursion
   (`decom_one_generators.py`) silently accepting a corrupted
   `ShapeFix_Shape`/`ShapeUpgrade_UnifySameDomain` repair, fixed
