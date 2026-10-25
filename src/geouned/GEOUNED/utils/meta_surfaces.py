@@ -1,3 +1,5 @@
+import math
+
 from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import twoPimod
 from .geometry_gu import other_face_edge
@@ -318,6 +320,55 @@ def get_tcone_surfaces(cone, solidFaces, *, tolerances):
         return surfaces, faceindex
 
 
+def _farthest_corner_plane_pair(cyl_shell, adjacent_planes):
+    """Among more than 2 corner-plane candidates `get_adjacent_cylplane`
+    already found (and already filtered for a normal orthogonal to the
+    cylinder's own axis -- that part of the selection is correct as is,
+    this only covers the >2 case it used to reject outright), pick the
+    pair whose own touching edges (`item[1]`) are farthest apart --
+    measured as the arc they draw over the real, trimmed cylindrical
+    FACE (`cyl_shell.Surface.parameter`, the one common reference frame
+    `ShellFaceGu._U_parameter_faces` already uses for a multi-piece
+    shell's own overall extent), not a straight-line 3D distance, and
+    not each candidate's own, possibly differently-originated, local
+    surface parametrization (two real face pieces of the exact same
+    analytic cylinder can have a different U origin -- the documented
+    frame-mismatch class of bug this project already fixed once for
+    `gen_plane_cone`/`gen_plane_cylinder`, see CLAUDE.md).
+
+    Each candidate's own azimuthal position is unwrapped relative to
+    the first one (add/subtract a full turn until within half a turn of
+    it) before comparing -- safe here because the round corner's own
+    cylinder is never a fully closed face (the caller already rejected
+    that case earlier), so every candidate's real position lies within
+    one contiguous, less-than-a-full-turn span, with no genuine
+    ambiguity about which way around the branch cut sits."""
+    radius = cyl_shell.Surface.Radius
+    positions = []
+    u_ref = None
+    for item in adjacent_planes:
+        point = item[1].Vertexes[0]
+        u = cyl_shell.Surface.parameter(point)[0]
+        if u_ref is None:
+            u_ref = u
+        else:
+            while u - u_ref > math.pi:
+                u -= twoPi
+            while u - u_ref < -math.pi:
+                u += twoPi
+        positions.append(u)
+
+    best_pair = None
+    best_arc = -1.0
+    for i in range(len(adjacent_planes)):
+        for j in range(i + 1, len(adjacent_planes)):
+            arc = abs(positions[i] - positions[j]) * radius
+            if arc > best_arc:
+                best_arc = arc
+                best_pair = (adjacent_planes[i], adjacent_planes[j])
+    return best_pair
+
+
 def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None, *, tolerances):
 
     rc_list = []
@@ -340,10 +391,12 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
         return None, None
 
     adjacent_planes = get_adjacent_cylplane(cyl_shell, Faces, cornerPlanes=True, tolerances=tolerances)
-    if len(adjacent_planes) != 2:
+    if len(adjacent_planes) < 2:
         return None, None
-
-    ep1, ep2 = adjacent_planes
+    elif len(adjacent_planes) == 2:
+        ep1, ep2 = adjacent_planes
+    else:
+        ep1, ep2 = _farthest_corner_plane_pair(cyl_shell, adjacent_planes)
     p1, p2 = ep1[3], ep2[3]
 
     # cyl_plane_region_conf still takes the single seed `cylinder` (not the
