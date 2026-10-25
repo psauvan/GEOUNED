@@ -1,4 +1,4 @@
-import math
+﻿import math
 import logging
 
 from geouned.GEOUNED.utils.geometry_gu import ShellFaceGu, merge_periodic_uv
@@ -10,7 +10,7 @@ from ..utils.basic_functions_part1 import (
 from ..utils.basic_functions_part2 import is_same_plane
 from ..utils.build_region.Objects import plane_polygon_from_box
 from ..utils.geouned_classes import GeounedSurface
-from ...geo import GPlane, GSphere, GBoundBox, GVector, Gmake_wire
+from ...geo import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR, GPlane, GSphere, GBoundBox, GVector, Gmake_wire
 from ...geo.constants import NUMERIC_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel
 
@@ -505,6 +505,8 @@ def one_degenerated_torus_plane(shell):
         wire = Gmake_wire(list(boundary_edges))
         axis = get_axis_inertia(wire.MatrixOfInertia)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         axis = GVector(0, 0, 0)
         for e in boundary_edges:
             axis = axis + get_axis_inertia(e.MatrixOfInertia)

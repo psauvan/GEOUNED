@@ -1,7 +1,9 @@
-import sys
+﻿import sys
 import threading
 import time
 from tqdm import tqdm
+
+from ...geo import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 
 
 class ReturnValueThread(threading.Thread):
@@ -15,6 +17,8 @@ class ReturnValueThread(threading.Thread):
         try:
             self.result = self._target(*self._args, **self._kwargs)
         except Exception as exc:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             print(f"{type(exc).__name__}: {exc}", file=sys.stderr)  # properly handle the exception
 
     def join(self, *args, **kwargs):

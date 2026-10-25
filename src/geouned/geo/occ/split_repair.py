@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/split_repair.py
 
 Non-manifold-solid repair for a raw BOPAlgo_Splitter result: face-
@@ -30,6 +30,7 @@ from OCC.Core.TopoDS import (
     topods,
 )
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..constants import DEFAULT_FIX_TOLERANCE, MAX_REPAIR_VOLUME_REL_CHANGE, SEW_TOLERANCE
 from ._native_utils import _volume_props
 from ..volume_utils import volume_within
@@ -147,7 +148,8 @@ def _repair_non_manifold_solid(native_solid, fix_tolerance: float = DEFAULT_FIX_
             if solid_maker.IsDone():
                 results.append(solid_maker.Solid())
         except Exception:
-            pass
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
 
     if not results:
         return [native_solid]
@@ -259,6 +261,8 @@ def _separate_edge_joined_components(native_solid) -> "list | None":
         try:
             solid_maker = BRepBuilderAPI_MakeSolid(shell)
         except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             return None
         if not solid_maker.IsDone():
             return None

@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/solid_defects.py
 
 Split out of `vector_geometry.py` (2026-08-28) -- load-time CAD-defect
@@ -21,6 +21,7 @@ across all 3 engines, exactly like `vector_geometry.py`/
 
 from __future__ import annotations
 
+from . import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from .surface_geometry import axes_parallel
 from .constants import (
     DEFAULT_MIN_FACE_WIDTH,
@@ -53,6 +54,8 @@ def valid_solid(solid, min_volume: float) -> bool:
         vol = solid.Volume
         area = solid.Area
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return False
     if vol < 0:
         return False
@@ -260,7 +263,8 @@ def is_sliver_face(face, min_face_width: float) -> bool :
         if cw is not None and cw < min_face_width:
             return True
     except Exception:
-        pass
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
     return False
 
 def count_split_ring_pairs(solid, rel_tol: float = SPLIT_RING_REL_TOL) -> int:

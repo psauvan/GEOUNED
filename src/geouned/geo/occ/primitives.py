@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/primitives.py
 
 Primitive construction (Gmake_box/_cylinder/_cone/.../_compound).
@@ -44,6 +44,7 @@ from OCC.Core.TopoDS import (
     TopoDS_Shell,
     topods,
 )
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..vector_geometry import GVector, arbitrary_perpendicular
 from .topology import GEdge, GFace, GPlane, GShell, GSolid, GWire
 from ._native_utils import to_native_vector
@@ -362,7 +363,8 @@ def Gmake_solid(shell: GShell) -> "GSolid | None":
         if solid_maker.IsDone():
             return GSolid(solid_maker.Solid())
     except Exception:
-        pass
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
     return None
 
 

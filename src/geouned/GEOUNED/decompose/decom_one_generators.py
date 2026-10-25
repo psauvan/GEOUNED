@@ -8,6 +8,9 @@ from ...boolean_utils.boolean_function import evaluate_three_valued
 from ..utils.build_region.build_region import get_cell_object
 from .generators import get_surfaces
 from ...geo import (
+    STRICT_EXCEPTIONS,
+    STRICT_LEVEL_CANDIDATE,
+    STRICT_LEVEL_REPAIR,
     GCompound,
     GSolid,
     Gheal_topology,
@@ -64,7 +67,8 @@ def split_surfaces(solid, options, tolerances):
             if _fix_result_is_sane(fixed_s, s.Volume):
                 s = fixed_s
         except Exception:
-            pass
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
         # A boolean cut landing exactly tangent to a pre-existing surface
         # can leave a residual "phantom" face duplicating part of a real
         # neighboring face -- `generic_split`'s own recursive cuts can
@@ -86,7 +90,8 @@ def split_surfaces(solid, options, tolerances):
                 if repaired is not None:
                     s = repaired
         except Exception:
-            pass
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
         fixed_solids.append(s)
 
     # A thin sliver that survived Gsplit's own repair cascade (see
@@ -259,6 +264,8 @@ def _face_anchored_points(solid):
         try:
             outward = face.orientation_outward(solid)
         except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             continue
         u_min, u_max, v_min, v_max = face.ParameterRange
         for iu in range(STUCK_FRAGMENT_PROBE_GRID):
@@ -271,6 +278,8 @@ def _face_anchored_points(solid):
                     point = face.value_at(u, v)
                     normal = face.normal_at(u, v)
                 except Exception:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                        raise
                     continue
                 inward = -normal if outward else normal
                 d = length0
@@ -553,6 +562,8 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                     "cell's boolean expression."
                 )
         except Exception as e:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_CANDIDATE:
+                raise
             comsolid_solids = [solid]
             logger.info(f"Failed to build or split base with {surf.Type} surface: {e}")
 
@@ -639,6 +650,8 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
         try:
             fixed = solid.fix(tolerances.fix_tolerance)
         except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             fixed = solid
         # .fix() is a no-op for the large majority of genuinely-stuck
         # fragments (measured directly, 2026-10-09, on
@@ -689,6 +702,8 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                 try:
                     surf.build_surface(bbox, tolerances, forward=True)
                 except Exception:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_CANDIDATE:
+                        raise
                     continue
                 if surf.shape is not None:
                     fresh_tools.append(surf)
@@ -703,6 +718,8 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                     # no worse off than not having tried.
                     return generic_split(rebuilt, options, tolerances, loop, healed=True)
                 except Exception:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                        raise
                     logger.info("STEP round-trip heal retry failed; keeping the original fragment")
 
     if not new_split and fallback_solids is not None:

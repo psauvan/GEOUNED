@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/split.py
 
 SplitResult and Gsplit's own orchestration (_raw_bop_split,
@@ -18,6 +18,7 @@ from OCC.Core.BRepCheck import BRepCheck_Analyzer
 from OCC.Core.TopAbs import TopAbs_SHELL
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..solid_defects import find_sliver_faces, valid_solid
 from .topology import GShape, GSolid
 from ._native_utils import _volume_props
@@ -309,6 +310,8 @@ def _resolve_solid_candidate(g: GSolid, tolerances) -> "GSolid | None":
             return None
         solid = maker.Solid()
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
     if not BRepCheck_Analyzer(solid).IsValid():
         return None

@@ -1,4 +1,4 @@
-#
+﻿#
 # Set of useful functions used in different parts of the code
 #
 import logging
@@ -52,6 +52,8 @@ from .build_shape_functions import (
 )
 from ...geo.surface_geometry import is_same_oriented_plane_surface, opposite_sense
 from ...geo import (
+    STRICT_EXCEPTIONS,
+    STRICT_LEVEL_REPAIR,
     GBoundBox,
     GSolid,
     GVector,
@@ -91,6 +93,8 @@ class GeounedSolid:
                 try:
                     self.Solids = comsolid.refine().Solids
                 except Exception:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                        raise
                     self.Solids = comsolid.Solids
 
                 for i, s in enumerate(self.Solids):

@@ -37,6 +37,66 @@ CAD_ENGINE = _engine
 GEOReverse's own dispatch so its export follows the same
 `GEOUNED_CAD_ENGINE` choice as GEOUNED's own forward pipeline."""
 
+STRICT_LEVEL_CANDIDATE = 0b01
+"""Bit 0 (value 1) of `STRICT_EXCEPTIONS` -- candidate-SELECTION sites:
+a loop that tries several equally-valid options in turn (a candidate
+cutting surface in `generic_split`'s own search, a candidate (tolerance,
+face) configuration in `_try_coaxial_cone_split`, a single boolean cut
+of one real surface against one real solid in GEOReverse's own
+`SplitSolid`) and reacts to one option failing by trying the next, or by
+falling back to "leave this solid uncut" -- NOT by retrying the SAME
+option a different way. A bug in how a candidate is BUILT (wrong
+attribute path, bad argument order, ...) looks identical, from this
+loop's own point of view, to "this candidate's geometry doesn't actually
+split anything" -- which is exactly how the `makeTCone`/`ConeParams.Cone`
+AttributeError stayed hidden in production despite every targeted unit
+test passing (they called the sewing primitive directly, bypassing the
+buggy wrapper and its own silencing `except`)."""
+
+STRICT_LEVEL_REPAIR = 0b10
+"""Bit 1 (value 2) of `STRICT_EXCEPTIONS` -- low-level REPAIR/fallback
+sites: a "never raises" contract other code structurally depends on
+(`Gmerge_coplanar_planes`, `Gfuse_solids`'s own opportunistic refine/
+substitute attempts, the `geo/{occ,ocp}/repair.py` cascades, the
+decompose cache's own read/write guards, ...). These fire ROUTINELY on
+real, complex geometry (confirmed live on `testing/inputSTEP/BC.stp`:
+`Gmerge_coplanar_planes`'s own `BRepBuilderAPI_Sewing.Perform()` call
+hits a native `Standard_NoSuchObject` as part of ordinary operation, not
+a bug) -- raising here does not surface a hidden bug, it just breaks a
+documented, widely-relied-on fallback and changes the whole pipeline's
+downstream behavior unpredictably. Enable this level only to inspect
+one specific repair step in isolation, never to run the full pipeline
+or the test suite end to end."""
+
+_strict_raw = os.environ.get("GEOUNED_STRICT_EXCEPTIONS", "0").strip()
+try:
+    STRICT_EXCEPTIONS = int(_strict_raw, 0)
+except ValueError:
+    STRICT_EXCEPTIONS = 0
+"""Development-time escape hatch for this codebase's many "never let one
+candidate's/one repair step's failure abort an otherwise-fine operation"
+`except Exception:` blocks -- a bitmask of `STRICT_LEVEL_CANDIDATE` (1)
+and `STRICT_LEVEL_REPAIR` (2), read once here, at import time, matching
+`CAD_ENGINE`'s own convention, since many of the call sites that need
+this (deep in `geo/`) only ever have `tolerances` in scope, never a
+`Settings`/`Options` object to thread a flag through.
+
+Set `GEOUNED_STRICT_EXCEPTIONS` to `0` (default, every `except` swallows
+exactly as before), `1` (binary `01`, candidate-selection sites only --
+safe to run against the full test suite or a real pipeline run, see
+`STRICT_LEVEL_CANDIDATE`'s own docstring), `2` (binary `10`,
+repair/fallback sites only -- see `STRICT_LEVEL_REPAIR`'s own docstring
+for why this is noisy and pipeline-breaking by design, useful only when
+inspecting one specific repair step), or `3` (binary `11`, both). This is
+NOT a blanket "disable every try/except in the codebase" switch -- only
+sites that explicitly check `STRICT_EXCEPTIONS & STRICT_LEVEL_CANDIDATE`
+or `STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR` (always as the first line of
+their own `except` block) are affected; narrow, expected-and-handled
+exceptions (e.g. a single native call wrapped to retry with a different
+tolerance) are deliberately left alone. Apply this pattern to a new
+silencing site whenever it's implicated in debugging a real bug, rather
+than retrofitting the whole codebase at once."""
+
 from .vector_geometry import (
     GBoundBox,
     GMatrix,

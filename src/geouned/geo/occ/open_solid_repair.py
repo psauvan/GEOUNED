@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/open_solid_repair.py
 
 Detection + targeted repair of *open* (non-watertight) TopoDS_Solids left
@@ -67,6 +67,7 @@ from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID, TopAbs_WIRE
 from OCC.Core.TopExp import TopExp_Explorer, topexp
 from OCC.Core.TopoDS import TopoDS_Shell, topods
 
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..constants import (
     COLLINEAR_SIN_TOL,
     DEGENERATE_EDGE_LENGTH_FLOOR,
@@ -576,6 +577,8 @@ def _close_retrace_spike(native_solid, tolerances):
                 solid = fixed
         return solid
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
 
 
@@ -621,6 +624,8 @@ def _close_open_solid(native_solid, problem: str, tolerances):
     try:
         result = repair(native_solid, tolerances)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
     if result is None or _free_edges(result):
         return None

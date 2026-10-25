@@ -34,6 +34,7 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from OCC.Core.TopTools import TopTools_ListOfShape
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_CANDIDATE
 from ..vector_geometry import GVector
 from ..surface_geometry import (
     is_coaxial_cone_cylinder_pair,
@@ -298,6 +299,8 @@ def _try_coaxial_cone_split(base: "GSolid", tool: "GSolid", tolerance_floor: flo
         try:
             presplit = Gmake_solid(Gmake_shell(new_faces))
         except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_CANDIDATE:
+                raise
             presplit = None
         if presplit is None:
             continue

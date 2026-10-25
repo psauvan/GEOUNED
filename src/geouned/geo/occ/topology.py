@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/topology.py
 
 Analytic surface descriptors (GPlane/GCylinder/GCone/GSphere/GTorus),
@@ -103,6 +103,7 @@ from ._native_utils import (
     _volume_props,
     to_native_vector,
 )
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..constants import (
     ANGLE_THRESHOLD,
     BOX_TOL,
@@ -983,6 +984,8 @@ class GFace:
                             exp = TopExp_Explorer(common, TopAbs_EDGE)
                             has_content = exp.More()
             except Exception:
+                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                    raise
                 has_content = False
 
             if has_content:
@@ -1258,6 +1261,8 @@ class GSolid:
             refined = unify.Shape()
             refined_volume = _volume_props(refined).Mass()
         except RuntimeError:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             return GSolid(native)
         if not volume_within(refined_volume, original_volume, rel_tol):
             return GSolid(native)

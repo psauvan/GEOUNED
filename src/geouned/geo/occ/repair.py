@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/repair.py
 
 Load-time CAD-defect repair: Gdefeature, Gcollapse_split_rings,
@@ -76,6 +76,7 @@ from OCC.Core.TopTools import (
     TopTools_IndexedDataMapOfShapeListOfShape,
     TopTools_ListOfShape,
 )
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..vector_geometry import GVector
 from ..solid_defects import (
     check_solid_defects,
@@ -136,6 +137,8 @@ def Gdefeature(solid: "GSolid", faces: "list[GFace]", sliver_edge_rel_tol) -> "G
     try:
         defeat.Build()
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
     if not defeat.IsDone():
         return None
@@ -256,6 +259,8 @@ def Gcollapse_split_rings(solid: "GSolid", tolerances) -> "GSolid | None":
         healed = coerced if coerced is not None else built_solid
         result = GSolid(healed)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
 
     if not result.is_valid():
@@ -542,6 +547,8 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
             healed = closed
         result = GSolid(healed)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
 
     if not result.is_valid():
@@ -770,6 +777,8 @@ def Gmerge_coplanar_planes(solid: "GSolid", tolerances) -> "GSolid":
         fixer.Perform()
         result = GSolid(fixer.Shape())
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return solid
 
     if not BRepCheck_Analyzer(result.__native__).IsValid():
@@ -1182,6 +1191,8 @@ def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
         # flagged for a future session, not silently dropped.
         result = GSolid(fixer.Shape())
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
 
     if not result.is_valid():
@@ -1310,6 +1321,8 @@ def Gface_valid(face) -> bool:
     try:
         return bool(BRepCheck_Analyzer(native).IsValid())
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return False
 
 
@@ -1373,6 +1386,8 @@ def Gheal_topology(solid: "GSolid") -> "GSolid | None":
             return None
         return GSolid(healed)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return None
 
 

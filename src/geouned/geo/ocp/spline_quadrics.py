@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/ocp/spline_quadrics.py
 
 Detect a BSplineSurface or SurfaceOfRevolution face that is secretly a
@@ -53,6 +53,7 @@ from OCP.TColStd import TColStd_HArray1OfReal
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopoDS import TopoDS
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..constants import NUMERIC_DOUBLE_TOL
 from ._native_utils import _volume_props
 from .topology import GSolid, Gclassify_surface
@@ -439,6 +440,8 @@ def _project_curve_2d(edge, first, last, new_surf, n: int = 20):
         interpolator.Perform()
         return interpolator.Curve()
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         # A pathologically short edge (its own 3D parameter range
         # collapsing to a near-zero span, e.g. a tiny sliver face left
         # behind by a fuse+refine) samples down to numerically duplicate
@@ -466,6 +469,8 @@ def _project_curve_2d(edge, first, last, new_surf, n: int = 20):
             interpolator.Perform()
             return interpolator.Curve()
         except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             # Even the two endpoints themselves coincide (a genuinely
             # degenerate span) -- fall back to the same hand-built
             # Geom2d_Line pattern _substitute_face_surface already uses

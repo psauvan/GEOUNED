@@ -16,6 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
+from . import STRICT_EXCEPTIONS, STRICT_LEVEL_CANDIDATE, STRICT_LEVEL_REPAIR
 from .constants import (
     DEFAULT_FIX_TOLERANCE,
     DEGENERATE_SOLID_VOL_AREA_RATIO,
@@ -137,6 +138,8 @@ def Gfuse_solids(parts, tolerances=None):
     try:
         fused = Gfuse(parts)
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         fused = None
 
     if fused is not None:
@@ -147,6 +150,8 @@ def Gfuse_solids(parts, tolerances=None):
             try:
                 fixed = fused.fix(fix_tolerance)
             except Exception:
+                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                    raise
                 fixed = None
 
             if fixed is not None and fixed.is_valid():
@@ -162,7 +167,8 @@ def Gfuse_solids(parts, tolerances=None):
             if refined.is_valid():
                 gsolid = refined
         except Exception:
-            pass
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
 
     # `refine()`'s own ShapeUpgrade_UnifySameDomain pass (just above) can
     # leave a face whose native surface is a generic GeomAbs_
@@ -188,7 +194,8 @@ def Gfuse_solids(parts, tolerances=None):
                 if resolved:
                     gsolid = substituted
         except Exception:
-            pass
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
 
     if gsolid.Volume < 0:
         gsolid = gsolid.reverse()
@@ -241,6 +248,8 @@ def is_sliver_solid(piece) -> bool:
     try:
         area = piece.Area
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return False
     if area == 0:
         return False
@@ -496,6 +505,8 @@ def SplitSolid(base, surfacesCut, cellObj, tolerances, classify):
             # printed rather than swallowed -- same "surface the real
             # error" principle already applied to
             # CAD/buildCAD.py::BuildUniverseCells this same session.
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_CANDIDATE:
+                raise
             print(f"SplitSolid: Gsplit failed ({type(e).__name__}: {e}) -- falling back to uncut solid")
             Solids = []
         if not Solids:

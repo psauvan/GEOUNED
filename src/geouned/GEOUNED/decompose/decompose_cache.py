@@ -1,4 +1,4 @@
-"""
+﻿"""
 GEOUNED/decompose/decompose_cache.py
 
 Persists each solid's decomposed convex pieces (`main_split`'s own
@@ -73,7 +73,7 @@ import shutil
 from importlib.metadata import version
 from pathlib import Path
 
-from ...geo import CAD_ENGINE, GSolid, Gexport_binary, Gload_binary, kernel_version
+from ...geo import CAD_ENGINE, STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR, GSolid, Gexport_binary, Gload_binary, kernel_version
 from ...geo.constants import TMP_CACHE
 
 logger = logging.getLogger("general_logger")
@@ -189,6 +189,8 @@ class DecomposeCache:
                             try:
                                 self._flat_pieces[namespace] = Gload_binary(str(bin_path))
                             except Exception as e:
+                                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                                    raise
                                 logger.warning(
                                     "decompose cache: failed to read %s (%s: %s) -- treating the "
                                     "'%s' namespace as uncached; every solid in it will be "
@@ -202,6 +204,8 @@ class DecomposeCache:
                         "tolerances) differ from this run's own -- ignoring the cached result entirely"
                     )
             except Exception as e:
+                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                    raise
                 logger.warning(
                     "decompose cache: failed to read %s (%s: %s) -- ignoring the cached result "
                     "entirely, every solid will be (re)decomposed this run",
@@ -223,6 +227,8 @@ class DecomposeCache:
                         "resuming from it (its own entries take precedence)"
                     )
             except Exception as e:
+                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                    raise
                 logger.warning(
                     "decompose cache: failed to read %s (%s: %s) -- ignoring the interrupted "
                     "previous run's tmp/ staging entirely",
@@ -252,6 +258,8 @@ class DecomposeCache:
                 try:
                     return Gload_binary(str(piece_file))
                 except Exception as e:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                        raise
                     logger.warning(
                         "decompose cache: failed to read tmp staging %s (%s: %s) for %r -- "
                         "redecomposing it instead",
@@ -305,6 +313,8 @@ class DecomposeCache:
             self._tmp_manifest[namespace][label] = {"file": filename}
             _atomic_write_json(self.tmp_dir / _MANIFEST_NAME, self._tmp_manifest)
         except Exception as e:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             logger.warning(
                 "decompose cache: failed to stage %r to tmp/ (%s: %s) -- this run itself is "
                 "unaffected, but this solid won't be recoverable from tmp/ if the run is "
@@ -372,6 +382,8 @@ class DecomposeCache:
                     target.unlink()
                 manifest[namespace] = offsets
             except Exception as e:
+                if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                    raise
                 any_failed = True
                 logger.warning(
                     "decompose cache: failed to write the consolidated %s (%s: %s) -- this run's "
@@ -387,6 +399,8 @@ class DecomposeCache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             _atomic_write_json(self.cache_dir / _MANIFEST_NAME, manifest)
         except Exception as e:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
             any_failed = True
             logger.warning(
                 "decompose cache: failed to write %s (%s: %s) -- this run's own decomposition "

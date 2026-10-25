@@ -1,4 +1,4 @@
-"""
+﻿"""
 geo/occ/queries.py
 
 Spatial queries between two independent shapes (Gin_contact/Gdistance).
@@ -21,6 +21,7 @@ from OCC.Core.TopoDS import topods
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from .topology import GShape
 from ._native_utils import _bnd_box, _volume_props
+from .. import STRICT_EXCEPTIONS, STRICT_LEVEL_REPAIR
 from ..constants import VOLUME_MIN_E8
 
 
@@ -112,7 +113,8 @@ def Gin_contact(shape_a: GShape, shape_b: GShape, tolerance: float) -> bool:
     try:
         return BRepExtrema_DistShapeShape(native_a, native_b).Value() < tolerance
     except Exception:
-        pass
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
 
     try:
         common = BRepAlgoAPI_Common(native_a, native_b).Shape()
@@ -126,6 +128,8 @@ def Gin_contact(shape_a: GShape, shape_b: GShape, tolerance: float) -> bool:
                 return True
         return False
     except Exception:
+        if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+            raise
         return False
 
 
