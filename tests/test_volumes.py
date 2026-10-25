@@ -9,15 +9,10 @@ import os
 import sys
 from pathlib import Path
 
-try:
-    import freecad  # importing conda package if present
-except:
-    pass
 import geouned
 import openmc
-import Part
 import pytest
-from FreeCAD import Import
+from geouned.geo import Gload_step
 
 with open("cross_sections.xml", "w") as file:
     file.write("""
@@ -62,9 +57,7 @@ def test_volumes(input_step_file):
     output_filename_stem = output_dir / input_step_file.stem
     openmc_xml_file = output_filename_stem.with_suffix(".xml")
 
-    Import.insert(str(input_step_file), "converted-cad")
-    result = Part.Shape()
-    result.read(str(input_step_file))
+    solids = Gload_step(str(input_step_file))
 
     materials = openmc.Materials()
     geometry = openmc.Geometry.from_xml(openmc_xml_file, materials)
@@ -73,10 +66,10 @@ def test_volumes(input_step_file):
     # some of the csg cells are void space around the CAD, so we just check
     # that there are at least as many cells as there could be more cells in the
     # CSG than the CAD
-    assert len(result.Solids) <= len(cells.keys())
+    assert len(solids) <= len(cells.keys())
 
     all_cell_vol_calc = []
-    for solid, (cell_id, cell) in zip(result.Solids, cells.items()):
+    for solid, (cell_id, cell) in zip(solids, cells.items()):
 
         bb = solid.BoundBox
         llx, lly, llz, urx, ury, urz = (
@@ -115,7 +108,7 @@ def test_volumes(input_step_file):
     model.export_to_model_xml(path=openmc_xml_file.with_name("model.xml"))
     openmc.run(cwd=output_dir)
 
-    for solid, (cell_id, cell) in zip(result.Solids, cells.items()):
+    for solid, (cell_id, cell) in zip(solids, cells.items()):
 
         vol_calc_file = openmc_xml_file.with_name(f"volume_{cell_id}.h5")
         cell_vol_calc_results = openmc.VolumeCalculation.from_hdf5(vol_calc_file)

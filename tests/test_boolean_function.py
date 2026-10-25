@@ -1,4 +1,4 @@
-import geouned  # must be imported before Part -- sets up FreeCAD's sys.path
+import geouned
 from geouned.boolean_utils.boolean_function import BoolSequence as GeounedBoolSequence
 from geouned.GEOReverse.Modules.Objects import CadCell
 from geouned.GEOReverse.Modules.Utils.booleanFunction import (

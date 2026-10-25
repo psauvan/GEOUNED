@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import typing
 
-from . import CAD_ENGINE
 from .constants import (
     DEFAULT_FIX_TOLERANCE,
     DEFAULT_MIN_FACE_WIDTH,
@@ -87,7 +86,7 @@ class GeoTolerances:
         self.min_face_width = min_face_width
         self.sliver_edge_rel_tol = sliver_edge_rel_tol
         if split_tolerance is None:
-            split_tolerance = 1.0e-4 if CAD_ENGINE in ("occ", "ocp") else 0.0
+            split_tolerance = 1.0e-4
         self.split_tolerance = split_tolerance
         self.scale_up_floor = scale_up_floor
         self.scale = scale

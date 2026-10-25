@@ -17,7 +17,7 @@ os.environ.setdefault("GEOUNED_CAD_ENGINE", "ocp")
 
 pytest.importorskip("OCP.BRepPrimAPI", reason="OCP not available on this machine")
 
-if os.environ.get("GEOUNED_CAD_ENGINE", "freecad").strip().lower() != "ocp":
+if os.environ.get("GEOUNED_CAD_ENGINE", "occ").strip().lower() != "ocp":
     pytest.skip(
         "GEOUNED_CAD_ENGINE is not 'ocp' -- geouned.geo already loaded a different backend in this process",
         allow_module_level=True,

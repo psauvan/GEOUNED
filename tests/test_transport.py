@@ -8,14 +8,9 @@ import os
 import sys
 from pathlib import Path
 
-try:
-    import freecad  # importing conda package if present
-except:
-    pass
 import openmc
-import Part
 import pytest
-from FreeCAD import Import
+from geouned.geo import Gload_step
 
 openmc.config["cross_sections"] = Path("tests/cross_sections.xml").resolve()
 
@@ -52,13 +47,13 @@ def test_transport(input_step_file):
     output_filename_stem = output_dir / input_step_file.stem
     openmc_xml_file = output_filename_stem.with_suffix(".xml")
 
-    Import.insert(str(input_step_file), "converted-cad")
-    result = Part.Shape()
-    result.read(str(input_step_file))
+    solids = Gload_step(str(input_step_file))
 
     # getting the bounding box of the CAD so we can use it to make a source
     # over the whole geometry
-    bb = result.BoundBox
+    bb = solids[0].BoundBox
+    for solid in solids[1:]:
+        bb = bb.union(solid.BoundBox)
     llx, lly, llz, urx, ury, urz = bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax
     # converting from mm to cm
     llx, lly, llz, urx, ury, urz = (

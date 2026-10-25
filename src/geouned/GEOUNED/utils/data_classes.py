@@ -1,7 +1,6 @@
 import typing
 from numbers import Real
 
-from ...geo import CAD_ENGINE
 from ...geo.tolerances import GeoTolerances
 
 
@@ -29,21 +28,18 @@ class Options:
             cut with parallel planes should be carried out first. Defaults
             to 0.
         splitTolerance (Real, optional): Fuzzy tolerance value used in the
-            solid-splitting call during decomposition (FreeCAD's
-            “BOPTools.SplitAPI.slice”, or the pyOCC/OCP “BOPAlgo_Splitter”
-            equivalent). Defaults to `None`, which resolves per engine:
-            `0.0` under FreeCAD, `1e-4` under `occ`/`ocp`. The pyOCC-family
-            default is not `0.0` like FreeCAD's because OCCT 7.9.x's own
-            internal fuzzy tolerance (used when none is set explicitly) is
-            measurably more sensitive to spurious near-tangencies than
-            FreeCAD's bundled OCCT 7.8.1 -- confirmed on a real case
-            (hylife-v06.stp solid 17, 2026-08-16): a candidate cut that
-            FreeCAD recognizes as a no-op in ~1s took ~18s under `occ`/`ocp`
-            at the implicit zero tolerance (computing, then discarding, 13
-            genuinely near-zero-volume spurious fragments), and dropped to
-            ~0.2s -- faster than FreeCAD -- once an explicit `1e-4`
-            tolerance was set; verified against the full 50-file
-            `tests/test_cadtocsg.py` corpus with zero regressions.
+            pyOCC/OCP "BOPAlgo_Splitter" solid-splitting call during
+            decomposition. Defaults to `None`, which resolves to `1e-4`
+            -- not `0.0`, because OCCT's own internal fuzzy tolerance
+            (used when none is set explicitly) is measurably more
+            sensitive to spurious near-tangencies than an explicit
+            `1e-4`: confirmed on a real case (hylife-v06.stp solid 17,
+            2026-08-16), a candidate cut took ~18s at the implicit zero
+            tolerance (computing, then discarding, 13 genuinely
+            near-zero-volume spurious fragments), and dropped to ~0.2s
+            once an explicit `1e-4` tolerance was set; verified against
+            the full 50-file `tests/test_cadtocsg.py` corpus with zero
+            regressions.
         scaleUp (bool, optional): Scale up Fuzzy tolerance once get below
             1e-12. Defaults to True.
         quadricPY (bool, optional): In openMC python script format, the
@@ -57,9 +53,8 @@ class Options:
             definition. Adjacent cell definition are rested from current
             cell definition. Defaults to False.
         n_thread (int, optional): number of threads used for decomposition
-            and cell definition building. Experimental doesn't give signicant
-            improvements until freecad is base on python version > 3.12.
-            Defaults to 1.
+            and cell definition building. Experimental, doesn't give
+            significant improvements yet. Defaults to 1.
         cut_large_cell (int, optional): face-count threshold above which a
             solid is pre-cut in two by a single synthetic plane (through its
             own center of mass, along the principal inertia axis closest to
@@ -115,7 +110,7 @@ class Options:
         self.enlargeBox = enlargeBox
         self.nPlaneReverse = nPlaneReverse
         if splitTolerance is None:
-            splitTolerance = 1e-4 if CAD_ENGINE in ("occ", "ocp") else 0.0
+            splitTolerance = 1e-4
         self.splitTolerance = splitTolerance
         self.scaleUp = scaleUp
         self.quadricPY = quadricPY
@@ -314,9 +309,8 @@ class Tolerances(GeoTolerances):
             so this relative value alone never needs to account for very small solids either.
         split_tolerance (float, optional): geo.Gsplit's own BOPAlgo_Splitter fuzzy tolerance --
             previously sourced ad hoc from Options.splitTolerance at each Gsplit call site (a plain
-            float, not carried on Tolerances at all). Defaults to None, resolved the same way
-            Options.splitTolerance's own default is: 1.0e-4 under the occ/ocp engines, 0.0 under freecad
-            (see CAD_ENGINE, already imported in this module for exactly this) -- PROVISIONAL: this field
+            float, not carried on Tolerances at all). Defaults to None, resolved to 1.0e-4 the same
+            way Options.splitTolerance's own default is -- PROVISIONAL: this field
             is not yet wired to Options.splitTolerance itself at any call site (2026-08-30, added as part
             of Gsplit's own tolerances-object refactor; deferred question, not yet resolved, whether/where
             a Tolerances instance should pick up the user's own Options.splitTolerance value instead of
@@ -352,8 +346,8 @@ class Tolerances(GeoTolerances):
             feature (see CLAUDE.md, "Spline-vs-quadric identification") found a true positive (a real
             quadric round-tripped through a BSpline conversion, even via a real STEP write/read) residual
             ~1e-12 to 1e-13 x face size, vs. ~1 for a genuine freeform surface -- ~9 orders of margin, so
-            this default sits with enormous room on both sides. occ/ocp only -- freecad doesn't call this
-            (see that function's own docstring for why cone is excluded from this feature entirely).
+            this default sits with enormous room on both sides (see that function's own docstring for
+            why cone is excluded from this feature entirely).
         spline_quadric_volume_rel_tol (float, optional): geo.Gsubstitute_spline_quadrics' own whole-solid
             volume-conservation gate -- a substitution is only accepted if the solid's own volume, before
             vs. after every spline face is swapped for its analytic surface, agrees to within this

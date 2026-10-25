@@ -3,19 +3,20 @@ geo/ocp/__init__.py
 
 OCP (pybind11-based, the binding CadQuery/build123d use) implementation
 of the `geo` package -- the default engine (see `geo/__init__.py`), a
-sibling to `geo/occ/` (pythonocc-core/SWIG) and `geo/freecad/`. Mirrors
-their class/function names and field names (matching FreeCAD's own
-attribute names, e.g. GPlane.Position/.Axis/.XDir) so the rest of
-GEOUNED does not change regardless of which backend is selected.
+sibling to `geo/occ/` (pythonocc-core/SWIG). Mirrors its class/function
+names and field names so the rest of GEOUNED does not change regardless
+of which backend is selected (the original FreeCAD/`Part`-API backend,
+`geo/freecad/`, was removed once "sewing composite surface" work made
+clear it had no remaining reason to exist -- see `geo/__init__.py`'s
+own module docstring).
 
 Split out of the former monolithic `_ocp_impl.py` (2026-08-30), mirroring
 the `geo/occ/` split -- see CLAUDE.md for the full account, including the
 2 genuine circular dependencies (split.py<->split_coaxial_cone.py,
 topology.py<->io.py) broken with function-local (lazy) imports.
 
-`GEOReverse` (CsgToCad) is out of scope for this whole package entirely
--- it keeps importing FreeCAD/Part directly, unconditionally, regardless
-of GEOUNED_CAD_ENGINE (see geouned/__init__.py).
+`GEOReverse` (CsgToCad) follows the same `GEOUNED_CAD_ENGINE` choice as
+GEOUNED's own forward pipeline (see `geouned/__init__.py`).
 
 `spline_quadrics.py`'s `Gsubstitute_spline_quadrics` (2026-09-18) lets a
 BSplineSurface face that's secretly a cylinder/sphere/torus be recovered

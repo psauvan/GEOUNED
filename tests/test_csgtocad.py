@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
-import geouned  # must be imported before Part -- sets up FreeCAD's sys.path
-from geouned.geo import CAD_ENGINE, Gload_step
+import geouned
+from geouned.geo import Gload_step
 
 # Baseline solid volumes captured from the current (pre-FreeCAD-removal-migration)
 # FreeCAD output of tests/csg_files/cylinder_box.{mcnp,xml} -- the two CSG input
@@ -46,18 +46,13 @@ def test_cylbox_convertion(csg_format):
     )
 
     geo.build_universe()
-    # "fcstd" has no pyOCC equivalent (see Modules/_occ_impl.py) -- only
-    # requested under the engine that actually supports it.
-    formats = ["stp", "fcstd"] if CAD_ENGINE == "freecad" else ["stp"]
-    geo.export_cad(output_filename=f"tests_outputs/csgtocad/{csg_format}", format=formats)
+    geo.export_cad(output_filename=f"tests_outputs/csgtocad/{csg_format}", format=["stp"])
 
     stp_path = Path(f"tests_outputs/csgtocad/{csg_format}.stp")
     assert stp_path.exists()
-    if CAD_ENGINE == "freecad":
-        assert Path(f"tests_outputs/csgtocad/{csg_format}.FCStd").exists()
 
     # Gload_step is engine-agnostic (geo.CAD_ENGINE-dispatched) -- works
-    # identically whether this process loaded the FreeCAD or pyOCC backend.
+    # identically whether this process loaded the occ or ocp backend.
     solids = Gload_step(str(stp_path))
     volumes = sorted(s.Volume for s in solids)
     expected = sorted(_EXPECTED_VOLUMES[csg_format])
@@ -135,16 +130,6 @@ _HAS_UNIVERSE_COMPLEMENT = {
 _UNIVERSE_LIKE_VOLUME = 1e17  # well above any real solid here, comfortably below the ~8e18 universe box
 
 
-@pytest.mark.skipif(
-    CAD_ENGINE == "freecad",
-    reason=(
-        "freecad's own exotic-quadric implementations (_freecad_impl.py) are deliberately "
-        "untouched, separate constructions from occ/ocp's -- like tests/test_georeverse_occ_impl.py/"
-        "_ocp_impl.py, this end-to-end regression is occ/ocp-only; most of these fixtures don't even "
-        "convert under freecad yet (a real, separate gap, not caused by either fix this test's own "
-        "docstring describes -- flagged, not chased down here)"
-    ),
-)
 @pytest.mark.parametrize("name", sorted(_EXOTIC_VOLUMES))
 def test_exotic_quadric_convertion(name):
     geo = geouned.CsgToCad()

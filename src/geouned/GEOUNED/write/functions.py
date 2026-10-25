@@ -6,7 +6,7 @@ from ...geo.surface_geometry import axis_alignment, opposite_sense
 from ...geo import CAD_ENGINE, GVector
 from .string_functions import remove_redundant
 
-_ENGINE_LABELS = {"freecad": "FreeCAD", "occ": "pythonocc-core", "ocp": "OCP"}
+_ENGINE_LABELS = {"occ": "pythonocc-core", "ocp": "OCP"}
 
 
 def engine_label() -> str:

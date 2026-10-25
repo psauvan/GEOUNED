@@ -176,20 +176,17 @@ def Gfuse_solids(parts, tolerances=None):
     # tangent blend the fuse+refine created). Try the same opportunistic
     # substitution the load-time/post-split repair cascades already use
     # elsewhere; never let this auxiliary step abort an otherwise-fine
-    # fuse (freecad has no `Gsubstitute_spline_quadrics` at all, and a
-    # bare `tolerances=None` caller -- GEOReverse sometimes passes this --
-    # has no fit/volume tolerance to run it with, so both are skipped).
+    # fuse (a bare `tolerances=None` caller -- GEOReverse sometimes
+    # passes this -- has no fit/volume tolerance to run it with, so it
+    # is skipped then too).
     if tolerances is not None and len(gsolid.Solids) == 1:
         try:
-            from . import CAD_ENGINE
+            from . import Gspline_surface, Gsubstitute_spline_quadrics
 
-            if CAD_ENGINE != "freecad":
-                from . import Gspline_surface, Gsubstitute_spline_quadrics
-
-                if Gspline_surface(gsolid.__native__):
-                    substituted, resolved = Gsubstitute_spline_quadrics(gsolid, tolerances)
-                    if resolved:
-                        gsolid = substituted
+            if Gspline_surface(gsolid.__native__):
+                substituted, resolved = Gsubstitute_spline_quadrics(gsolid, tolerances)
+                if resolved:
+                    gsolid = substituted
         except Exception:
             pass
 

@@ -33,7 +33,7 @@ import math
 
 import numpy as np
 
-import geouned  # must be imported before Part -- sets up FreeCAD's sys.path
+import geouned
 from geouned.GEOReverse.Modules.MCNP_parser.MCNPinput import gq2params
 
 

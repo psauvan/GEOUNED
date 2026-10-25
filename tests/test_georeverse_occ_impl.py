@@ -7,7 +7,7 @@ os.environ.setdefault("GEOUNED_CAD_ENGINE", "occ")
 
 pytest.importorskip("OCC.Core.BRepPrimAPI", reason="pythonocc-core not available on this machine")
 
-if os.environ.get("GEOUNED_CAD_ENGINE", "freecad").strip().lower() != "occ":
+if os.environ.get("GEOUNED_CAD_ENGINE", "ocp").strip().lower() != "occ":
     pytest.skip(
         "GEOUNED_CAD_ENGINE is not 'occ' -- geouned.geo already loaded a different backend in this process",
         allow_module_level=True,

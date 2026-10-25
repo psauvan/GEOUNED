@@ -228,7 +228,7 @@ class CsgToCad:
             output_filename (str, optional): The filename stem and path of the output file(s) created.
                 Defaults to the name of the csg file.
             format (str or list, optional): CAD file format(s) to export, e.g. "stp" or
-                ["stp", "fcstd"]. A single file is written per requested format. Must be one of
+                ["stp", "step"]. A single file is written per requested format. Must be one of
                 the formats supported by the CAD engine currently in use. Defaults to "stp".
         """
 

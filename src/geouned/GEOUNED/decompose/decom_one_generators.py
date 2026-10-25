@@ -8,7 +8,6 @@ from ...boolean_utils.boolean_function import evaluate_three_valued
 from ..utils.build_region.build_region import get_cell_object
 from .generators import get_surfaces
 from ...geo import (
-    CAD_ENGINE,
     GCompound,
     GSolid,
     Gheal_topology,
@@ -16,13 +15,11 @@ from ...geo import (
     Gsolid_max_tolerance,
     Gspline_surface,
     Gsplit,
+    Gsubstitute_spline_quadrics,
     Gtrim_overlapping_coplanar_faces,
     is_sliver_solid,
     merge_sliver_pieces,
 )
-
-if CAD_ENGINE != "freecad":
-    from ...geo import Gsubstitute_spline_quadrics
 from ...geo.constants import (
     FACE_PROBE_BISECTION_STEPS,
     MAX_REPAIR_VOLUME_REL_CHANGE,
@@ -432,9 +429,8 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # export_csg) -- a real d1suned run on the result still loses 10
     # particles, a separate, not-yet-investigated boundary/adjacency gap
     # in the written cell definition, unrelated to spline detection
-    # itself. freecad has no equivalent (occ/ocp only, matching every
-    # other spline-quadric feature).
-    if CAD_ENGINE != "freecad" and Gspline_surface(solid.__native__):
+    # itself.
+    if Gspline_surface(solid.__native__):
         substituted, resolved = Gsubstitute_spline_quadrics(solid, tolerances)
         if resolved:
             solid = substituted
@@ -471,16 +467,9 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # misbehave. Fixed by resetting BOTH the tolerance AND re-running the
     # same validity fix already used once at the top of this function,
     # before every new candidate is tried, not just once at the top.
-    # freecad has no equivalent tolerance-reset primitive
-    # (Gsolid_set_tolerance) yet -- occ/ocp only, matching every other
-    # native-tolerance-inspection feature in this cascade; its own `.fix()`
-    # re-run still applies there since it's engine-agnostic.
-    if CAD_ENGINE != "freecad":
-        from ...geo import Gsolid_set_tolerance
+    from ...geo import Gsolid_set_tolerance
 
-        original_tolerance = Gsolid_max_tolerance(solid)
-    else:
-        original_tolerance = None
+    original_tolerance = Gsolid_max_tolerance(solid)
 
     # Candidate-surface detection (cutting planes, MultiPlane/Can/TCone/
     # RoundCorner masters, ...) must judge a face's own min_area/
@@ -527,8 +516,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
     # accepted immediately.
     fallback_solids = None
     for surf in get_surfaces(solid, omitfaces, scaled_tolerances, options, meta_surface=options.meta_surfaces):
-        if original_tolerance is not None:
-            Gsolid_set_tolerance(solid, original_tolerance)
+        Gsolid_set_tolerance(solid, original_tolerance)
         if not solid.is_valid():
             fixed = solid.fix(tolerances.fix_tolerance)
             if fixed.is_valid():
