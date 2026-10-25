@@ -560,6 +560,19 @@ class MultiPlanesParams:
         self.Edges = params[1]
         self.Vertexes = params[2]
         self.Planes = params[0][:]
+        # The real component planes/junction edges/material-hint points,
+        # ordered as a simple chain (params[3]/params[4]/params[5]) --
+        # present only when `build_multip_params` found the real
+        # adjacency graph to be a single simple open chain through every
+        # deduplicated plane; `None` otherwise (a branching/star
+        # junction or a closed ring). Used by the "sewing composite
+        # surface" branch's own construction
+        # (build_shape_functions.py::makeMultiPlanes,
+        # geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_multiplane_chain)
+        # instead of the box-cut cascade.
+        self.ChainPlanes = params[3] if len(params) > 3 else None
+        self.ChainEdges = params[4] if len(params) > 4 else None
+        self.ChainMaterialHints = params[5] if len(params) > 5 else None
 
     def __str__(self):
         outstr = f"""Multiplane :\n"""
@@ -591,6 +604,18 @@ class RoundCornerParams:
         self.Configuration = params[2]
         self.Planes = params[1]
         self.Cylinder = params[0]
+        # The real tangent edges (one per plane, params[3]/params[4]) and
+        # a point on the cylinder's own real face (params[5]) -- present
+        # only when build_roundC_params found them (always, for a normal
+        # 2-distinct-plane corner); used by the "sewing composite
+        # surface" branch's own construction
+        # (build_shape_functions.py::makeRoundCorner) instead of
+        # BuildDepth/Gfuse_solids, point 3 of that design. `None` if the
+        # params tuple predates this field (defensive, no real caller
+        # should hit this).
+        self.Edge1 = params[3] if len(params) > 3 else None
+        self.Edge2 = params[4] if len(params) > 4 else None
+        self.CylinderHint = params[5] if len(params) > 5 else None
 
 
 class MultiRoundCornerParams:

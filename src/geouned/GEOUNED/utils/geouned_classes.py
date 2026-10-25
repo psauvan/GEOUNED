@@ -436,9 +436,7 @@ class GeounedSurface:
 
         elif self.Type == "MultiPlane":
             Box = Box.enlarged(10)
-            planes = self.Surf.Planes
-            vertexes = self.Surf.Vertexes
-            result = makeMultiPlanes(planes, vertexes, Box, tolerances=tolerances)
+            result = makeMultiPlanes(self, Box, tolerances)
             if result is None:
                 self.shape = None
                 self.shell = None

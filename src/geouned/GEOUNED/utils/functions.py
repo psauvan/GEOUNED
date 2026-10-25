@@ -253,6 +253,18 @@ def get_reversed_cone_cylinder(solidFaces, multiplanes, tolerances, conecylface_
         return conecyl_list, conecylface_index
 
 
+def _first_common_edge(face1, face2):
+    """The first real edge shared between `face1`/`face2`, or `None` --
+    `commonEdge`'s own return shape differs when `face1` is a
+    `ShellFaceGu` (a `(edges, face)` tuple) vs a plain face (a bare edge
+    list), so this normalizes both to "just the edge" for a caller that
+    only needs one real, already-existing tangent edge to reuse (the
+    'sewing composite surface' branch's own point 3)."""
+    result = commonEdge(face1, face2)
+    edges = result[0] if isinstance(result, tuple) else result
+    return edges[0] if edges else None
+
+
 def _index_of_plane(plane_list, plane, tolerances):
     """Index of the first GeounedSurface plane of `plane_list` that is the same oriented plane as `plane`, else None."""
     for i, other in enumerate(plane_list):
@@ -315,7 +327,18 @@ def build_roundC_params(rc_list, *, tolerances):
         else:
             plane_list.append(gp1)
             rc_planes.append(p2)
-        params = (gcyl, (gp1, gp2), config)
+
+        # The real tangent edges (one per plane) and a point on the
+        # cylinder's own real, un-oversized face -- found here, from the
+        # same real `cyl`/`p1`/`p2` face objects this function already
+        # has in scope, purely to be carried forward on RoundCornerParams
+        # for the "sewing composite surface" branch's own construction
+        # (geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_round_corner_cylinder)
+        # -- never recomputed analytically, point 3 of that design.
+        edge1 = _first_common_edge(cyl, p1)
+        edge2 = _first_common_edge(cyl, p2)
+        cyl_hint = cyl.CenterOfMass
+        params = (gcyl, (gp1, gp2), config, edge1, edge2, cyl_hint)
 
         orientation = "Forward" if fwd_corner else "Reversed"
         rc = GeounedSurface(("RoundCorner", params, orientation))
@@ -642,34 +665,91 @@ def build_tcone_params(ks):
     return (gcone, bsurf[0], bsurf[1])
 
 
+def _multiplane_chain_order(n, dedup_adjacency):
+    """`(ordered_plane_indices, ordered_edges)` if the real adjacency
+    graph on the `n` deduplicated planes (`dedup_adjacency`: `{(i, j):
+    edge}`, `i < j`, one entry per real junction edge between 2
+    DISTINCT deduplicated planes) is a single simple OPEN CHAIN
+    (a path) through every one of the `n` planes -- the "sewing
+    composite surface" branch's own prerequisite for building the
+    MultiPlane's `.shape` by sewing (`build_shape_functions.py::
+    makeMultiPlanes`, `geo/{occ,ocp}/sewn_composite.py::
+    Gmake_sewn_multiplane_chain`) instead of the box-cut cascade.
+
+    `None` for any other real topology: a plane touched by more than 2
+    real neighbors (a branching/star junction), a closed ring (every
+    node degree 2, but `len(dedup_adjacency) == n`, not `n - 1`), or a
+    disconnected group (shouldn't normally occur -- `multiplane`'s own
+    walk only ever grouped these planes together because they ARE all
+    connected -- kept as a defensive `None`, not an assumption)."""
+    neighbors = {i: [] for i in range(n)}
+    for (i, j), e in dedup_adjacency.items():
+        neighbors[i].append((j, e))
+        neighbors[j].append((i, e))
+
+    if n < 2 or len(dedup_adjacency) != n - 1:
+        return None
+    if any(len(v) > 2 for v in neighbors.values()):
+        return None
+
+    endpoints = [i for i, v in neighbors.items() if len(v) <= 1]
+    if len(endpoints) != 2:
+        return None
+
+    order = [endpoints[0]]
+    edges_order = []
+    visited = {endpoints[0]}
+    current = endpoints[0]
+    while len(order) < n:
+        nxt = next((item for item in neighbors[current] if item[0] not in visited), None)
+        if nxt is None:
+            return None  # disconnected -- not a single chain through every plane
+        order.append(nxt[0])
+        edges_order.append(nxt[1])
+        visited.add(nxt[0])
+        current = nxt[0]
+
+    return order, edges_order
+
+
 def build_multip_params(plane_list, *, tolerances):
 
     planeparams = []
+    plane_dedup_index = []
     edges = []
-    vertexes = []
+    material_hints = []
 
     for p in plane_list:
         # plane = PlaneGu(p)
         # planeparams.append((plane.Position, plane.Axis, plane.dim1, plane.dim2))
         normal = -p.Surface.Axis if p.Orientation == "Forward" else p.Surface.Axis
         gp = GeounedSurface(("Plane", (p.Surface.Position, normal, 1.0, 1.0)))
-        same = False
-        for pp in planeparams:
+        same_index = None
+        for k, pp in enumerate(planeparams):
             if surface_geometry.is_same_plane_surface(pp.Surf, gp.Surf, tolerances):
-                same = True
+                same_index = k
                 break
-        if not same:
+        if same_index is None:
             planeparams.append(gp)
+            material_hints.append(p.CenterOfMass)
+            same_index = len(planeparams) - 1
+        plane_dedup_index.append(same_index)
 
     ajdacent_planes = [[] for i in range(len(plane_list))]
+    dedup_adjacency = {}
     for i, p1 in enumerate(plane_list):
-        for j, p2 in enumerate(plane_list[i + 1 :]):
+        for j, p2 in enumerate(plane_list[i + 1 :], start=i + 1):
             Edges = commonEdge(p1, p2)
             if Edges:
                 e = Edges[0]
                 edges.append(e)
                 ajdacent_planes[i].append((j, e))
                 ajdacent_planes[j].append((i, e))
+                di, dj = plane_dedup_index[i], plane_dedup_index[j]
+                if di != dj:
+                    key = (min(di, dj), max(di, dj))
+                    if key not in dedup_adjacency:
+                        dedup_adjacency[key] = e
 
     vertex_list = []
     for i, e1 in enumerate(edges):
@@ -688,4 +768,21 @@ def build_multip_params(plane_list, *, tolerances):
         if n > 0:
             vertexes.append((v, n + 1))
 
-    return (planeparams, edges, vertexes)
+    # "sewing composite surface" branch: a simple open chain through
+    # every deduplicated plane can be sewn directly
+    # (Gmake_sewn_multiplane_chain) instead of the box-cut cascade --
+    # see build_shape_functions.py::makeMultiPlanes. None of these 3
+    # lists is built (chain_planes/chain_edges/chain_hints stay None)
+    # when the real topology isn't a simple chain (branching, closed
+    # ring, ...); makeMultiPlanes falls back to the original
+    # construction in that case.
+    chain = _multiplane_chain_order(len(planeparams), dedup_adjacency)
+    if chain is None:
+        chain_planes = chain_edges = chain_hints = None
+    else:
+        order, edges_order = chain
+        chain_planes = [planeparams[idx] for idx in order]
+        chain_hints = [material_hints[idx] for idx in order]
+        chain_edges = edges_order
+
+    return (planeparams, edges, vertexes, chain_planes, chain_edges, chain_hints)

@@ -3,6 +3,7 @@ import numpy
 from .build_region.build_region import get_cell_object
 from .build_region.Objects import plane_polygon_from_box, cylinder_from_box, elliptic_cylinder_from_box, cone_from_box
 from ...geo import (
+    CAD_ENGINE,
     BuildDepth,
     GBoundBox,
     GPlane,
@@ -19,7 +20,16 @@ from ...geo import (
     myBox,
 )
 from ...geo.constants import EDGE_PROJECTION_TOL, POINT_POINT_TOL
-from ...geo.surface_geometry import axes_parallel, axes_same_direction
+from ...geo.surface_geometry import axes_parallel, axes_same_direction, is_same_oriented_plane_surface
+
+if CAD_ENGINE != "freecad":
+    # Gmake_sewn_round_corner_cylinder doesn't exist under geo/freecad/
+    # __init__.py (occ/ocp only, matching every other sewing-composite-
+    # surface/exotic-quadric feature's own established import pattern --
+    # see e.g. geouned_classes.py's Gmake_torus_elliptic usage) -- a
+    # plain, unconditional top-level import would break module import
+    # under the freecad engine entirely, not just this one function.
+    from ...geo import Gmake_sewn_multiplane_chain, Gmake_sewn_round_corner_cylinder
 
 
 def makePlane(normal: GVector, position: GVector, box: GBoundBox):
@@ -64,7 +74,33 @@ def makeCone(axis: GVector, apex: GVector, tan: float, box: GBoundBox):
     return (cone, shell)
 
 
-def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True, *, tolerances):
+def makeMultiPlanes(multiPlane, box: GBoundBox, tolerances):
+    """Build a MultiPlane's own `.shape`/`.shell` by sewing its real,
+    oversized component planes together along the real junction edges
+    already found during detection
+    (`MultiPlanesParams.ChainPlanes`/`.ChainEdges`/`.ChainMaterialHints`,
+    see `functions.py::build_multip_params`/`_multiplane_chain_order`)
+    -- in place of `_makeMultiPlanes_box_cut`'s own box-clipping
+    construction, matching `makeRoundCorner`'s own established pattern.
+    No BOPAlgo_Splitter call is made while building this shell itself.
+
+    Falls back to `_makeMultiPlanes_box_cut` whenever the sewing
+    prerequisites aren't met: freecad (no
+    `Gmake_sewn_multiplane_chain` there), or the real adjacency graph
+    isn't a simple open chain through every component plane (a
+    branching/star junction or a closed ring -- `ChainPlanes` is `None`
+    in that case)."""
+    surf = multiPlane.Surf
+    if CAD_ENGINE != "freecad" and surf.ChainPlanes is not None and len(surf.ChainPlanes) >= 2:
+        planes = [GPlane.from_values(p.Surf.Position, p.Surf.Axis) for p in surf.ChainPlanes]
+        span = box.DiagonalLength
+        shell = Gmake_sewn_multiplane_chain(planes, surf.ChainMaterialHints, surf.ChainEdges, span)
+        native_shell = shell.__native__
+        return (native_shell, native_shell)
+    return _makeMultiPlanes_box_cut(surf.Planes, surf.Vertexes, box, tolerances=tolerances)
+
+
+def _makeMultiPlanes_box_cut(plane_list: list, vertex_list: list, box: GBoundBox, multibuild=True, *, tolerances):
     """Build the CAD object of the multiplane surface: a genuine closed
     solid for .shape/Gsplit's own use (the box, clipped in turn by every
     plane in plane_list -- the material region the multiplane composite
@@ -120,6 +156,45 @@ def makeMultiPlanes(plane_list: list, vertex_list: list, box: GBoundBox, multibu
 
 
 def makeRoundCorner(roundCorner, Box, tolerances):
+    """Build a RoundCorner's own `.shape`/`.shell` by sewing its 2 real
+    oversized planes and 1 real oversized cylinder face together
+    (`geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_round_corner_cylinder`),
+    reusing the real tangent edges already found during detection
+    (`RoundCornerParams.Edge1`/`.Edge2`, see `functions.py::
+    build_roundC_params`) -- in place of the recursive boolean
+    `BuildDepth`/`Gfuse_solids` cascade `build_complex_shape` still uses
+    for every OTHER composite type. No BOPAlgo_Splitter call is made
+    while building this shell itself.
+
+    Falls back to the original `build_complex_shape` construction
+    whenever the sewing prerequisites aren't met: freecad (no
+    `Gmake_sewn_round_corner_cylinder` there), the real tangent edges
+    weren't found (defensive -- every normal detection finds them), or
+    the degenerate "both planes are really the same one" corner (a
+    single-plane AND/OR with the cylinder, not a 3-face sew)."""
+    surf = roundCorner.Surf
+    edge1, edge2 = surf.Edge1, surf.Edge2
+    if CAD_ENGINE != "freecad" and edge1 is not None and edge2 is not None and not edge1.is_same(edge2):
+        p1, p2 = surf.Planes
+        if not is_same_oriented_plane_surface(p1.Surf, p2.Surf, tolerances):
+            cyl_only = surf.Cylinder.Surf.Cylinder
+            plane1 = GPlane.from_values(p1.Surf.Position, p1.Surf.Axis)
+            plane2 = GPlane.from_values(p2.Surf.Position, p2.Surf.Axis)
+            cylinder = GCylinder.from_values(cyl_only.Surf.Center, cyl_only.Surf.Axis, cyl_only.Surf.Radius)
+            span = Box.DiagonalLength
+            shell = Gmake_sewn_round_corner_cylinder(
+                plane1,
+                p1.Surf.Position,
+                edge1,
+                cylinder,
+                surf.CylinderHint,
+                edge2,
+                plane2,
+                p2.Surf.Position,
+                span,
+            )
+            native_shell = shell.__native__
+            return (native_shell, native_shell)
     return build_complex_shape(roundCorner, Box, tolerances)
 
 

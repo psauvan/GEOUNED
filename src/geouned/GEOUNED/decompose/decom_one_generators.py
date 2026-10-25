@@ -4,6 +4,8 @@
 
 import logging
 
+from ...boolean_utils.boolean_function import evaluate_three_valued
+from ..utils.build_region.build_region import get_cell_object
 from .generators import get_surfaces
 from ...geo import (
     CAD_ENGINE,
@@ -138,7 +140,21 @@ def split_surfaces(solid, options, tolerances):
     return comp
 
 
-def _tool_classifier(surf):
+def _evaluate_cell_definition(cell, point):
+    """`point -> bool`, evaluating `cell`'s own registry-free boolean
+    `definition` (`build_region.build_region.get_cell_object`'s own
+    return) by classifying `point` against each of `cell.surfaces`'
+    analytic descriptors directly (`CellSurface.is_inside`) -- the exact
+    same self-contained mechanism `build_complex_shape`'s own
+    `BuildDepth` cascade already evaluates a candidate region with, just
+    without building any native shape at all. Used by `_tool_classifier`
+    for the composite types whose own `.shape` is no longer a genuine
+    closed solid (see that function's own docstring)."""
+    values = {sid: s.is_inside(point) for sid, s in cell.surfaces.items()}
+    return evaluate_three_valued(cell.definition, values) is True
+
+
+def _tool_classifier(surf, tolerances):
     """A `point -> bool` callable for `surf`'s own already-built
     `.shape`, used by `_some_real_candidate_should_have_split` to decide
     which side of this real candidate a sampled point falls on.
@@ -158,17 +174,41 @@ def _tool_classifier(surf):
     "one-sided" answer on testing/inputSTEP/BC.stp's own Plane
     candidates only because that fragment is genuinely irreducible
     anyway. Cylinder/Cone/Sphere/Torus and the composite Can/TCone/
-    RoundCorner/MultiRoundCorner/MultiPlane types all build a real,
-    closed solid for `.shape` (confirmed by direct inspection of each
-    branch in `geouned_classes.py::GeounedSurface.build_surface` and, for
-    MultiPlane, `build_shape_functions.py::makeMultiPlanes`'s own
-    `Gmake_solid(Gmake_shell(cutfaces))`), so `is_inside` is correct for
-    every one of them -- only Plane needs the direct half-space formula
-    instead."""
+    MultiRoundCorner types all build a real, closed solid for `.shape`
+    (confirmed by direct inspection of each branch in
+    `geouned_classes.py::GeounedSurface.build_surface`), so `is_inside`
+    is correct for every one of them.
+
+    RoundCorner and MultiPlane are the odd ones out, same reasoning as
+    Plane but for a different cause: since the "sewing composite
+    surface" branch (2026-10-25), their own `.shape` is a deliberately
+    OVERSIZED, OPEN shell (sewn from the composite's real component
+    faces, bigger than the solid being cut -- see
+    `build_shape_functions.py::makeRoundCorner`/`makeMultiPlanes`'s own
+    docstrings), not a genuine closed solid bounding the composite's own
+    real region any more -- `is_inside` on it would be just as
+    meaningless as on Plane's own bare face. Each gets its own direct
+    classifier instead, reusing the REAL region formula rather than
+    re-deriving an approximation:
+    - RoundCorner: `get_cell_object` already builds the exact same
+      registry-free `(definition, surfaces)` pair `build_complex_shape`
+      used to build the old closed solid from -- evaluating it directly
+      with each component's own analytic `is_inside` is the same
+      classification the old solid gave, with no native shape involved.
+    - MultiPlane: `MetaSurfacesDict.add_multiPlane` confirms its own
+      region is a plain OR across every component plane's own signed
+      half-space (`BoolSurface.add` chained once per plane) -- no
+      registry needed to reproduce that directly."""
     if surf.Type == "Plane":
         position = surf.Surf.Position
         axis = surf.Surf.Axis
         return lambda p: (p - position).dot(axis) > 0
+    if surf.Type == "MultiPlane":
+        planes = surf.Surf.Planes
+        return lambda p: any((p - mp.Surf.Position).dot(mp.Surf.Axis) > 0 for mp in planes)
+    if surf.Type == "RoundCorner":
+        cell = get_cell_object(surf, tolerances)
+        return lambda p: _evaluate_cell_definition(cell, p)
     tool_solid = GSolid(surf.shape)
     return lambda p: tool_solid.is_inside(p)
 
@@ -246,7 +286,7 @@ def _face_anchored_points(solid):
     return points
 
 
-def _some_real_candidate_should_have_split(solid, surfaces):
+def _some_real_candidate_should_have_split(solid, surfaces, tolerances):
     """Independent, geometric ground truth for "did at least one of the
     REAL candidates `generic_split` just exhausted genuinely divide
     `solid`'s own material, even though BOPAlgo_Splitter reported no
@@ -297,7 +337,7 @@ def _some_real_candidate_should_have_split(solid, surfaces):
     if not points:
         return False
     for surf in surfaces:
-        classify = _tool_classifier(surf)
+        classify = _tool_classifier(surf, tolerances)
         in_n = sum(1 for p in points if classify(p))
         out_n = len(points) - in_n
         if in_n >= STUCK_FRAGMENT_PROBE_MIN_COUNT and out_n >= STUCK_FRAGMENT_PROBE_MIN_COUNT:
@@ -666,7 +706,7 @@ def generic_split(solid, options, tolerances, loop=0, healed=False):
                     fresh_tools.append(surf)
         else:
             fresh_tools = []
-        if fresh_tools and _some_real_candidate_should_have_split(fixed, fresh_tools):
+        if fresh_tools and _some_real_candidate_should_have_split(fixed, fresh_tools, tolerances):
             rebuilt = Gheal_topology(fixed)
             if rebuilt is not None:
                 try:
