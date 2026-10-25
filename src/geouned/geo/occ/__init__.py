@@ -103,4 +103,4 @@ from .primitives import (
 from .boolean import Gcommon, Gcut, Gfuse
 from .split import SplitResult, Gsplit
 from .queries import Gdistance, Gin_contact, Gsolid_max_tolerance, Gsolid_nonmanifold_edge_count, Gsolid_set_tolerance
-from .sewn_composite import Gmake_sewn_multiplane_chain, Gmake_sewn_plane_pair, Gmake_sewn_round_corner_cylinder, Gmake_sewn_tcone
+from .sewn_composite import Gmake_sewn_can, Gmake_sewn_multiplane_chain, Gmake_sewn_plane_pair, Gmake_sewn_round_corner_cylinder, Gmake_sewn_tcone

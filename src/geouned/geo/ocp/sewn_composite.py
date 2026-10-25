@@ -84,14 +84,38 @@ boundary edges are then geometrically, but not topologically, identical
 to `wire1`/`wire2` (the planes' own real, reused closing curves) --
 `Gmake_shell`'s own `BRepBuilderAPI_Sewing(SEW_TOLERANCE)` stitches them
 together by coincidence, exactly as it would for any other 2 faces built
-independently."""
+independently.
+
+Fourth case: Can (`Gmake_sewn_can`) -- the same idea as TCone (a cylinder
+instead of a cone, always closed 360 degrees), but a Can's own 2 closing
+surfaces can each be a plane, a sphere, or a cone (`GEOUNED/utils/
+functions.py::get_can_surfaces` accepts any of the 3 -- a torus is
+rejected outright, and a differently-radiused or non-coaxial closing
+cylinder falls back to `build_complex_shape`, see below). Confirmed
+directly (2026-10-25, isolated probe script, not guessed): a sphere or
+cone closing surface, ASSUMED coaxial with the main cylinder (the
+sphere's center on the cylinder's axis; the cone's axis parallel to the
+cylinder's, which is the common real-world "domed tank end" / "nozzle
+reducer" case), has a real tangency circle sitting at a single constant
+latitude (sphere) or slant distance (cone) -- found by projecting one
+real point of the detected edge, exactly `_cone_native_v`'s own
+technique generalized -- so each cap can be built the SAME way the TCone
+cone body is: a direct parametric `(u, v)` trim, no wire, no
+`_substitute_face_surface` fix-up needed (confirmed empirically: both
+come back `BRepCheck_Analyzer`-valid with the exact analytic area on the
+first attempt, unlike `_oversized_cylinder_face`'s own wire-based
+cylinder, which did need that fix-up). A plane closing surface still
+reuses `_tcone_cap_face`/the real edges directly (point 3), exactly as
+in TCone. The main cylindrical wall is trimmed the same way the TCone
+cone body is, just simpler: `Geom_CylindricalSurface`'s own V already IS
+the axial height (no slant-distance conversion needed at all)."""
 
 from __future__ import annotations
 
 import math
 
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
-from OCP.Geom import Geom_Circle, Geom_ConicalSurface, Geom_CylindricalSurface
+from OCP.Geom import Geom_Circle, Geom_ConicalSurface, Geom_CylindricalSurface, Geom_SphericalSurface
 from OCP.gp import gp_Ax2, gp_Ax3, gp_Dir, gp_Pln
 from OCP.ShapeAnalysis import ShapeAnalysis_Surface
 from OCP.TopAbs import TopAbs_VERTEX
@@ -102,8 +126,9 @@ from ..constants import UV_PROJECTION_TOL
 from ..vector_geometry import GVector, arbitrary_perpendicular
 from ._native_utils import to_native_vector, _edge_curve_and_range
 from .primitives import Gmake_shell
+from .repair import _order_wire_edges
 from .spline_quadrics import _substitute_face_surface
-from .topology import GCone, GCylinder, GEdge, GFace, GPlane, GShell
+from .topology import GCone, GCylinder, GEdge, GFace, GPlane, GShell, GSphere
 
 
 def _extended_edge_on_curve(junction_edge: GEdge, span: float) -> GEdge:
@@ -489,26 +514,63 @@ def Gmake_sewn_round_corner_cylinder(
 
 def _wire_from_edges(edges: list[GEdge]):
     """A native wire built from `edges`, reused exactly (point 3) -- the
-    real closed boundary between a TCone's cone and one of its 2 closing
-    planes (a circle, or an ellipse for an oblique closing plane),
-    possibly represented as more than one edge segment. `BRepBuilderAPI_
-    MakeWire.Add()` connects them in whatever order they're added; for
-    the common case (a single real edge already forming the whole closed
-    loop) this is a one-element, already-trivially-ordered call."""
+    real closed boundary between a TCone/Can's own main surface and one
+    of its closing surfaces (a circle, or an ellipse for an oblique
+    closing plane), possibly represented as more than one edge segment.
+    `BRepBuilderAPI_MakeWire.Add()` only ever connects a new edge to the
+    wire's own CURRENT open end -- for the common case (a single real
+    edge already forming the whole closed loop) that's a one-element,
+    already-trivially-ordered call; for 2+ segments, `_order_wire_edges`
+    (already validated for exactly this failure mode elsewhere in this
+    cascade, see its own docstring) reorders them into a connectivity-
+    respecting sequence first.
+
+    Returns `None` (never raises) when `edges` genuinely don't form one
+    simple closed loop at all -- confirmed live, 2026-10-25,
+    Cans/pipe.stp: a real candidate's own "shared edges" came back as 2
+    (or 3) segments with NO matching endpoints between them whatsoever
+    (a genuine detection/geometry defect on this specific candidate, not
+    an ordering problem `_order_wire_edges` could ever fix) -- forcing a
+    wire through disconnected edges raises a native `StdFail_NotDone`
+    from `.Wire()` instead of this function's own `IsDone()` check
+    catching it first. The caller (`_tcone_cap_face`/`_can_cap_face`)
+    propagates `None` up to `Gmake_sewn_tcone`/`Gmake_sewn_can`, whose
+    own caller (`makeTCone`/`makeCan`) falls back to
+    `build_complex_shape` for this one candidate -- the same
+    "sewing prerequisites not met" fallback already used for a missing
+    Edge1/Edge2 or an unsupported closing-surface type, not a crash."""
+    natives = [e.__native__ for e in edges]
+    if len(natives) > 1:
+        ordered = _order_wire_edges(natives)
+        if ordered is None:
+            return None
+        natives = ordered
     wire_maker = BRepBuilderAPI_MakeWire()
-    for e in edges:
-        wire_maker.Add(e.__native__)
-    return wire_maker.Wire()
+    for native_edge in natives:
+        wire_maker.Add(native_edge)
+    if not wire_maker.IsDone():
+        return None
+    try:
+        return wire_maker.Wire()
+    except Exception:
+        # IsDone() alone doesn't catch every disconnected-edge case --
+        # confirmed live, Cans/pipe.stp: it still reported True right
+        # before .Wire() itself raised StdFail_NotDone.
+        return None
 
 
-def _tcone_cap_face(plane: GPlane, wire) -> GFace:
-    """One of a TCone's own 2 planar end caps: `plane`'s own real
+def _tcone_cap_face(plane: GPlane, wire) -> "GFace | None":
+    """One of a TCone/Can's own planar end caps: `plane`'s own real
     (Position, Axis) analytic plane, trimmed to exactly the finite-area
     region `wire` bounds -- `BRepBuilderAPI_MakeFace(surface, wire)`'s
     own default meaning for a single closed planar wire, no material
     hint or side choice needed (unlike `_oversized_plane_face`, nothing
     here is ambiguous: there is only one bounded side to a closed curve
-    on a plane)."""
+    on a plane). `None` if `wire` itself is `None` (see
+    `_wire_from_edges`'s own docstring for why that can happen) --
+    never raises."""
+    if wire is None:
+        return None
     xdir = plane.XDir if plane.XDir is not None else arbitrary_perpendicular(plane.Axis)
     ax3 = gp_Ax3(to_native_vector(plane.Position), gp_Dir(plane.Axis.x, plane.Axis.y, plane.Axis.z), gp_Dir(xdir.x, xdir.y, xdir.z))
     native_face = BRepBuilderAPI_MakeFace(gp_Pln(ax3), wire).Face()
@@ -532,7 +594,7 @@ def Gmake_sewn_tcone(
     plane1: GPlane,
     edges2: list[GEdge],
     plane2: GPlane,
-) -> GShell:
+) -> "GShell | None":
     """Build the open, three-face cutting-tool shell for a TCone
     composite (1 cone, closed 360 degrees, + 2 real planar closures): no
     BOPAlgo_Splitter call is made while building the tool itself, in
@@ -549,9 +611,15 @@ def Gmake_sewn_tcone(
     curve (usually a single edge; occasionally more than one segment),
     reused exactly (point 3) as each closing plane's own boundary.
     `plane1`/`plane2` are the composite's own two real closing planes.
-    """
+
+    Returns `None` (never raises) when either closing curve's own real
+    edges don't form one simple closed loop -- see `_wire_from_edges`'s
+    own docstring; the caller (`build_shape_functions.py::makeTCone`)
+    falls back to `build_complex_shape` for this one candidate."""
     wire1 = _wire_from_edges(edges1)
     wire2 = _wire_from_edges(edges2)
+    if wire1 is None or wire2 is None:
+        return None
 
     apex = to_native_vector(cone.Apex)
     cone_xdir = arbitrary_perpendicular(cone.Axis)
@@ -571,3 +639,134 @@ def Gmake_sewn_tcone(
     # topologically, identical to wire1/wire2 -- Gmake_shell's own
     # BRepBuilderAPI_Sewing(SEW_TOLERANCE) stitches them by coincidence.
     return Gmake_shell([plane1_face, cone_face, plane2_face])
+
+
+def _cylinder_native_v(cyl_surface, point: GVector) -> float:
+    """`point`'s own V (axial height) parameter on `cyl_surface` --
+    unlike `Geom_ConicalSurface`, `Geom_CylindricalSurface`'s own V
+    already IS the axial height directly, but `point` is still
+    projected (never computed from a formula) for the same robustness
+    `_cone_native_v` already established."""
+    uv = ShapeAnalysis_Surface(cyl_surface).ValueOfUV(to_native_vector(point), 1e-6)
+    return uv.Y()
+
+
+def _sphere_cap_face(sphere: GSphere, axis: GVector, edge_point: GVector) -> GFace:
+    """One of a Can's own end caps when the closing surface is a
+    sphere, assumed coaxial with the main cylinder (the sphere's own
+    center lies on the cylinder's axis -- the common domed-end-cap
+    case): a direct parametric trim from the real tangency circle's
+    own latitude (found by projecting one real point of the detected
+    edge, same technique as `_cone_native_v`) to whichever pole sits on
+    the same side -- mirrors `Gmake_sewn_tcone`'s own cone-face
+    technique, generalized to a surface with 2 poles instead of 1 apex.
+
+    `axis` is the main cylinder's own axis direction, reused directly
+    as the sphere's own pole axis under the coaxial assumption; its
+    sign does not matter here -- the near pole is picked from
+    `edge_point`'s own projected sign, not assumed from `axis`'s
+    orientation."""
+    xdir = arbitrary_perpendicular(axis)
+    ax3 = gp_Ax3(to_native_vector(sphere.Center), gp_Dir(axis.x, axis.y, axis.z), gp_Dir(xdir.x, xdir.y, xdir.z))
+    sphere_surface = Geom_SphericalSurface(ax3, sphere.Radius)
+    v_edge = ShapeAnalysis_Surface(sphere_surface).ValueOfUV(to_native_vector(edge_point), 1e-6).Y()
+    v_min, v_max = (v_edge, math.pi / 2.0) if v_edge >= 0.0 else (-math.pi / 2.0, v_edge)
+    native_face = BRepBuilderAPI_MakeFace(sphere_surface, 0.0, 2.0 * math.pi, v_min, v_max, UV_PROJECTION_TOL).Face()
+    return GFace(native_face)
+
+
+def _cone_cap_face(cone: GCone, edge_point: GVector) -> GFace:
+    """One of a Can's own end caps when the closing surface is a cone,
+    assumed coaxial with the main cylinder: the cap is the cone's own
+    surface from its real apex (V=0 by construction, see
+    `_cone_native_v`'s own docstring for why V is slant distance, not
+    axial height) to the real tangency circle's own projected V.
+    `v_edge`'s sign depends only on which way `cone.Axis` happens to
+    point relative to "from apex toward the real tangency circle" (the
+    real face's own analytic convention, not chosen here) -- 0 (the
+    apex) is always one of the two trim bounds regardless."""
+    apex = to_native_vector(cone.Apex)
+    cone_xdir = arbitrary_perpendicular(cone.Axis)
+    cone_ax3 = gp_Ax3(apex, gp_Dir(cone.Axis.x, cone.Axis.y, cone.Axis.z), gp_Dir(cone_xdir.x, cone_xdir.y, cone_xdir.z))
+    cone_surface = Geom_ConicalSurface(cone_ax3, cone.SemiAngle, 0.0)
+    v_edge = ShapeAnalysis_Surface(cone_surface).ValueOfUV(to_native_vector(edge_point), 1e-6).Y()
+    v_min, v_max = (0.0, v_edge) if v_edge >= 0.0 else (v_edge, 0.0)
+    native_face = BRepBuilderAPI_MakeFace(cone_surface, 0.0, 2.0 * math.pi, v_min, v_max, UV_PROJECTION_TOL).Face()
+    return GFace(native_face)
+
+
+def _can_cap_face(surf, axis: GVector, edges: list[GEdge]) -> "GFace | None":
+    """Dispatch one of a Can's own 2 end caps by the closing surface's
+    real analytic type -- a plane (reuses `_tcone_cap_face`/the real
+    edges exactly, point 3), a sphere, or a cone (both via the direct
+    parametric trim above, assumed coaxial with the main cylinder, no
+    edge reuse needed at all -- same reasoning as the main cylindrical
+    wall below). `Gmake_sewn_can`'s own caller (`build_shape_functions.
+    py::makeCan`) only calls this when both of a Can's own closing
+    surfaces are one of these 3 types -- a 4th (a differently-radiused
+    or non-coaxial closing cylinder, whose real tangency curve is in
+    general not planar/not at constant height) falls back to
+    `build_complex_shape` instead, same precondition-gated pattern
+    `makeRoundCorner`/`makeMultiPlanes`/`makeTCone` already use. Returns
+    `None` (propagated from `_tcone_cap_face`/`_wire_from_edges`) for a
+    plane cap whose own real edges don't form one simple closed loop --
+    see `_wire_from_edges`'s own docstring; the sphere/cone branches
+    never fail this way since they don't build a wire at all."""
+    if isinstance(surf, GPlane):
+        return _tcone_cap_face(surf, _wire_from_edges(edges))
+    if isinstance(surf, GSphere):
+        return _sphere_cap_face(surf, axis, edges[0].Vertexes[0])
+    if isinstance(surf, GCone):
+        return _cone_cap_face(surf, edges[0].Vertexes[0])
+    raise ValueError(f"Gmake_sewn_can: unsupported closing surface type {type(surf).__name__}")
+
+
+def Gmake_sewn_can(
+    cylinder: GCylinder,
+    edges1: list[GEdge],
+    surf1,
+    edges2: list[GEdge],
+    surf2,
+) -> "GShell | None":
+    """Build the open, three-face cutting-tool shell for a Can
+    composite (1 cylinder, closed 360 degrees, + 2 real closures, each
+    a plane, sphere, or cone): no `BOPAlgo_Splitter` call is made while
+    building the tool itself, in place of `build_complex_shape`'s own
+    `BuildDepth`/`Gfuse_solids` cascade. Mirrors `Gmake_sewn_tcone`
+    exactly -- see this module's own docstring for the full "why no
+    oversizing, why a direct parametric trim instead of the usual
+    reused-edge wire" reasoning, which applies here identically (a Can
+    is already a topologically closed shell, same as a TCone).
+
+    `edges1`/`edges2` are the real edges already found during Can
+    detection between the cylinder and each closing surface
+    (`functions.py::build_can_params`'s own `_common_edges` call,
+    stored as `CanParams.Edge1`/`.Edge2`); `surf1`/`surf2` are the
+    composite's own 2 real closing surfaces, already resolved to a
+    `geo` analytic type (`GPlane`/`GSphere`/`GCone`) by the caller.
+
+    Returns `None` (never raises) when a plane closing surface's own
+    real edges don't form one simple closed loop (see
+    `_wire_from_edges`'s own docstring) -- the caller
+    (`build_shape_functions.py::makeCan`) falls back to
+    `build_complex_shape` for this one candidate."""
+    ax3 = gp_Ax3(to_native_vector(cylinder.Center), gp_Dir(cylinder.Axis.x, cylinder.Axis.y, cylinder.Axis.z))
+    cyl_surface = Geom_CylindricalSurface(ax3, cylinder.Radius)
+
+    v1 = _cylinder_native_v(cyl_surface, edges1[0].Vertexes[0])
+    v2 = _cylinder_native_v(cyl_surface, edges2[0].Vertexes[0])
+    v_min, v_max = (v1, v2) if v1 <= v2 else (v2, v1)
+    cyl_native = BRepBuilderAPI_MakeFace(cyl_surface, 0.0, 2.0 * math.pi, v_min, v_max, UV_PROJECTION_TOL).Face()
+    cyl_face = GFace(cyl_native)
+
+    cap1 = _can_cap_face(surf1, cylinder.Axis, edges1)
+    cap2 = _can_cap_face(surf2, cylinder.Axis, edges2)
+    if cap1 is None or cap2 is None:
+        return None
+
+    # Same coincidence-only stitching as Gmake_sewn_tcone's own cone/
+    # plane seam -- none of cyl_face/cap1/cap2's own rim edges are the
+    # same native object as any other face's, for any closing surface
+    # type (unlike the plane-pair/RoundCorner cases, where the shared
+    # edge IS reused topologically).
+    return Gmake_shell([cap1, cyl_face, cap2])

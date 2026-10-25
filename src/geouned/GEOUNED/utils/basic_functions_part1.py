@@ -588,6 +588,17 @@ class CanParams:
         self.s1_configuration = params[1][1]
         self.s2 = params[2][0]
         self.s2_configuration = params[2][1]
+        # The real edges shared between the cylinder and each closing
+        # surface (params[4]/params[5]) -- present only when
+        # build_can_params found them (always, for a normal Can -- see
+        # functions.py's own docstring there); used by the "sewing
+        # composite surface" branch's own construction
+        # (build_shape_functions.py::makeCan) instead of
+        # build_complex_shape, mirroring TConeParams.Edge1/Edge2. `[]`
+        # if the params tuple predates this field (defensive, no real
+        # caller should hit this).
+        self.Edge1 = params[4] if len(params) > 4 else []
+        self.Edge2 = params[5] if len(params) > 5 else []
 
 
 class TConeParams:

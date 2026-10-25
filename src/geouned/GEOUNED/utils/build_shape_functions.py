@@ -9,12 +9,14 @@ from ...geo import (
     GCylinder,
     GCone,
     GFace,
+    GSphere,
     GVector,
     Gfirst_shell,
     Gfuse_solids,
     Gmake_shell,
     Gmake_solid,
     Gmake_polygon_face,
+    Gmake_sewn_can,
     Gmake_sewn_multiplane_chain,
     Gmake_sewn_round_corner_cylinder,
     Gmake_sewn_tcone,
@@ -191,7 +193,59 @@ def makeMultiRoundCorner(multiRoundCorner, Box, tolerances, forward=False):
     return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
 
 
+def _can_closing_surface(gs):
+    """Resolve one of a Can's own 2 closing surfaces (`CanParams.s1`/
+    `.s2`, a GeounedSurface whose `.Type` is "Plane"/"Sphere"/"Cone"/
+    "Cylinder" -- see `functions.py::build_can_params`) to the matching
+    `geo` analytic type (`GPlane`/`GSphere`/`GCone`), or `None` for a
+    closing cylinder -- its real tangency curve is in general not
+    planar/not at constant height (a differently-radiused or
+    non-coaxial cylinder; a same-radius coaxial "broken pipe" kink is
+    already converted to a Plane by build_can_params itself, via
+    cks_edge_plane), so `Gmake_sewn_can` has no construction for it;
+    the caller falls back to `build_complex_shape` instead."""
+    if gs.Type == "Plane":
+        return GPlane.from_values(gs.Surf.Position, gs.Surf.Axis)
+    if gs.Type == "Sphere":
+        sph_only = gs.Surf.Sphere.Surf
+        return GSphere.from_values(sph_only.Center, sph_only.Radius)
+    if gs.Type == "Cone":
+        cone_only = gs.Surf.Cone.Surf
+        return GCone.from_values(cone_only.Apex, cone_only.Axis, cone_only.SemiAngle)
+    return None
+
+
 def makeCan(can, Box, tolerances, forward=False):
+    """Build a Can's own `.shape`/`.shell` by sewing its real cylinder
+    face and 2 real closing surfaces together
+    (`geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_can`), reusing the
+    real closing edges already found during detection
+    (`CanParams.Edge1`/`.Edge2`, see `functions.py::build_can_params`)
+    -- in place of `build_complex_shape`'s own recursive `BuildDepth`/
+    `Gfuse_solids` cascade, still used for MultiRoundCorner (and for a
+    Can whose closing surface is a cylinder, see
+    `_can_closing_surface`'s own docstring). Mirrors `makeTCone`
+    exactly. No BOPAlgo_Splitter call is made while building this
+    shell itself.
+
+    Falls back to the original `build_complex_shape` construction
+    whenever the sewing prerequisites aren't met: the real closing
+    edges weren't found (defensive -- every normal detection finds
+    them), either closing surface is a cylinder, or `Gmake_sewn_can`
+    itself declines (a plane closing surface whose own real edges don't
+    form one simple closed loop -- a genuine detection/geometry defect
+    on that one candidate, see `Gmake_sewn_can`'s own docstring --
+    confirmed live, 2026-10-25, Cans/pipe.stp)."""
+    surf = can.Surf
+    s1 = _can_closing_surface(surf.s1)
+    s2 = _can_closing_surface(surf.s2)
+    if surf.Edge1 and surf.Edge2 and s1 is not None and s2 is not None:
+        cyl_only = surf.Cylinder.Surf.Cylinder.Surf
+        cylinder = GCylinder.from_values(cyl_only.Center, cyl_only.Axis, cyl_only.Radius)
+        shell = Gmake_sewn_can(cylinder, surf.Edge1, s1, surf.Edge2, s2)
+        if shell is not None:
+            native_shell = shell.__native__
+            return (native_shell, native_shell)
     return build_complex_shape(can, Box, tolerances, forward=forward)
 
 
@@ -209,7 +263,10 @@ def makeTCone(tcone, Box, tolerances):
     Falls back to the original `build_complex_shape` construction
     whenever the sewing prerequisites aren't met: the real closing
     edges weren't found (defensive -- every normal detection finds
-    them)."""
+    them), or `Gmake_sewn_tcone` itself declines (a closing plane's own
+    real edges don't form one simple closed loop -- a genuine
+    detection/geometry defect on that one candidate, see
+    `Gmake_sewn_tcone`'s own docstring)."""
     surf = tcone.Surf
     if surf.Edge1 and surf.Edge2:
         cone_only = surf.Cone.Surf.Cone.Surf
@@ -217,8 +274,9 @@ def makeTCone(tcone, Box, tolerances):
         plane1 = GPlane.from_values(surf.p1.Surf.Position, surf.p1.Surf.Axis)
         plane2 = GPlane.from_values(surf.p2.Surf.Position, surf.p2.Surf.Axis)
         shell = Gmake_sewn_tcone(cone, surf.Edge1, plane1, surf.Edge2, plane2)
-        native_shell = shell.__native__
-        return (native_shell, native_shell)
+        if shell is not None:
+            native_shell = shell.__native__
+            return (native_shell, native_shell)
     return build_complex_shape(tcone, Box, tolerances)
 
 

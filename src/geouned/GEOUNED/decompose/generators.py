@@ -217,7 +217,15 @@ def next_Can(solid, canface_index, *, tolerances):
             if cs is not None:
                 params = build_can_params(cs, tolerances=tolerances)
                 if params is not None:
-                    gc = GeounedSurface(("Can", params[0:3], params[3]))
+                    # Full params (not a params[0:3] slice -- a pre-existing
+                    # truncation that used to only drop cyl.Orientation,
+                    # itself still read explicitly below, but would also
+                    # silently drop CanParams.Edge1/.Edge2 (params[4:6]),
+                    # added for the "sewing composite surface" branch's own
+                    # construction -- see CanParams/build_can_params's own
+                    # docstrings) is passed through, matching next_truncCone's
+                    # own identical, unsliced build_tcone_params(cs) call.
+                    gc = GeounedSurface(("Can", params, params[3]))
                     canface_index.update(surfindex)
                     yield gc
 

@@ -533,8 +533,21 @@ def build_can_params(cs, *, tolerances):
 
     bsurf = []
     sid = 0
+    # The real edges shared between the cylinder (cyl_in, possibly a
+    # merged ShellFaceGu) and each closing surface -- carried forward on
+    # CanParams for the "sewing composite surface" branch's own
+    # construction (geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_can)
+    # instead of build_complex_shape, mirroring build_tcone_params's own
+    # Edge1/Edge2. Captured for every branch, including Plane (which
+    # otherwise never needs the real edges for its own boolean-algebra
+    # construction below).
+    edge_lists = []
     for s, r, omit in (sr1, sr2):
         if type(s.Surface) is GPlane:
+            if shell:
+                edges, _ = commonEdge(cyl_in, s, outer1_only=True, outer2_only=False)
+            else:
+                edges = commonEdge(cyl, s, outer1_only=True, outer2_only=False)
             normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
             if r == "OR":
                 normal = -normal  # plane axis toward cylinder center
@@ -644,6 +657,7 @@ def build_can_params(cs, *, tolerances):
                 orientation = "Reversed" if s.Orientation == "Forward" else "Forward"
             gs = GeounedSurface(("Sphere", (sphOnly, pa), orientation))
 
+        edge_lists.append(edges)
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
@@ -651,7 +665,7 @@ def build_can_params(cs, *, tolerances):
     cylOnly.bVar = BoolVariable(sid)
     gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
-    return (gcyl, bsurf[0], bsurf[1], cyl.Orientation)
+    return (gcyl, bsurf[0], bsurf[1], cyl.Orientation, edge_lists[0], edge_lists[1])
 
 
 def build_tcone_params(ks):
