@@ -597,6 +597,17 @@ class TConeParams:
         self.p1_configuration = params[1][1]
         self.p2 = params[2][0]
         self.p2_configuration = params[2][1]
+        # The real edges shared between the cone and each closing plane
+        # (lists -- a closed circle/ellipse boundary can be more than one
+        # edge segment), present only when `build_tcone_params` found
+        # them (always, for a normal TCone -- see `functions.py`'s own
+        # docstring there); used by the "sewing composite surface"
+        # branch's own construction (build_shape_functions.py::makeTCone)
+        # instead of BuildDepth/Gfuse_solids. `[]` if the params tuple
+        # predates this field (defensive, no real caller should hit
+        # this).
+        self.Edge1 = params[3] if len(params) > 3 else []
+        self.Edge2 = params[4] if len(params) > 4 else []
 
 
 class RoundCornerParams:

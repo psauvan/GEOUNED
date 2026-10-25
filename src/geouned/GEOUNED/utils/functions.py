@@ -265,6 +265,23 @@ def _first_common_edge(face1, face2):
     return edges[0] if edges else None
 
 
+def _common_edges(face1, face2, *, outer2_only=True):
+    """Every real edge shared between `face1`/`face2` (never just the
+    first) -- same `ShellFaceGu`-vs-plain-face return-shape
+    normalization as `_first_common_edge`, kept for a caller whose
+    shared boundary may legitimately be a single CLOSED curve
+    represented as more than one edge segment (e.g. a Can/TCone's own
+    closing circle/ellipse between the cone/cylinder and each closing
+    plane -- the 'sewing composite surface' branch's own point 3,
+    generalized from a single straight generatrix line). `outer2_only`
+    mirrors `get_can_surfaces`'s own `commonEdge(..., outer2_only=False)`
+    call: a closing plane can share its boundary with the cone/cylinder
+    via its own INNER wire (a washer), not just its outer one."""
+    result = commonEdge(face1, face2, outer1_only=True, outer2_only=outer2_only)
+    edges = result[0] if isinstance(result, tuple) else result
+    return edges or []
+
+
 def _index_of_plane(plane_list, plane, tolerances):
     """Index of the first GeounedSurface plane of `plane_list` that is the same oriented plane as `plane`, else None."""
     for i, other in enumerate(plane_list):
@@ -646,8 +663,23 @@ def build_tcone_params(ks):
         kne = kne_in.Faces[0]
 
     bsurf = []
+    # The real edges shared between the cone (kne_in, possibly a merged
+    # ShellFaceGu if the cone face was split into several pieces) and
+    # each closing plane -- a TCone's own closing surface is always a
+    # plane (get_tcone_surfaces already rejects anything else), and its
+    # real boundary with the cone is always a single closed, planar
+    # curve (a circle, or an ellipse for an oblique closing plane),
+    # possibly represented as more than one edge segment. Found here,
+    # from the same real `kne_in`/`s` face objects this function already
+    # has in scope, purely to be carried forward on TConeParams for the
+    # "sewing composite surface" branch's own construction
+    # (geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_tcone) -- never
+    # recomputed analytically, the same point 3 of that design already
+    # used for RoundCorner/MultiPlane.
+    edge_lists = []
     sid = 0
     for s, r, omit in (p1, p2):
+        edge_lists.append(_common_edges(kne_in, s, outer2_only=False))
         normal = -s.Surface.Axis if s.Orientation == "Forward" else s.Surface.Axis
         if r == "OR":
             normal = -normal  # plane axis toward cone center
@@ -662,7 +694,7 @@ def build_tcone_params(ks):
     sid += 1
     coneOnly.bVar = BoolVariable(sid)
     gcone = GeounedSurface(("Cone", (coneOnly, None, None), kne.Orientation))
-    return (gcone, bsurf[0], bsurf[1])
+    return (gcone, bsurf[0], bsurf[1], edge_lists[0], edge_lists[1])
 
 
 def _multiplane_chain_order(n, dedup_adjacency):

@@ -43,33 +43,67 @@ reused unchanged for the 2 plane faces; the cylinder's own oversized face
 is new -- bounded in the angular (U) direction by the 2 real tangent
 edges (extended, point 1), and in the axial (V) direction by `span`, via
 2 new circular-arc "cap" edges built on the cylinder's own real
-Center/Axis/Radius. There is no cone-based RoundCorner to handle here --
-`GEOUNED/utils/functions.py::get_roundCorner` only ever detects a
-RoundCorner from a `GCylinder` face; a cone with 2 adjacent planes is
-instead its own, separate composite type, TCone (`get_TCone`), not a
-RoundCorner variant. If this sewing technique is ever extended to TCone,
-it would need a dedicated cone version of this section (the cross-section
-radius varies linearly with distance from the apex, so the 2 "cap" arcs
-would need different radii, and the extension must not cross the apex)
--- not a gap in this RoundCorner implementation itself.
-"""
+Center/Axis/Radius.
+
+Third case: TCone (`Gmake_sewn_tcone`) -- 1 cone, closed 360 degrees,
++ 2 real planar closures (`GEOUNED/utils/functions.py::get_tcone_surfaces`
+always requires both closing surfaces to be `GPlane`; a cone with 2
+adjacent planes is its own composite type, never a RoundCorner variant,
+since `get_roundCorner` only ever detects one from a `GCylinder` face).
+Genuinely different design from RoundCorner/MultiPlane, confirmed
+directly by the user (2026-10-25): a TCone is already a topologically
+CLOSED shell (a cone, closed 360 degrees, with 2 planar end caps), so
+none of points 1/2's own "oversized, bigger-than-the-solid, free sides"
+reasoning applies here at all -- the cone's own face is trimmed
+precisely between the two real closing curves' own heights, and each
+plane's own face is trimmed to precisely the finite-area region its own
+real closing curve (reused exactly, point 3) bounds -- both are already
+the composite's true, complete boundary. No `span`/material-hint
+parameter is needed at all, unlike every other function in this module.
+
+TCone's own cone face is deliberately NOT built from point 3's usual
+"reuse the real edge as the boundary wire" technique, unlike every other
+function here -- confirmed empirically (2026-10-25) that reusing the 2
+real closing edges as ONE wire (closed loop + a synthetic seam, the
+standard OCCT idiom for a periodic surface trimmed between 2 full
+iso-curves) is fragile in a way this project's own established
+`_substitute_face_surface` fix doesn't resolve: the 2 edges' real
+relative orientation (as found in an actual solid) is not a fixed
+convention, and even once a seam/orientation combination passes
+`BRepCheck_Analyzer`, the resulting face can still make BOPAlgo_Splitter
+produce a wrong (volume-inconsistent) split. The direct parametric trim
+(`BRepBuilderAPI_MakeFace(surface, 0, 2*pi, vmin, vmax)` -- no wire, no
+seam, confirmed empirically to always come back `BRepCheck_Analyzer`-
+valid) is used instead; `vmin`/`vmax` are found by projecting one real
+point of each closing curve onto the cone's own native V parameter
+(`ShapeAnalysis_Surface.ValueOfUV`) -- NOT the axial height from the
+apex, since `Geom_ConicalSurface`'s own V is the SLANT distance
+(confirmed empirically: `Value(0, v)` at the real apex gives a point at
+axial height `v*cos(SemiAngle)`, not `v`). The cone face's own new
+boundary edges are then geometrically, but not topologically, identical
+to `wire1`/`wire2` (the planes' own real, reused closing curves) --
+`Gmake_shell`'s own `BRepBuilderAPI_Sewing(SEW_TOLERANCE)` stitches them
+together by coincidence, exactly as it would for any other 2 faces built
+independently."""
 
 from __future__ import annotations
 
 import math
 
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
-from OCP.Geom import Geom_Circle, Geom_CylindricalSurface
+from OCP.Geom import Geom_Circle, Geom_ConicalSurface, Geom_CylindricalSurface
 from OCP.gp import gp_Ax2, gp_Ax3, gp_Dir, gp_Pln
+from OCP.ShapeAnalysis import ShapeAnalysis_Surface
 from OCP.TopAbs import TopAbs_VERTEX
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
-from ..vector_geometry import GVector
+from ..constants import UV_PROJECTION_TOL
+from ..vector_geometry import GVector, arbitrary_perpendicular
 from ._native_utils import to_native_vector, _edge_curve_and_range
 from .primitives import Gmake_shell
 from .spline_quadrics import _substitute_face_surface
-from .topology import GCylinder, GEdge, GFace, GPlane, GShell
+from .topology import GCone, GCylinder, GEdge, GFace, GPlane, GShell
 
 
 def _extended_edge_on_curve(junction_edge: GEdge, span: float) -> GEdge:
@@ -451,3 +485,89 @@ def Gmake_sewn_round_corner_cylinder(
     face2 = _oversized_plane_face(plane2, e2_ext, span, material_hint_2)
     cyl_face = _oversized_cylinder_face(cylinder, e1_ext, e2_ext, cylinder_material_hint)
     return Gmake_shell([face1, cyl_face, face2])
+
+
+def _wire_from_edges(edges: list[GEdge]):
+    """A native wire built from `edges`, reused exactly (point 3) -- the
+    real closed boundary between a TCone's cone and one of its 2 closing
+    planes (a circle, or an ellipse for an oblique closing plane),
+    possibly represented as more than one edge segment. `BRepBuilderAPI_
+    MakeWire.Add()` connects them in whatever order they're added; for
+    the common case (a single real edge already forming the whole closed
+    loop) this is a one-element, already-trivially-ordered call."""
+    wire_maker = BRepBuilderAPI_MakeWire()
+    for e in edges:
+        wire_maker.Add(e.__native__)
+    return wire_maker.Wire()
+
+
+def _tcone_cap_face(plane: GPlane, wire) -> GFace:
+    """One of a TCone's own 2 planar end caps: `plane`'s own real
+    (Position, Axis) analytic plane, trimmed to exactly the finite-area
+    region `wire` bounds -- `BRepBuilderAPI_MakeFace(surface, wire)`'s
+    own default meaning for a single closed planar wire, no material
+    hint or side choice needed (unlike `_oversized_plane_face`, nothing
+    here is ambiguous: there is only one bounded side to a closed curve
+    on a plane)."""
+    xdir = plane.XDir if plane.XDir is not None else arbitrary_perpendicular(plane.Axis)
+    ax3 = gp_Ax3(to_native_vector(plane.Position), gp_Dir(plane.Axis.x, plane.Axis.y, plane.Axis.z), gp_Dir(xdir.x, xdir.y, xdir.z))
+    native_face = BRepBuilderAPI_MakeFace(gp_Pln(ax3), wire).Face()
+    return GFace(native_face)
+
+
+def _cone_native_v(cone_surface, point: GVector) -> float:
+    """`point`'s own V parameter on `cone_surface` -- NOT the axial
+    height from the apex, `Geom_ConicalSurface`'s own V is the SLANT
+    distance (confirmed empirically, 2026-10-25: `Value(0, v)` at the
+    real apex gives a point at axial height `v*cos(SemiAngle)`, not
+    `v`); projecting the real point directly sidesteps ever needing that
+    conversion formula."""
+    uv = ShapeAnalysis_Surface(cone_surface).ValueOfUV(to_native_vector(point), 1e-6)
+    return uv.Y()
+
+
+def Gmake_sewn_tcone(
+    cone: GCone,
+    edges1: list[GEdge],
+    plane1: GPlane,
+    edges2: list[GEdge],
+    plane2: GPlane,
+) -> GShell:
+    """Build the open, three-face cutting-tool shell for a TCone
+    composite (1 cone, closed 360 degrees, + 2 real planar closures): no
+    BOPAlgo_Splitter call is made while building the tool itself, in
+    place of `build_complex_shape`'s own `BuildDepth`/`Gfuse_solids`
+    cascade. See this module's own docstring for why no oversizing of
+    any kind is needed here, unlike every other function in this file,
+    and for why the cone's own face is built via a direct parametric
+    trim rather than point 3's usual reused-edge wire.
+
+    `edges1`/`edges2` are the real edges already found during TCone
+    detection between the cone and each closing plane
+    (`functions.py::build_tcone_params`'s own `_common_edges` call,
+    stored as `TConeParams.Edge1`/`.Edge2`) -- each a closed, planar
+    curve (usually a single edge; occasionally more than one segment),
+    reused exactly (point 3) as each closing plane's own boundary.
+    `plane1`/`plane2` are the composite's own two real closing planes.
+    """
+    wire1 = _wire_from_edges(edges1)
+    wire2 = _wire_from_edges(edges2)
+
+    apex = to_native_vector(cone.Apex)
+    cone_xdir = arbitrary_perpendicular(cone.Axis)
+    cone_ax3 = gp_Ax3(apex, gp_Dir(cone.Axis.x, cone.Axis.y, cone.Axis.z), gp_Dir(cone_xdir.x, cone_xdir.y, cone_xdir.z))
+    cone_surface = Geom_ConicalSurface(cone_ax3, cone.SemiAngle, 0.0)
+
+    v1 = _cone_native_v(cone_surface, edges1[0].Vertexes[0])
+    v2 = _cone_native_v(cone_surface, edges2[0].Vertexes[0])
+    v_min, v_max = (v1, v2) if v1 <= v2 else (v2, v1)
+    cone_native = BRepBuilderAPI_MakeFace(cone_surface, 0.0, 2.0 * math.pi, v_min, v_max, UV_PROJECTION_TOL).Face()
+    cone_face = GFace(cone_native)
+
+    plane1_face = _tcone_cap_face(plane1, wire1)
+    plane2_face = _tcone_cap_face(plane2, wire2)
+
+    # `cone_face`'s own 2 rim edges are geometrically, but not
+    # topologically, identical to wire1/wire2 -- Gmake_shell's own
+    # BRepBuilderAPI_Sewing(SEW_TOLERANCE) stitches them by coincidence.
+    return Gmake_shell([plane1_face, cone_face, plane2_face])
