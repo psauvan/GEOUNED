@@ -599,6 +599,17 @@ class CanParams:
         # caller should hit this).
         self.Edge1 = params[4] if len(params) > 4 else []
         self.Edge2 = params[5] if len(params) > 5 else []
+        # The closing face's own COMPLETE real boundary (every edge of the
+        # actual face in the solid, not just Edge1/Edge2's tangency curve
+        # with the cylinder) -- params[6]/params[7]. Confirmed directly by
+        # the user, 2026-10-26: reusing this real boundary exactly (be it
+        # one circular edge + a genuine degenerate apex, or two real
+        # circular edges for a frustum closing surface) is simpler and
+        # more robust than reconstructing a pole/apex boundary
+        # analytically, for both the sphere and cone cases uniformly --
+        # see geo/ocp/sewn_composite.py's own module docstring.
+        self.FaceEdges1 = params[6] if len(params) > 6 else []
+        self.FaceEdges2 = params[7] if len(params) > 7 else []
 
 
 class TConeParams:

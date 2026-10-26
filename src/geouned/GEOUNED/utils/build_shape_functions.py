@@ -197,13 +197,7 @@ def _can_closing_surface(gs):
     """Resolve one of a Can's own 2 closing surfaces (`CanParams.s1`/
     `.s2`, a GeounedSurface whose `.Type` is "Plane"/"Sphere"/"Cone"/
     "Cylinder" -- see `functions.py::build_can_params`) to the matching
-    `geo` analytic type (`GPlane`/`GSphere`/`GCone`), or `None` for a
-    closing cylinder -- its real tangency curve is in general not
-    planar/not at constant height (a differently-radiused or
-    non-coaxial cylinder; a same-radius coaxial "broken pipe" kink is
-    already converted to a Plane by build_can_params itself, via
-    cks_edge_plane), so `Gmake_sewn_can` has no construction for it;
-    the caller falls back to `build_complex_shape` instead."""
+    `geo` analytic type (`GPlane`/`GSphere`/`GCone`/`GCylinder`)."""
     if gs.Type == "Plane":
         return GPlane.from_values(gs.Surf.Position, gs.Surf.Axis)
     if gs.Type == "Sphere":
@@ -212,37 +206,44 @@ def _can_closing_surface(gs):
     if gs.Type == "Cone":
         cone_only = gs.Surf.Cone.Surf
         return GCone.from_values(cone_only.Apex, cone_only.Axis, cone_only.SemiAngle)
+    if gs.Type == "Cylinder":
+        cyl_only = gs.Surf.Cylinder.Surf
+        return GCylinder.from_values(cyl_only.Center, cyl_only.Axis, cyl_only.Radius)
     return None
 
 
 def makeCan(can, Box, tolerances, forward=False):
     """Build a Can's own `.shape`/`.shell` by sewing its real cylinder
     face and 2 real closing surfaces together
-    (`geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_can`), reusing the
-    real closing edges already found during detection
-    (`CanParams.Edge1`/`.Edge2`, see `functions.py::build_can_params`)
-    -- in place of `build_complex_shape`'s own recursive `BuildDepth`/
-    `Gfuse_solids` cascade, still used for MultiRoundCorner (and for a
-    Can whose closing surface is a cylinder, see
-    `_can_closing_surface`'s own docstring). Mirrors `makeTCone`
-    exactly. No BOPAlgo_Splitter call is made while building this
-    shell itself.
+    (`geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_can`), reusing real
+    boundaries already found during detection -- the cylinder's own
+    tangency curve with each closing surface (`CanParams.Edge1`/
+    `.Edge2`) and each closing surface's own COMPLETE real face
+    boundary (`CanParams.FaceEdges1`/`.FaceEdges2`), see
+    `functions.py::build_can_params` -- in place of
+    `build_complex_shape`'s own recursive `BuildDepth`/`Gfuse_solids`
+    cascade, still used for MultiRoundCorner. Mirrors `makeTCone`
+    exactly, including taking no `Box`-derived sizing parameter: every
+    face (the cylinder AND both caps, whatever each closing surface's
+    own type) is built from real edges alone, never an oversized
+    native solid (`Gmake_sewn_can`'s own docstring has the full
+    recipe).
 
     Falls back to the original `build_complex_shape` construction
-    whenever the sewing prerequisites aren't met: the real closing
-    edges weren't found (defensive -- every normal detection finds
-    them), either closing surface is a cylinder, or `Gmake_sewn_can`
-    itself declines (a plane closing surface whose own real edges don't
-    form one simple closed loop -- a genuine detection/geometry defect
-    on that one candidate, see `Gmake_sewn_can`'s own docstring --
+    whenever the sewing prerequisites aren't met: the real edges
+    weren't found (defensive -- every normal detection finds them), or
+    `Gmake_sewn_can` itself declines (some real edge list doesn't form
+    one simple closed loop, or the two main-cylinder loops can't be
+    joined into one wire -- a genuine detection/geometry defect on
+    that one candidate, see `Gmake_sewn_can`'s own docstring --
     confirmed live, 2026-10-25, Cans/pipe.stp)."""
     surf = can.Surf
     s1 = _can_closing_surface(surf.s1)
     s2 = _can_closing_surface(surf.s2)
-    if surf.Edge1 and surf.Edge2 and s1 is not None and s2 is not None:
+    if surf.Edge1 and surf.Edge2 and surf.FaceEdges1 and surf.FaceEdges2 and s1 is not None and s2 is not None:
         cyl_only = surf.Cylinder.Surf.Cylinder.Surf
         cylinder = GCylinder.from_values(cyl_only.Center, cyl_only.Axis, cyl_only.Radius)
-        shell = Gmake_sewn_can(cylinder, surf.Edge1, s1, surf.Edge2, s2)
+        shell = Gmake_sewn_can(cylinder, surf.Edge1, s1, surf.Edge2, s2, surf.FaceEdges1, surf.FaceEdges2)
         if shell is not None:
             native_shell = shell.__native__
             return (native_shell, native_shell)

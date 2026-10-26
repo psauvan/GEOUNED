@@ -542,6 +542,22 @@ def build_can_params(cs, *, tolerances):
     # otherwise never needs the real edges for its own boolean-algebra
     # construction below).
     edge_lists = []
+    # The closing face `s`'s own COMPLETE real boundary (every edge of
+    # the actual face in the solid, not just the one shared with the
+    # cylinder) -- also carried forward on CanParams, for the same
+    # sewing branch's own cap construction. Confirmed directly by the
+    # user, 2026-10-26: a cone (or any other) closing surface's real
+    # face in the solid already encodes its own true extent exactly
+    # (a frustum's own 2 real circular edges, or a genuine apex vertex
+    # if the face really does narrow to a point) -- reusing it exactly
+    # is simpler and more robust than reconstructing a pole/apex
+    # boundary analytically (which the sewing branch tried first, see
+    # geo/ocp/sewn_composite.py's own module docstring, and which the
+    # existing boolean-definition code below never needed either: a
+    # Can's own cone branch always closes the region with an
+    # additional PLANE -- `cone_apex_plane`/`_closing_plane` -- never
+    # by treating the apex as a topological boundary).
+    face_edge_lists = []
     for s, r, omit in (sr1, sr2):
         if type(s.Surface) is GPlane:
             if shell:
@@ -658,6 +674,7 @@ def build_can_params(cs, *, tolerances):
             gs = GeounedSurface(("Sphere", (sphOnly, pa), orientation))
 
         edge_lists.append(edges)
+        face_edge_lists.append(s.Edges)
         bsurf.append((gs, r))
 
     cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
@@ -665,7 +682,16 @@ def build_can_params(cs, *, tolerances):
     cylOnly.bVar = BoolVariable(sid)
     gcyl = GeounedSurface(("Cylinder", (cylOnly, None), cyl.Orientation))
 
-    return (gcyl, bsurf[0], bsurf[1], cyl.Orientation, edge_lists[0], edge_lists[1])
+    return (
+        gcyl,
+        bsurf[0],
+        bsurf[1],
+        cyl.Orientation,
+        edge_lists[0],
+        edge_lists[1],
+        face_edge_lists[0],
+        face_edge_lists[1],
+    )
 
 
 def build_tcone_params(ks):

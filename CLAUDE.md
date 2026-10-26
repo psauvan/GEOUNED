@@ -103,30 +103,52 @@ section above), but mirrors the same structure at a smaller scale.
 Engine-swappability (the original motivation for the attempt-1 ABC) is
 achieved at the **module** level instead of dependency injection:
 `geo/__init__.py` reads `GEOUNED_CAD_ENGINE` once at import time
-(`ocp` by default; `occ` for pythonocc-core/SWIG; `freecad` for the
-original `Part`/`BOPTools` implementation) and imports the matching
-engine package — the rest of GEOUNED never branches on the engine.
+(`ocp` by default; `occ` for pythonocc-core/SWIG) and imports the
+matching engine package — the rest of GEOUNED never branches on the
+engine. **The original third engine, `freecad` (`Part`/`BOPTools`), was
+removed entirely 2026-10-24** (branch `sewing-composite-surface`, see
+"Known open items" -> Shared/cross-cutting -> "sewing composite
+surface" below): once that work made it clear there was no remaining
+reason to keep it (FreeCAD's own bundled OCCT silently fails to split
+some solids OCP's/pythonocc-core's newer OCCT succeeds on — the
+project's own original motivating tangency bug — and every feature
+added since the migration had no FreeCAD equivalent to begin with),
+`geo/freecad/`, `GEOReverse/Modules/engine_dependency/_freecad_impl.py`,
+and every `CAD_ENGINE == "freecad"` branch across the whole package were
+deleted outright. `GEOUNED_CAD_ENGINE` now only accepts `"occ"`/`"ocp"`
+(raises `ValueError` otherwise) -- every `freecad`-specific detail
+still described elsewhere in this file (a third per-engine file split,
+a "freecad has no equivalent" aside, a 3-way test-suite comparison, ...)
+is historical, describing what was true at the time that entry was
+written, not the current state.
 
 Layout:
 
-- `geo/freecad/`, `geo/occ/`, `geo/ocp/` — one package per engine, each
-  with the same file-group split so a fix found in one engine is easy to
-  locate and port to the others: `_native_utils.py` (native-conversion
-  helpers, `kernel_version`), `topology.py` (analytic surface/curve
-  descriptors — `GPlane`/`GCylinder`/`GCone`/`GSphere`/`GTorus`/`GLine`/
-  `GCircle`/`GEllipse`/`GBSpline` — plus the neutral topology classes
-  `GEdge`/`GWire`/`GFace`/`GShell`/`GSolid`, all mutually recursive so
-  kept in one file), `repair.py` (`Gdefeature`/`Gcollapse_split_rings`/
+- `geo/occ/`, `geo/ocp/` — one package per engine, each with the same
+  file-group split so a fix found in one engine is easy to locate and
+  port to the other: `_native_utils.py` (native-conversion helpers,
+  `kernel_version`), `topology.py` (analytic surface/curve descriptors —
+  `GPlane`/`GCylinder`/`GCone`/`GSphere`/`GTorus`/`GLine`/`GCircle`/
+  `GEllipse`/`GBSpline` — plus the neutral topology classes `GEdge`/
+  `GWire`/`GFace`/`GShell`/`GSolid`, all mutually recursive so kept in
+  one file), `repair.py` (`Gdefeature`/`Gcollapse_split_rings`/
   `Gsliver_heal`/`Gcheck_and_repair`/`Gspline_surface`/`Gheal_topology`
   — the load-time and post-split CAD-defect detection/repair cascade),
   `split.py` (`Gsplit`), `boolean.py` (`Gcut`/`Gcommon`/`Gfuse`),
-  `primitives.py` (`Gmake_*` constructors), `io.py` (`Gload_step`/
-  `Gload_step_labels`/`Gexport_step`/`Gload_and_process_step`), `queries.py`
-  (`Gface_valid`, tolerance/manifold diagnostics). `occ`/`ocp` additionally
-  split `split_repair.py` (non-manifold / phantom-cut repair of a raw
-  BOPAlgo_Splitter result) and `split_coaxial_cone.py` (the coaxial-cone/
-  cylinder degeneracy fallback) out of `split.py`'s own larger cascade —
-  `freecad`'s `Gsplit` has no equivalent complexity.
+  `primitives.py` (`Gmake_*` constructors), `sewn_composite.py`
+  (`Gmake_sewn_plane_pair`/`Gmake_sewn_multiplane_chain`/
+  `Gmake_sewn_round_corner_cylinder`/`Gmake_sewn_tcone`/`Gmake_sewn_can`
+  — building a composite meta-surface's own cutting-tool shell by
+  sewing its real, analytically-trimmed component faces together,
+  in place of `build_complex_shape`'s own recursive `BuildDepth`/
+  `Gfuse_solids` boolean cascade; see "Known open items" ->
+  Shared/cross-cutting -> "sewing composite surface" for the whole
+  initiative), `io.py` (`Gload_step`/`Gload_step_labels`/`Gexport_step`/
+  `Gload_and_process_step`), `queries.py` (`Gface_valid`, tolerance/
+  manifold diagnostics), plus `split_repair.py` (non-manifold/
+  phantom-cut repair of a raw `BOPAlgo_Splitter` result) and
+  `split_coaxial_cone.py` (the coaxial-cone/cylinder degeneracy
+  fallback) split out of `split.py`'s own larger cascade.
 - `geo/vector_geometry.py` — pure math, zero native dependency:
   `GVector`, `GMatrix`, `GBoundBox` and their `to_g*` converters, and,
   since 2026-09-17, `myBox` (the `Forward`/`Reversed` box-arithmetic
@@ -305,6 +327,82 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`next_Can` (`decompose/generators.py`) truncated `build_can_params`'s
+  own return to `params[0:3]` before building `CanParams`, fixed
+  2026-10-25 -- root cause of the Can "sewing composite surface"
+  construction (see "Known open items" -> Shared/cross-cutting) never
+  actually running for ANY real Can candidate, despite every unit test
+  passing.** This truncation pre-dates this session (it already dropped
+  `cyl.Orientation`, read separately as the outer `GeounedSurface`'s own
+  3rd positional argument, `params[3]`) -- but once `build_can_params`
+  gained 2 new trailing elements (`Edge1`/`Edge2`, the real edges needed
+  by `Gmake_sewn_can`), the same slice silently dropped those too.
+  Confirmed live via direct instrumentation across the whole real
+  `Solidos/test_models/Cans/` corpus: EVERY real candidate reported
+  `surf.Edge1 == [] and surf.Edge2 == []` at the `makeCan` call site,
+  even though `build_can_params` itself (traced separately, in
+  isolation) returned non-empty edges every time -- `next_truncCone`'s
+  own, sibling call site (`GeounedSurface(("TCone",
+  build_tcone_params(cs)))`) was never sliced this way, which is exactly
+  why the TCone sewing path (above) didn't have this specific bug, only
+  its own separate `ConeParams.Cone` one. **Fix**: `next_Can` now passes
+  the full `params` tuple through (`GeounedSurface(("Can", params,
+  params[3]))`), matching `next_truncCone`'s own unsliced call exactly.
+  **Verified**: re-running the same corpus-wide trace after the fix,
+  every real Plane/Sphere/Cone-closed Can candidate now reports non-empty
+  `Edge1`/`Edge2` and actually dispatches into `Gmake_sewn_can`.
+- **`_wire_from_edges` (`geo/{occ,ocp}/sewn_composite.py`, shared by
+  TCone and Can) could raise a native `StdFail_NotDone` instead of
+  returning cleanly, fixed 2026-10-25 -- found live on
+  `Cans/pipe.stp`/`pipe1.stp` (a real multi-kink pipe) once the
+  `next_Can` fix above let real candidates reach it for the first
+  time.** One real candidate's own detected "shared edges" for one end
+  came back as 2-3 segments with NO matching endpoints between them AT
+  ALL (confirmed by printing every edge's own vertex coordinates: e.g.
+  one segment ending at `(-9153.957, 14494.3606, -3102.5221)`, the next
+  starting at `(-9105.8989, 14495.1725, -3131.247)`, ~60mm apart) -- a
+  genuine detection/geometry defect on this one candidate, not an
+  ordering problem the already-existing `_order_wire_edges` reordering
+  step (added earlier the same day for a DIFFERENT, real ordering issue
+  on this same file -- see below) could ever fix; `_order_wire_edges`
+  correctly returns `None` for exactly this case, but the function kept
+  trying to force a wire through the unordered edges anyway, and
+  `BRepBuilderAPI_MakeWire.Wire()` raised rather than reporting
+  `IsDone()==False` first.
+  **The earlier, separate ordering bug this same function already had
+  (also found on `pipe.stp`/`pipe1.stp`, fixed first)**: a real closing
+  curve represented as 2+ edge segments isn't guaranteed to arrive in
+  connectable order, and `BRepBuilderAPI_MakeWire.Add()` only ever
+  connects a new edge to the wire's own CURRENT open end -- fixed by
+  reusing `_order_wire_edges` (`repair.py`, already validated for this
+  exact failure mode elsewhere in the repair cascade) to reorder the
+  edges first.
+  **Fix (the disconnected-edges case)**: `_wire_from_edges` now returns
+  `None` (never raises) both when `_order_wire_edges` itself reports no
+  valid loop, and as a last-resort `try`/`except` around `.Wire()`
+  itself (confirmed live: `IsDone()` alone still reported `True` right
+  before `.Wire()` raised for this exact case). `None` now propagates
+  cleanly up through `_tcone_cap_face`/`_can_cap_face` ->
+  `Gmake_sewn_tcone`/`Gmake_sewn_can` -> `makeTCone`/`makeCan`, which
+  fall back to `build_complex_shape` for that one candidate -- the same
+  "sewing prerequisites not met" fallback already used for a missing
+  `Edge1`/`Edge2` or an unsupported closing-surface type, not a crash.
+  **Verified**: the whole real `Cans/` corpus (14 files) converts
+  cleanly end to end after this fix, with zero crashes (confirmed via a
+  dedicated corpus-wide trace instrumenting `makeCan` directly). A
+  before/after written-MCNP-text diff (sewing vs. a forced
+  `build_complex_shape` fallback for every candidate) is byte-identical
+  (modulo Creation Date) for every file in the corpus EXCEPT
+  `pipe.stp`/`pipe1.stp` themselves, where sewing finds a genuinely
+  finer decomposition (5 pieces vs. 3, identical total volume to 1e-5
+  relative) -- a real correctness difference, not noise: Monte Carlo
+  point-sampling (200000 samples per mode) against the true CAD solid on
+  that file's own first written cell confirms sewing is the correct one
+  (0 missed material either way, but only 2% of its own true volume
+  over-included for sewing -- ordinary sampling-boundary noise, matching
+  this project's own established "a few parts in 10^5" precedent for a
+  correct cell -- vs. 158% over-included for the old cascade's own, less
+  precise merge of this specific candidate).
 - **`Gfuse_solids` (`geo/solid_ops.py`) could leave a face whose
   `Surface` is `None` behind, fixed 2026-10-15 -- root cause of
   `simple_solid_definition` crashing with a bare `KeyError:
@@ -4041,6 +4139,226 @@ gaps for whenever it's picked back up:
 
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
+- **"Sewing composite surface" initiative, branch `sewing-composite-surface`,
+  started 2026-10-24, ongoing.** Builds a composite meta-surface's own
+  cutting-tool shell (used by `generic_split` as a `Gsplit` candidate,
+  via `build_shape_functions.py::makeMultiPlanes`/`makeRoundCorner`/
+  `makeTCone`/`makeCan`) by sewing its real, analytically-trimmed
+  component faces together directly, in `geo/{occ,ocp}/sewn_composite.py`
+  — in place of `build_complex_shape`'s own recursive `BuildDepth`/
+  `Gfuse_solids` boolean cascade (still used for `MultiRoundCorner`, and
+  as the fallback whenever a sewing precondition isn't met). Motivated
+  directly by the user: once sewing could reliably build these shapes,
+  there was no remaining reason to keep the `freecad` engine around at
+  all (its own bundled OCCT has no equivalent for this and several other
+  post-migration features) -- closing out that whole engine, see
+  "Current architecture" above.
+  Three design principles, confirmed directly by the user (2026-10-24)
+  and restated in `geo/{occ,ocp}/sewn_composite.py`'s own module
+  docstring: (1) the tool doesn't need to be a closed, valid solid -- an
+  open shell, bigger than the real solid, is enough (`BOPAlgo_Splitter`
+  already accepts a bare face as a cutting tool for every basic surface
+  today; a multi-face shell is a direct generalization); (2) it doesn't
+  need to know which side has material -- that's resolved afterward, the
+  same way it already is for every other candidate in `generic_split`;
+  (3) reuse the real edge(s) already found during composite *detection*
+  as the shared seam, instead of re-deriving a tangency/junction curve
+  analytically.
+  **Progress, each case genuinely different from the last, newest
+  first:**
+  - **Can (`Gmake_sewn_can`), 2026-10-25/26, closed out** -- same idea as
+    TCone (a cylinder, closed 360 degrees, instead of a cone), generalized
+    to all 4 closing-surface types a Can can legitimately have (plane,
+    sphere, cone, cylinder), coaxial or not, uniformly. Went through 3
+    design iterations the same week before landing on the final one below
+    -- kept here because each iteration's own failure mode is a real,
+    re-discoverable trap, not just historical trivia:
+    1. First implementation (2026-10-25): coaxial-only parametric trim for
+       sphere/cone, `Gcommon`-based for the general case. Superseded once
+       both were found to generalize.
+    2. Second implementation (2026-10-26): every face (main body AND both
+       caps) built uniformly by reusing the real closing curve as a wire
+       (`_wire_from_edges`) + `_sign_corrected_face`, joining the main
+       body's 2 closing curves via a synthetic double seam
+       (`_join_boundary_wires`). Validated end to end against the real
+       motivating fixture, `Cans/barrel_left.stp` (a R=395 bore through a
+       R=1936.8/1879.6 barrel wall, non-coaxial, 2 Can candidates, 0
+       fallbacks, decomposed volume conserved to 4e-8 relative) -- but
+       broke the instant either closing surface was COAXIAL with the main
+       cylinder (sphere/cone caps on a synthetic test fixture): `Gsplit`
+       against the resulting tool silently returned the box uncut. Root-
+       caused via direct numeric derivation, not guessed: a face that
+       sweeps a FULL 360 degrees in U (any main body or cap bounded by an
+       undivided, single circular edge) cannot be represented by a single
+       real-valued pcurve per edge without a literal one-period
+       discontinuity at the seam vertex -- the edge's own 2 ends, forced
+       by its own 2*pi sweep to differ by exactly one period, cannot
+       simultaneously satisfy BOTH of its neighbors in the joined wire,
+       whose own independently-sampled branches can each only agree with
+       ONE of the two. Tried and failed: shifting a mismatched edge's
+       whole pcurve by a period (always breaks the OTHER connection
+       instead); giving the self-looping edge 2 distinct vertex objects
+       at its own one physical point, mirroring the user's own proposed
+       fix -- blocked by OCCT itself, which silently merges 2 coincident
+       points back into one vertex via `BRepBuilderAPI_MakeEdge(curve, p,
+       p, first, last)`, and raises `StdFail_NotDone` if 2 pre-built,
+       genuinely distinct `TopoDS_Vertex` objects are passed explicitly
+       instead.
+    3. **Final design (2026-10-26)**: per direct user decision, extend
+       `Gmake_sewn_tcone`'s own already-working "no wire at all" technique
+       (a direct parametric trim, `BRepBuilderAPI_MakeFace(surface, 0,
+       2*pi, v_min, v_max)`) to the Can's main body AND both caps, instead
+       of the wire-based reconstruction -- sidestepping the discontinuity
+       above entirely, since no edge/vertex is reused for these faces at
+       all. `_v_extent_of_boundary` (`geo/{occ,ocp}/sewn_composite.py`)
+       finds `v_min`/`v_max` directly from the real edges: samples each
+       non-degenerate edge's own curve at 3 points and keeps it only if
+       all 3 agree on V within `NUMERIC_TOL` (a "flat", V-constant circle
+       or arc -- immune to the U-branch ambiguity above, since that only
+       ever corrupts U, never V); a degenerate edge (a true pole/apex)
+       contributes its own single V directly. A real sphere/cone cap's
+       own native topology also carries 2 non-flat MERIDIAN edges
+       connecting the tangency circle to the pole (confirmed live, not a
+       defect) -- these are skipped for V-extent purposes, only checked
+       to stay within the flat edges' own range (a genuinely out-of-range
+       non-flat edge means the real, non-coaxial case, correctly falling
+       through). `_flat_periodic_trim` returns `None` (falling back to
+       the wire-based `_main_body_face`/`_cap_face` branch, step 2 above)
+       whenever the surface isn't U-periodic (`GPlane`, always wire-based)
+       or no edge is flat (the general non-coaxial case) -- `barrel_left.
+       stp` re-verified after this change: still 2/2 Can candidates sewn,
+       0 fallbacks, volume conserved exactly (0.0 relative).
+       `_order_wire_edges` (`geo/{occ,ocp}/repair.py`) also gained a real,
+       independent fix in the same investigation: at a vertex touched by
+       more than 2 edges (e.g. a cap's own pole, touched by 2 seam copies
+       AND a degenerate self-loop), the old greedy "first matching edge in
+       list order" choice could strand a self-loop edge with no remaining
+       connection -- fixed by preferring a self-loop match over a bridging
+       one whenever both are available at the current vertex (a self-loop
+       must be visited at its own single vertex regardless of when, so
+       taking it immediately can never block reaching anywhere else).
+       Verified: `tests/geo/test_sewn_composite_can_{occ,ocp}.py` (4 tests
+       each, parametrized over a synthetic domed-can (sphere) and
+       nozzle-can (cone) fixture, both the watertight-shell check and a
+       real `Gsplit`-against-a-bigger-box correctness check) green on
+       both engines; full `tests/geo` + `test_cadtocsg.py` +
+       `test_csgtocad.py` green on both engines (ocp 219 passed/12
+       skipped, occ 238 passed/6 skipped -- occ's own 3 always-skipped
+       `GEOUNED_CAD_ENGINE`-default test files excluded, a pre-existing,
+       unrelated environment issue); `barrel_left.stp` end to end as
+       above. `CanParams` gained `.FaceEdges1`/`.FaceEdges2` (the closing
+       face's own COMPLETE real boundary, not just the tangency curve
+       shared with the cylinder -- `build_can_params`'s own `s.Edges`,
+       `functions.py`), threaded through `makeCan` -- needed for the cap
+       construction to see a genuine frustum/degenerate-apex boundary
+       correctly, same principle as `TConeParams.Edge1`/`.Edge2`. The
+       entirely-superseded `_pole_cap_face`/`_degenerate_pole_wire`
+       machinery from iteration 2 was deleted outright, not kept as a
+       fallback.
+  - **TCone (`Gmake_sewn_tcone`), 2026-10-25** -- 1 cone, closed 360
+    degrees, + 2 real planar closures (`get_tcone_surfaces` always
+    requires both closing surfaces to be a `GPlane`). Genuinely
+    different design from RoundCorner/MultiPlane: a TCone is already a
+    topologically CLOSED shell, so none of points 1/2's own "oversized,
+    free-sided" reasoning applies -- confirmed, tried, and reverted:
+    reusing the 2 real closing edges as one wire (a closed loop + a
+    synthetic seam, the standard OCCT idiom for a periodic surface
+    trimmed between 2 full iso-curves) looked right (passed
+    `BRepCheck_Analyzer`) but still made `BOPAlgo_Splitter` produce a
+    wrong, volume-inconsistent split downstream. Replaced with a direct
+    parametric trim (`BRepBuilderAPI_MakeFace(surface, 0, 2*pi, vmin,
+    vmax)`, no wire, no seam -- confirmed empirically to always come
+    back valid), `vmin`/`vmax` found by projecting one real point of
+    each closing curve onto the cone's own native V parameter --
+    confirmed NOT the axial height from the apex (`Geom_ConicalSurface`'s
+    own V is the SLANT distance).
+    **Critical production bug found and fixed the same day**:
+    `makeTCone` unwrapped `surf.Cone.Surf` directly as the cone's own
+    Apex/Axis/SemiAngle params, but `surf.Cone.Surf` is a `ConeParams`
+    (itself wrapping `.Cone.Surf` as the real `ConeOnlyParams`) -- so
+    `.Apex`/`.Axis`/`.SemiAngle` raised `AttributeError` on every real
+    TCone candidate, silently caught by `generic_split`'s own
+    candidate-loop `except Exception:` and logged at `info` level, so
+    this sewing path had **never actually run in production** despite
+    passing every targeted unit test (which called `Gmake_sewn_tcone`
+    directly, bypassing the buggy wrapper). Found on `Hollow_plates/
+    placa.stp`, where the TCone never got built at all. Fixed by the
+    extra `.Cone.Surf` unwrap, matching the established nested-params
+    pattern already used by `makeRoundCorner` (`surf.Cylinder.Surf.
+    Cylinder`).
+  - **RoundCorner (`Gmake_sewn_round_corner_cylinder`) and MultiPlane
+    (`Gmake_sewn_plane_pair`/`Gmake_sewn_multiplane_chain`), 2026-10-24.**
+    The first 2 cases, validating the sew-with-a-real-edge mechanism
+    (MultiPlane first, with no curved-surface tangency math involved,
+    then RoundCorner, the first composite that genuinely still paid for
+    `build_complex_shape`'s own cascade). A RoundCorner's own cylinder
+    face is bounded in the angular (U) direction by its 2 real
+    (extended) tangent edges, and in the axial (V) direction by a
+    `span` margin, via 2 new circular-arc "cap" edges on the cylinder's
+    own real Center/Axis/Radius -- `BRepBuilderAPI_MakeFace(surface,
+    wire)` alone came back invalid/zero-area for this mix of a reused
+    straight generatrix edge and a freshly-built arc edge (confirmed:
+    the computed (u, v) trim was exactly right, the auto-pcurve
+    computation itself was what failed); fixed via
+    `_substitute_face_surface` (this project's own already-validated
+    recipe for attaching a correct pcurve to an edge that doesn't have
+    one yet on a given surface, originally built for
+    `Gsubstitute_spline_quadrics`), not a `ShapeFix_Face` pass (which
+    recovered a valid face but silently rebuilt one of the 2 reused
+    edges, defeating point 3's whole purpose). `MultiPlane` was
+    generalized the same day from a 2-plane pair to an N-plane open
+    chain (`Gmake_sewn_multiplane_chain`), detected via
+    `functions.py::_multiplane_chain_order` (is the real adjacency graph
+    among the deduplicated planes a simple path?).
+  - Also the same day (2026-10-24): `get_roundcorner_surfaces`
+    (`meta_surfaces.py`) gained `_farthest_corner_plane_pair` -- when
+    `get_adjacent_cylplane` finds more than 2 corner-plane candidates for
+    a cylinder, picks the pair whose real edges draw the LONGEST ARC on
+    the cylinder's own face (via `cyl_shell.Surface.parameter()`, with
+    angle unwrapping across the branch cut), not the straight-line-3D-
+    distance-farthest pair tried and reverted first. Found on
+    `PiezaDavid.stp` (user-reported: a real R=85 cylinder with 2
+    candidate planes at py=40/py=-40 wasn't being picked as a
+    RoundCorner at all).
+  **Remaining, as of 2026-10-26**: MultiRoundCorner only (still
+  `build_complex_shape`) -- Can's own general closing-cylinder/
+  non-coaxial-closing-cone case is closed, see Can's own entry above.
+- **Development-time debug mode for exception-swallowing fallbacks,
+  `GEOUNED_STRICT_EXCEPTIONS`, 2026-10-25.** Motivated directly by the
+  `ConeParams.Cone`/TCone bug above: the codebase has many "never let
+  one candidate's/one repair step's failure abort an otherwise-fine
+  operation" `except Exception:` blocks, by design -- but they swallow a
+  genuine programming bug exactly as readily as an expected, recoverable
+  failure, which is how that bug stayed hidden in production despite
+  passing every targeted unit test. A plain boolean flag was tried
+  first and found too coarse: enabling it made every such block raise,
+  which broke 12 tests outright -- not because they exposed real bugs,
+  but because several of these blocks (`Gmerge_coplanar_planes`,
+  `Gfuse_solids`'s own opportunistic refine/substitute attempts, the
+  `geo/{occ,ocp}/repair.py` cascades, the decompose cache's own
+  read/write guards, ...) have an explicit "never raises" CONTRACT other
+  code structurally depends on, and fire ROUTINELY on real, complex
+  geometry as part of ordinary operation (confirmed live,
+  `testing/inputSTEP/BC.stp`: `Gmerge_coplanar_planes`'s own
+  `BRepBuilderAPI_Sewing.Perform()` call hits a native
+  `Standard_NoSuchObject` there not as a bug, but as routine behavior).
+  **Fix, per direct user design** ("poner niveles... codificado en
+  binario"): `geo.STRICT_EXCEPTIONS` is a bitmask (read once at import
+  time from the env var, matching `CAD_ENGINE`'s own convention) of 2
+  levels -- `STRICT_LEVEL_CANDIDATE` (1): candidate-SELECTION loops only
+  (`generic_split`'s own search, `_try_coaxial_cone_split`, GEOReverse's
+  `SplitSolid`) -- confirmed safe against the full test suite and a real
+  pipeline run, and exactly what would have caught the `ConeParams.Cone`
+  bug immediately; `STRICT_LEVEL_REPAIR` (2): the low-level "never
+  raises"-contract repair/fallback primitives above -- confirmed noisy
+  and pipeline-breaking BY DESIGN, useful only to inspect one specific
+  repair step in isolation, never the full suite. `0` (default) is
+  unchanged; `3` enables both. Applied to every `except Exception:`
+  block found across `geo/` and `GEOUNED/`, each classified by its
+  actual role rather than applied uniformly; 2 sites deliberately left
+  untouched as normal control flow, not error-swallowing (pythonocc-
+  core's own `DownCast`-raises-instead-of-returning-`None` shim; the
+  Levenberg-Marquardt solver's own singular-matrix retry).
 - **`GEOUNED`'s `build_region/` vs `GEOReverse`'s `CAD/buildSolidCell.py`+
   `CAD/splitFunction.py`, unified 2026-09-17/18** (supersedes the
   "remain two separate implementations... no further code has moved
@@ -6390,8 +6708,11 @@ gaps for whenever it's picked back up:
 
 ## Environment notes
 
-- `GEOUNED_CAD_ENGINE` selects the geometry backend: `ocp` (default),
-  `occ` (pythonocc-core/SWIG), or `freecad`.
+- `GEOUNED_CAD_ENGINE` selects the geometry backend: `ocp` (default) or
+  `occ` (pythonocc-core/SWIG). The original third engine, `freecad`, was
+  removed entirely 2026-10-24 (see "Current architecture" and "Known
+  open items" -> Shared/cross-cutting -> "sewing composite surface") --
+  the env var now raises `ValueError` for any other value.
 - The pyOCC engines run in dedicated conda environments, not the
   default Python: `pyoccenv` (pythonocc-core,
   `C:\Users\Patrick\Apps\Conda\envs\pyoccenv\python.exe`) and `ocpenv`
@@ -6399,9 +6720,9 @@ gaps for whenever it's picked back up:
   `reference-pyoccenv-path`/`reference-ocpenv-path` memories.
 - Always use PowerShell, not Bash, to invoke either pyOCC env's
   `python.exe` directly — Bash gives exit 127 with zero output for
-  reasons never root-caused. FreeCAD and either pyOCC engine cannot
-  coexist in one process (a bundled-Python DLL conflict) — never mix
-  engines in one invocation.
+  reasons never root-caused. occ and ocp still cannot coexist in one
+  process (a bundled-Python DLL conflict) — never mix engines in one
+  invocation.
 - Workshop conversion/verification scripts (batch conversion, d1suned
   runs, corpus diffs) already exist under `SolidTestMCNP/scripts/` on
   the WSL side — check there before writing a new ad-hoc script (see

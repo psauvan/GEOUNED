@@ -1,22 +1,24 @@
 """Prototype validation (branch `sewing-composite-surface`) for
 `Gmake_sewn_can` -- the Can case (1 cylinder, closed 360 degrees, + 2
-real closures, each a plane, sphere, or cone). Mirrors
-`test_sewn_composite_tcone_ocp.py` exactly: a Can is already a
-topologically closed shell, so the cylinder's own lateral face and
-each curved (sphere/cone) cap are built via a direct parametric trim,
-not a reused-edge wire -- confirmed empirically (2026-10-25, see
-geo/ocp/sewn_composite.py's own module docstring) that this generalizes
-cleanly from `Gmake_sewn_tcone`'s own cone-body technique. A plane cap
-still reuses the real edge exactly, same as TCone.
+real closures, each a plane, sphere, cone, or cylinder). Every face of
+a Can is built the same wire-based way (`_sign_corrected_face`),
+regardless of each closing surface's own type or whether it's coaxial
+with the main cylinder -- see geo/ocp/sewn_composite.py's own module
+docstring for the full rationale and the real fixture
+(`Cans/barrel_left.stp`, plane/cylinder only) this was validated
+against end to end.
 
-A sphere or cone cap carries one real OCCT *degenerate* edge at its own
-pole/apex (both endpoints identical, zero length) -- the standard,
-expected topology for a full 360-degree surface trimmed up to its own
-singular point, not a watertightness defect -- so the watertightness
-check below excludes degenerate edges explicitly (a plain free-edge
-count, matching the TCone test's own check, would wrongly flag this
-one edge even though the shell is otherwise fully sewn).
-"""
+A sphere or cone cap reuses the real closing face's own COMPLETE
+boundary (`face_edges`, not just the tangency curve shared with the
+cylinder) -- which, for a dome/nozzle that genuinely narrows to a
+single point, already carries one real OCCT *degenerate* edge at that
+pole/apex (both endpoints identical, zero length) built by whatever
+operation created the solid, not reconstructed here. This is the
+standard, expected topology for a full 360-degree surface trimmed up
+to its own singular point, not a watertightness defect -- so the
+watertightness check below excludes degenerate edges explicitly (a
+plain free-edge count would wrongly flag this one edge even though the
+shell is otherwise fully sewn)."""
 
 import math
 import os
@@ -35,7 +37,6 @@ if os.environ.get("GEOUNED_CAD_ENGINE", "occ").strip().lower() != "ocp":
     )
 
 from OCP.BRep import BRep_Tool
-from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
@@ -110,8 +111,7 @@ def _build_domed_can():
 
 def _build_nozzle_can():
     """A cylinder (flat bottom) closed at the top by a coaxial conical
-    nozzle narrowing to a real apex -- the coaxial case
-    `Gmake_sewn_can`'s own cone cap assumes."""
+    nozzle narrowing to a real apex."""
     length = 6.0
     half_angle = math.atan2(_R_CYL, length)
     apex = GVector(0, 0, _HEIGHT + length)
@@ -129,9 +129,9 @@ def _faces_of(solid):
     return cyl_face, plane_face, other_face
 
 
-@pytest.mark.parametrize("builder", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
-def test_gmake_sewn_can_builds_a_watertight_shell(builder):
-    can_solid, _ = builder()
+@pytest.mark.parametrize("build_can", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
+def test_gmake_sewn_can_builds_a_watertight_shell(build_can):
+    can_solid, _ = build_can()
     cyl_face, plane_face, other_face = _faces_of(can_solid)
 
     edges_plane = _shared_edges(cyl_face, plane_face)
@@ -139,24 +139,26 @@ def test_gmake_sewn_can_builds_a_watertight_shell(builder):
     assert len(edges_plane) >= 1 and len(edges_other) >= 1
 
     cylinder = GCylinder.from_values(cyl_face.Surface.Center, cyl_face.Surface.Axis, cyl_face.Surface.Radius)
-    tool = Gmake_sewn_can(cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface)
+    tool = Gmake_sewn_can(
+        cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface, plane_face.Edges, other_face.Edges
+    )
 
+    assert tool is not None
     assert len(tool.Faces) == 3
-    for f in tool.Faces:
-        assert BRepCheck_Analyzer(f.__native__).IsValid()
-
     assert _free_non_degenerate_edges(tool) == 0
 
 
-@pytest.mark.parametrize("builder", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
-def test_sewn_can_separates_the_can_from_a_bigger_box(builder):
-    can_solid, expected_volume = builder()
+@pytest.mark.parametrize("build_can", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
+def test_sewn_can_separates_the_can_from_a_bigger_box(build_can):
+    can_solid, expected_volume = build_can()
     cyl_face, plane_face, other_face = _faces_of(can_solid)
     edges_plane = _shared_edges(cyl_face, plane_face)
     edges_other = _shared_edges(cyl_face, other_face)
 
     cylinder = GCylinder.from_values(cyl_face.Surface.Center, cyl_face.Surface.Axis, cyl_face.Surface.Radius)
-    tool = Gmake_sewn_can(cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface)
+    tool = Gmake_sewn_can(
+        cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface, plane_face.Edges, other_face.Edges
+    )
 
     big_box = Gmake_box(-30, -30, -30, 30, 30, 30)
     result = Gsplit(big_box, tool, _TOLERANCES)

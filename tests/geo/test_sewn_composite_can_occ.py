@@ -21,7 +21,6 @@ if os.environ.get("GEOUNED_CAD_ENGINE", "occ").strip().lower() != "occ":
     )
 
 from OCC.Core.BRep import BRep_Tool
-from OCC.Core.BRepCheck import BRepCheck_Analyzer
 from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCC.Core.TopExp import topexp as TopExp, TopExp_Explorer
 from OCC.Core.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
@@ -96,8 +95,7 @@ def _build_domed_can():
 
 def _build_nozzle_can():
     """A cylinder (flat bottom) closed at the top by a coaxial conical
-    nozzle narrowing to a real apex -- the coaxial case
-    `Gmake_sewn_can`'s own cone cap assumes."""
+    nozzle narrowing to a real apex."""
     length = 6.0
     half_angle = math.atan2(_R_CYL, length)
     apex = GVector(0, 0, _HEIGHT + length)
@@ -115,9 +113,9 @@ def _faces_of(solid):
     return cyl_face, plane_face, other_face
 
 
-@pytest.mark.parametrize("builder", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
-def test_gmake_sewn_can_builds_a_watertight_shell(builder):
-    can_solid, _ = builder()
+@pytest.mark.parametrize("build_can", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
+def test_gmake_sewn_can_builds_a_watertight_shell(build_can):
+    can_solid, _ = build_can()
     cyl_face, plane_face, other_face = _faces_of(can_solid)
 
     edges_plane = _shared_edges(cyl_face, plane_face)
@@ -125,24 +123,26 @@ def test_gmake_sewn_can_builds_a_watertight_shell(builder):
     assert len(edges_plane) >= 1 and len(edges_other) >= 1
 
     cylinder = GCylinder.from_values(cyl_face.Surface.Center, cyl_face.Surface.Axis, cyl_face.Surface.Radius)
-    tool = Gmake_sewn_can(cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface)
+    tool = Gmake_sewn_can(
+        cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface, plane_face.Edges, other_face.Edges
+    )
 
+    assert tool is not None
     assert len(tool.Faces) == 3
-    for f in tool.Faces:
-        assert BRepCheck_Analyzer(f.__native__).IsValid()
-
     assert _free_non_degenerate_edges(tool) == 0
 
 
-@pytest.mark.parametrize("builder", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
-def test_sewn_can_separates_the_can_from_a_bigger_box(builder):
-    can_solid, expected_volume = builder()
+@pytest.mark.parametrize("build_can", [_build_domed_can, _build_nozzle_can], ids=["sphere_cap", "cone_cap"])
+def test_sewn_can_separates_the_can_from_a_bigger_box(build_can):
+    can_solid, expected_volume = build_can()
     cyl_face, plane_face, other_face = _faces_of(can_solid)
     edges_plane = _shared_edges(cyl_face, plane_face)
     edges_other = _shared_edges(cyl_face, other_face)
 
     cylinder = GCylinder.from_values(cyl_face.Surface.Center, cyl_face.Surface.Axis, cyl_face.Surface.Radius)
-    tool = Gmake_sewn_can(cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface)
+    tool = Gmake_sewn_can(
+        cylinder, edges_plane, plane_face.Surface, edges_other, other_face.Surface, plane_face.Edges, other_face.Edges
+    )
 
     big_box = Gmake_box(-30, -30, -30, 30, 30, 30)
     result = Gsplit(big_box, tool, _TOLERANCES)

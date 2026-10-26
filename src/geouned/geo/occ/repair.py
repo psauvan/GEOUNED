@@ -848,7 +848,24 @@ def _order_wire_edges(edges: list) -> "list | None":
     replacement edges in the order they were discovered left one
     disconnected, producing a near-zero-area face instead of the
     intended quadrilateral). `None` if the edges don't actually form a
-    single closed loop (never guesses past that)."""
+    single closed loop (never guesses past that).
+
+    At a vertex touched by more than 2 edges (e.g. a sphere/cone cap's
+    own pole/apex, touched by 2 seam copies AND a self-loop degenerate
+    edge, or a full periodic surface's own seam vertex, touched by 2
+    seam copies AND the self-loop closing curve), a plain greedy "first
+    matching edge in list order" choice can paint itself into a corner:
+    confirmed live, 2026-10-26, a real sphere cap's own 4 edges (1
+    circle self-loop at the tangency vertex, 1 degenerate self-loop at
+    the pole, 2 seams joining them) -- taking both seams back-to-back
+    before the pole's own self-loop stranded the degenerate edge with
+    no remaining connection. Fixed by preferring a SELF-LOOP match (an
+    edge whose own 2 endpoints coincide) over a bridging one whenever
+    both are available at the current vertex -- a self-loop must be
+    visited at its own single vertex regardless of when, so taking it
+    immediately can never block reaching anywhere else, while deferring
+    it risks exactly this dead end once both bridging edges out of that
+    vertex have already been consumed."""
     remaining = list(edges)
     if not remaining:
         return None
@@ -862,20 +879,27 @@ def _order_wire_edges(edges: list) -> "list | None":
     _, end_v = endpoints(ordered[0])
     end_pt = _vertex_point(end_v)
     while remaining:
+        match_i = None
+        match_new_end = None
+        match_is_selfloop = False
         for i, e in enumerate(remaining):
             v1, v2 = endpoints(e)
-            if (_vertex_point(v1) - end_pt).length < POINT_POINT_TOL:
-                ordered.append(e)
-                end_pt = _vertex_point(v2)
-                remaining.pop(i)
+            p1, p2 = _vertex_point(v1), _vertex_point(v2)
+            is_selfloop = (p1 - p2).length < POINT_POINT_TOL
+            if (p1 - end_pt).length < POINT_POINT_TOL:
+                new_end = p2
+            elif (p2 - end_pt).length < POINT_POINT_TOL:
+                new_end = p1
+            else:
+                continue
+            if match_i is None or (is_selfloop and not match_is_selfloop):
+                match_i, match_new_end, match_is_selfloop = i, new_end, is_selfloop
+            if match_is_selfloop:
                 break
-            if (_vertex_point(v2) - end_pt).length < POINT_POINT_TOL:
-                ordered.append(e)
-                end_pt = _vertex_point(v1)
-                remaining.pop(i)
-                break
-        else:
+        if match_i is None:
             return None  # no remaining edge connects -- not a single closed loop
+        ordered.append(remaining.pop(match_i))
+        end_pt = match_new_end
     return ordered
 
 
