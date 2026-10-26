@@ -4140,14 +4140,19 @@ gaps for whenever it's picked back up:
 ### Shared / cross-cutting (touches both pipelines, or is test-fixture housekeeping)
 
 - **"Sewing composite surface" initiative, branch `sewing-composite-surface`,
-  started 2026-10-24, ongoing.** Builds a composite meta-surface's own
-  cutting-tool shell (used by `generic_split` as a `Gsplit` candidate,
-  via `build_shape_functions.py::makeMultiPlanes`/`makeRoundCorner`/
-  `makeTCone`/`makeCan`) by sewing its real, analytically-trimmed
-  component faces together directly, in `geo/{occ,ocp}/sewn_composite.py`
-  — in place of `build_complex_shape`'s own recursive `BuildDepth`/
-  `Gfuse_solids` boolean cascade (still used for `MultiRoundCorner`, and
-  as the fallback whenever a sewing precondition isn't met). Motivated
+  started 2026-10-24, closed out 2026-10-26.** Builds a composite
+  meta-surface's own cutting-tool shell (used by `generic_split` as a
+  `Gsplit` candidate, via `build_shape_functions.py::makeMultiPlanes`/
+  `makeRoundCorner`/`makeTCone`/`makeCan`/`makeMultiRoundCorner`) by
+  sewing its real, analytically-trimmed component faces together
+  directly, in `geo/{occ,ocp}/sewn_composite.py` — in place of
+  `build_complex_shape`'s own recursive `BuildDepth`/`Gfuse_solids`
+  boolean cascade, now kept only as each composite's own documented,
+  narrow fallback (a missing real edge, an unsupported topology, or a
+  native construction failure) -- every composite type (MultiPlane,
+  RoundCorner, TCone, Can, MultiRoundCorner) is sewn by default as of
+  this date, see the MultiRoundCorner entry below for the last one.
+  Motivated
   directly by the user: once sewing could reliably build these shapes,
   there was no remaining reason to keep the `freecad` engine around at
   all (its own bundled OCCT has no equivalent for this and several other
@@ -4320,9 +4325,55 @@ gaps for whenever it's picked back up:
     `PiezaDavid.stp` (user-reported: a real R=85 cylinder with 2
     candidate planes at py=40/py=-40 wasn't being picked as a
     RoundCorner at all).
-  **Remaining, as of 2026-10-26**: MultiRoundCorner only (still
-  `build_complex_shape`) -- Can's own general closing-cylinder/
-  non-coaxial-closing-cone case is closed, see Can's own entry above.
+  - **MultiRoundCorner (`Gmake_sewn_multi_round_corner`), 2026-10-26,
+    closes out the whole "sewing composite surface" initiative** (every
+    composite type now sewn, no composite left on `build_complex_shape`
+    by default). Generalizes `Gmake_sewn_round_corner_cylinder` from 1
+    corner to N chained corners (an open chain or a closed ring,
+    sharing a junction plane between each pair of neighbors) via the
+    exact same per-face recipe: an oversized plane for every real
+    end plane, an oversized plane for every SHARED junction (built from
+    BOTH neighbors' own real tangent edges, `_oversized_plane_face_
+    two_edges` -- the same helper `Gmake_sewn_multiplane_chain` already
+    uses for its own interior links), an oversized cylinder per corner.
+    `build_shape_functions.py::makeMultiRoundCorner` groups each
+    corner's own 2 real planes (`RoundCornerParams.Planes`) into
+    `shared_planes`/`open_planes` by geometric identity
+    (`is_same_oriented_plane_surface`), NOT by `MultiRoundCornerParams.
+    Corners`' own list order -- confirmed by reading `meta_surfaces.py::
+    get_roundcorner_surfaces`'s own recursive detection walk, this list
+    is NOT in chain-sequential order (the walk starts at an arbitrary
+    entry corner and explores BOTH of its own 2 directions in turn,
+    appending each direction's own results in sequence -- so the
+    starting corner is NOT necessarily at either end of the final
+    list); a plane bordered by more than 2 corners (not a simple
+    chain/ring) falls back to `build_complex_shape`, mirroring
+    `Gmake_sewn_multiplane_chain`'s own identical caveat. No new
+    `geo`-level edge-ordering/pcurve machinery was needed at all --
+    unlike Can, every face here is a plain plane or cylinder, the same
+    2 types `Gmake_sewn_round_corner_cylinder`/`Gmake_sewn_multiplane_
+    chain` already build without any periodic-surface complications.
+    Verified: `tests/geo/test_sewn_composite_multi_round_corner_
+    {occ,ocp}.py` (a real, `BRepFilletAPI_MakeFillet`-built 2-corner
+    open chain -- both fillets on the box's own x=10 face, sharing it
+    as the junction plane -- watertight-shell check + a real
+    `Gsplit`-against-the-sharp-box correctness check, exact to the
+    closed-form wedge-volume formula) green on both engines; full
+    `tests/geo` + `test_cadtocsg.py` + `test_csgtocad.py` green on both
+    engines, zero regressions (each engine's own exercised subset, same
+    pre-existing cross-engine pytest-collection-order skip pattern
+    every other `_occ.py`/`_ocp.py` sewn-composite test pair already
+    has -- not a regression); end to end against a real fixture with
+    genuine MultiRoundCorner candidates
+    (`Decomposed/SCDR_solid19_solid26.stp`, 2 solids): 12 real
+    `Gmake_sewn_multi_round_corner` calls, 0 fallbacks, decomposed
+    volume conserved to the same ~1e-14 relative noise floor as the
+    other already-closed composites.
+  **Remaining, as of 2026-10-26**: none -- every composite type
+  (MultiPlane, RoundCorner, TCone, Can, MultiRoundCorner) is now sewn
+  by default, with `build_complex_shape` kept only as each one's own
+  documented, narrow fallback (missing real edges, an unsupported
+  topology, or a native construction failure).
 - **Development-time debug mode for exception-swallowing fallbacks,
   `GEOUNED_STRICT_EXCEPTIONS`, 2026-10-25.** Motivated directly by the
   `ConeParams.Cone`/TCone bug above: the codebase has many "never let

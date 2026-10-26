@@ -481,6 +481,62 @@ def Gmake_sewn_round_corner_cylinder(
     return Gmake_shell([face1, cyl_face, face2])
 
 
+def Gmake_sewn_multi_round_corner(
+    cylinders: "list[tuple[GCylinder, GEdge, GEdge, GVector]]",
+    shared_planes: "list[tuple[GPlane, GEdge, GEdge]]",
+    open_planes: "list[tuple[GPlane, GEdge, GVector]]",
+    span: float,
+) -> GShell:
+    """Build the open cutting-tool shell for a MultiRoundCorner
+    composite (N chained RoundCorners -- an open chain or a closed
+    ring, sharing a junction plane between each pair of neighbors):
+    generalizes `Gmake_sewn_round_corner_cylinder` from 1 corner to N,
+    reusing the exact same per-face recipe (an oversized plane for
+    every real, un-shared end plane; an oversized plane for every
+    shared junction, built from BOTH neighbors' own real tangent
+    edges; an oversized cylinder per corner) -- no BOPAlgo_Splitter
+    call is made while building the tool itself, in place of
+    `build_complex_shape`'s own `BuildDepth`/`Gfuse_solids` cascade.
+
+    `cylinders[i]` is `(cylinder, edge1, edge2, cylinder_hint)` for the
+    i-th corner, exactly the per-corner inputs
+    `Gmake_sewn_round_corner_cylinder` already takes; `edge1`/`edge2`
+    are the real tangent generatrices found during RoundCorner
+    detection (`RoundCornerParams.Edge1`/`.Edge2`). `shared_planes` is
+    `(plane, edge_a, edge_b)` for a plane bordering exactly 2
+    neighboring corners -- `edge_a`/`edge_b` must be the SAME edge
+    objects passed as one of `cylinders`' own `edge1`/`edge2` entries
+    (point 3: this function extends each cylinder's own edges exactly
+    once via `_matched_axial_extension`, keyed by object identity, and
+    reuses that SAME extended copy wherever the same real edge appears
+    again here or in `open_planes`, so every seam is exact, not merely
+    numerically coincident). `open_planes` is `(plane, edge,
+    material_hint)` for a plane bordering only 1 corner (an open
+    chain's own 2 loose ends -- never populated for a closed ring).
+
+    The caller (`build_shape_functions.py::makeMultiRoundCorner`) is
+    responsible for grouping each corner's own 2 real planes into
+    `shared_planes`/`open_planes` by geometric identity (a plane
+    touched by more than 2 corners is not a simple chain/ring and
+    should be rejected there, before calling this function at all --
+    mirrors `Gmake_sewn_multiplane_chain`'s own identical caveat)."""
+    extended: dict[int, GEdge] = {}
+    cyl_faces = []
+    for cylinder, edge1, edge2, hint in cylinders:
+        e1_ext, e2_ext = _matched_axial_extension(edge1, edge2, cylinder.Center, cylinder.Axis, span)
+        extended[id(edge1)] = e1_ext
+        extended[id(edge2)] = e2_ext
+        cyl_faces.append(_oversized_cylinder_face(cylinder, e1_ext, e2_ext, hint))
+
+    plane_faces = []
+    for plane, edge_a, edge_b in shared_planes:
+        plane_faces.append(_oversized_plane_face_two_edges(plane, extended[id(edge_a)], extended[id(edge_b)]))
+    for plane, edge, hint in open_planes:
+        plane_faces.append(_oversized_plane_face(plane, extended[id(edge)], span, hint))
+
+    return Gmake_shell(cyl_faces + plane_faces)
+
+
 def _wire_from_edges(edges: list[GEdge]):
     """A native wire built from `edges`, reused exactly (point 3) -- the
     real closed boundary between a TCone/Can's own main surface and one

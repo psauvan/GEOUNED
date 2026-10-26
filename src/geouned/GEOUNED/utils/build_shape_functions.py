@@ -17,6 +17,7 @@ from ...geo import (
     Gmake_solid,
     Gmake_polygon_face,
     Gmake_sewn_can,
+    Gmake_sewn_multi_round_corner,
     Gmake_sewn_multiplane_chain,
     Gmake_sewn_round_corner_cylinder,
     Gmake_sewn_tcone,
@@ -190,6 +191,85 @@ def makeRoundCorner(roundCorner, Box, tolerances):
 
 
 def makeMultiRoundCorner(multiRoundCorner, Box, tolerances, forward=False):
+    """Build a MultiRoundCorner's own `.shape`/`.shell` by sewing every
+    corner's own real oversized cylinder and plane faces together
+    (`geo/{occ,ocp}/sewn_composite.py::Gmake_sewn_multi_round_corner`),
+    reusing the real tangent edges already found during detection for
+    each individual corner (`RoundCornerParams.Edge1`/`.Edge2`, see
+    `makeRoundCorner`) -- in place of `build_complex_shape`'s own
+    recursive `BuildDepth`/`Gfuse_solids` cascade, generalizing
+    `makeRoundCorner` from 1 corner to the whole chain/ring. No
+    `BOPAlgo_Splitter` call is made while building this shell itself.
+
+    Groups each corner's own 2 real planes (`RoundCornerParams.Planes`)
+    by geometric identity (`is_same_oriented_plane_surface`) into
+    `shared_planes` (a plane bordering exactly 2 neighboring corners)
+    and `open_planes` (a plane bordering only 1 corner -- an open
+    chain's own loose ends; never populated for a closed ring) --
+    `MultiRoundCornerParams.Corners` is NOT in walk order (the
+    detection walk starting point can land in the middle of a chain,
+    see `meta_surfaces.py::get_roundcorner_surfaces`), so this grouping
+    is done by comparing every corner's own 2 planes pairwise, not by
+    assuming any list order.
+
+    Falls back to the original `build_complex_shape` construction
+    whenever the sewing prerequisites aren't met: any corner's own real
+    tangent edges weren't found (defensive -- every normal detection
+    finds them), any corner has the degenerate "both planes are really
+    the same one" case (mirrors `makeRoundCorner`'s own identical
+    check), a plane is bordered by more than 2 corners (not a simple
+    chain/ring -- mirrors `Gmake_sewn_multiplane_chain`'s own identical
+    caveat), or the native construction itself raises."""
+    surf = multiRoundCorner.Surf
+    corners = surf.Corners
+    span = Box.DiagonalLength
+
+    cylinders = []
+    slots = []
+    for rc in corners:
+        rc_surf = rc.Surf
+        edge1, edge2 = rc_surf.Edge1, rc_surf.Edge2
+        if edge1 is None or edge2 is None or edge1.is_same(edge2):
+            return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
+        p1, p2 = rc_surf.Planes
+        if is_same_oriented_plane_surface(p1.Surf, p2.Surf, tolerances):
+            return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
+        cyl_only = rc_surf.Cylinder.Surf.Cylinder
+        cylinder = GCylinder.from_values(cyl_only.Surf.Center, cyl_only.Surf.Axis, cyl_only.Surf.Radius)
+        cylinders.append((cylinder, edge1, edge2, rc_surf.CylinderHint))
+        slots.append((p1, edge1))
+        slots.append((p2, edge2))
+
+    groups = []
+    for i, (plane_i, edge_i) in enumerate(slots):
+        for group in groups:
+            plane_j, _ = slots[group[0]]
+            if is_same_oriented_plane_surface(plane_i.Surf, plane_j.Surf, tolerances):
+                group.append(i)
+                break
+        else:
+            groups.append([i])
+
+    shared_planes = []
+    open_planes = []
+    for group in groups:
+        plane_i, edge_i = slots[group[0]]
+        geo_plane = GPlane.from_values(plane_i.Surf.Position, plane_i.Surf.Axis)
+        if len(group) == 1:
+            open_planes.append((geo_plane, edge_i, plane_i.Surf.Position))
+        elif len(group) == 2:
+            _, edge_b = slots[group[1]]
+            shared_planes.append((geo_plane, edge_i, edge_b))
+        else:
+            return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
+
+    try:
+        shell = Gmake_sewn_multi_round_corner(cylinders, shared_planes, open_planes, span)
+    except Exception:
+        shell = None
+    if shell is not None:
+        native_shell = shell.__native__
+        return (native_shell, native_shell)
     return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
 
 
