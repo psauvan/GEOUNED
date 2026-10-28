@@ -49,6 +49,9 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
     # Cylinders and cones are tried before planes: on the test_models corpus this
     # gives fewer irreducible solids (346 -> 325 over 176 original solids, 4
     # solids improve, none gets worse) with identical volume conservation.
+    for surface in implicit_bound_planes(solid_GU.Faces, omitfaces, tolerances):
+        yield surface
+
     for surface in cylinder_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
@@ -65,11 +68,11 @@ def get_surfaces(solid, omitfaces, tolerances, options, meta_surface=True):
         yield surface
 
     omitfaces = omitfaces - extPlanes
-    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances, True):
+    for surface in plane_generator(solid_GU.Faces, omitfaces, tolerances):
         yield surface
 
 
-def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
+def plane_generator(GUFaces, omitfaces, tolerances):
     omit_isolated_planes(GUFaces, omitfaces, tolerances=tolerances)
     cutting_plane_face = order_plane_face(GUFaces, omitfaces, tolerances.min_area, tolerances.min_face_width, tolerances=tolerances)
     for p in cutting_plane_face:
@@ -81,8 +84,15 @@ def plane_generator(GUFaces, omitfaces, tolerances, externalPlanes=False):
         plane = GeounedSurface(("Plane", (pos, normal, dim1, dim2)))
         yield plane
 
-    if externalPlanes:
-        return
+
+def implicit_bound_planes(GUFaces, omitfaces, tolerances):
+    # A cutting plane that isn't a real plane FACE of the solid at all --
+    # derived from where a curved face (cylinder/cone/sphere: cks_bound_planes;
+    # torus: torus_bound_planes) ends, the same way plane_generator's own real
+    # cutting planes are derived from an actual Plane face. Split out of
+    # plane_generator, 2026-10-28, so it can be tried in its own position in
+    # get_surfaces's own candidate order independently of the real-plane-face
+    # search.
     for face in GUFaces:
         if face.Index in omitfaces:
             continue
