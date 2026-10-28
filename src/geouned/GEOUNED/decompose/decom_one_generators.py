@@ -92,6 +92,30 @@ def split_surfaces(solid, options, tolerances):
         except Exception:
             if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
                 raise
+        # Same reasoning as the overlapping-coplanar-faces check just
+        # above: `generic_split`'s own entry-point substitution attempt
+        # (this same file, top of `generic_split`) only ever runs ONCE,
+        # before that fragment's candidate search starts -- a candidate
+        # that fails partway through (BOPAlgo_Splitter can corrupt a
+        # solid's own native shape as a side effect of merely attempting
+        # a split, see generic_split's own comment on this) can still
+        # leave a face that re-approximates to an unsupported surface
+        # type, with no further opportunity to retry before this piece
+        # becomes a final, returned leaf. Confirmed live, 2026-10-28,
+        # Mixed/base_all8_to_cylinder.stp: one of its own torus-adjacent
+        # faces (already correctly substituted at load time, see
+        # GeounedSolid.__init__'s own matching fix) came back unresolved
+        # in exactly one of 42 final pieces, later crashing
+        # merge_same_surface_faces (cell_definition.py) with the same
+        # arc_extent failure this whole investigation started from.
+        try:
+            if Gspline_surface(s.__native__):
+                substituted, resolved = Gsubstitute_spline_quadrics(s, tolerances)
+                if resolved:
+                    s = substituted
+        except Exception:
+            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                raise
         fixed_solids.append(s)
 
     # A thin sliver that survived Gsplit's own repair cascade (see

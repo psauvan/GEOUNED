@@ -73,7 +73,7 @@ def _empty_boundbox():
 
 
 class GeounedSolid:
-    def __init__(self, id, comsolid=None):
+    def __init__(self, id, comsolid=None, tolerances=None):
         refine = True
         if not comsolid:
             self.Solids = None
@@ -100,6 +100,41 @@ class GeounedSolid:
                 for i, s in enumerate(self.Solids):
                     if s.Volume < 0:
                         self.Solids[i] = s.reverse()
+
+                # `refine()`'s own ShapeUpgrade_UnifySameDomain pass (just
+                # above) can leave a face whose native surface is a generic
+                # GeomAbs_SurfaceOfRevolution (or BSpline) that is secretly
+                # one of the 5 analytic types -- Gclassify_surface reports
+                # it as `None`. Confirmed live, 2026-10-28 (`Mixed/
+                # base_all8_to_cylinder.stp`): the load-time pass
+                # (`Gload_and_process_step`) already resolved this exact
+                # solid's own 4 such faces via `Gsubstitute_spline_
+                # quadrics` BEFORE ever reaching this constructor -- but
+                # `refine()`, called unconditionally right above,
+                # reintroduces the identical 4 unresolved faces every
+                # time, undoing that work silently (the solid still loads
+                # and decomposes, just with these faces permanently
+                # unclassified, until something far downstream -- here,
+                # `merge_same_surface_faces` on one decomposed piece --
+                # finally chokes on them). Same opportunistic re-
+                # substitution `solid_ops.py::Gfuse_solids` already runs
+                # after its own `refine()` call, for the same reason;
+                # never let this auxiliary step abort an otherwise-fine
+                # load (a bare `tolerances=None` caller has no fit/volume
+                # tolerance to run it with, so it is skipped then, same
+                # as `Gfuse_solids`'s own precedent).
+                if tolerances is not None:
+                    from ...geo import Gspline_surface, Gsubstitute_spline_quadrics
+
+                    for i, s in enumerate(self.Solids):
+                        try:
+                            if Gspline_surface(s.__native__):
+                                substituted, resolved = Gsubstitute_spline_quadrics(s, tolerances)
+                                if resolved:
+                                    self.Solids[i] = substituted
+                        except Exception:
+                            if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                                raise
             else:
                 self.Solids = comsolid.Solids
             self.Volume = comsolid.Volume

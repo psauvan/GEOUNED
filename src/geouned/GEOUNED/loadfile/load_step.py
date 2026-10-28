@@ -59,7 +59,7 @@ def load_cad(filename, spline_surf, settings, options, corrupted_solids="stop", 
     for i, s in enumerate(gsolid_list):
         if i in spline_solids_id and loop_spline:
             s = None
-        meta_list.append(LF.GeounedSolid(i + 1, s))
+        meta_list.append(LF.GeounedSolid(i + 1, s, tolerances=tolerances))
 
     i_solid = 0
     missing_mat = set()
