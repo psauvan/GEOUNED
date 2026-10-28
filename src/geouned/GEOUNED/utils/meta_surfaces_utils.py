@@ -9,6 +9,7 @@ from .data_constants import twoPi, mask
 from ..utils.basic_functions_part1 import shapes_in_contact
 from ..conversion.cell_definition_functions import gen_cone, gen_cylinder, cone_apex_plane
 from ...geo import (
+    CAD_ENGINE,
     GEdge,
     GFace,
     GVector,
@@ -38,7 +39,7 @@ from ...geo.constants import (
     SPLINE_PLANARITY_ANGLE,
     WINDING_ANGLE_TOL,
 )
-from ...geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction
+from ...geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction, is_same_torus_surface
 
 
 class reversedCCP:
@@ -1860,7 +1861,30 @@ def merge_same_surface_faces(face_in, solidFaces, *, tolerances):
             continue
         if current_face.Area < min_area:
             continue
-        if is_same_surface(face_in.Surface, current_face.Surface, tolerances=tolerances):
+        # A self-intersecting (degenerate) torus's inner and outer sheets
+        # are two genuinely distinct faces that happen to satisfy the
+        # same implicit surface equation -- is_same_surface's own generic
+        # dispatch (check_a_sign=False, the right default for CSG-surface
+        # REGISTRATION, where both sheets correctly write as one MCNP/
+        # OpenMC surface) must NOT be used here: this function groups
+        # physically-connected same-surface FACE FRAGMENTS, the exact
+        # same role SolidGu.same_torus_surf already uses check_a_sign=True
+        # for. Confirmed live, 2026-10-28 (Mixed/base_all8_to_cylinder.
+        # stp): a degenerate torus (MinorRadius=55 > MajorRadius=6.1)
+        # contributes one inner-sheet and one outer-sheet face, each
+        # 295.17mm^2 -- grouping them here (the old, unconditional
+        # is_same_surface call did) merges two faces whose combined U
+        # range spans the SAME nominal 2*pi-periodic domain for two
+        # different sheets, not one continuous arc -- ShellFaceGu.
+        # _U_parameter_faces's own arc_extent call correctly rejects
+        # stitching them, crashing merge_same_surface_faces's own real
+        # caller (cell_definition.py::simple_solid_definition) on this
+        # piece.
+        if type(face_in.Surface) is GTorus and type(current_face.Surface) is GTorus:
+            same = is_same_torus_surface(face_in.Surface, current_face.Surface, tolerances, check_a_sign=True)
+        else:
+            same = is_same_surface(face_in.Surface, current_face.Surface, tolerances=tolerances)
+        if same:
             same_surface.append(current_face)
 
     if len(same_surface) > 1:
@@ -1868,9 +1892,64 @@ def merge_same_surface_faces(face_in, solidFaces, *, tolerances):
         sameIndex.insert(0, 0)
         connected_faces = [same_surface[i] for i in sameIndex]
         if len(connected_faces) > 1:
-            return ShellFaceGu(connected_faces)
+            merged_faces = _collapse_connected_faces(connected_faces, solidFaces, tolerances)
+            shell = ShellFaceGu(merged_faces)
+            # Always the FULL original index set, regardless of how many
+            # actual pieces _collapse_connected_faces ended up with --
+            # every real face this same-surface group absorbed must stay
+            # marked consumed (omitFaces bookkeeping) even when several of
+            # them were physically fused into one GFace and therefore no
+            # longer appear as distinct entries in shell.Faces.
+            shell.Indexes = {f.Index for f in connected_faces}
+            return shell
 
     return face_in
+
+
+def _collapse_connected_faces(connected_faces, solidFaces, tolerances):
+    """Opportunistically eliminate the fictitious internal edges between
+    `connected_faces`'s own real, same-surface, physically-connected
+    pieces (`geo.ocp.repair.Gmerge_same_surface_faces` -- the real face
+    merge, triple-point-chain removal, no `ShapeUpgrade_UnifySameDomain`
+    involved at all, see that function's own docstring) BEFORE
+    `ShellFaceGu` ever has to reconcile their individual U-parameter
+    ranges via `arc_extent` -- fewer, more complete pieces means less for
+    that stitching to get wrong, and in the best case (the whole group
+    merges into one real face) it has nothing left to stitch at all.
+
+    `ocp`-only for now (no `occ` port yet) -- returns `connected_faces`
+    unchanged on any other engine, or if the merge attempt itself raises
+    for any reason (an opportunistic simplification must never be able to
+    break an otherwise-working decomposition; `Gmerge_same_surface_faces`
+    already protects its own internal per-pair attempts the same way, see
+    its own docstring, so this outer guard is only for the import/call
+    itself)."""
+    if CAD_ENGINE != "ocp":
+        return connected_faces
+    from ...geo.ocp.repair import Gmerge_same_surface_faces
+
+    try:
+        merged = Gmerge_same_surface_faces(connected_faces, solidFaces, tolerances)
+    except Exception:
+        return connected_faces
+
+    result = []
+    for f in merged:
+        if getattr(f, "Index", None) is not None:
+            result.append(f)
+        else:
+            new_face = FaceGu(f)
+            new_face.set_index(connected_faces[0].Index)
+            # FaceGu.__init__ always leaves OuterWire as None, relying on
+            # the caller to set it once (same contract as every other
+            # FaceGu construction site, e.g. define_list_face_gu's own
+            # callers) -- confirmed live, 2026-10-28
+            # (Mixed/base_all8_to_cylinder.stp): skipping this crashed
+            # get_adjacent_cylplane with a bare AttributeError the first
+            # time a merged face reached it.
+            new_face.set_outerWire()
+            result.append(new_face)
+    return result
 
 
 def closed_cylinder_cone(cylkne, solidFaces, *, tolerances):

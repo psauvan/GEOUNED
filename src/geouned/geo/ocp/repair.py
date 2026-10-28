@@ -8,6 +8,7 @@ Gsliver_heal, Gcheck_and_repair, Gspline_surface, Gheal_topology.
 from __future__ import annotations
 
 import io
+import math
 
 from OCP.BRep import (
     BRep_Builder,
@@ -21,6 +22,7 @@ from OCP.BRepAlgoAPI import BRepAlgoAPI_Defeaturing
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepBuilderAPI import (
+    BRepBuilderAPI_Copy,
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakeSolid,
@@ -28,6 +30,7 @@ from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_Sewing,
 )
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepLib import BRepLib
 from OCP.BRepTools import BRepTools
 from OCP.GeomAbs import (
     GeomAbs_Circle,
@@ -35,16 +38,22 @@ from OCP.GeomAbs import (
     GeomAbs_Cylinder,
     GeomAbs_Line,
 )
+from OCP.Geom import Geom_CylindricalSurface
+from OCP.Geom2dAPI import Geom2dAPI_Interpolate
 from OCP.gp import (
     gp_Ax2,
     gp_Circ,
     gp_Dir,
     gp_Pln,
     gp_Pnt,
+    gp_Pnt2d,
+    gp_Vec2d,
 )
+from OCP.TColgp import TColgp_HArray1OfPnt2d
+from OCP.TColStd import TColStd_HArray1OfReal
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeBuild import ShapeBuild_ReShape
-from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
+from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Solid
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import (
     STEPControl_AsIs,
@@ -57,6 +66,7 @@ from OCP.TopAbs import (
     TopAbs_REVERSED,
     TopAbs_SHELL,
     TopAbs_VERTEX,
+    TopAbs_WIRE,
 )
 from OCP.TopExp import (
     TopExp,
@@ -960,6 +970,503 @@ def _order_wire_edges(edges: list) -> "list | None":
         ordered.append(remaining.pop(match_i))
         end_pt = match_new_end
     return ordered
+
+
+def _shared_edge_chains(face_a: "GFace", face_b: "GFace") -> "list[list]":
+    """Every maximal connected chain of native edges shared (by
+    `IsSame`) between `face_a` and `face_b` -- usually one chain of one
+    edge, but a residual boolean-cut artifact can split the real
+    boundary between two same-surface faces into several consecutive
+    edge segments (e.g. an extra vertex inserted by an unrelated split
+    elsewhere on the solid) -- those segments form a SINGLE chain here
+    (grouped by shared vertex), not several independent ones, so the
+    chain's own 2 true free ends are found once, not once per segment.
+    Two faces touching at more than one physically separate location
+    (rare) come back as more than one chain. `[]` if they share no
+    edge at all."""
+    shared = []
+    for ea in face_a.Edges:
+        for eb in face_b.Edges:
+            if ea.__native__.IsSame(eb.__native__):
+                shared.append(ea.__native__)
+                break
+    if not shared:
+        return []
+
+    n = len(shared)
+    endpoints = []
+    for e in shared:
+        v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+        TopExp.Vertices_s(e, v1, v2)
+        endpoints.append((_vertex_point(v1), _vertex_point(v2)))
+
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            pi, pj = endpoints[i], endpoints[j]
+            if any((a - b).length < POINT_POINT_TOL for a in pi for b in pj):
+                union(i, j)
+
+    groups: dict[int, list] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(shared[i])
+    return list(groups.values())
+
+
+def _chain_free_ends(chain: list) -> "tuple | None":
+    """The chain's own 2 "free" endpoints -- the 2 vertex positions
+    touched by exactly ONE edge of `chain` -- or `None` if `chain`
+    doesn't reduce to a single simple open path (e.g. it closes into a
+    loop with no free end, or branches). An internal joint of a
+    multi-edge chain (touched by exactly 2 of the chain's own edges)
+    is correctly NOT a free end -- it's the point this whole function
+    exists to pass straight through, per direct user design: a vertex
+    where two shared-surface edges of the SAME chain meet is never, on
+    its own, a reason to keep that chain."""
+    counts: list[tuple] = []  # [(point, count)]
+    for e in chain:
+        v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+        TopExp.Vertices_s(e, v1, v2)
+        for v in (v1, v2):
+            p = _vertex_point(v)
+            for i, (rp, c) in enumerate(counts):
+                if (p - rp).length < POINT_POINT_TOL:
+                    counts[i] = (rp, c + 1)
+                    break
+            else:
+                counts.append((p, 1))
+    ends = [p for p, c in counts if c == 1]
+    if len(ends) != 2:
+        return None
+    return tuple(ends)
+
+
+def _is_true_branch_point(point: GVector, context_native_edges: list, exclude_native: list) -> bool:
+    """Whether `point` is a genuine branch point of the solid's own
+    edge graph -- touched (as an endpoint) by at least 2 DISTINCT
+    native edges in `context_native_edges` other than `exclude_native`
+    (the chain being considered for removal), or lying in the INTERIOR
+    of some other edge's own curve (a "T" junction: a third edge simply
+    passes through this point without ending there, which is just as
+    real a reason this point cannot be silently dropped). Direct user
+    design (2026-10-27): a chain's own free end is only safe to keep as
+    a real face corner when something ELSE, beyond the chain itself,
+    anchors it there."""
+    other_endpoint_edges = []
+    for e in context_native_edges:
+        if any(e.IsSame(x) for x in exclude_native):
+            continue
+        v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+        TopExp.Vertices_s(e, v1, v2)
+        p1, p2 = _vertex_point(v1), _vertex_point(v2)
+        if (point - p1).length < POINT_POINT_TOL or (point - p2).length < POINT_POINT_TOL:
+            if not any(e.IsSame(s) for s in other_endpoint_edges):
+                other_endpoint_edges.append(e)
+    if len(other_endpoint_edges) >= 2:
+        return True
+
+    for e in context_native_edges:
+        if any(e.IsSame(x) for x in exclude_native):
+            continue
+        ge = GEdge(e)
+        first, last = ge.ParameterRange
+        if last <= first:
+            continue
+        margin = (last - first) * 1e-3
+        try:
+            u = ge.parameter(point)
+        except Exception:
+            continue
+        if u < first + margin or u > last - margin:
+            continue  # at or near an endpoint -- not an interior ("T") touch
+        if (ge.value_at(u) - point).length < POINT_POINT_TOL:
+            return True
+    return False
+
+
+def _pcurve_value_at_point(face_native, edge_native, point: GVector) -> "tuple | None":
+    """`(u, v)` of `point` as seen by `edge_native`'s own pcurve on
+    `face_native` -- `point` must be (within `POINT_POINT_TOL`) one of
+    the edge's own 2 endpoints; `None` if not, or if the edge has no
+    pcurve on this face. Used to read a TRUSTED (already correct,
+    never recomputed) (u, v) value straight from a face that hasn't
+    been touched by the merge at all yet."""
+    first, last = BRep_Tool.Range_s(edge_native, face_native)
+    try:
+        pcurve = BRep_Tool.CurveOnSurface_s(edge_native, face_native, first, last)
+    except Exception:
+        return None
+    if pcurve is None:
+        return None
+    v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+    TopExp.Vertices_s(edge_native, v1, v2)
+    p1, p2 = _vertex_point(v1), _vertex_point(v2)
+    if (point - p1).length < POINT_POINT_TOL:
+        return (pcurve.Value(first).X(), pcurve.Value(first).Y())
+    if (point - p2).length < POINT_POINT_TOL:
+        return (pcurve.Value(last).X(), pcurve.Value(last).Y())
+    return None
+
+
+def _project_curve_2d_exact_cylinder(edge, first: float, last: float, cylinder_surf, n: int = 20):
+    """Exact analytic counterpart to `spline_quadrics.py::_project_curve_2d`,
+    for a `Geom_CylindricalSurface` specifically: `(u, v)` of a 3D point
+    on a cylinder has a plain closed-form inverse (`u = atan2(y, x)`,
+    `v = z`, in the surface's own `gp_Ax3` frame -- no root-finding, no
+    Newton iteration, nothing approximate), confirmed empirically
+    against `cylinder_surf.Value(u, v)` to within float noise
+    (<2e-13mm) for arbitrary (u, v). Confirmed live, 2026-10-28
+    (`Mixed/base_all8_to_cylinder.stp`'s own crashing fragment), by
+    direct comparison against `_project_curve_2d`'s own Newton-based
+    projection on the same edge: the two give essentially identical
+    values -- the generic function was already accurate enough here;
+    kept anyway as the exact, zero-iteration choice for this one
+    well-understood surface type, while other periodic surface types
+    still go through the generic, approximate `_project_curve_2d`."""
+    ax3 = cylinder_surf.Position()
+    loc = ax3.Location()
+    zdir = ax3.Direction()
+    xdir = ax3.XDirection()
+    ydir = ax3.YDirection()
+    loc_v = GVector(loc.X(), loc.Y(), loc.Z())
+    zdir_v = GVector(zdir.X(), zdir.Y(), zdir.Z())
+    xdir_v = GVector(xdir.X(), xdir.Y(), xdir.Z())
+    ydir_v = GVector(ydir.X(), ydir.Y(), ydir.Z())
+
+    adaptor = BRepAdaptor_Curve(edge)
+    pts2d = TColgp_HArray1OfPnt2d(1, n + 1)
+    params = TColStd_HArray1OfReal(1, n + 1)
+    two_pi = 2.0 * math.pi
+    u_prev = None
+    for k in range(n + 1):
+        t = first + (last - first) * k / n
+        point = adaptor.Value(t)
+        rel = GVector(point.X(), point.Y(), point.Z()) - loc_v
+        v = rel.dot(zdir_v)
+        radial = rel - v * zdir_v
+        u = math.atan2(radial.dot(ydir_v), radial.dot(xdir_v))
+        if u_prev is not None:
+            while u - u_prev > math.pi:
+                u -= two_pi
+            while u - u_prev < -math.pi:
+                u += two_pi
+        u_prev = u
+        pts2d.SetValue(k + 1, gp_Pnt2d(u, v))
+        params.SetValue(k + 1, t)
+    interpolator = Geom2dAPI_Interpolate(pts2d, params, False, 1e-7)
+    interpolator.Perform()
+    return interpolator.Curve()
+
+
+def _attach_pcurves_for_leftover_b(face_a: "GFace", leftover_b: "list[GEdge]", chain_ends: tuple, native_surf) -> "list[GEdge] | None":
+    """Build a FRESH `BRepBuilderAPI_Copy` of every one of `leftover_b`'s
+    own native edges, and attach a fresh pcurve to each copy on
+    `native_surf` (`face_a`'s OWN, already-valid native surface object
+    -- `face_a.Surface.__native__`, never a freshly-rebuilt one with
+    its own arbitrary reference frame) -- BEFORE any wire/face is built
+    from them.
+
+    `leftover_b` is ordered into its own single connected sub-path first
+    (`_order_wire_edges`) -- it must run between `chain_ends`'s own 2
+    points (the SAME shared-chain free ends already found and validated
+    by the caller), since those are exactly where `leftover_b`'s own
+    path reconnects to `leftover_a`'s. The sub-path is walked from
+    whichever of `chain_ends` one of `face_a`'s OWN edges can give an
+    ALREADY-TRUSTED (u, v) for (`_pcurve_value_at_point`, read directly
+    off `face_a.__native__`, completely untouched by this whole merge) --
+    every subsequent edge's own freshly-computed pcurve
+    (`spline_quadrics.py::_project_curve_2d`) is then shifted by the
+    EXACT delta (any size, not restricted to a whole period) needed to
+    match the running point inherited from its predecessor, which is
+    always either that trusted seed or an earlier `leftover_b` edge
+    already corrected this same way -- so the correction never
+    compounds an error, it only ever removes one. Confirmed live,
+    2026-10-27 (`Mixed/base_all8_to_cylinder.stp`'s own crashing
+    fragment): a naive, unseeded `_project_curve_2d` call for a short
+    edge sitting very close to the periodic seam came back off by a
+    SMALL, non-period amount (~12 degrees) from the correct value --
+    smaller than `sewn_composite.py::_fix_periodic_pcurve_continuity`'s
+    own "only shift by a whole period, and only past half a period"
+    correction ever attempts to fix, since that function assumes a
+    small residual is harmless representation noise, which it is NOT
+    here.
+
+    Each of `leftover_b`'s own native edges is replaced by a FRESH,
+    independent `BRepBuilderAPI_Copy` before anything else -- NOT
+    mutated directly. Confirmed live, 2026-10-27: `BRep_Tool.
+    CurveOnSurface_s(edge, face, first, last)`'s own FACE-based lookup
+    matches by the SURFACE'S OWN GEOMETRIC identity (same type, axis,
+    radius), not exact object/location identity -- so an untouched
+    original edge, queried against `face_a.__native__`, silently
+    returns its OWN PRE-EXISTING pcurve (built for `face_b`'s own,
+    geometrically-identical-but-distinct cylinder surface) even before
+    this function ever runs, and calling `UpdateEdge` on that SAME
+    original edge afterward was observed to not reliably replace it
+    (which representation a later lookup returns became dependent on
+    OCCT's own internal ordering, not simply "the most recent one set"
+    -- confirmed by a minimal, isolated reproduction). A
+    `BRepBuilderAPI_Copy`'d edge starts with no such geometrically-
+    matching representation at all (confirmed: a face-based lookup on
+    a fresh copy, before any `UpdateEdge` call, returns `None`), so the
+    ONE pcurve this function attaches is unambiguously the only one a
+    later lookup can find.
+
+    Returns the list of `leftover_b`'s own edges to use from now on
+    (copies, each a `GEdge`, each carrying the fresh, corrected pcurve
+    for `native_surf`) -- the caller must build the final wire from
+    these, not from the original `leftover_b` list. Returns `None`
+    (never raises) if `leftover_b` doesn't reduce to one simple path
+    between `chain_ends`, or no trusted seed can be found for either of
+    its own ends."""
+    from .spline_quadrics import _project_curve_2d
+
+    def project(e, f, l):
+        if isinstance(native_surf, Geom_CylindricalSurface):
+            return _project_curve_2d_exact_cylinder(e, f, l, native_surf)
+        return _project_curve_2d(e, f, l, native_surf)
+
+    if not leftover_b:
+        return []
+
+    copies = [TopoDS.Edge(BRepBuilderAPI_Copy(e.__native__, True, True).Shape()) for e in leftover_b]
+    ordered = _order_wire_edges(copies) if len(copies) > 1 else copies
+    if ordered is None:
+        return None
+
+    def endpoints(e):
+        v1, v2 = TopoDS_Vertex(), TopoDS_Vertex()
+        TopExp.Vertices_s(e, v1, v2)
+        return _vertex_point(v1), _vertex_point(v2)
+
+    p1, _ = endpoints(ordered[0])
+    seed_point = next((p for p in chain_ends if (p - p1).length < POINT_POINT_TOL), None)
+    if seed_point is None:
+        return None
+    far_point = next((p for p in chain_ends if (p - seed_point).length >= POINT_POINT_TOL), None)
+
+    def trusted_uv(point):
+        for e in (e.__native__ for e in face_a.Edges):
+            uv = _pcurve_value_at_point(face_a.__native__, e, point)
+            if uv is not None:
+                return uv
+        return None
+
+    running_end = trusted_uv(seed_point)
+    if running_end is None:
+        return None
+
+    # Deliberately NOT forcing the far end (`far_point`) to land exactly on
+    # face_a's own independently-read trusted value there. The two original
+    # faces being merged can carry a small, genuine topological defect of
+    # their own at that far corner -- their real boundary curves, read
+    # independently, need not agree to better than a few thousandths of a
+    # mm even though they share the exact same vertex -- and forcing an
+    # artificial two-point-exact blend there (an earlier version of this
+    # function did, via a dedicated end-anchoring correction) manufactures a
+    # pcurve shape that does not honestly track either original curve,
+    # which is what a real CAD kernel's own validity check rejects. The
+    # correct repair, per the project's own established "smooth over a tiny
+    # inherent defect, don't fabricate exactness" convention, is to seed
+    # from ONE trusted point only and propagate a single, honest shift
+    # edge-by-edge -- then let `BRepLib.SameParameter_s`/`ShapeFix_Face`
+    # (already applied by the caller) absorb whatever small residual gap
+    # remains at the far end, exactly the tolerance-aware adjustment they
+    # exist for.
+    face_location = face_a.__native__.Location()
+    builder = BRep_Builder()
+    for native_edge in ordered:
+        v1, v2 = endpoints(native_edge)
+        reversed_ = (v2 - seed_point).length < POINT_POINT_TOL
+        first, last = BRep_Tool.Range_s(native_edge)
+        edge_tol = BRep_Tool.Tolerance_s(native_edge)
+        pcurve = project(native_edge, first, last)
+        p_entry = pcurve.Value(last if reversed_ else first)
+        du = running_end[0] - p_entry.X()
+        dv = running_end[1] - p_entry.Y()
+        if du != 0.0 or dv != 0.0:
+            pcurve = pcurve.Translated(gp_Vec2d(du, dv))
+        builder.UpdateEdge(native_edge, pcurve, native_surf, face_location, edge_tol)
+        p_exit = pcurve.Value(first if reversed_ else last)
+        running_end = (p_exit.X(), p_exit.Y())
+        seed_point = v1 if reversed_ else v2
+    return [GEdge(e) for e in ordered]
+
+
+def _build_merged_face_reusing_pcurves(face_a: "GFace", wire) -> "GFace | None":
+    """`BRepBuilderAPI_MakeFace(face_a.Surface.__native__, wire)` ->
+    `SameParameter` -> `ShapeFix_Face` -- `wire`'s own edges must
+    already carry a valid pcurve on `face_a.Surface.__native__` by this
+    point (`face_a`'s own leftover edges always do, untouched;
+    `leftover_b`'s were already attached by
+    `_attach_pcurves_for_leftover_b` before this is ever called).
+
+    `ShapeFix_Face` does NOT mutate its own input `TopoDS_Face` in
+    place -- confirmed live, 2026-10-28 (`Mixed/base_all8_to_cylinder.
+    stp`'s own crashing fragment): an earlier version of this function
+    called `ShapeFix_Face(raw_face).Perform()` and then returned
+    `GFace(raw_face)`, discarding whatever fix was actually applied and
+    silently returning the ORIGINAL, still-`BRepCheck_UnorientableShape`
+    face -- `ShapeFix_Face(...).Face()` is the one that carries the
+    fixed result. `BRepLib.SameParameter_s` DOES mutate in place (an
+    `OCP`-bound static/`_s` call taking the shape directly, not a
+    fix-object with its own separate result accessor), so it needs no
+    equivalent correction."""
+    native_surf = face_a.Surface.__native__
+    raw_face = BRepBuilderAPI_MakeFace(native_surf, wire).Face()
+    face_tol = BRep_Tool.Tolerance_s(face_a.__native__)
+    BRepLib.SameParameter_s(raw_face, face_tol, True)
+    fixer = ShapeFix_Face(raw_face)
+    fixer.Perform()
+    return GFace(fixer.Face())
+
+
+def _sign_corrected_merged_face(face_a: "GFace", wire) -> "GFace | None":
+    """`_build_merged_face_reusing_pcurves`, retried with the wire
+    reversed if the first attempt picks the wrong side of the closed
+    wire (negative signed area) -- the same empirically-confirmed-
+    necessary correction `sewn_composite.py::_sign_corrected_face` makes
+    for a face built from reused, independently-sourced edges."""
+    merged = _build_merged_face_reusing_pcurves(face_a, wire)
+    if merged is None:
+        return None
+    if merged.Area < 0.0:
+        merged = _build_merged_face_reusing_pcurves(face_a, TopoDS.Wire(wire.Reversed()))
+    return merged
+
+
+def _try_merge_same_surface_pair(face_a: "GFace", face_b: "GFace", context_native_edges: list, tolerances) -> "GFace | None":
+    """Merge `face_a`/`face_b` (already confirmed the same analytic
+    surface) into one face by removing every edge chain they share,
+    WITHOUT using OCCT's own `ShapeUpgrade_UnifySameDomain` -- which
+    this exact scenario (two faces of a periodic surface -- cylinder,
+    cone, sphere, torus -- sharing a boundary that crosses the 0/period
+    seam) was confirmed, live, 2026-10-27, NOT to merge even in total
+    isolation (see CLAUDE.md's own investigation of
+    `Mixed/base_all8_to_cylinder.stp`). `None` on any of: no shared
+    edge; a shared chain that isn't one simple open path
+    (`_chain_free_ends`); either of the chain's own free ends not a
+    true branch point of the solid (`_is_true_branch_point`, periodic
+    surfaces only -- a plane has no seam to cross, so any shared chain
+    is always safe there); more than one simple wire on either face
+    (an inner hole -- out of scope for this first version); the
+    rebuilt wire/face failing (`_wire_from_edges`, pcurve reuse +
+    targeted reprojection via `_sign_corrected_merged_face`); the result not
+    BRepCheck-valid; or its area not conserving the two input faces'
+    combined area. Never raises -- a failed merge just means the
+    caller keeps `face_a`/`face_b` as two separate faces, same as
+    before this function existed."""
+    from .sewn_composite import _native_surface, _sign_corrected_face, _wire_from_edges
+
+    chains = _shared_edge_chains(face_a, face_b)
+    if not chains:
+        return None
+
+    is_periodic = not isinstance(face_a.Surface, GPlane)
+    all_shared = []
+    chain_ends = []
+    for chain in chains:
+        all_shared.extend(chain)
+        if is_periodic:
+            ends = _chain_free_ends(chain)
+            if ends is None:
+                return None
+            for p in ends:
+                if not _is_true_branch_point(p, context_native_edges, chain):
+                    return None
+            chain_ends.extend(ends)
+
+    if len(face_a.wires()) != 1 or len(face_b.wires()) != 1:
+        return None
+
+    leftover_a = [e for e in face_a.Edges if not any(e.__native__.IsSame(s) for s in all_shared)]
+    leftover_b = [e for e in face_b.Edges if not any(e.__native__.IsSame(s) for s in all_shared)]
+    if not leftover_a and not leftover_b:
+        return None
+
+    if is_periodic:
+        fixed_leftover_b = _attach_pcurves_for_leftover_b(face_a, leftover_b, tuple(chain_ends), face_a.Surface.__native__)
+        if fixed_leftover_b is None:
+            return None
+        leftover_b = fixed_leftover_b
+
+    wire = _wire_from_edges(leftover_a + leftover_b)
+    if wire is None:
+        return None
+
+    if is_periodic:
+        merged = _sign_corrected_merged_face(face_a, wire)
+    else:
+        # A plane has no periodic seam to cross -- any (u, v) projection is
+        # exact and frame-independent, so the original, simpler recipe
+        # (a freshly-built surface + per-edge reprojection via
+        # _substitute_face_surface, no seeding needed) is already correct.
+        merged = _sign_corrected_face(_native_surface(face_a.Surface), wire)
+    if merged is None:
+        return None
+
+    if not BRepCheck_Analyzer(merged.__native__).IsValid():
+        return None
+    expected_area = face_a.Area + face_b.Area
+    if abs(merged.Area - expected_area) > max(POINT_POINT_TOL, 1.0e-6 * expected_area):
+        return None
+    return merged
+
+
+def Gmerge_same_surface_faces(connected_faces: "list[GFace]", context_faces: "list[GFace]", tolerances) -> "list[GFace]":
+    """Collapse `connected_faces` (already confirmed to all lie on the
+    same analytic surface and to be mutually connected, e.g. by
+    `meta_surfaces_utils.py::merge_same_surface_faces`'s own
+    `same_surface`+`same_faces` grouping) into as few faces as possible,
+    by repeatedly merging any pair sharing a removable edge chain
+    (`_try_merge_same_surface_pair`) until no more merges happen.
+    `context_faces` is the WHOLE fragment's own face list (not just
+    `connected_faces`), needed so a chain's own free-end branch-point
+    check (periodic surfaces only) can see edges belonging to OTHER,
+    unrelated faces too (e.g. a third surface entirely, see
+    `base_all8_to_cylinder.stp`'s own real fixture, where the two
+    faces' real corners are anchored by a DIFFERENT cylinder's own
+    edges, not by each other).
+
+    A plain, engine-agnostic fixed-point loop over
+    `_try_merge_same_surface_pair`: O(n^2) per pass, fine for the small
+    (2-10 face) groups this is actually used on. Faces that never merge
+    with anything pass through unchanged, in their original order
+    relative to each other (merged faces are appended at the end) --
+    callers that care about order should not assume it is preserved.
+    Never raises; a face pair whose merge attempt fails for any reason
+    is simply left as two separate faces."""
+    faces = list(connected_faces)
+    context_native_edges = [e.__native__ for f in context_faces for e in f.Edges]
+    changed = True
+    while changed and len(faces) > 1:
+        changed = False
+        for i in range(len(faces)):
+            for j in range(i + 1, len(faces)):
+                try:
+                    merged = _try_merge_same_surface_pair(faces[i], faces[j], context_native_edges, tolerances)
+                except Exception:
+                    if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
+                        raise
+                    merged = None
+                if merged is not None:
+                    faces = [f for k, f in enumerate(faces) if k not in (i, j)] + [merged]
+                    changed = True
+                    break
+            if changed:
+                break
+    return faces
 
 
 def _trim_edge_for_boundary_touching_pair(small: "GFace", large: "GFace", shared_native_edge) -> "list | None":
