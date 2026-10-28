@@ -30,7 +30,7 @@ from ..utils.basic_functions_part1 import (
     is_same_value,
 )
 from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
-from ...geo.constants import NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
+from ...geo.constants import CKS_COAXIAL_AXIS_DIST_TOL, NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
@@ -112,17 +112,27 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
                 axis1 = face.Surface.Axis
                 axis2 = adjacent_face.Surface.Axis
 
-                # calculate distance between the two axes and if it is less than a tolerance, do not create a plane
+                # Calculate the distance between the two axes: a plane is
+                # only built when they are close enough to be the same
+                # line (a genuine coaxial cone/cylinder tangent-
+                # continuation seam, e.g. a Can/TCone's own closing
+                # circle) -- two genuinely distinct, non-coaxial axes
+                # give up here (their own real edge, if planar at all,
+                # isn't this kind of closing seam). CKS_COAXIAL_AXIS_
+                # DIST_TOL (not POINT_POINT_TOL, which is tuned for a
+                # much smaller role, exact point coincidence) -- see its
+                # own docstring in geo/constants.py for the corpus
+                # measurement this value is based on.
                 cross = axis1.cross(axis2)
                 if cross.length > NUMERIC_DOUBLE_TOL:
                     dist = abs(cross.dot(p1 - p2)) / cross.length
-                    if dist > POINT_POINT_TOL:
-                        continue  # doesn't create plane if the axes are not close enough
+                    if dist > CKS_COAXIAL_AXIS_DIST_TOL:
+                        continue  # not coaxial enough -- a real corner, no plane here
                 else:
                     # if the axes are parallel, check the distance between the two points
                     dist = (p1 - p2).length
-                    if dist > POINT_POINT_TOL:
-                        continue  # doesn't create plane if the axes are not close enough
+                    if dist > CKS_COAXIAL_AXIS_DIST_TOL:
+                        continue  # not coaxial enough -- a real corner, no plane here
 
             plane = cks_edge_plane(face, [e])
             if plane is not None:

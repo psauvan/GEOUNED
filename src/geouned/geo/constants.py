@@ -585,6 +585,16 @@ DEFAULT_MIN_FACE_WIDTH = 0.1
 # margin over the rounding of a STEP written with 6 decimals and stays 10x below Tolerances' surface tolerances.
 POINT_POINT_TOL = 1.0e-5
 
+# Absolute distance (mm) below which two cone/cylinder axes, adjacent across a planar edge
+# (decompose/decom_utils_generator.py::cks_bound_planes), are treated as coaxial -- i.e. the edge is a genuine
+# tangent-continuation seam (no cutting plane needed there) rather than a real corner between two distinct
+# curved surfaces. Measured on Solidos/test_models (172 files, excluding Big_*): every real measured value is
+# either <= 1e-5 (56 samples, clean coaxial pairs) or >= 1e-1 (64 samples, genuinely distinct axes) -- a clean,
+# 4-decade-wide empty gap, except for Mixed/base_all8_to_cylinder.stp's own 8 samples at ~6.498e-5, a real but
+# tiny (sub-micron-scale) axis offset between 2 nominally-coaxial cylinder families, one BOPAlgo tolerance-weld
+# short of POINT_POINT_TOL. 1e-4 sits inside the empty gap with margin on both sides.
+CKS_COAXIAL_AXIS_DIST_TOL = 1.0e-4
+
 # Corner-to-corner tolerance (mm) when two bounding boxes are compared. Same value as POINT_POINT_TOL, kept as its
 # own name because box slop and point coincidence are different physics: OCCT bounding boxes carry a few 1e-6 mm of
 # slop (55 of 386 corpus comparisons fall in 1e-6..1e-5) and the old 1e-6 split those cases. Measured 2026-09-19:
