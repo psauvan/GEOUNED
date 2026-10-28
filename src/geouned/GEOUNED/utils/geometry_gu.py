@@ -56,24 +56,156 @@ def is_same_surface(surface_1, surface_2, tolerances):
     return _SAME_SURFACE_PREDICATE[type(surface_1)](surface_1, surface_2, tolerances)
 
 
+def _reprojected_range(face, other, value_index, p0, p1):
+    """Re-express `face`'s own raw (p0, p1) range (along the parameter
+    selected by `value_index`, 0=U/1=V) in `other`'s own native frame, or
+    `None` if `face` has fewer than 2 vertices with distinguishable own
+    values (degenerate, should not happen for a real face), or if
+    `face`/`other` don't expose real vertex/surface data at all (a
+    lightweight test double standing in for a face already in a common
+    frame, needing no reprojection)."""
+    try:
+        return _reprojected_range_unchecked(face, other, value_index, p0, p1)
+    except AttributeError:
+        return None
+
+
+def _reprojected_range_unchecked(face, other, value_index, p0, p1):
+    """The real implementation of `_reprojected_range`, assuming `face`/
+    `other` both expose `.Vertexes` and `.Surface.parameter(...)`.
+
+    `face` and `other` are two fragments of the exact SAME physical,
+    already-identified analytic surface (same a_sign/sheet, confirmed by
+    the caller via `is_same_torus_surface(..., check_a_sign=True)`), so
+    ANY of `face`'s own real vertices lies exactly on `other`'s own
+    surface equation too -- no shared edge is needed to relate the two.
+
+    Two faces of one physical torus can carry ANTIPARALLEL native axes
+    (two independently-built native surface instances with opposite-sign
+    frames), not merely a different U/V origin -- confirmed live,
+    2026-10-28, `Mixed/base_all8_to_cylinder.stp`. This makes the map
+    from `face`'s own parameter to `other`'s own parameter a REFLECTION
+    (`other_val = C - own_val`) rather than a plain SHIFT (`other_val =
+    own_val + C`) -- confirmed live on the same fixture: a single-point
+    shift happened to give the right answer for one face pair's V range
+    by coincidence (one face's own tiny residual arc nested inside the
+    other's), but silently under-reported the true combined U range for
+    the exact same pair (missing ~1.5 rad of real extent) because the
+    true U map is a reflection, not a shift.
+
+    Determined empirically from the 2 of `face`'s own vertices whose own
+    values (along `value_index`) are farthest apart (the best-
+    conditioned pair, away from any accidental near-duplicate), never
+    assumed from the axes alone and never from an arbitrary INTERIOR
+    point: for a genuinely self-intersecting (degenerate, MinorRadius >
+    MajorRadius) torus, an interior point can satisfy the implicit
+    surface equation at more than one (u, v), so native point inversion
+    can silently land on the wrong, only-algebraically-equivalent branch;
+    a real VERTEX has no such ambiguity (it is where the face's own
+    boundary curves meet, not a point picked by this function)."""
+    vertices = list(face.Vertexes)
+    if len(vertices) < 2:
+        return None
+    own_values = [face.Surface.parameter(v)[value_index] for v in vertices]
+    i_min = min(range(len(vertices)), key=lambda i: own_values[i])
+    i_max = max(range(len(vertices)), key=lambda i: own_values[i])
+    if i_min == i_max:
+        return None
+    own_a, own_b = own_values[i_min], own_values[i_max]
+    ref_a = other.Surface.parameter(vertices[i_min])[value_index]
+    ref_b = other.Surface.parameter(vertices[i_max])[value_index]
+
+    def unwrapped_gap(x, y):
+        d = x - y
+        two_pi = 2.0 * math.pi
+        while d > math.pi:
+            d -= two_pi
+        while d < -math.pi:
+            d += two_pi
+        return abs(d)
+
+    shift_a, shift_b = ref_a - own_a, ref_b - own_b
+    reflect_a, reflect_b = ref_a + own_a, ref_b + own_b
+    if unwrapped_gap(shift_a, shift_b) <= unwrapped_gap(reflect_a, reflect_b):
+        shift = shift_a
+        while shift > math.pi:
+            shift -= 2.0 * math.pi
+        while shift < -math.pi:
+            shift += 2.0 * math.pi
+        return p0 + shift, p1 + shift
+    else:
+        const = reflect_a
+        while const > 2.0 * math.pi + math.pi:
+            const -= 2.0 * math.pi
+        while const < -math.pi:
+            const += 2.0 * math.pi
+        # a reflection reverses order: own's own min maps to other's own max
+        return const - p1, const - p0
+
+
 def merge_periodic_uv(parameter, faces):
     """Merged parameter range, along "U" or "V", of `faces` (pieces of ONE periodic surface).
 
     Returns `(closed, (v_min, v_max))`: `closed` is True when the pieces add up to a full turn (2*pi), in which case
     the range is `(V0, V0 + 2*pi)`. "Adds up to a full turn" and "starts at 0 / ends at 2*pi / touches its neighbour"
-    are decided with NUMERIC_TOL: the parameters come from the same solid's own faces, so they carry the same numbers."""
+    are decided with NUMERIC_TOL: the parameters come from the same solid's own faces, so they carry the same numbers.
+
+    `faces[0]` itself always keeps its own raw ParameterRange untouched
+    (no native round-trip at all). Every OTHER face's own range is
+    re-expressed in `faces[0]`'s own native frame via `_reprojected_range`
+    (using `face`'s own real vertices, reprojected through `faces[0]`'s
+    own surface equation -- never through an arbitrary interior point;
+    see that function's own docstring for why, and for the shift-vs-
+    reflection distinction it resolves). A face with fewer than 2
+    vertices with distinguishable own values (should not happen for a
+    real face) keeps its own raw range untouched, same as `faces[0]` --
+    silently trusting raw values here is safer than guessing a transform
+    from an unreliable reprojection."""
     two_pi = 2.0 * math.pi
     if parameter == "U":
-        i1, i2 = 0, 2
+        own_i1, own_i2 = 0, 2
     elif parameter == "V":
-        i1, i2 = 2, 4
+        own_i1, own_i2 = 2, 4
     else:
         raise ValueError(f"parameter must be 'U' or 'V', not {parameter!r}")
+    value_index = 0 if parameter == "U" else 1
 
+    reference_face = faces[0]
     params = []
     arcLength = 0.0
-    for face in faces:
-        V0, V1 = face.ParameterRange[i1:i2]
+    ref_V0 = None
+    for i, face in enumerate(faces):
+        p0, p1 = face.ParameterRange[own_i1:own_i2]
+        if i == 0:
+            V0, V1 = p0, p1
+        else:
+            reprojected = _reprojected_range(face, reference_face, value_index, p0, p1)
+            V0, V1 = reprojected if reprojected is not None else (p0, p1)
+            if V1 < V0:
+                V0, V1 = V1, V0
+        # Even a correctly-anchored (or, for i==0, deliberately untouched)
+        # pair can land on a DIFFERENT, only periodically-equivalent
+        # representative of the SAME real arc as an earlier pair --
+        # confirmed live, 2026-10-28, the real fixture this function was
+        # rewritten for: face4's own raw range and face5's own shifted
+        # range turned out to be the IDENTICAL real arc, just one whole
+        # period apart (6.226..6.283 vs -0.057..~0) -- sorting and
+        # min/max-ing them as-is reads that as two DISTANT arcs needing
+        # to span the WHOLE gap between them (a bogus ~6.34 rad result)
+        # instead of recognizing they already overlap almost entirely.
+        # Unwrapping every pair's own V0 to within half a period of the
+        # very first pair's own V0 keeps the whole list in one mutually
+        # consistent frame, so two equivalent-but-offset pairs collapse
+        # back onto each other before the sort/min/max below ever runs.
+        if ref_V0 is None:
+            ref_V0 = V0
+        else:
+            while V0 - ref_V0 > math.pi:
+                V0 -= two_pi
+                V1 -= two_pi
+            while V0 - ref_V0 < -math.pi:
+                V0 += two_pi
+                V1 += two_pi
         arcLength += V1 - V0
         params.append((V0, V1))
 
@@ -272,15 +404,48 @@ class ShellFaceGu:
         # fails (RoundCorners/rrc23.stp). Re-express every face's U
         # interval in ONE common frame -- self.Surface, classified from
         # Faces[0] -- by projecting a real boundary point back through
-        # self.Surface.parameter(); keep the face's own (frame-independent)
-        # angular width for the far end, since a single face never wraps
-        # internally.
+        # self.Surface.parameter().
+        #
+        # Reproject BOTH u0 AND u1 (not just u0, with the face's own raw
+        # width `u1-u0` simply added on) -- that assumed U increases in
+        # the SAME rotational sense in both frames, true for a mere
+        # origin shift (different XDirection, same axis direction) but
+        # false for a face whose own surface axis is ANTIPARALLEL to
+        # self.Surface's (two sheets/fragments of one degenerate torus
+        # built with opposite-sign native frames is a real, confirmed
+        # case, Mixed/base_all8_to_cylinder.stp, 2026-10-28) -- there,
+        # reprojected U runs BACKWARDS relative to the common frame, and
+        # adding the raw width lands on the wrong side entirely, which is
+        # what made arc_extent reject a genuinely contiguous pair as a
+        # "gap". Reprojecting both ends and taking (min, max) after
+        # unwrapping u1 to within half a period of u0 is correct either
+        # way, same-direction or reversed, and costs one extra native
+        # projection per face.
+        #
+        # self.Faces[0] itself is the EXCEPTION: self.Surface was
+        # classified FROM it, so its own raw (u0, u1) is already
+        # expressed in that exact frame by construction -- reprojecting
+        # it anyway (tried first) round-trips it through native point
+        # inversion for no reason, and that round-trip can land on a
+        # different, only periodically-equivalent representative right
+        # at a periodic boundary (confirmed live in the sibling
+        # merge_periodic_uv fix, same file: a raw 0.0 came back as
+        # 2*pi), silently corrupting the one face this function must
+        # get exactly right.
         Uval = []
-        for f in self.Faces:
+        for i, f in enumerate(self.Faces):
             u0, u1, v0, v1 = f.ParameterRange
+            if i == 0:
+                Uval.append((u0, u1))
+                continue
             vm = 0.5 * (v0 + v1)
             cu0 = self.Surface.parameter(f.value_at(u0, vm))[0]
-            Uval.append((cu0, cu0 + (u1 - u0)))
+            cu1 = self.Surface.parameter(f.value_at(u1, vm))[0]
+            while cu1 - cu0 > math.pi:
+                cu1 -= twoPi
+            while cu1 - cu0 < -math.pi:
+                cu1 += twoPi
+            Uval.append((min(cu0, cu1), max(cu0, cu1)))
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)
 
