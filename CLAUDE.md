@@ -412,6 +412,186 @@ instruction).
   checked -- flagged, not yet investigated, since both the old and new
   convexity methods already agree on this exact group regardless.
 
+- **The `inout_RC.stp` regression above (the "not yet root-caused" one)
+  is now root-caused and fixed, 2026-10-30, commit `d29d253`: a genuine
+  infinite loop in `convex_round_corner_points`'s own walk, not a
+  convexity-formula problem at all.** `convex_round_corner_points`'s
+  `while True` walk (building one ordered polygon from the union-find
+  graph of a MultiRoundCorner candidate's own 4-points-per-corner data)
+  only ever checked `nxt != prev` (don't immediately backtrack) -- no
+  `visited` set. If any node in the graph has degree >= 3 (a real
+  physical point where 3 different corners' own points coincide, not a
+  hash/iteration-order artifact -- confirmed with real coordinate data
+  on `inout_RC.stp`'s own candidate groups), the walk can enter a
+  sub-cycle that never reaches `start` or a degree-1 dead end, repeating
+  the same nodes forever. Reproduced live via a bounded-walk diagnostic
+  patch run against the REAL, unpatched `myrun.py` script (not a
+  reimplementation -- an earlier attempt at reproducing this with a
+  hand-copied version of the function never hit the malformed-graph
+  case, apparently because object-`id()`-based hashing of some
+  upstream `set()` gives a different candidate-search order each
+  process run) plus a `faulthandler.dump_traceback_later` periodic
+  stack dump confirming the exact hang location.
+  **Fix**: `if degree and max(degree.values()) > 2: return False`,
+  checked right after building the `degree`/`adjacency` dicts, before
+  computing `endpoints`/`closed`/starting the walk at all -- by basic
+  graph theory, a connected graph where every vertex has degree <= 2 is
+  always a single path or cycle, so this check alone is both necessary
+  AND sufficient to guarantee the walk can never hang (every node is
+  visited exactly once before hitting a dead end or returning to
+  `start`). `False` (not a valid convex chain) is the semantically
+  correct answer here, not just a safe default: a group whose own real
+  boundary points don't even form one connected simple path/cycle
+  genuinely cannot be represented as a single MultiRoundCorner,
+  regardless of whether it would otherwise be convex. A second,
+  independent `visited`-set check was also added inside the walk loop
+  itself (mathematically unreachable given the degree guard above, kept
+  only as a zero-cost second safety net).
+  **Verified against the real, unpatched `myrun.py` script** (which
+  previously hung indefinitely): now completes end to end
+  (`decompose_solids` + `build_solid_definition` + `build_void` +
+  `export_csg`) in ~13-17s. A corpus-wide re-scan (all 175
+  `Solidos/test_models` files, excluding `Big_*`) with this fix applied
+  found 11 of 23 `convex_round_corner_points` calls on `inout_RC.stp`
+  alone hit the new malformed-graph branch (groups of 2 to 11 corners)
+  -- not a rare edge case for this file, routine. Full `tests/geo` +
+  `test_cadtocsg.py` + `test_csgtocad.py` green (218 passed/14 skipped,
+  1 pre-existing unrelated failure -- see the next entry). The same
+  commit also includes 3 small, real detection-widening changes made
+  earlier in the investigation (kept because they're part of what makes
+  `inout_RC.stp` reach this code path at all, not because they were
+  separately re-verified in isolation this session):
+  `curved_edge_plane` (`decom_utils_generator.py`) no longer special-
+  cases away a `GTorus` face's own circular edge when its axis is
+  parallel to the curve's own axis; `implicit_bound_planes`
+  (`generators.py`) now skips `Reversed`-orientation faces, matching
+  the real-plane-face search's own existing convention; and
+  `get_adjacent_cylplane` (`meta_surfaces_utils.py`) uses the general,
+  curvature-based `edge_1D` check instead of a strict `type(...) is
+  GLine` test, so a near-straight BSpline tangent edge also counts as a
+  corner-plane candidate.
+
+- **`merge_same_surface_faces`'s own opportunistic face-collapse step
+  removed, and the REAL root cause of `Hollow_plates/placa2.stp` losing
+  its ability to decompose found and fixed, 2026-10-30.** Surfaced while
+  investigating the `placa2.stp` regression flagged in the very first
+  full-corpus re-scan after the fix above (161/175 -- the same scan that
+  confirmed `inout_RC.stp` was now fixed also found this ONE new
+  failure, `arc_extent: pairs do not stitch into a single arc across
+  the 0/2*pi boundary`, traced to `ShellFaceGu.__init__` ->
+  `_U_parameter_faces` -> `arc_extent`, via `closed_cylinder_cone` ->
+  `merge_same_surface_faces`).
+  **Step 1, per direct user instruction ("vamos a quitar los
+  _collapse_connected_faces y guardar solamente el shellFaceGu")**:
+  `merge_same_surface_faces` (`meta_surfaces_utils.py`) no longer calls
+  `_collapse_connected_faces` (the opportunistic
+  `geo.ocp.repair.Gmerge_same_surface_faces`-based physical face merge
+  added by commit `3887463`, 2026-10-28, for a different, genuinely
+  unrelated bug -- a torus face pair whose shared boundary crosses the
+  periodic seam) -- it builds `ShellFaceGu(connected_faces)` directly
+  from the raw grouped faces again, matching the function's own
+  pre-`3887463` behavior. `_collapse_connected_faces` itself (and its
+  now-dead `CAD_ENGINE` import) was deleted outright. Confirmed, by
+  testing with ONLY this revert applied (no other change), that
+  `placa2.stp` still crashed identically -- proving `3887463`'s own
+  collapse step was never the regression's actual cause, just an
+  unrelated, independently-motivated feature that happened to land in
+  the same commit range. (`Gmerge_same_surface_faces` and its private
+  helpers in `geo/ocp/repair.py` are now fully unused -- left in place,
+  not deleted, since removing them wasn't part of this specific
+  instruction.)
+  **Step 2, a real, independent bug found and fixed in the same
+  investigation**: `_order_wire_edges` (`geo/ocp/repair.py`, used by
+  `_attach_pcurves_for_leftover_b` among other callers) only ever grew
+  its ordered chain from the CURRENT END (`remaining.pop(0)` as an
+  arbitrary start, then only matching new edges against `end_pt`) --
+  correct for a genuine closed loop (the starting edge's own identity
+  never matters there, since growing one direction alone eventually
+  reaches every vertex of a true cycle) but wrong for an OPEN path when
+  the arbitrary starting edge happens to be a MIDDLE edge of the real
+  path, not a true endpoint: the edge connecting to the chain's own
+  START point can then never be found (the algorithm never looks
+  backward), wrongly reporting "no single loop" for a genuinely
+  connectable 4-edge path. Confirmed by hand-tracing the exact 4 edges
+  of `placa2.stp`'s own face18/face19 merge attempt (traced via direct
+  instrumentation of `_shared_edge_chains`/`_order_wire_edges`/
+  `_pcurve_value_at_point`, not guessed). **Fix**: the function now
+  tracks both a `start_pt` and an `end_pt` and grows the chain from
+  EITHER end (prepending via `ordered.insert(0, e)` when a match is
+  found at `start_pt`, appending as before when found at `end_pt`) --
+  generalizes correctly to both open paths and closed loops, confirmed
+  via the existing closed-loop call site (`_trim_edge_for_boundary_
+  touching_pair`'s own outer-wire rebuild) remaining unaffected.
+  **Step 3, the actual regression root cause, found by git-bisecting
+  the 37 commits between the last confirmed-good commit
+  (`5ff1552`) and HEAD** (via `git worktree` + the project's own
+  `sys.path.insert`/`sys.modules`-clearing technique, each candidate
+  tested directly against `testing/inputSTEP/placa2.stp` -- same file
+  as `Solidos/test_models/Hollow_plates/placa2.stp`, confirmed by
+  hash): narrowed to exactly ONE commit, `ac8b6e3` ("Fix torus U/V
+  range merging for antiparallel native axes", 2026-10-28, right after
+  `3887463`). That commit's own change to `ShellFaceGu._U_parameter_
+  faces` (not `merge_periodic_uv`, a different function the same
+  commit also touched, for the torus case it was actually built for)
+  replaced the old "reproject `u0` only, add the face's own raw width"
+  scheme with "reproject `u0` AND `u1` independently, then unwrap `u1`
+  to within half a period (`pi`) of `u0`, take `(min, max)`" -- correct
+  for the antiparallel-axis case it was built for, but silently wrong
+  whenever a face's own real angular width exceeds `pi` (half a turn):
+  confirmed live, `placa2.stp`'s own face19 (a `GCone` fragment) has a
+  real width of ~249 degrees -- the half-period unwrap snapped its
+  reprojected `u1` to the WRONG periodic branch, truncating its
+  reported extent to ~110 degrees (missing ~139 degrees of real
+  coverage), which is exactly the "gap" `arc_extent` then correctly
+  (given the corrupted input) refused to stitch.
+  **Fix**: `_U_parameter_faces` now reuses `_reprojected_range` (the
+  SAME helper `ac8b6e3` already built for `merge_periodic_uv`, which
+  determines shift-vs-reflection from 2 of a face's own real vertices --
+  farthest apart in their own values, never from an arbitrary interior
+  point or from `u0`/`u1` directly -- so it never assumes a face's own
+  width is small) instead of the separate, ad-hoc half-period-unwrap
+  scheme that broke on a wide face. Per direct user instruction ("no
+  hay que deshacerlo sino combinar las dos") this is a combination, not
+  a revert: the antiparallel-axis handling `ac8b6e3` was built for is
+  fully preserved (it's the exact same underlying mechanism, just
+  invoked through the already-more-careful, vertex-based helper instead
+  of a second, less careful implementation of the same idea inline).
+  **Verified**: `placa2.stp` decomposes and runs the full pipeline
+  (`decompose_solids`+`build_solid_definition`+`build_void`+
+  `export_csg`) end to end. `Mixed/base_all8_to_cylinder.stp` (the
+  exact fixture `ac8b6e3`'s own antiparallel-axis fix was built for) --
+  re-tested directly, not just reasoned about: real difference found in
+  decomposed-piece volumes (one piece 4249.8191 -> 4266.52 mm^3, a 16.7
+  mm^3 shift), but relative to the whole solid's own total (~793850
+  mm^3) that's only ~2.1e-5 relative -- the same order of ordinary
+  BOPAlgo split-tessellation noise already documented elsewhere in this
+  file (e.g. `placa.stp`'s own ~5.3e-6, `struct_plate3.stp`'s own
+  ~7e-6), not a correctness regression. Full `tests/geo` +
+  `test_cadtocsg.py` + `test_csgtocad.py`: 219 passed/14 skipped, 0
+  failures (up from 218 passed/1 failure -- the `placa2.stp` test
+  itself, `test_conversion[input_step_file5]`, now passes). A full
+  corpus re-run (175 files, excluding `Big_*`): conversion 162/175 (up
+  from 161/175 -- `placa2.stp` is the one that moved from failing to
+  OK; the other 13 are the same, already-known set: 4 pre-existing
+  timeout/crash failures, 9 non-solid open-shell test fixtures). A full
+  corpus d1suned stochastic-volume check (NPS default, both `before`
+  and `after` this whole day's changes run explicitly for comparison on
+  the 2 files that came back severely wrong): 93.3% of 225 solid-cell
+  tallies within 2 sigma, 0 lost particles anywhere, exactly 3 files
+  beyond 3 sigma -- `RoundCorners/shed_solid.stp` (3.04 sigma, the
+  same already-documented MC-noise-on-a-small-cell case from elsewhere
+  in this file), and 2 SEVERE, confirmed PRE-EXISTING failures
+  unrelated to any of today's changes: `Mixed/base_all8_to_cylinder.
+  stp` (badly wrong both before today's fixes, 33 sigma/10 lost
+  particles, and after, 98 sigma/1 lost particle -- some other,
+  already-present bug, not investigated further this session) and
+  `RoundCorners/rrc21.stp` (bit-identical before and after today's
+  changes, 43.9 sigma either way -- completely unaffected, confirmed by
+  direct before/after d1suned comparison, not just inference). Neither
+  of these 2 pre-existing failures is caused by, or fixed by, any
+  change in this entry -- flagged here as a known, open, unrelated gap
+  for a future session, not acted on further today.
+
 - **`tangent_cut_plane`/`curved_edge_plane`/`line_edge_tangent_plane`
   (`decom_utils_generator.py`), landed earlier the same session as the
   entry above, commit `d2ee89f`.** When a cylinder/cone/sphere

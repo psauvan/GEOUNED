@@ -406,45 +406,39 @@ class ShellFaceGu:
         # Faces[0] -- by projecting a real boundary point back through
         # self.Surface.parameter().
         #
-        # Reproject BOTH u0 AND u1 (not just u0, with the face's own raw
-        # width `u1-u0` simply added on) -- that assumed U increases in
-        # the SAME rotational sense in both frames, true for a mere
-        # origin shift (different XDirection, same axis direction) but
-        # false for a face whose own surface axis is ANTIPARALLEL to
-        # self.Surface's (two sheets/fragments of one degenerate torus
-        # built with opposite-sign native frames is a real, confirmed
-        # case, Mixed/base_all8_to_cylinder.stp, 2026-10-28) -- there,
-        # reprojected U runs BACKWARDS relative to the common frame, and
-        # adding the raw width lands on the wrong side entirely, which is
-        # what made arc_extent reject a genuinely contiguous pair as a
-        # "gap". Reprojecting both ends and taking (min, max) after
-        # unwrapping u1 to within half a period of u0 is correct either
-        # way, same-direction or reversed, and costs one extra native
-        # projection per face.
+        # Reproject via _reprojected_range (shared with merge_periodic_uv's
+        # own, already-validated shift-vs-reflection logic) instead of a
+        # separate, ad-hoc "reproject u0/u1, unwrap u1 to within half a
+        # period of u0" scheme -- that scheme (tried first, reverted
+        # 2026-10-30) assumed a face's own real angular width never
+        # exceeds half a turn, which is false in general: confirmed live,
+        # Hollow_plates/placa2.stp, a real cone face spanning ~249
+        # degrees (> pi) got its own reprojected u1 silently snapped to
+        # the WRONG periodic branch (the "short way around" from u0,
+        # ~110 degrees), truncating its true extent and making arc_extent
+        # reject a genuinely contiguous pair as a "gap". _reprojected_range
+        # instead determines the SHIFT-vs-REFLECTION mapping from 2 of the
+        # face's own real vertices (never from u0/u1 directly), then
+        # applies it to the exact, known (u0, u1) -- the true width is
+        # never assumed to be small.
         #
         # self.Faces[0] itself is the EXCEPTION: self.Surface was
         # classified FROM it, so its own raw (u0, u1) is already
         # expressed in that exact frame by construction -- reprojecting
-        # it anyway (tried first) round-trips it through native point
-        # inversion for no reason, and that round-trip can land on a
-        # different, only periodically-equivalent representative right
-        # at a periodic boundary (confirmed live in the sibling
-        # merge_periodic_uv fix, same file: a raw 0.0 came back as
-        # 2*pi), silently corrupting the one face this function must
-        # get exactly right.
+        # it anyway round-trips it through native point inversion for no
+        # reason, and that round-trip can land on a different, only
+        # periodically-equivalent representative right at a periodic
+        # boundary (confirmed live in the sibling merge_periodic_uv fix,
+        # same file: a raw 0.0 came back as 2*pi), silently corrupting
+        # the one face this function must get exactly right.
         Uval = []
         for i, f in enumerate(self.Faces):
             u0, u1, v0, v1 = f.ParameterRange
             if i == 0:
                 Uval.append((u0, u1))
                 continue
-            vm = 0.5 * (v0 + v1)
-            cu0 = self.Surface.parameter(f.value_at(u0, vm))[0]
-            cu1 = self.Surface.parameter(f.value_at(u1, vm))[0]
-            while cu1 - cu0 > math.pi:
-                cu1 -= twoPi
-            while cu1 - cu0 < -math.pi:
-                cu1 += twoPi
+            reprojected = _reprojected_range(f, self.Faces[0], 0, u0, u1)
+            cu0, cu1 = reprojected if reprojected is not None else (u0, u1)
             Uval.append((min(cu0, cu1), max(cu0, cu1)))
 
         Umin, ifacemin, Umax, ifacemax = vector_geometry.arc_extent(Uval)

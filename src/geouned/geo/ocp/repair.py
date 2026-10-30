@@ -934,7 +934,19 @@ def _order_wire_edges(edges: list) -> "list | None":
     visited at its own single vertex regardless of when, so taking it
     immediately can never block reaching anywhere else, while deferring
     it risks exactly this dead end once both bridging edges out of that
-    vertex have already been consumed."""
+    vertex have already been consumed.
+
+    Grows the chain from BOTH its current start and its current end, not
+    just the end -- confirmed live, 2026-10-30
+    (`Hollow_plates/placa2.stp`'s own cone/hole-boundary fragment): the
+    arbitrary `remaining.pop(0)` starting edge need not be a true end of
+    an OPEN path (this function's other, closed-loop call sites never
+    exposed this, since every vertex of a true cycle is reachable by
+    growing one direction alone regardless of the starting edge) -- here
+    it can land on an edge in the MIDDLE of the real path, leaving the
+    edge connecting to that start point unreachable by an end-only walk
+    and wrongly reported as "no single loop" even though the 4 edges do
+    form one simple, connectable path."""
     remaining = list(edges)
     if not remaining:
         return None
@@ -945,30 +957,41 @@ def _order_wire_edges(edges: list) -> "list | None":
         return v1, v2
 
     ordered = [remaining.pop(0)]
-    _, end_v = endpoints(ordered[0])
+    start_v, end_v = endpoints(ordered[0])
+    start_pt = _vertex_point(start_v)
     end_pt = _vertex_point(end_v)
     while remaining:
         match_i = None
-        match_new_end = None
+        match_new_pt = None
+        match_at_start = False
         match_is_selfloop = False
         for i, e in enumerate(remaining):
             v1, v2 = endpoints(e)
             p1, p2 = _vertex_point(v1), _vertex_point(v2)
             is_selfloop = (p1 - p2).length < POINT_POINT_TOL
             if (p1 - end_pt).length < POINT_POINT_TOL:
-                new_end = p2
+                new_pt, at_start = p2, False
             elif (p2 - end_pt).length < POINT_POINT_TOL:
-                new_end = p1
+                new_pt, at_start = p1, False
+            elif (p1 - start_pt).length < POINT_POINT_TOL:
+                new_pt, at_start = p2, True
+            elif (p2 - start_pt).length < POINT_POINT_TOL:
+                new_pt, at_start = p1, True
             else:
                 continue
             if match_i is None or (is_selfloop and not match_is_selfloop):
-                match_i, match_new_end, match_is_selfloop = i, new_end, is_selfloop
+                match_i, match_new_pt, match_at_start, match_is_selfloop = i, new_pt, at_start, is_selfloop
             if match_is_selfloop:
                 break
         if match_i is None:
-            return None  # no remaining edge connects -- not a single closed loop
-        ordered.append(remaining.pop(match_i))
-        end_pt = match_new_end
+            return None  # no remaining edge connects -- not a single connected path
+        e = remaining.pop(match_i)
+        if match_at_start:
+            ordered.insert(0, e)
+            start_pt = match_new_pt
+        else:
+            ordered.append(e)
+            end_pt = match_new_pt
     return ordered
 
 
