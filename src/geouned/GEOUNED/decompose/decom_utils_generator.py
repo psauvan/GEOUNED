@@ -58,8 +58,6 @@ def curved_edge_plane(face, e):
 
     if type(curve) is GCircle:
         dir = curve.Axis
-        if type(face.Surface) is GTorus and axes_parallel(dir, face.Surface.Axis, NUMERIC_TOL):
-            return None
         center = curve.Center
         dim1 = curve.Radius
         dim2 = curve.Radius

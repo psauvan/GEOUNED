@@ -164,7 +164,7 @@ def get_adjacent_cylplane(cyl, Faces, cornerPlanes=True, axial_bounds=None, *, t
 
         planes = []
         for e in cyl.OuterWire.Edges:
-            if type(Gclassify_curve(e)) is not GLine:
+            if not edge_1D(e): # good
                 continue
             result = other_face_edge(e, cyl, Faces, outer_only=True, skip_slivers=True, tolerances=tolerances)
             if result is None:

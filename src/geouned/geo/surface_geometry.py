@@ -888,6 +888,20 @@ def convex_round_corner_points(point_sets, zaxis) -> bool:
         adjacency.setdefault(a, []).append(b)
         adjacency.setdefault(b, []).append(a)
 
+    if degree and max(degree.values()) > 2:
+        # A node touched by more than 2 edges means some physical point
+        # plays more than the 2 roles a simple chain/ring allows -- e.g. a
+        # genuine 3-way junction where 3 different corners' own points
+        # coincide (confirmed live, 2026-10-30, ITER-TOKAMAK_comp/
+        # inout_RC.stp, via real coordinate data, not a hash/iteration-
+        # order artifact). A connected graph with every node of degree <=2
+        # is always a single path or cycle; one with a degree->=3 node
+        # never is, so this group's own real boundary points can't be
+        # walked into one ordered polygon at all, regardless of convexity
+        # -- not just non-convex, not representable as one
+        # MultiRoundCorner chain/ring in the first place.
+        return False
+
     endpoints = [node for node, d in degree.items() if d == 1]
     closed = len(endpoints) == 0
     start = endpoints[0] if endpoints else next(iter(degree), None)
@@ -895,11 +909,19 @@ def convex_round_corner_points(point_sets, zaxis) -> bool:
         return True
 
     ordered_nodes = [start]
+    visited = {start}
     prev, current = None, start
     while True:
         nxt = next((nb for nb in adjacency.get(current, []) if nb != prev), None)
         if nxt is None or (closed and nxt == start):
             break
+        if nxt in visited:
+            # Unreachable given the degree<=2 guard above (a connected
+            # degree<=2 graph can't revisit a node), kept only as a
+            # second, independent safety net so this walk can never spin
+            # forever even if that invariant is ever violated elsewhere.
+            return False
+        visited.add(nxt)
         ordered_nodes.append(nxt)
         prev, current = current, nxt
 

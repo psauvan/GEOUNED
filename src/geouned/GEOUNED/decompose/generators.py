@@ -96,6 +96,9 @@ def implicit_bound_planes(GUFaces, omitfaces, tolerances):
     # get_surfaces's own candidate order independently of the real-plane-face
     # search.
     for face in GUFaces:
+        if face.Orientation == "Reversed":
+            continue
+        
         if face.Index in omitfaces:
             continue
         surf_type = type(face.Surface)
