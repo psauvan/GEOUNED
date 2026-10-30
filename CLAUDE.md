@@ -327,6 +327,135 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **MultiRoundCorner convexity determined from real boundary points
+  instead of bounding planes, and a torus-tangent-cut infinite loop
+  fixed, 2026-10-30 (commit `d2ee89f`).** Two independent bugs, found
+  while investigating a user-reported closure problem in
+  `meta_surfaces.py`'s MultiRoundCorner construction.
+  **A) `Torus/example.stp` solid index 6 never terminated**: traced
+  live (a monkeypatched `generic_split`/`get_surfaces` trace, flushed to
+  disk every call so forward progress survived a possible native
+  crash) to `tangent_cut_plane` (see below) substituting a PLANE
+  cutting candidate for a torus near-tangent to an adjacent plane --
+  a plane only ever grazes a torus along one circle, never cleanly
+  separating material, so `generic_split`'s own recursive search kept
+  substituting an ever-thinner near-tangent plane at the next
+  recursion level (`nfaces`/candidate count growing every loop) instead
+  of converging, eventually overflowing the native call stack. Fixed
+  with a new, torus-specific `torus_tangent_cut_surface`
+  (`decom_utils_generator.py`, wired into `torus_generator` only): when
+  the near-tangent neighbor is a plane, substitutes a CYLINDER coaxial
+  with the torus's own axis instead, at the tangent edge's own circle
+  radius (falling back to the radial distance from the torus axis at
+  the tangent point when the edge isn't a circle, e.g. a BSpline
+  residue of an earlier cut). Any other near-tangent neighbor (e.g. a
+  cylinder, the original `Mixed/base_all8_to_cylinder.stp` fixture
+  `tangent_cut_plane` was built for) still defers entirely to
+  `tangent_cut_plane`'s own, unmodified plane-based logic.
+  **B) `RoundCorners/rc16.stp`'s MultiRoundCorner closed incorrectly**
+  (d1suned: 22.4 sigma from 1.0). The existing convexity/orientation
+  test (`build_roundC_params` -> `surface_geometry.convex_planes`,
+  using only the group's shared bounding planes' own Position/Axis) is
+  too coarse to always get this right. Per direct, step-by-step user
+  design: `get_roundcorner_surfaces` now also records, per corner, 4
+  real boundary points -- the two bounding planes' own points farthest
+  from their own tangent edge (`_farthest_plane_point_from_edge`, over
+  the plane's real `OuterWire` VERTICES, not its `ParameterRange`'s own
+  corners -- a non-rectangular trimmed face can have a `ParameterRange`
+  corner that falls entirely outside its real boundary, confirmed live
+  on `Misc/PiezaDavid.stp`), plus the two tangent-edge midpoints -- all
+  projected onto one common plane perpendicular to the shared cylinder
+  axis (`_project_onto_axis_plane`). New
+  `surface_geometry.convex_round_corner_points` determines the group's
+  convexity directly from these points: a union-find merges coincident
+  points **at any of the 4 positions**, not just extreme-to-extreme --
+  confirmed live (`rc16.stp`'s own 3-corner group) that a corner's own
+  far point can land exactly on a NEIGHBORING corner's own tangent
+  point, not that neighbor's far point, so an extremes-only matcher
+  (the first implementation, caught by direct user review of its
+  result) silently drops corners from the ring entirely. The merged
+  graph is then walked as a single cycle (closed) or path (open, 2
+  degree-1 endpoints) and checked for turning-sign consistency between
+  consecutive edges (including each corner's own tangent-to-tangent
+  chord). Orientation is explicitly UNAFFECTED by convexity and stays
+  entirely plane-based (the same centroid + reference-direction formula
+  `convex_planes` itself uses, reused inline in `build_roundC_params`,
+  including its own `< 3 planes and closed -> Reversed` special case) --
+  a direct user design decision, not derived.
+  **Verified**: `rc16.stp` d1suned 22.4 sigma -> 1.2 sigma (SD4 exact,
+  0 lost particles). Full `tests/geo` + `test_cadtocsg.py` +
+  `test_csgtocad.py` green on ocp (276 passed, 7 skipped) throughout.
+  A full `Solidos/test_models` corpus conversion (161/175, same
+  pre-existing failures as before) confirmed no new crash from either
+  fix.
+  **A real, still-OPEN regression found while verifying the corpus,
+  confirmed UNRELATED to both fixes above**: `ITER-TOKAMAK_comp/
+  inout_RC.stp` now fails to convert at all (`RuntimeError: Spline
+  surface detected`, `cutting_face_number`) -- it used to convert
+  (with its own already-documented, separate 10-lost-particle gap).
+  Bisected exhaustively: a clean checkout at the previous commit
+  (`be83362`, no uncommitted changes at all) converts it fine; reverting
+  ONLY the torus fix (A) still crashes; reverting ONLY the RoundCorner
+  points fix (B) -- even forcing the OLD `convex_planes`-based
+  determination, which gives the IDENTICAL `False` (not convex) on this
+  exact 6-corner group's own real data -- still crashes; reverting BOTH
+  (A) and (B) together, keeping every other already-uncommitted change
+  from earlier in this same session, STILL crashes. So this regression
+  predates both of today's fixes -- it comes from some other
+  already-uncommitted change from earlier in the session (candidates:
+  the `spline_2D` statistical rewrite or the `line_edge_tangent_plane`
+  guards, both below) -- not yet root-caused. Separately noted: this
+  same 6-corner group has 3 Reversed and 3 Forward corners mixed
+  together, and whether `convex_round_corner_points`'s turning-sign
+  test should treat a Reversed (concave fillet) corner's own
+  tangent-to-tangent chord differently from a Forward one has not been
+  checked -- flagged, not yet investigated, since both the old and new
+  convexity methods already agree on this exact group regardless.
+
+- **`tangent_cut_plane`/`curved_edge_plane`/`line_edge_tangent_plane`
+  (`decom_utils_generator.py`), landed earlier the same session as the
+  entry above, commit `d2ee89f`.** When a cylinder/cone/sphere
+  candidate about to be yielded by `cylinder_generator`/
+  `cone_generator`/`sphere_generator` is near-tangent to an adjacent,
+  different-surface face along one of its own boundary edges, these
+  substitute the plane through that shared edge as the cutting
+  candidate instead of the curved surface itself -- cutting right at a
+  near-tangent line risks a degenerate, sliver-producing or
+  non-separating result (confirmed live, `Mixed/
+  base_all8_to_cylinder.stp`: a cylinder exactly tangent to a torus left
+  `generic_split`'s own candidate search unable to split that fragment
+  at all). `line_edge_tangent_plane` covers the 2 real straight-line-
+  tangent-edge cases (cylinder/cone tangent to a plane; cylinder tangent
+  to a cylinder, via each pair's own established normal-direction
+  derivation) with explicit degenerate-direction guards (a zero-length
+  cross/radial vector returns `None` instead of raising dividing by
+  zero); `curved_edge_plane` covers a Circle/Ellipse/planar-BSpline
+  tangent edge, reusing the same construction `torus_bound_planes`
+  already had inline (now factored out and shared). New
+  `Tolerances.tangent_angle` (default 5 degrees, per direct user
+  estimate) gates how near "tangent" must be -- deliberately generous,
+  since per direct user design a wrong substitution only costs
+  decomposition optimality (the candidate just fails to separate
+  anything, like any other rejected one), never correctness. Wired into
+  `next_roundCorner`'s own per-corner (`not multi_round`) and
+  whole-group (`multi_round`) fallbacks too, checking each corner's own
+  real cylinder face for a near-tangent neighbor before ever yielding it
+  or building the MultiRoundCorner.
+
+- **`meta_surfaces_utils.py::spline_2D` (BSpline edge planarity),
+  landed in the same commit `d2ee89f`.** Now tolerates a real terminal
+  kink (the reconstruction artifact of a boolean cut) whose own knots
+  together span a negligible fraction of the edge's total arc length,
+  instead of rejecting the WHOLE edge as non-planar over a couple of
+  knots at one end. New `SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC` (1e-2,
+  `geo/constants.py`) -- measured on the one real fixture this was
+  built for (`base_all8_to_cylinder.stp`'s own call0037 face0 edge): 2
+  of 21 knots deviate ~89 degrees (a genuine local kink) but together
+  span only ~0.235% of the edge's own 2.87mm length; a ~40x margin kept
+  above that measured case. `edge_1D`/`spline_2D`'s own straight-line
+  check also moved from `NUMERIC_TOL` to a new, dedicated
+  `EDGE_CURVATURE_TOL` (1e-4).
+
 - **`next_Can` (`decompose/generators.py`) truncated `build_can_params`'s
   own return to `params[0:3]` before building `CanParams`, fixed
   2026-10-25 -- root cause of the Can "sewing composite surface"
