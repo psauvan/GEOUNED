@@ -1,3 +1,4 @@
+import math
 import typing
 from numbers import Real
 
@@ -366,6 +367,20 @@ class Tolerances(GeoTolerances):
             substitution mechanism genuinely going wrong (which produces drastically larger errors --
             10-100%, not fractions of a percent -- confirmed via the same investigation's false-positive
             testing), just calibrated to the noise floor this specific "before" measurement actually has.
+        tangent_angle (float, optional): decompose/decom_utils_generator.py::tangent_cut_plane's own
+            threshold, on the angle between the outward normals of a cylinder/cone/sphere/torus candidate
+            face and an adjacent, different-surface face at their shared edge's own midpoint -- below this,
+            the two surfaces are treated as continuing into each other smoothly (no real corner), and the
+            candidate itself is replaced by the plane through that shared edge (when the edge has one --
+            see tangent_cut_plane's own docstring) rather than risking a degenerate, sliver-producing cut
+            along the curved surface right at the near-tangent line. Defaults to math.radians(5.0) --
+            per direct user estimate of the angle above which cutting by the curved surface itself is
+            already safe (does not produce a sliver). Per direct user design, cutting by the substituted
+            plane instead is never itself a source of error (at worst it fails to separate anything,
+            exactly like any other rejected decomposition candidate -- generic_split's own search just
+            moves on to the next one) -- only makes the decomposition potentially less optimal (more
+            pieces than strictly necessary) -- so overestimating this value is deliberately preferred
+            over underestimating it (robustness over optimal granularity).
     """
 
     # Reference length (mm, GEOUNED's own internal unit) used by scaled()
@@ -405,6 +420,7 @@ class Tolerances(GeoTolerances):
         volume_tolerance: float = 1.0e-4,
         spline_quadric_fit_rel_tol: float = 1.0e-6,
         spline_quadric_volume_rel_tol: float = 2.0e-2,
+        tangent_angle: float = math.radians(5.0),
     ):
 
         super().__init__(
@@ -436,6 +452,7 @@ class Tolerances(GeoTolerances):
         self.add_pln_angle = add_pln_angle
         self.spline_quadric_fit_rel_tol = spline_quadric_fit_rel_tol
         self.spline_quadric_volume_rel_tol = spline_quadric_volume_rel_tol
+        self.tangent_angle = tangent_angle
 
     @property
     def relativeTol(self):
@@ -581,6 +598,9 @@ class Tolerances(GeoTolerances):
             min_solid_volume=self.min_solid_volume,
             fix_tolerance=self.fix_tolerance,
             volume_tolerance=self.volume_tolerance,
+            spline_quadric_fit_rel_tol=self.spline_quadric_fit_rel_tol,
+            spline_quadric_volume_rel_tol=self.spline_quadric_volume_rel_tol,
+            tangent_angle=self.tangent_angle,
         )
 
 

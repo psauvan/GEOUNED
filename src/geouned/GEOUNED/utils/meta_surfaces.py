@@ -369,6 +369,58 @@ def _farthest_corner_plane_pair(cyl_shell, adjacent_planes):
     return best_pair
 
 
+def _edge_mid_point(edge):
+    """Point at the middle of edge's own parameter range -- for a straight
+    (GLine) edge this is just its geometric midpoint."""
+    first, last = edge.ParameterRange
+    return edge.value_at(0.5 * (first + last))
+
+
+def _edge_point_distance(edge, point):
+    """Real 3D distance from `point` to the bounded edge `edge`: the
+    orthogonal projection when it falls within edge's own parameter
+    range, else the nearest of its two endpoints.
+    GeomAPI_ProjectPointOnCurve (behind GEdge.parameter) only searches
+    for an extremum within the curve's own trimmed range and raises
+    StdFail_NotDone when none exists there -- confirmed live, 2026-10-30,
+    Misc/PiezaDavid.stp, for a point whose true orthogonal foot falls
+    beyond one of edge's own ends."""
+    first, last = edge.ParameterRange
+    try:
+        closest = edge.value_at(edge.parameter(point))
+    except Exception:
+        v0 = edge.value_at(first)
+        v1 = edge.value_at(last)
+        d0 = (point - v0).length
+        d1 = (point - v1).length
+        closest = v0 if d0 <= d1 else v1
+    return (point - closest).length
+
+
+def _farthest_plane_point_from_edge(plane_face, edge):
+    """Among the real vertices of plane_face's own OuterWire boundary
+    (not plane_face.ParameterRange's own corners -- plane_face's real
+    trimmed shape need not be a rectangle, so a ParameterRange corner can
+    fall outside the real face entirely, confirmed live, 2026-10-30,
+    RoundCorners/shed_part.stp), the one whose real 3D distance to
+    `edge` is maximum."""
+    best_point = None
+    best_dist = -1.0
+    for point in plane_face.OuterWire.OrderedVertexes:
+        dist = _edge_point_distance(edge, point)
+        if dist > best_dist:
+            best_dist = dist
+            best_point = point
+    return best_point
+
+
+def _project_onto_axis_plane(point, axis, plane_point):
+    """Project `point` onto the plane through `plane_point` perpendicular
+    to `axis`."""
+    diff = point - plane_point
+    return point - diff.dot(axis) * axis
+
+
 def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None, *, tolerances):
 
     rc_list = []
@@ -398,6 +450,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     else:
         ep1, ep2 = _farthest_corner_plane_pair(cyl_shell, adjacent_planes)
     p1, p2 = ep1[3], ep2[3]
+    e1, e2 = ep1[1], ep2[1]
 
     # cyl_plane_region_conf still takes the single seed `cylinder` (not the
     # shell) -- same pattern get_can_surfaces uses for its own per-endpoint
@@ -411,6 +464,20 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
 
     if switched:
         p1, p2 = p2, p1
+        e1, e2 = e2, e1
+
+    # 4 points, all lying in one common plane perpendicular to the
+    # cylinder's own axis (the exact height along the axis is arbitrary --
+    # here the height of e1/e2's own midpoints): the point of e1, the
+    # point of e2, and, for each corner plane, the point of that plane
+    # farthest from its own tangent edge, projected onto that same
+    # perpendicular plane.
+    axis = cyl_shell.Surface.Axis
+    point_e1 = _edge_mid_point(e1)
+    point_e2 = _edge_mid_point(e2)
+    point_p1 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p1, e1), axis, point_e1)
+    point_p2 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p2, e2), axis, point_e2)
+    corner_points = (point_p1, point_e1, point_e2, point_p2)
 
     """    
     AND_cyl_p1 = configuration & mask.p1_cyl == mask.p1_cyl
@@ -443,7 +510,7 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
         # exact touching edge/face get_adjacent_cylplane already found,
         # not cyl's own (possibly non-touching) edge.
         gpa = get_additional_corner_plane(cyl_shell)
-    rc_list.append((cylinder, p1, p2, gpa, (configuration, fwd_cyl)))
+    rc_list.append((cylinder, p1, p2, gpa, corner_points, (configuration, fwd_cyl)))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:

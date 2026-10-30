@@ -248,6 +248,10 @@ class _SplineEdge:
         t = self.thetas[k]
         return self._rot(GVector(-math.cos(t), -math.sin(t), 0.0), k)
 
+    def value_at(self, k):
+        t = self.thetas[k]
+        return self._rot(GVector(math.cos(t), math.sin(t), 0.0), k)
+
 
 def test_spline_2d_uses_the_intrinsic_planarity_constant():
     from geouned.geo.constants import SPLINE_PLANARITY_ANGLE

@@ -25,6 +25,7 @@ import math
 
 from .constants import (
     NUMERIC_DOUBLE_TOL,
+    POINT_POINT_TOL,
     RELATIVE_TOL_ABS_FLOOR,
 )
 from .vector_geometry import GVector
@@ -798,3 +799,130 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
             p0 = p1
 
     return convex, orientation
+
+
+def convex_round_corner_points(point_sets, zaxis) -> bool:
+    """Convexity of a MultiRoundCorner group's own cross-section,
+    determined directly from each corner's own 4 real boundary points
+    rather than from the group's bounding planes alone -- orientation
+    itself is unaffected by whether the group is convex or not, and
+    stays plane-based (see convex_planes/build_roundC_params).
+
+    `point_sets` is one 4-tuple per corner (`point_p1, point_e1,
+    point_e2, point_p2` -- see meta_surfaces.py::get_roundcorner_surfaces),
+    each already ordered along that corner's own boundary (p1-side far
+    point, tangent point e1, tangent point e2, p2-side far point).
+    Every point is projected onto one common plane perpendicular to
+    `zaxis` first -- every cylinder of one MultiRoundCorner group shares
+    the same axis, so the only reason these points aren't already
+    coplanar is the arbitrary height each was computed at.
+
+    A corner's own far point (point_p1/point_p2) need not match another
+    corner's own far point -- for a corner whose bounding plane's real
+    boundary is spanned directly by the two tangent lines meeting it
+    (confirmed live, 2026-10-30, RoundCorners/rc16.stp), a corner's own
+    far point from one tangent edge lands exactly on the NEIGHBORING
+    corner's own tangent point instead (point_e1/point_e2), not on that
+    neighbor's own far point. So every one of a corner's own 4 points is
+    a candidate match for every point of every other corner, not just
+    extreme-to-extreme: a plain union-find over all points (by real
+    coincidence, within POINT_POINT_TOL) merges whichever ones are the
+    same physical point, then each corner's own 3 internal edges
+    (p1-e1, e1-e2, e2-p2) are added between the merged nodes -- a shared
+    boundary is then represented by the identical edge from both
+    corners' own side, collapsing to one. The resulting graph is a
+    single cycle (closed) or a single path with 2 degree-1 endpoints
+    (open) when every corner's own 4 points are genuinely consistent
+    with one connected group; walking it gives the ordered polygon."""
+
+    project = lambda point: point - zaxis * (point - centroid).dot(zaxis)
+    same_point = lambda a, b: (a - b).length < POINT_POINT_TOL
+    edge = lambda i: ordered[(i + 1) % m] - ordered[i]
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    total = GVector(0.0, 0.0, 0.0)
+    count = 0
+    for s in point_sets:
+        for p in s:
+            total = total + p
+            count += 1
+    centroid = total / count
+
+    sets = [tuple(project(p) for p in s) for s in point_sets]
+
+    flat = [p for s in sets for p in s]
+    parent = list(range(len(flat)))
+
+    for a in range(len(flat)):
+        for b in range(a + 1, len(flat)):
+            if same_point(flat[a], flat[b]):
+                union(a, b)
+
+    node_point = {}
+    edges = set()
+    for ci, s in enumerate(sets):
+        base = ci * 4
+        for k in range(3):
+            na, nb = find(base + k), find(base + k + 1)
+            node_point[na] = s[k]
+            node_point[nb] = s[k + 1]
+            if na != nb:
+                edges.add(frozenset((na, nb)))
+
+    degree = {}
+    adjacency = {}
+    for e in edges:
+        a, b = tuple(e)
+        degree[a] = degree.get(a, 0) + 1
+        degree[b] = degree.get(b, 0) + 1
+        adjacency.setdefault(a, []).append(b)
+        adjacency.setdefault(b, []).append(a)
+
+    endpoints = [node for node, d in degree.items() if d == 1]
+    closed = len(endpoints) == 0
+    start = endpoints[0] if endpoints else next(iter(degree), None)
+    if start is None:
+        return True
+
+    ordered_nodes = [start]
+    prev, current = None, start
+    while True:
+        nxt = next((nb for nb in adjacency.get(current, []) if nb != prev), None)
+        if nxt is None or (closed and nxt == start):
+            break
+        ordered_nodes.append(nxt)
+        prev, current = current, nxt
+
+    ordered = [node_point[node] for node in ordered_nodes]
+
+    m = len(ordered)
+    if m < 3:
+        return True
+
+    e_prev = edge(m - 1) if closed else edge(0)
+    start_i = 0 if closed else 1
+    stop_i = m if closed else m - 1
+
+    signref = None
+    convex = True
+    for i in range(start_i, stop_i):
+        e_curr = edge(i)
+        sign = zaxis.dot(e_prev.cross(e_curr))
+        if signref is None:
+            signref = sign
+        elif signref * sign < 0:
+            convex = False
+            break
+        e_prev = e_curr
+
+    return convex

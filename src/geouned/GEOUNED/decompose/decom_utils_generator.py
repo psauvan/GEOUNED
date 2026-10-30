@@ -29,11 +29,139 @@ from ...geo import (
 from ..utils.basic_functions_part1 import (
     is_same_value,
 )
-from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges
+from ..utils.meta_surfaces_utils import material_direction, region_sign, planar_edges, edge_1D
 from ...geo.constants import CKS_COAXIAL_AXIS_DIST_TOL, NUMERIC_DOUBLE_TOL, NUMERIC_TOL, PARAM_ANGLE_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel
 
 logger = logging.getLogger("general_logger")
+
+
+def curved_edge_plane(face, e):
+    """The plane through `e`, a single CIRCLE/ELLIPSE/planar-BSpline
+    boundary edge of `face` (any of cylinder/cone/sphere/torus) --
+    built directly from the edge's own curve geometry (center/axis/
+    radii), never from `face`'s own material direction (unlike
+    cks_edge_plane, which both relies on that and hardcodes dim1=dim2=1
+    instead of the edge's own real size -- a design tuned for
+    cks_bound_planes' own narrower role, not verified safe for every
+    other caller). `None` when `e`'s own curve type isn't one of these
+    three, or (Circle only, torus faces only) when the circle's own
+    axis is parallel to the torus's own axis -- a "latitude" boundary
+    circle (fixed U-parameter, varying V around the tube), whose own
+    plane would cut across the tube at a fixed axial height rather than
+    bound the face where it actually ends; only a "meridian" boundary
+    circle (fixed V, the tube's own cross-section at one azimuth, axis
+    perpendicular to the torus axis) is a real face-ending bound. No
+    analogous exclusion exists for cylinder/cone/sphere, whose own
+    circular boundaries are always a genuine end cap."""
+    curve = Gclassify_curve(e)
+
+    if type(curve) is GCircle:
+        dir = curve.Axis
+        if type(face.Surface) is GTorus and axes_parallel(dir, face.Surface.Axis, NUMERIC_TOL):
+            return None
+        center = curve.Center
+        dim1 = curve.Radius
+        dim2 = curve.Radius
+        return GeounedSurface(("Plane", (center, dir, dim1, dim2)))
+
+    if type(curve) is GEllipse:
+        dir = curve.Axis
+        center = curve.Center
+        dim1 = curve.MinorRadius
+        dim2 = curve.MajorRadius
+        return GeounedSurface(("Plane", (center, dir, dim1, dim2)))
+
+    if type(curve) is GBSpline:
+        planeParams = spline_wires((e,), face)
+        if planeParams is not None:
+            return GeounedSurface(("Plane", planeParams))
+
+    return None
+
+
+def line_edge_tangent_plane(face, adjacent_face, e):
+    """The cutting plane for a near-tangent pair whose shared boundary
+    edge is a straight LINE -- a generatrix, which planar_edges always
+    rejects on its own (a bare line has no unique supporting plane), so
+    this is a separate, direct construction instead of curved_edge_
+    plane's Circle/Ellipse/BSpline-only logic.
+
+    Per direct user design, derived case by case from the only 3 real
+    possibilities for two DIFFERENT, near-tangent surfaces to share a
+    straight-line boundary (a cone-cone pair might also do so in some
+    degenerate configuration, but no confirmed real case exists -- not
+    handled, `None`):
+    - cylinder-plane / cone-plane: the cutting plane contains the
+      shared edge and its own normal is perpendicular to the adjacent
+      plane's own normal -- i.e. normal_cut = cross(edge_direction,
+      adjacent_plane_normal). NOT the adjacent plane itself reused
+      directly (a first, wrong attempt at this derivation) -- that
+      plane IS already one of the solid's own real boundary faces, so
+      reusing it as the cutting tool does not resolve the tangency
+      degeneracy at all, it just relocates it to the plane's own side.
+    - cylinder-cylinder: 2 cylinders sharing a straight generatrix
+      tangentially must have PARALLEL axes; the cutting plane contains
+      the shared edge and is perpendicular to the plane spanned by the
+      two axes -- i.e. its own normal lies within that axes-plane,
+      perpendicular to the (shared) axis direction, which is exactly
+      the direction connecting the two cylinder centers once their
+      common axis component is removed.
+    `None` for any other pair, or a degenerate configuration (e.g.
+    coincident cylinder axes, leaving no well-defined radial
+    direction)."""
+    if e.Length < POINT_POINT_TOL:
+        return None  # degenerate edge -- no well-defined direction
+
+    adj_surf = adjacent_face.Surface
+    if type(adj_surf) is GPlane:
+        first, last = e.ParameterRange
+        v0 = e.value_at(first)
+        v1 = e.value_at(last)
+        diff = v1 - v0
+        if diff.length < POINT_POINT_TOL:
+            # a closed/periodic edge: its two PARAMETER endpoints land on
+            # the same 3D point even though the edge itself has real
+            # length (e.Length, checked above, does not catch this) --
+            # no well-defined chord direction to build the cutting plane
+            # from.
+            return None
+        e_dir = diff.normalized()
+        normal = e_dir.cross(adj_surf.Axis)
+        if normal.length < NUMERIC_TOL:
+            return None  # degenerate: edge direction parallel to the plane's own normal
+        normal = normal.normalized()
+        position = e.value_at(0.5 * (first + last))
+        return GeounedSurface(("Plane", (position, normal, 1, 1)))
+
+    face_surf = face.Surface
+    if type(face_surf) is GCylinder and type(adj_surf) is GCylinder:
+        axis_dir = face_surf.Axis
+        diff = adj_surf.Center - face_surf.Center
+        radial = diff - diff.dot(axis_dir) * axis_dir
+        if radial.length < NUMERIC_TOL:
+            return None  # coincident axes -- no well-defined radial direction
+        radial = radial.normalized()
+        first, last = e.ParameterRange
+        position = e.value_at(0.5 * (first + last))
+        return GeounedSurface(("Plane", (position, radial, 1, 1)))
+
+    return None
+
+
+def is_line_edge(e):
+    """True if `e`'s own curve is a straight line -- either a genuine
+    GLine, or a GBSpline that is geometrically straight (zero curvature
+    along its length, the same degenerate-BSpline-as-a-line signature
+    meta_surfaces_utils.edge_1D already tests for a different caller).
+    The curve TYPE is checked first (cheap, exact) so a real curved
+    BSpline never pays for the curvature probe at all."""
+    curve = Gclassify_curve(e)
+    if type(curve) is GLine:
+        return True
+    if type(curve) is GBSpline:
+        return edge_1D(e)
+    return False
 
 
 def torus_bound_planes(solidFaces, face, *, tolerances):
@@ -45,40 +173,20 @@ def torus_bound_planes(solidFaces, face, *, tolerances):
     Edges = face.OuterWire.Edges
 
     for e in Edges:
-        curve = Gclassify_curve(e)
-
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
             if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
                 continue  # doesn't create plane if other face has same surface
 
-        if type(curve) is GCircle:
-            dir = curve.Axis
-            if not axes_parallel(dir, face.Surface.Axis, NUMERIC_TOL):
-                center = curve.Center
-                dim1 = curve.Radius
-                dim2 = curve.Radius
-                plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
-                planes.append(plane)
-
-        elif type(curve) is GEllipse:
-            dir = curve.Axis
-            center = curve.Center
-            dim1 = curve.MinorRadius
-            dim2 = curve.MajorRadius
-            plane = GeounedSurface(("Plane", (center, dir, dim1, dim2)))
+        plane = curved_edge_plane(face, e)
+        if plane is not None:
             planes.append(plane)
-
-        elif type(curve) is GBSpline:
-            planeParams = spline_wires((e,), face)
-            if planeParams is not None:
-                plane = GeounedSurface(("Plane", planeParams))
-                planes.append(plane)
 
     return planes
 
 
 def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
+    #face can be a cylinder/cone/sphere/torus. Edges must by planar but not a straight line.
 
     if Edges is None:
         Edges = face.OuterWire.Edges
@@ -86,6 +194,8 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
 
     for e in Edges:
         if not planar_edges([e], tolerances=tolerances):
+            continue
+        if is_line_edge(e):
             continue
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is not None:
@@ -140,6 +250,153 @@ def cks_bound_planes(solidFaces, face, omitfaces, Edges=None, *, tolerances):
     if len(planes) > 2 and type(face.Surface) is not GSphere:
         planes = most_outer_planes(face.Surface.Axis, planes)
     return planes
+
+
+def tangent_cut_plane(face, solidFaces, *, tolerances, roundCorner=False):
+    """If `face` (a cylinder/cone/sphere/torus candidate about to be
+    yielded as a cutting surface by cylinder_generator/cone_generator/
+    sphere_generator/torus_generator) is near-tangent to an adjacent,
+    DIFFERENT-surface face along one of its own boundary edges, AND
+    that shared edge itself lies within a well-defined plane
+    (planar_edges), return the plane through that edge -- the caller
+    should yield THIS instead of `face`'s own normal surface candidate.
+    `None` when no edge qualifies (no near-tangent neighbor, or the
+    tangent edge isn't planar) -- the caller should yield its own
+    normal candidate as usual.
+
+    Tangency is decided by comparing each face's own outward normal
+    (material_direction's own convention, both oriented consistently
+    away from material -- see GFace.normal_at) at the shared edge's own
+    midpoint: cos(theta) = dot(normal1, normal2); theta <
+    tolerances.tangent_angle means the two surfaces continue into each
+    other smoothly (no real corner), so cutting along the curved
+    surface itself right at that line risks a degenerate, sliver-
+    producing or non-separating result -- confirmed live, 2026-10-28,
+    Mixed/base_all8_to_cylinder.stp: a cylinder tangent to a torus at
+    EXACTLY theta=0 left generic_split's own candidate search unable to
+    split that fragment at all (BOPAlgo_Splitter repeatedly falling back
+    to the uncut original once every curved-surface candidate produced
+    only a degenerate sliver).
+
+    tolerances.tangent_angle is deliberately a generous (5 degrees,
+    per direct user estimate of the angle above which a cut is already
+    safe), not a tight corpus-measured value: per direct user design,
+    substituting the plane is never itself a source of error -- at
+    worst it fails to separate anything, exactly like any other
+    rejected candidate (generic_split's own search just moves on to the
+    next one, since neither this function nor its callers ever touch
+    omitfaces) -- it only risks a less optimal decomposition (more
+    pieces than strictly necessary). Robustness is explicitly preferred
+    over optimal granularity for this decision.
+
+    The plane itself is built by curved_edge_plane (Circle/Ellipse/
+    planar-BSpline edges) or line_edge_tangent_plane (a straight-line
+    edge, handled by its own dedicated cylinder/cone/plane-specific
+    construction -- see that function's own docstring) -- never
+    cks_edge_plane, which was designed for cks_bound_planes' own
+    narrower role (a hardcoded dim1=dim2=1, a sign flip from `face`'s
+    own material_direction, an un-trimmed edge.Curve.value(0) sample)
+    and isn't verified safe for this different one."""
+    for e in face.OuterWire.Edges:
+        adjacent_face = other_face_edge(e, face, solidFaces)
+        if adjacent_face is None:
+            continue
+        if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
+            continue
+
+        curve = Gclassify_curve(e)
+        if roundCorner and type(adjacent_face.Surface) is GPlane:
+            continue  
+        
+        if type(curve) is GLine or type(adjacent_face.Surface) is GPlane:
+            plane = line_edge_tangent_plane(face, adjacent_face, e)
+        elif planar_edges([e], tolerances=tolerances):
+            plane = curved_edge_plane(face, e)
+        else:
+            plane = None  # tangent, but this edge has no supported, well-defined plane
+        if plane is None:
+            continue
+
+        first, last = e.ParameterRange
+        pos = e.value_at(0.5 * (first + last))
+        u1, v1 = face.Surface.parameter(pos)
+        normal1 = face.normal_at(u1, v1)
+        u2, v2 = adjacent_face.Surface.parameter(pos)
+        normal2 = adjacent_face.normal_at(u2, v2)
+        cos_theta = normal1.dot(normal2)
+        if cos_theta <= math.cos(tolerances.tangent_angle):
+            continue  # not tangent enough -- a real corner, cut by the curved surface itself
+
+        return plane
+    return None
+
+
+def torus_tangent_cut_surface(face, solidFaces, *, tolerances):
+    """Like tangent_cut_plane, but for a TORUS candidate about to be
+    yielded by torus_generator specifically: when the near-tangent
+    neighbor found along one of `face`'s own boundary edges is a
+    PLANE, a plane cannot be the cutting surface here -- it would only
+    graze the torus along that one tangent circle, never cleanly
+    separating material, which left generic_split's own recursive
+    search unable to converge (confirmed live, 2026-10-30,
+    Torus/example.stp's own solid index 6: an unbounded chain of
+    ever-finer near-tangent-plane substitutions -- nfaces +2 and
+    candidate count +4 per recursion level, for 25+ levels -- eventually
+    overflowing the native call stack). The surface that genuinely
+    separates "inside this radius" from "outside it" is a cylinder
+    coaxial with the torus's own axis, at the tangent edge's own
+    (circular) radius.
+
+    For any OTHER near-tangent neighbor (e.g. a torus tangent to a
+    cylinder, Mixed/base_all8_to_cylinder.stp -- the original fixture
+    tangent_cut_plane was built for), this defers entirely to
+    tangent_cut_plane's own, unmodified plane-based logic."""
+    for e in face.OuterWire.Edges:
+        adjacent_face = other_face_edge(e, face, solidFaces)
+        if adjacent_face is None:
+            continue
+        if is_same_surface(face.Surface, adjacent_face.Surface, tolerances=tolerances):
+            continue
+
+        curve = Gclassify_curve(e)
+        if type(curve) is GLine or type(adjacent_face.Surface) is GPlane:
+            plane = line_edge_tangent_plane(face, adjacent_face, e)
+        elif planar_edges([e], tolerances=tolerances):
+            plane = curved_edge_plane(face, e)
+        else:
+            plane = None  # tangent, but this edge has no supported, well-defined plane
+        if plane is None:
+            continue
+
+
+        first, last = e.ParameterRange
+        pos = e.value_at(0.5 * (first + last))
+        u1, v1 = face.Surface.parameter(pos)
+        normal1 = face.normal_at(u1, v1)
+        u2, v2 = adjacent_face.Surface.parameter(pos)
+        normal2 = adjacent_face.normal_at(u2, v2)
+        cos_theta = normal1.dot(normal2)
+        if cos_theta <= math.cos(tolerances.tangent_angle):
+            continue  # not tangent enough -- a real corner, cut by the torus itself
+
+        if type(adjacent_face.Surface) is not GPlane:
+            return plane
+        else:
+            torus = face.Surface
+            # Prefer the shared edge's own circle radius (exact to the
+            # edge's real geometry) over a radial distance recomputed from
+            # one sampled point -- but the edge need not be a circle (e.g.
+            # a BSpline residue of an earlier cut), in which case there is
+            # no curve.Radius to read and the radial distance from the
+            # torus axis at the sampled point is the only option left.
+            radius = curve.Radius if type(curve) is GCircle else None
+            if radius is None:
+                diff = pos - torus.Center
+                radial = diff - diff.dot(torus.Axis) * torus.Axis
+                radius = radial.length
+                if radius < NUMERIC_TOL:
+                    continue  # degenerate -- tangent point sits on the torus's own axis
+            return GeounedSurface(("CylinderOnly", (torus.Center, torus.Axis, radius, 1)))
 
 
 def cks_edge_plane(face, edges, pc=None):

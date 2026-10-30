@@ -299,6 +299,9 @@ NUMERIC_DOUBLE_TOL = 1.0e-12
 # sample of the same quantity across the 143-file corpus is genuine noise at 1e-93..1e-62.
 SQUARED_LENGTH_TOL_E8 = 1.0e-8
 
+# Tolerance for curvature of edge curve to be considerred as straight line.
+EDGE_CURVATURE_TOL = 1.0e-4
+
 # Angle tolerance (rad) between two directions (also used for the sine of it: |unit x unit|).
 ANGLE_THRESHOLD = 5.0e-2
 WINDING_ANGLE_TOL = 2.0e-3
@@ -616,6 +619,24 @@ DEFECT_AXIS_ANGLE = math.acos(1.0 - 1.0e-5)
 # (1e-2, 1e-1], 72 beyond). A property of how the CAD stores the curve, not something the user tunes; it is the value `is_parallel`'s
 # default gave here before.
 SPLINE_PLANARITY_ANGLE = 1.0e-3
+
+# `spline_2D`'s own statistical tolerance: the fraction of the edge's own
+# total arc length that may be spanned by knots whose binormal deviates
+# beyond SPLINE_PLANARITY_ANGLE before the edge is rejected as non-planar.
+# A real tail kink (e.g. the terminal artifact of a boolean-cut
+# reconstruction) can pack several knots into a vanishingly small physical
+# span right at one end of the curve -- rejecting the WHOLE edge over a
+# couple of knots that together cover a negligible fraction of its real
+# length throws away a genuinely planar edge over noise, not a real bend.
+# Measured 2026-10-30 on the one real fixture this was built for
+# (base_all8_to_cylinder.stp, call0037's own face0 edge v0=(-1031.18,
+# -4982.88,896.39)/v1=(-1032.62,-4980.75,895.95)): 2 of 21 knots deviate
+# ~89 degrees (curvature spikes from ~0.3-0.95 to 15-31 there, a genuine
+# local kink, not noise) but together span only ~0.235% of the edge's own
+# 2.87mm length. 1e-2 keeps a ~40x margin over that one measured case
+# while staying far below any span a genuinely non-planar curve's own real
+# bend would occupy.
+SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC = 1.0e-2
 
 # sin(angle) gate for "are these two edge directions collinear", used by
 # `Gtrim_overlapping_coplanar_faces`'s boundary-touching-pair repair to

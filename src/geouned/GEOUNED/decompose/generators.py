@@ -16,6 +16,8 @@ from .decom_utils_generator import (
     exclude_no_cutting_planes,
     order_plane_face,
     omit_isolated_planes,
+    tangent_cut_plane,
+    torus_tangent_cut_surface,
 )
 
 
@@ -128,6 +130,12 @@ def cylinder_generator(GUFaces, omitfaces, tolerances=None):
             # docstring); same check as plane_generator/order_plane_face.
             continue
 
+        if tolerances is not None:
+            tangent_plane = tangent_cut_plane(face, GUFaces, tolerances=tolerances)
+            if tangent_plane is not None:
+                yield tangent_plane
+                continue
+
         dir = face.Surface.Axis
         orig = face.Surface.Center
         rad = face.Surface.Radius
@@ -144,6 +152,13 @@ def cone_generator(GUFaces, omitfaces, tolerances=None):
             continue
         if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
+
+        if tolerances is not None:
+            tangent_plane = tangent_cut_plane(face, GUFaces, tolerances=tolerances)
+            if tangent_plane is not None:
+                yield tangent_plane
+                continue
+
         dir = face.Surface.Axis
         apex = face.Surface.Apex
         half_angle = face.Surface.SemiAngle
@@ -162,6 +177,12 @@ def sphere_generator(GUFaces, omitfaces, tolerances=None):
         if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
 
+        if tolerances is not None:
+            tangent_plane = tangent_cut_plane(face, GUFaces, tolerances=tolerances)
+            if tangent_plane is not None:
+                yield tangent_plane
+                continue
+
         rad = face.Surface.Radius
         pnt = face.Surface.Center
         sphere = GeounedSurface(("SphereOnly", (pnt, rad)))
@@ -174,6 +195,12 @@ def torus_generator(GUFaces, tolerances=None):
             continue
         if tolerances is not None and getattr(face, "CharacteristicWidth", float("inf")) < tolerances.min_face_width:
             continue
+
+        if tolerances is not None:
+            tangent_surface = torus_tangent_cut_surface(face, GUFaces, tolerances=tolerances)
+            if tangent_surface is not None:
+                yield tangent_surface
+                continue
 
         radMaj = face.Surface.MajorRadius
         radMin = face.Surface.MinorRadius
@@ -273,11 +300,40 @@ def next_roundCorner(solid, cornerface_index, *, tolerances):
                 cornerface_index.update(surfindex)
                 rc_list, plane_list, multi_round, orientation, closed_set = build_roundC_params(rc, tolerances=tolerances)
                 if not multi_round:
-                    for gc in rc_list:
-                        yield gc
+                    # `rc` (the real cylinder faces, one tuple per corner)
+                    # and `rc_list` (the already-built RoundCorner
+                    # GeounedSurface candidates) are in the exact same
+                    # order, one entry each per corner -- zip them to
+                    # check each corner's own REAL cylinder face for a
+                    # near-tangent neighbor before yielding it as the
+                    # cylinder itself. A RoundCorner's own cylinder is
+                    # already explicitly bounded by its own 2 corner
+                    # planes (p1/p2, part of what made it a RoundCorner
+                    # in the first place) -- a near-tangent neighbor
+                    # found here is some OTHER, different face (e.g. a
+                    # tangent torus, see Mixed/base_all8_to_cylinder.
+                    # stp), never p1/p2 themselves.
+                    for (cyl, p1, p2, gpa, corner_points, config_orientation), gc in zip(rc, rc_list):
+                        tangent_plane = tangent_cut_plane(cyl, solidFaces, tolerances=tolerances, roundCorner=True)
+                        yield tangent_plane if tangent_plane is not None else gc
                 else:
-                    gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation, closed_set)))
-                    yield gc
+                    # Same check, but across every real cylinder face
+                    # feeding this one MultiRoundCorner group -- if ANY of
+                    # them has a near-tangent neighbor, that candidate's
+                    # own cutting plane is returned instead of ever
+                    # building the MultiRoundCorner at all (the first one
+                    # found, not every one -- a single real cut is enough
+                    # to let generic_split make progress on this fragment).
+                    tangent_plane = None
+                    for cyl, p1, p2, gpa, corner_points, config_orientation in rc:
+                        tangent_plane = tangent_cut_plane(cyl, solidFaces, tolerances=tolerances, roundCorner=True)
+                        if tangent_plane is not None:
+                            break
+                    if tangent_plane is not None:
+                        yield tangent_plane
+                    else:
+                        gc = GeounedSurface(("MultiRoundCorner", (rc_list, plane_list, orientation, closed_set)))
+                        yield gc
     return None
 
 

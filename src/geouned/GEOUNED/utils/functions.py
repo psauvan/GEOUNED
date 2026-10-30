@@ -298,7 +298,7 @@ def build_roundC_params(rc_list, *, tolerances):
     extra_planes = []
     var_id = 0
 
-    for cyl, p1, p2, gpa, config_orientation in rc_list:
+    for cyl, p1, p2, gpa, corner_points, config_orientation in rc_list:
         config, fwd_corner = config_orientation
         cylOnly = GeounedSurface(("CylinderOnly", (cyl.Surface.Center, cyl.Surface.Axis, cyl.Surface.Radius, 1.0, 1.0)))
         var_id += 1
@@ -395,7 +395,7 @@ def build_roundC_params(rc_list, *, tolerances):
         closed_set = True
         for p in rc_planes:
             count = 0
-            for cyl, p1, p2, _, _ in rc_list:
+            for cyl, p1, p2, _, _, _ in rc_list:
                 if surface_geometry.is_same_plane_surface(p1.Surface, p.Surface, tolerances) or surface_geometry.is_same_plane_surface(p2.Surface, p.Surface, tolerances):
                     count += 1
                     if count == 2:
@@ -421,7 +421,25 @@ def build_roundC_params(rc_list, *, tolerances):
             for p in extra_planes:
                 if _index_of_plane(convexity_planes, p, tolerances) is None:
                     convexity_planes.append(p)
-            multi_round, orientation = surface_geometry.convex_planes(convexity_planes, cyl.Surface.Axis, closed_set)
+
+            # Orientation still comes from the bounding planes -- same
+            # centroid + reference-direction formula convex_planes itself
+            # uses, kept here since it's unaffected by whether the group
+            # turns out convex or not (that part is now points-based,
+            # below).
+            center = convexity_planes[0].Surf.Position
+            for p in convexity_planes[1:]:
+                center = center + p.Surf.Position
+            center = center / len(convexity_planes)
+            ref = convexity_planes[0].Surf.Position - center
+            ref = (ref - cyl.Surface.Axis * ref.dot(cyl.Surface.Axis)).normalized()
+            orientation = "Forward" if convexity_planes[0].Surf.Axis.dot(ref) < 0 else "Reversed"
+            if len(convexity_planes) < 3 and closed_set:
+                # see convex_planes's own docstring for this exact case
+                orientation = "Reversed"
+
+            point_sets = [corner_points for _, _, _, _, corner_points, _ in rc_list]
+            multi_round = surface_geometry.convex_round_corner_points(point_sets, cyl.Surface.Axis)
 
         if multi_round:
             if len(plane_list) > 1:

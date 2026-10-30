@@ -35,8 +35,10 @@ from ...geo.constants import (
     PARAM_ANGLE_TOL,
     POINT_POINT_TOL,
     REL_DIST_TOL,
+    EDGE_CURVATURE_TOL,
     SIDE_FRACTION_GAP_MIN,
     SPLINE_PLANARITY_ANGLE,
+    SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC,
     WINDING_ANGLE_TOL,
 )
 from ...geo.surface_geometry import axes_parallel, axes_perpendicular, axes_same_direction, is_same_torus_surface
@@ -2153,13 +2155,26 @@ def edge_1D(edge):
         return False
     p0, p1 = edge.ParameterRange
     pe = 0.5 * (p1 + p0)
-    return edge.curvature(pe) < NUMERIC_TOL
+    return edge.curvature(pe) < EDGE_CURVATURE_TOL
 
 
 def spline_2D(edge):
+    """True if `edge` (a BSpline) lies in a single plane -- statistically:
+    a knot whose own binormal deviates from the first knot's beyond
+    SPLINE_PLANARITY_ANGLE is an "outlier", but the edge is still
+    accepted as planar when the outliers' own combined contribution --
+    the arc-length segments bordering them -- stays within
+    SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC of the edge's own total length.
+    A real terminal kink (the reconstruction artifact of a boolean cut)
+    can pack several knots into a vanishingly small physical span right
+    at one end of the curve; rejecting the whole edge over a couple of
+    knots that together cover a negligible fraction of its real length
+    would throw away a genuinely planar edge over noise, not a real
+    bend. See SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC's own docstring for
+    the real fixture this was measured against."""
     knots = edge.knots()
 
-    if edge.curvature(knots[0]) < NUMERIC_TOL:
+    if edge.curvature(knots[0]) < EDGE_CURVATURE_TOL:
         return False  # straight line
 
     d0 = edge.derivative1_at(knots[0])
@@ -2168,13 +2183,25 @@ def spline_2D(edge):
 
     norm_0 = d0.cross(edge.normal_at(knots[0])).normalized()
 
-    for k in knots[1:]:
+    points = [edge.value_at(k) for k in knots]
+    gaps = [(points[i + 1] - points[i]).length for i in range(len(points) - 1)]
+    total_length = sum(gaps)
+    if total_length < POINT_POINT_TOL:
+        return True  # degenerate-length curve; nothing to measure
+
+    outlier_knots = set()
+    for i, k in enumerate(knots[1:], start=1):
         # check if derivative orthogonal to curve normal vector
         dk = edge.derivative1_at(k)
         normal_k = dk.cross(edge.normal_at(k)).normalized()
         if not axes_parallel(normal_k, norm_0, SPLINE_PLANARITY_ANGLE):
-            return False
-    return True
+            outlier_knots.add(i)
+
+    if not outlier_knots:
+        return True
+
+    outlier_length = sum(gaps[i] for i in range(len(gaps)) if i in outlier_knots or (i + 1) in outlier_knots)
+    return outlier_length / total_length <= SPLINE_PLANARITY_OUTLIER_LENGTH_FRAC
 
 
 def get_shell_UV_nodes(face_or_shell):
