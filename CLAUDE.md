@@ -327,6 +327,110 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`get_roundcorner_surfaces`'s own `dir1`/`dir2` sign bug fixed (a
+  non-convex plane face could send the "farthest boundary point from
+  this tangent edge" search in the wrong direction), and
+  `convex_from_points`'s own chain-building walk hardened against the
+  resulting hang, 2026-11-02/03 -- the real combination that finally
+  resolves the `inout_RC.stp` hang flagged in the two entries just
+  below (the earlier `degree > 2` guard addressed a different failure
+  mode of the PRIOR union-find-based implementation; this entry's own
+  2 fixes land on a rewritten, simpler implementation).**
+  `get_roundcorner_surfaces` (`meta_surfaces.py`) used
+  `plane_face.CenterOfMass` as the reference point to decide which of
+  the 2 candidate perpendicular directions ("toward the farthest
+  vertex") actually points into `plane_face`'s own material, next to
+  its tangent edge with the round-corner cylinder. Per direct user
+  diagnosis: this is only safe when the face is "conexa" (simply
+  connected/convex) -- for a non-convex face, the centroid can sit on
+  the OPPOSITE side of a given edge from where the face genuinely
+  extends locally next to that edge, confirmed concretely on
+  `ITER-TOKAMAK_comp/inout_RC.stp`'s own `plane33` (a real, non-convex
+  10-vertex "staircase" polygon any one of several round-corner
+  cylinders is tangent to along a different one of its sides).
+  **Fix, per the user's own suggested construction**: new
+  `_edge_plane_perpendicular(edge, edge_point, plane_face)` computes
+  N x T instead -- `plane_face`'s own outward normal (`normal_at`,
+  already orientation-corrected) crossed with the edge's own oriented
+  tangent, reusing `meta_surfaces_utils.material_direction` (the same
+  construction `region_sign` already uses for this exact purpose
+  elsewhere in the file) -- then negates the result, since `edge` here
+  is always the CYLINDER's own copy of the shared edge (see
+  `get_adjacent_cylplane`'s own docstring), not `plane_face`'s, and a
+  shared edge carries the opposite `Orientation` convention on each of
+  its 2 adjacent faces (the same reasoning/fix `region_sign` itself
+  already documents inline: "oposite of vect2 because evaluated with
+  e1 and not the edge corresponding to surface2"). **Verified against
+  real ground truth, not just self-consistency**: for the exact
+  `inout_RC.stp` pair this was built against (2 round-corner cylinders,
+  190.79cm^2 and 62.83cm^2, both tangent to `plane33` along different
+  edges), stepping a small real epsilon from each edge's own midpoint
+  along the newly-computed direction and checking
+  `plane_face.is_part_of_domain(u, v)` confirms the direction lands
+  INSIDE the real trimmed face for both cylinders (and the OPPOSITE
+  direction lands outside, for both) -- both now independently resolve
+  to the identical real vertex of `plane33`, which is what the group's
+  own 4-point convexity test needs.
+  **Second, independent fix, the user's own edit (`surface_geometry.py`,
+  a from-scratch rewrite of `convex_round_corner_points`'s own chain-
+  building)**: the prior union-find/degree-walk implementation (see the
+  `degree > 2` entry just below) was itself replaced by a simpler,
+  direct pairwise-matching walk, `convex_from_points` -- builds
+  `boundary_pairs` (each corner's own 2 segments, `(p1,e1)`/`(e2,p2)`)
+  and grows one ordered `pairs_chain` by repeatedly finding the next
+  unconsumed pair that shares a coincident point (`same_segment`,
+  loosened to match on ANY one of the 2 points, not both -- a corner's
+  own far point can coincide with a neighbor's tangent point rather
+  than its own far point, the same real pattern the `degree > 2` fix
+  below was built around) with the chain's own current tail. The
+  `while` loop's own inner `for ... else: return False` (reached only
+  when NO remaining pair matches the current tail at all) is what
+  actually prevents the infinite loop this whole investigation started
+  from -- without a correctly-signed `dir1`/`dir2`, a corner's own
+  `point_p1`/`point_p2` can fail to coincide with its true neighbor at
+  all, which this new implementation now correctly reports as `False`
+  (not a valid single chain/ring) instead of spinning forever with no
+  progress.
+  **Verified end to end**: `tests/geo` + `test_cadtocsg.py` green on
+  ocp (260 passed, 7 skipped). A dedicated re-run of
+  `Solidos/test_models/RoundCorners` (47 files, GEOUNED conversion +
+  d1suned stochastic-volume check, both run 8/16-way parallel) gives
+  the exact same bucket as the project's own established baseline for
+  this folder: 89.3% of 56 solid-cell tallies within 2 sigma, 5
+  marginal (rc24/rrc1/rrc4/rrc12/rrc5, all ordinary MC noise), 1 beyond
+  3 sigma (`shed_solid.stp`, 3.04 sigma, the same already-documented
+  MC-noise-on-a-small-cell case), 0 lost particles. A full
+  `Solidos/test_models` corpus re-run (175 files excluding `Big_*`):
+  conversion 162/175, matching the project's own long-standing baseline
+  exactly (9 `Mixed/base_identified_faces/*` non-solid fixtures + 4
+  pre-existing timeout/crash files) -- **all 8 files that had started
+  timing out earlier in this same session** (`Hollow_plates/placa.stp`,
+  `Hollow_plates/placathin.stp`, `ITER-TOKAMAK_comp/{TCP,divertor_rc,
+  double_RC2,inout_RC,inout_RC2}.stp`, `Mixed/base_all8_to_cylinder.stp`)
+  **now convert again**. d1suned on the 162 converting files: 93.8% of
+  225 solid-cell tallies within 2 sigma, 12 marginal (ordinary MC
+  noise -- same RoundCorners files as above plus `Mixed/fwd_pipe.stp`,
+  `Complex_cell/modelcell_cut1_1.stp`, 4 `Torus/*` files,
+  `Decomposed/SCDR_solid19_solid26.stp`), 0 lost particles anywhere.
+  **`RoundCorners/rrc21.stp`, previously flagged as one of "2 SEVERE,
+  confirmed PRE-EXISTING failures" (43.9 sigma, see the
+  `merge_same_surface_faces`/`placa2.stp` entry below) is now within 2
+  sigma (1.20)** -- not separately root-caused or specifically targeted
+  by either fix in this entry, so this is noted as a side effect, not
+  yet confirmed as durably fixed (see "Known open items" ->
+  `project_next_session_rrc21_2026_10_30` memory, due for a dedicated
+  re-check next session before closing it out).
+  **`Mixed/base_all8_to_cylinder.stp`'s own d1suned failure persists,
+  with a DIFFERENT signature than previously recorded**: no longer
+  hangs/times out, and no longer loses particles (0 lost, was "98
+  sigma/1 lost particle" per the entry below) -- now converts cleanly
+  but writes a confirmed-wrong cell definition, tally `0.84323`
+  (116.20 sigma, `rel_err` only 0.16% -- a real ~15.7% missing-volume
+  gap, not MC noise). Flagged, per direct user instruction, as the
+  priority item for a future session (see the same
+  `project_next_session_rrc21_2026_10_30` memory) -- not investigated
+  further this session.
+
 - **MultiRoundCorner convexity determined from real boundary points
   instead of bounding planes, and a torus-tangent-cut infinite loop
   fixed, 2026-10-30 (commit `d2ee89f`).** Two independent bugs, found

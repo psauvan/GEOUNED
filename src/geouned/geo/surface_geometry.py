@@ -801,6 +801,112 @@ def convex_planes(plane_list, zaxis, closed) -> tuple[bool, str]:
     return convex, orientation
 
 
+def convex_from_points(sets):
+    same_point = lambda a, b: (a - b).length < POINT_POINT_TOL
+    
+    def same_segment(sa, sb):
+        match = (
+            (same_point(sa[0], sb[0]) and same_point(sa[1], sb[1])) or
+            (same_point(sa[0], sb[1]) and same_point(sa[1], sb[0]))
+        )
+        return match
+        
+    pair_match = lambda pa, pb : any(same_segment(sa,sb) for sa in pa for sb in pb)
+
+    n = len(sets)
+    boundary_pairs = [(s[0:2], s[2:4]) for s in sets]
+
+    # looking for not matching pairs
+    for i in range(n-1):
+        match_count = 0
+        two_bounds = False
+        pi = boundary_pairs[i]
+        for j in range(n):
+            if i == j:
+                continue
+            pj = boundary_pairs[j]
+            if pair_match(pi, pj):
+                match_count += 1
+                if match_count == 2:
+                    two_bounds = True
+                    break
+        if not two_bounds:
+            break        
+               
+    # sort pairs
+    pairs_chain = [pi]
+    del(boundary_pairs[i])
+    while len(boundary_pairs) > 0:
+        for j, pj in enumerate(boundary_pairs):
+            if pair_match(pairs_chain[-1], pj):
+                pairs_chain.append(pj)
+                del (boundary_pairs[j])
+                break
+        else:
+            return False  # not all pairs can be chained together    
+
+    # flush point into chain list
+    sorted_points = []
+    p0, p1 = pairs_chain[0:2]
+    if same_segment(p0[1], p1[0]) or same_segment(p0[1], p1[1]):
+        sorted_points.extend(p0[0][0:2])
+        sorted_points.extend(p0[1][0:2])
+    else:    
+        sorted_points.extend(reversed(p0[1][0:2]))
+        sorted_points.extend(reversed(p0[0][0:2]))
+
+    for pj in pairs_chain[1:]:
+        pi = sorted_points[-2:]
+        if same_segment(pi, pj[0]):
+            sorted_points.extend(pj[1][0:2])
+        else:    
+            sorted_points.extend(reversed(pj[0][0:2]))
+
+    if two_bounds:
+        closed = True
+        tounching_points = True
+    else:    
+        closed = False
+        tounching_points = same_point(sorted_points[0], sorted_points[-1])
+
+    if tounching_points and closed:
+        v0 = (sorted_points[0] - sorted_points[-1]).normalized()
+        v1 = (sorted_points[1] - sorted_points[0]).normalized()
+        istart = 1  
+    elif tounching_points and not closed:
+        v0 = (sorted_points[0] - sorted_points[-2]).normalized()
+        v1 = (sorted_points[1] - sorted_points[0]).normalized() 
+        istart = 1
+    else:
+        v0 = (sorted_points[1] - sorted_points[0]).normalized()
+        v1 = (sorted_points[2] - sorted_points[1]).normalized()
+        istart = 2
+ 
+    nloop = len(sorted_points) - 1
+    ref = v0.cross(v1)
+    if abs(ref.length) < POINT_POINT_TOL:
+        ref = None
+    else:
+        ref = ref.normalized()    
+
+    convex = True
+    for i in range(istart, nloop):    
+        v0 = v1
+        v1 = (sorted_points[i+1] - sorted_points[i]).normalized()
+        cross = v0.cross(v1)
+        if ref:
+            if abs(cross.length) < POINT_POINT_TOL:
+                continue
+            else:    
+                if ref.dot(cross) < 0:
+                    convex = False
+                    break
+        else:
+            if cross.length >= POINT_POINT_TOL:
+                ref = cross.normalized()
+    return convex    
+
+
 def convex_round_corner_points(point_sets, zaxis) -> bool:
     """Convexity of a MultiRoundCorner group's own cross-section,
     determined directly from each corner's own 4 real boundary points
@@ -823,32 +929,18 @@ def convex_round_corner_points(point_sets, zaxis) -> bool:
     (confirmed live, 2026-10-30, RoundCorners/rc16.stp), a corner's own
     far point from one tangent edge lands exactly on the NEIGHBORING
     corner's own tangent point instead (point_e1/point_e2), not on that
-    neighbor's own far point. So every one of a corner's own 4 points is
-    a candidate match for every point of every other corner, not just
-    extreme-to-extreme: a plain union-find over all points (by real
-    coincidence, within POINT_POINT_TOL) merges whichever ones are the
-    same physical point, then each corner's own 3 internal edges
-    (p1-e1, e1-e2, e2-p2) are added between the merged nodes -- a shared
-    boundary is then represented by the identical edge from both
-    corners' own side, collapsing to one. The resulting graph is a
-    single cycle (closed) or a single path with 2 degree-1 endpoints
-    (open) when every corner's own 4 points are genuinely consistent
-    with one connected group; walking it gives the ordered polygon."""
-
-    project = lambda point: point - zaxis * (point - centroid).dot(zaxis)
-    same_point = lambda a, b: (a - b).length < POINT_POINT_TOL
-    edge = lambda i: ordered[(i + 1) % m] - ordered[i]
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def union(i, j):
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
+    neighbor's own far point -- and only ONE of a junction's 2 points
+    may coincide this way, never both. Tuples are therefore chained end
+    to end directly by `_order_round_corner_tuples`, matching each
+    one's own 2 boundary pairs -- (p1, p2) and (p3, p4) -- against
+    another tuple's boundary pair whenever at least one of their own
+    points coincides (the tangent-to-tangent pair (p2, p3) is internal
+    to one corner, never shared with another); walking the resulting
+    chain/ring and flattening it (de-duplicating every point already
+    seen earlier in the walk, not just the immediately preceding one --
+    a junction that matches on only one of its 2 points still needs the
+    OTHER, non-coincident point of each side kept as its own distinct
+    vertex) gives the ordered polygon."""
 
     total = GVector(0.0, 0.0, 0.0)
     count = 0
@@ -857,94 +949,8 @@ def convex_round_corner_points(point_sets, zaxis) -> bool:
             total = total + p
             count += 1
     centroid = total / count
+    project = lambda point: point - zaxis * (point - centroid).dot(zaxis)
 
     sets = [tuple(project(p) for p in s) for s in point_sets]
 
-    flat = [p for s in sets for p in s]
-    parent = list(range(len(flat)))
-
-    for a in range(len(flat)):
-        for b in range(a + 1, len(flat)):
-            if same_point(flat[a], flat[b]):
-                union(a, b)
-
-    node_point = {}
-    edges = set()
-    for ci, s in enumerate(sets):
-        base = ci * 4
-        for k in range(3):
-            na, nb = find(base + k), find(base + k + 1)
-            node_point[na] = s[k]
-            node_point[nb] = s[k + 1]
-            if na != nb:
-                edges.add(frozenset((na, nb)))
-
-    degree = {}
-    adjacency = {}
-    for e in edges:
-        a, b = tuple(e)
-        degree[a] = degree.get(a, 0) + 1
-        degree[b] = degree.get(b, 0) + 1
-        adjacency.setdefault(a, []).append(b)
-        adjacency.setdefault(b, []).append(a)
-
-    if degree and max(degree.values()) > 2:
-        # A node touched by more than 2 edges means some physical point
-        # plays more than the 2 roles a simple chain/ring allows -- e.g. a
-        # genuine 3-way junction where 3 different corners' own points
-        # coincide (confirmed live, 2026-10-30, ITER-TOKAMAK_comp/
-        # inout_RC.stp, via real coordinate data, not a hash/iteration-
-        # order artifact). A connected graph with every node of degree <=2
-        # is always a single path or cycle; one with a degree->=3 node
-        # never is, so this group's own real boundary points can't be
-        # walked into one ordered polygon at all, regardless of convexity
-        # -- not just non-convex, not representable as one
-        # MultiRoundCorner chain/ring in the first place.
-        return False
-
-    endpoints = [node for node, d in degree.items() if d == 1]
-    closed = len(endpoints) == 0
-    start = endpoints[0] if endpoints else next(iter(degree), None)
-    if start is None:
-        return True
-
-    ordered_nodes = [start]
-    visited = {start}
-    prev, current = None, start
-    while True:
-        nxt = next((nb for nb in adjacency.get(current, []) if nb != prev), None)
-        if nxt is None or (closed and nxt == start):
-            break
-        if nxt in visited:
-            # Unreachable given the degree<=2 guard above (a connected
-            # degree<=2 graph can't revisit a node), kept only as a
-            # second, independent safety net so this walk can never spin
-            # forever even if that invariant is ever violated elsewhere.
-            return False
-        visited.add(nxt)
-        ordered_nodes.append(nxt)
-        prev, current = current, nxt
-
-    ordered = [node_point[node] for node in ordered_nodes]
-
-    m = len(ordered)
-    if m < 3:
-        return True
-
-    e_prev = edge(m - 1) if closed else edge(0)
-    start_i = 0 if closed else 1
-    stop_i = m if closed else m - 1
-
-    signref = None
-    convex = True
-    for i in range(start_i, stop_i):
-        e_curr = edge(i)
-        sign = zaxis.dot(e_prev.cross(e_curr))
-        if signref is None:
-            signref = sign
-        elif signref * sign < 0:
-            convex = False
-            break
-        e_prev = e_curr
-
-    return convex
+    return convex_from_points(sets)

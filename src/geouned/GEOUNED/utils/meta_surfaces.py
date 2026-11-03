@@ -19,6 +19,7 @@ from .meta_surfaces_utils import (
     same_curve,
     eligible_plane,
     get_additional_corner_plane,
+    material_direction,
 )
 from ...geo.constants import PARAM_ANGLE_TOL, POINT_POINT_TOL
 from ...geo.surface_geometry import axes_parallel, axes_perpendicular
@@ -376,7 +377,7 @@ def _edge_mid_point(edge):
     return edge.value_at(0.5 * (first + last))
 
 
-def _edge_point_distance(edge, point):
+def _edge_point_distance(edge, point, direction):
     """Real 3D distance from `point` to the bounded edge `edge`: the
     orthogonal projection when it falls within edge's own parameter
     range, else the nearest of its two endpoints.
@@ -385,19 +386,23 @@ def _edge_point_distance(edge, point):
     StdFail_NotDone when none exists there -- confirmed live, 2026-10-30,
     Misc/PiezaDavid.stp, for a point whose true orthogonal foot falls
     beyond one of edge's own ends."""
-    first, last = edge.ParameterRange
+    
     try:
         closest = edge.value_at(edge.parameter(point))
     except Exception:
+        first, last = edge.ParameterRange
         v0 = edge.value_at(first)
         v1 = edge.value_at(last)
         d0 = (point - v0).length
         d1 = (point - v1).length
         closest = v0 if d0 <= d1 else v1
-    return (point - closest).length
-
-
-def _farthest_plane_point_from_edge(plane_face, edge):
+    vec = point - closest
+    if vec.dot(direction) < 0.0:
+        return -vec.length
+    else:
+        return vec.length
+    
+def _farthest_plane_point_from_edge(plane_face, edge, direction):
     """Among the real vertices of plane_face's own OuterWire boundary
     (not plane_face.ParameterRange's own corners -- plane_face's real
     trimmed shape need not be a rectangle, so a ParameterRange corner can
@@ -407,7 +412,7 @@ def _farthest_plane_point_from_edge(plane_face, edge):
     best_point = None
     best_dist = -1.0
     for point in plane_face.OuterWire.OrderedVertexes:
-        dist = _edge_point_distance(edge, point)
+        dist = _edge_point_distance(edge, point, direction)
         if dist > best_dist:
             best_dist = dist
             best_point = point
@@ -419,6 +424,33 @@ def _project_onto_axis_plane(point, axis, plane_point):
     to `axis`."""
     diff = point - plane_point
     return point - diff.dot(axis) * axis
+
+
+def _edge_plane_perpendicular(edge, edge_point, plane_face):
+    """Vector perpendicular to `edge` and to `plane_face`'s own outward
+    normal (i.e. lying in plane_face's own plane, crossing `edge`),
+    oriented into plane_face's own material right next to `edge` -- the
+    direction `_farthest_plane_point_from_edge` needs to correctly pick
+    plane_face's own farthest boundary point.
+
+    A global reference such as plane_face.CenterOfMass is NOT safe here:
+    for a non-convex (or otherwise non-"simple") face, the centroid can
+    sit on the opposite side of `edge` from where the face actually
+    extends locally, next to this one edge. So this is computed purely
+    locally instead, from the edge's own orientation and the face's own
+    normal (N x T), reusing the same construction `material_direction`
+    already uses elsewhere in this module.
+
+    `edge` is the cylinder's own copy of the shared edge (see
+    get_adjacent_cylplane), not plane_face's -- its own Orientation flag
+    is only meaningful relative to the face that owns it, and is always
+    the OPPOSITE sense on the two faces that share one edge (the
+    standard 2-manifold rule). So the raw material_direction result
+    (computed as if `edge` belonged to plane_face) must be negated --
+    same reasoning/fix as region_sign's own "oposite of vect2 because
+    evaluated with e1 and not the edge corresponding to surface2"."""
+    vect, _ = material_direction(edge_point, plane_face, edge)
+    return -vect
 
 
 def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None, *, tolerances):
@@ -473,10 +505,13 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
     # farthest from its own tangent edge, projected onto that same
     # perpendicular plane.
     axis = cyl_shell.Surface.Axis
+
     point_e1 = _edge_mid_point(e1)
     point_e2 = _edge_mid_point(e2)
-    point_p1 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p1, e1), axis, point_e1)
-    point_p2 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p2, e2), axis, point_e2)
+    dir1 = _edge_plane_perpendicular(e1, point_e1, p1)
+    dir2 = _edge_plane_perpendicular(e2, point_e2, p2)
+    point_p1 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p1, e1, dir1), axis, point_e1)
+    point_p2 = _project_onto_axis_plane(_farthest_plane_point_from_edge(p2, e2, dir2), axis, point_e2)
     corner_points = (point_p1, point_e1, point_e2, point_p2)
 
     """    
