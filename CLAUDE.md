@@ -415,11 +415,16 @@ instruction).
   **`RoundCorners/rrc21.stp`, previously flagged as one of "2 SEVERE,
   confirmed PRE-EXISTING failures" (43.9 sigma, see the
   `merge_same_surface_faces`/`placa2.stp` entry below) is now within 2
-  sigma (1.20)** -- not separately root-caused or specifically targeted
-  by either fix in this entry, so this is noted as a side effect, not
-  yet confirmed as durably fixed (see "Known open items" ->
-  `project_next_session_rrc21_2026_10_30` memory, due for a dedicated
-  re-check next session before closing it out).
+  sigma (1.20) -- CLOSED, per direct user explanation**: `rrc21.stp` is
+  a MultiRoundCorner, and `convex_round_corner_points`/
+  `convex_from_points` (the function this whole entry's second fix
+  rewrote) is exactly what decides whether a group of RoundCorner
+  candidates is convex enough to merge into one MultiRoundCorner in the
+  first place -- before today, that detection was failing for this
+  file's own real geometry, so it never got built as a MultiRoundCorner
+  at all, which is why its written cell was wrong. This is therefore a
+  direct, understood consequence of the `convex_from_points` rewrite,
+  not an unexplained side effect -- no further re-check needed.
   **`Mixed/base_all8_to_cylinder.stp`'s own d1suned failure persists,
   with a DIFFERENT signature than previously recorded**: no longer
   hangs/times out, and no longer loses particles (0 lost, was "98
