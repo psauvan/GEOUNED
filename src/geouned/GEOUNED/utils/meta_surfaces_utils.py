@@ -1081,6 +1081,21 @@ def gen_plane_cylinder(face_or_shell):
     else:
         normal = cross.normalized()
 
+    # `vmid`, the straight-line chord midpoint of V1/V2, is deliberately
+    # NOT re-projected onto the real cylinder (tried 2026-11-05, reverted
+    # 2026-11-06): the sagitta direction (chord midpoint -> true circle
+    # point) is PARALLEL to `normal` here, not perpendicular to it (both
+    # lie along the chord's own perpendicular bisector, by the isoceles
+    # triangle axis-V1-V2) -- so shifting `vmid` that way moves the plane
+    # itself to a different, parallel one that no longer passes through
+    # the real boundary points V1/V2 at all, instead of landing on the
+    # same plane through a different point on it (which IS what happens
+    # moving along the chord line itself, see `get_additional_corner_
+    # plane`'s own docstring for the same distinction). Confirmed live:
+    # this reprojection caused a severe, corpus-wide d1suned regression
+    # across many unrelated RevCC/RoundCorner fixtures (e.g.
+    # RevCC_regression/modelcell_cut1_piece51_lost_particles.stp going
+    # from 0.3 sigma to 44.8 sigma) when it was in place.
     plane = GeounedSurface(("Plane", (vmid, normal, 1, 1)))
 
     return plane
@@ -2199,6 +2214,67 @@ def tessellate_face(face):
 
 
 def get_additional_corner_plane(cylinder):
+    """Build the "additional" closing plane a degenerate RoundCorner
+    corner needs when its own 2 real bounding planes are really the same
+    one (see `get_roundcorner_surfaces`'s own `gpa` construction) --
+    deliberately through the CHORD midpoint of the corner's own 2 real
+    tangent points (`pos1`/`pos2`), not re-projected onto the cylinder's
+    own true circle.
+
+    This matters because this plane's normal (`paxis = z x r12`) is
+    perpendicular to the chord `pos1-pos2` itself -- ANY point on the
+    line through `pos1`/`pos2` defines the identical plane, and the
+    chord midpoint is simply the most natural one of those. The
+    composite's own region algebra (`round_corner_region`/
+    `multi_round_corner_region`, `basic_functions_part1.py`) ANDs/ORs
+    this plane directly with the cylinder term to reconstruct the
+    fillet's own circular-segment wedge shape -- exactly the same
+    chord-plus-arc combination every genuine 2-plane RoundCorner's own 2
+    REAL planes already rely on, each passing through its own tangent
+    point.
+
+    Moving this plane off the chord was tried twice, both reverted:
+    2026-11-05, re-projecting `point` straight onto the circle (along the
+    chord's own perpendicular bisector) silently breaks that algebra --
+    confirmed live, RoundCorners/rrc21.stp/rrc22.stp, both regressed from
+    1.2 sigma to 33.8/31-ish sigma with the cylinder's own R=6 (resp.
+    similar) face correctly present in every other respect. 2026-11-06,
+    found and fixed the actual geometric reason why: the sagitta
+    direction (chord midpoint -> true circle point) is PARALLEL to this
+    plane's own normal here, not perpendicular to it (both lie along the
+    same perpendicular bisector, by the isoceles triangle center-pos1-
+    pos2) -- so re-projecting moves the plane itself to a different,
+    parallel one that no longer passes through the real tangent points
+    pos1/pos2 at all, rather than landing on the same plane through a
+    different point on it (which is what moving ALONG the chord line
+    itself would do). The identical mistake, made for the same reason,
+    was also tried and reverted in this function's own sibling,
+    `gen_plane_cylinder` just above -- that reprojection caused a severe,
+    corpus-wide d1suned regression across many unrelated RevCC/
+    RoundCorner fixtures having nothing to do with either rrc21.stp or
+    the original base_all8_to_cylinder.stp motivation (e.g.
+    RevCC_regression/modelcell_cut1_piece51_lost_particles.stp going
+    from 0.3 sigma to 44.8 sigma), caught only by re-running the FULL
+    `test_models` corpus (175 files) through both GEOUNED and d1suned --
+    the narrower n_pieces/volume/composite_counts differential used
+    earlier in the same investigation had already missed it once, the
+    same way it missed rrc21.stp's own wrong algebra despite a correct
+    piece count.
+
+    Confirmed `get_additional_corner_plane`'s own tangency "fix" was
+    never actually load-bearing for the original `Mixed/
+    base_all8_to_cylinder.stp` sliver bug either: with BOTH this
+    function and `gen_plane_cylinder` fully reverted to the plain chord
+    construction (no reprojection anywhere), that fixture already
+    decomposes with 0 slivers -- the sagitta-reprojection "fix" was a
+    solution to a problem that either never existed at this call site or
+    was already independently resolved elsewhere in the same session's
+    broader work.
+
+    `pos1`/`pos2` are NOT assumed to lie at a cylindrically-symmetric
+    pair of angles (any real angular span works, since this just needs 2
+    real points ON the cylinder -- no sagitta correction belongs here at
+    all, regardless of span)."""
 
     if type(cylinder) is ShellFaceGu:
         umin, umax = cylinder.U_parameter_range[:2]

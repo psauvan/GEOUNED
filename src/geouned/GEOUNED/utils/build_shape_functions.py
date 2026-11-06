@@ -1,5 +1,6 @@
 import numpy
 
+from ...boolean_utils.boolean_function import evaluate_three_valued
 from .build_region.build_region import get_cell_object
 from .build_region.Objects import plane_polygon_from_box, cylinder_from_box, elliptic_cylinder_from_box, cone_from_box
 from ...geo import (
@@ -190,6 +191,34 @@ def makeRoundCorner(roundCorner, Box, tolerances):
     return build_complex_shape(roundCorner, Box, tolerances)
 
 
+def _edge_mid_point(edge):
+    """Point at the middle of `edge`'s own parameter range -- for a
+    straight (GLine) edge this is just its geometric midpoint. Local copy
+    of `meta_surfaces.py`'s own identical helper (no import across that
+    module boundary for a 2-line function)."""
+    first, last = edge.ParameterRange
+    return edge.value_at(0.5 * (first + last))
+
+
+def _plane_crossing_flips(rc_obj, point, normal, eps):
+    """True if crossing `point` by `+-eps` along `normal` flips `rc_obj`'s
+    own boolean `definition`'s truth value -- the actual criterion for
+    whether a candidate planar face genuinely belongs in a composite's
+    cutting-tool shell (a face where crossing does NOT change the
+    region's own value is not part of its real boundary, regardless of
+    how plausible its topology looks): sample both sides directly against
+    the composite's own already-registered surfaces (`rc_obj.surfaces`,
+    `CellSurface.is_inside`) and definition (`rc_obj.definition`, a plain
+    `BoolSequence` over those surfaces' own local ids)."""
+    values_pos = {sid: s.is_inside(point + normal * eps) for sid, s in rc_obj.surfaces.items()}
+    values_neg = {sid: s.is_inside(point - normal * eps) for sid, s in rc_obj.surfaces.items()}
+    v_pos = evaluate_three_valued(rc_obj.definition, values_pos)
+    v_neg = evaluate_three_valued(rc_obj.definition, values_neg)
+    v_pos = bool(v_pos) if isinstance(v_pos, bool) else None
+    v_neg = bool(v_neg) if isinstance(v_neg, bool) else None
+    return v_pos != v_neg
+
+
 def makeMultiRoundCorner(multiRoundCorner, Box, tolerances, forward=False):
     """Build a MultiRoundCorner's own `.shape`/`.shell` by sewing every
     corner's own real oversized cylinder and plane faces together
@@ -201,67 +230,132 @@ def makeMultiRoundCorner(multiRoundCorner, Box, tolerances, forward=False):
     `makeRoundCorner` from 1 corner to the whole chain/ring. No
     `BOPAlgo_Splitter` call is made while building this shell itself.
 
-    Groups each corner's own 2 real planes (`RoundCornerParams.Planes`)
-    by geometric identity (`is_same_oriented_plane_surface`) into
-    `shared_planes` (a plane bordering exactly 2 neighboring corners)
-    and `open_planes` (a plane bordering only 1 corner -- an open
-    chain's own loose ends; never populated for a closed ring) --
-    `MultiRoundCornerParams.Corners` is NOT in walk order (the
-    detection walk starting point can land in the middle of a chain,
-    see `meta_surfaces.py::get_roundcorner_surfaces`), so this grouping
-    is done by comparing every corner's own 2 planes pairwise, not by
-    assuming any list order.
+    Every corner's own 2 real tangent edges (`Edge1`/`Edge2`, regardless
+    of whether its own 2 bounding planes happen to coincide) is collected
+    as a `(plane, edge, corner_index)` touch, then touches are grouped by
+    PHYSICAL PLANE IDENTITY (`is_same_oriented_plane_surface`) --
+    `MultiRoundCornerParams.Corners` is NOT in walk order (the detection
+    walk's own starting point can land in the middle of a chain, see
+    `meta_surfaces.py::get_roundcorner_surfaces`), so this grouping never
+    assumes any list order.
+
+    A physical plane touched by more than 2 real edges is a real,
+    expected topology here -- not just a degenerate corner whose own 2
+    planes coincide (a fillet tangent to a single wall at 2 points, a
+    local bump rather than a true 2-plane corner), but ALSO a neighboring
+    corner independently touching that SAME wall (confirmed live,
+    RoundCorners/rrc21.stp: a 3-corner group where 2 of the 3 corners are
+    each a "bump" on one of only 2 real walls, the 3rd corner's own 2
+    planes). Within such a group, the touches are ordered along the
+    plane's own in-plane direction (perpendicular to the group's shared
+    cylinder axis) and each ADJACENT pair is resolved per the one rule
+    that actually decides whether a face belongs in the shell: crossing
+    it must flip the composite's own boolean definition
+    (`_plane_crossing_flips`) -- an edge can be shared by at most 2 faces,
+    and a pair from the SAME corner is never even tested (that corner's
+    own cylinder, already in the shell, is what bounds that span, not a
+    plane -- confirmed by this exact test to never flip there). A pair
+    that fails the test (same corner, or a genuinely absent boundary) is
+    simply not built; each touch left unresolved on one of its 2 sides
+    (chain end, or a failed adjacent pairing) gets an oversized open-end
+    face extending further in that direction instead.
 
     Falls back to the original `build_complex_shape` construction
     whenever the sewing prerequisites aren't met: any corner's own real
     tangent edges weren't found (defensive -- every normal detection
-    finds them), any corner has the degenerate "both planes are really
-    the same one" case (mirrors `makeRoundCorner`'s own identical
-    check), a plane is bordered by more than 2 corners (not a simple
-    chain/ring -- mirrors `Gmake_sewn_multiplane_chain`'s own identical
-    caveat), or the native construction itself raises."""
+    finds them), or the native construction itself raises."""
     surf = multiRoundCorner.Surf
     corners = surf.Corners
     span = Box.DiagonalLength
 
     cylinders = []
-    slots = []
-    for rc in corners:
+    touches = []  # (plane GeounedSurface, edge, corner_index)
+    for corner_index, rc in enumerate(corners):
         rc_surf = rc.Surf
         edge1, edge2 = rc_surf.Edge1, rc_surf.Edge2
         if edge1 is None or edge2 is None or edge1.is_same(edge2):
             return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
         p1, p2 = rc_surf.Planes
-        if is_same_oriented_plane_surface(p1.Surf, p2.Surf, tolerances):
-            return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
         cyl_only = rc_surf.Cylinder.Surf.Cylinder
         cylinder = GCylinder.from_values(cyl_only.Surf.Center, cyl_only.Surf.Axis, cyl_only.Surf.Radius)
         cylinders.append((cylinder, edge1, edge2, rc_surf.CylinderHint))
-        slots.append((p1, edge1))
-        slots.append((p2, edge2))
+        touches.append((p1, edge1, corner_index))
+        touches.append((p2, edge2, corner_index))
 
-    groups = []
-    for i, (plane_i, edge_i) in enumerate(slots):
-        for group in groups:
-            plane_j, _ = slots[group[0]]
+    plane_groups = []
+    for touch in touches:
+        plane_i = touch[0]
+        for group in plane_groups:
+            plane_j = group[0][0]
             if is_same_oriented_plane_surface(plane_i.Surf, plane_j.Surf, tolerances):
-                group.append(i)
+                group.append(touch)
                 break
         else:
-            groups.append([i])
+            plane_groups.append([touch])
+
+    shared_axis = cylinders[0][0].Axis
+    rc_obj = None  # lazily built only once, the first time a group needs the crossing test
 
     shared_planes = []
     open_planes = []
-    for group in groups:
-        plane_i, edge_i = slots[group[0]]
-        geo_plane = GPlane.from_values(plane_i.Surf.Position, plane_i.Surf.Axis)
+    for group in plane_groups:
+        plane_ref = group[0][0]
+        geo_plane = GPlane.from_values(plane_ref.Surf.Position, plane_ref.Surf.Axis)
+
         if len(group) == 1:
-            open_planes.append((geo_plane, edge_i, plane_i.Surf.Position))
-        elif len(group) == 2:
-            _, edge_b = slots[group[1]]
-            shared_planes.append((geo_plane, edge_i, edge_b))
-        else:
-            return build_complex_shape(multiRoundCorner, Box, tolerances, forward=forward)
+            _, edge_i, _ = group[0]
+            open_planes.append((geo_plane, edge_i, plane_ref.Surf.Position))
+            continue
+
+        if len(group) == 2:
+            _, edge_a, corner_a = group[0]
+            _, edge_b, corner_b = group[1]
+            if corner_a != corner_b:
+                shared_planes.append((geo_plane, edge_a, edge_b))
+                continue
+            # Both touches are the SAME corner's own 2 planes (the
+            # degenerate "really the same one" case) with nothing else on
+            # this physical plane -- that corner's own cylinder, already
+            # in the shell, bounds this span; no plane face belongs here
+            # at all (equivalent to every pair in the general N>2 branch
+            # below failing the crossing test, just without needing to
+            # pay for the test when there is nothing else to pair with).
+            continue
+
+        # More than 2 real edges touch this one physical plane -- order
+        # them along the plane's own in-plane direction and resolve each
+        # adjacent pair via the crossing test.
+        if rc_obj is None:
+            rc_obj = get_cell_object(multiRoundCorner, tolerances)
+        direction = geo_plane.Axis.cross(shared_axis).normalized()
+        eps = span * 1.0e-3
+
+        ordered = sorted(
+            ((_edge_mid_point(edge), edge, corner_index) for _, edge, corner_index in group),
+            key=lambda t: t[0].dot(direction),
+        )
+        n = len(ordered)
+        for i in range(n - 1):
+            mid_i, edge_i, corner_i = ordered[i]
+            mid_j, edge_j, corner_j = ordered[i + 1]
+            if corner_i == corner_j:
+                # Same corner's own 2 edges, nothing else between them --
+                # its own cylinder bounds this span, not this plane.
+                continue
+            midpoint = (mid_i + mid_j) * 0.5
+            if _plane_crossing_flips(rc_obj, midpoint, geo_plane.Axis, eps):
+                shared_planes.append((geo_plane, edge_i, edge_j))
+
+        # A side left unpaired here (the sequence's own 2 true ends, or a
+        # failed adjacent test) gets NO face at all -- confirmed live,
+        # RoundCorners/rrc21.stp: an oversized open-end face there (this
+        # function's own first attempt) made Gsplit genuinely separate
+        # real material instead of leaving the solid untouched, which it
+        # must for a group whose own boundary is already the irreducible
+        # solid's real boundary. Wherever this plane stops mattering, the
+        # real solid's own other geometry (handled elsewhere, never by
+        # this composite) is what takes over -- this shell does not need
+        # to cap that transition itself.
 
     try:
         shell = Gmake_sewn_multi_round_corner(cylinders, shared_planes, open_planes, span)

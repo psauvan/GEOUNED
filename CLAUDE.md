@@ -327,6 +327,146 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`makeMultiRoundCorner` (`build_shape_functions.py`) rewritten to sew
+  a 3+-corner MultiRoundCorner's own cutting-tool shell directly (same
+  "sewing composite surface" family as `makeRoundCorner`/`makeCan`/
+  `makeTCone`, see "Known open items" -> Shared/cross-cutting), fixing
+  the `rrc21.stp`/`rrc22.stp` regression this entry starts from --
+  AND, while verifying the fix against the full corpus, a second,
+  unrelated, far more consequential bug was found and fixed: a tangent-
+  reprojection "fix" applied earlier the same session to both
+  `gen_plane_cylinder` and `get_additional_corner_plane`
+  (`meta_surfaces_utils.py`) was geometrically wrong and caused a
+  severe, corpus-wide d1suned regression, now fully reverted,
+  2026-11-06.
+  **The regression this investigation started from**: `RoundCorners/
+  rrc21.stp`/`rrc22.stp` (previously documented as correctly fixed at
+  1.2 sigma via the `convex_from_points` rewrite, see the entries
+  above) had regressed to ~33.8/31-ish sigma. Root-caused to
+  `makeMultiRoundCorner` falling back to `build_complex_shape` for any
+  MultiRoundCorner candidate containing a degenerate corner (one whose
+  own 2 bounding planes coincide -- `is_same_oriented_plane_surface`),
+  which for `rrc21.stp`'s own real 3-corner group silently dropped the
+  3rd, larger (R=6) cylinder's own face from the built tool shape
+  entirely -- confirmed via direct tracing (`which_tool_path.py`
+  monkeypatch) and by the user's own visual inspection of the exported
+  tool shell.
+  **Fix, built interactively with direct user guidance on each
+  iteration, per the user's own precise criterion for what belongs in
+  a composite's cutting-tool shell** ("el shell representa la
+  superficie donde si se atraviesa cualquier de sus caras el ecuacion
+  booleana de su definicion pasa de True a False (o al reves).
+  Cualquier cara que no cumple esta propiedad no puede ser una cara de
+  la shell"): `makeMultiRoundCorner` now collects every corner's own 2
+  real tangent edges (`RoundCornerParams.Edge1`/`.Edge2`) as
+  `(plane, edge, corner_index)` touches, groups them by PHYSICAL PLANE
+  IDENTITY (`is_same_oriented_plane_surface` -- never by
+  `MultiRoundCornerParams.Corners`' own list order, which is not
+  guaranteed to be walk-ordered, see `get_roundcorner_surfaces`'s own
+  docstring), and for a plane touched by more than 2 real edges (a real,
+  expected topology here -- not just one degenerate corner's own 2
+  coinciding planes, but ALSO 2 different corners independently
+  touching the SAME wall, confirmed live on `rrc21.stp`'s own 3-corner
+  group) orders the touches along the plane's own in-plane direction
+  and resolves each ADJACENT pair via a new
+  `_plane_crossing_flips(rc_obj, point, normal, eps)` helper -- sampling
+  `point +- eps*normal` against the composite's own already-registered
+  `CellObj.surfaces`/`.definition` (`get_cell_object`,
+  `evaluate_three_valued`) and checking whether the boolean truth value
+  actually flips. Per the user's own explicit, final correction after
+  seeing the 1st (self-pair faces: made things WORSE, 78.1 sigma) and
+  2nd (neighbor-paired but still with "open-end" faces extending to the
+  bounding box for every unresolved touch: `n_pieces=4`, 33.8 sigma)
+  iterations exported and visually inspected -- "este MRC sigue
+  teniendo cara que no tiene que estar. La cuarto cara planas cuyos
+  edge tocan la bound box no deben ser cara de la shell" -- an
+  unpaired touch within this N>2 group now gets NO face at all (an
+  open end still only exists for the `len(group) == 1` case: a plane
+  touched by exactly one edge anywhere, with nothing else on that same
+  physical plane -- the genuine open end of an open-chain
+  MultiRoundCorner, left unchanged). This drops the tool down to
+  exactly the 3 real cylinders + 2 real cross-corner junction planes
+  (5 faces total, 0 self-pair, 0 open-end) -- `Gsplit` against this
+  tool now correctly leaves the whole solid as 1 irreducible piece,
+  matching the user's own independently-stated ground truth for this
+  exact fixture ("Este solido rrc21 es un solido irreductible...").
+  **A second, deeper bug found only once decomposition itself was
+  correct**: even with `n_pieces=1` restored, `rrc21.stp`'s own
+  d1suned result was STILL wrong (33.8 sigma) -- proving the remaining
+  defect was entirely in the WRITTEN cell definition
+  (`multi_round_corner_region`/`round_corner_region`,
+  `basic_functions_part1.py`), independent of decomposition/`Gsplit`
+  behavior, per the user's own diagnostic instruction to compare
+  against the earlier, ALSO-1-piece-but-correct state and find what
+  differs between the two (since the same solid enters the
+  `conversion` module either way). A `git stash`-based A/B test
+  isolated it to `get_additional_corner_plane`'s own tangent-
+  reprojection code (added earlier the same session, alongside an
+  identical one in `gen_plane_cylinder`, both meant to fix a sliver bug
+  in `Mixed/base_all8_to_cylinder.stp`): reverting ONLY that one
+  function's reprojection (keeping `gen_plane_cylinder`'s) restored the
+  exact 1.2 sigma baseline for both `rrc21.stp`/`rrc22.stp`.
+  **The real, geometric reason both reprojections were wrong, found
+  2026-11-06 while verifying this fix against the FULL `test_models`
+  corpus (175 files, both GEOUNED decomposition and a real d1suned
+  stochastic-volume check -- not just the narrower
+  n_pieces/volume/composite_counts differential used earlier in this
+  same investigation, which had ALREADY missed `rrc21.stp`'s own wrong
+  algebra once, despite its correct piece count, and turned out to
+  miss this second bug too)**: a written-MCNP-TEXT diff (not just a
+  structural one) against the pre-session baseline found 30 files with
+  a genuinely different written definition, and a direct d1suned A/B
+  comparison on each found a severe regression on ~18 of them, many
+  completely unrelated to MultiRoundCorner at all (e.g. `RevCC_
+  regression/modelcell_cut1_piece51_lost_particles.stp` 0.3 sigma ->
+  44.8 sigma, several `Hollow_plates/placa3_*`/`ITER-TOKAMAK_comp_
+  double_RC*`/`Reversed_Cyl_Cones/*` fixtures similarly broken). A
+  `git stash` isolation (reverting `makeMultiRoundCorner` back to
+  `build_complex_shape`-always, keeping only `gen_plane_cylinder`'s
+  reprojection) reproduced the exact same broken tally on the worst
+  offender, proving `gen_plane_cylinder`'s own reprojection -- not
+  `makeMultiRoundCorner` -- was the real cause. Root cause: both
+  functions build a closing plane from 2 real points (V1/V2, or
+  pos1/pos2) known to lie ON a cylinder, through their straight-line
+  CHORD midpoint, with a normal perpendicular to that chord. The
+  "fix" re-projected the chord midpoint outward onto the true circle
+  along the chord's own perpendicular bisector (the sagitta direction)
+  -- but that direction is exactly PARALLEL to the plane's own normal
+  (both lie along the same bisector, by the isoceles triangle
+  center-V1-V2), not perpendicular to it. Moving a plane's defining
+  point along a direction PARALLEL to its own normal produces a
+  different, PARALLEL plane that no longer passes through the real
+  boundary points V1/V2 at all -- only a move ALONG the chord line
+  itself (perpendicular to the normal) stays on the identical plane,
+  which the original, unmodified chord-midpoint construction already
+  does trivially. **Both reprojections were reverted entirely** (not
+  just `get_additional_corner_plane`'s) -- confirmed, with neither
+  function reprojecting anything, `Mixed/base_all8_to_cylinder.stp`
+  (the original motivating fixture) still decomposes with 0 slivers,
+  proving this reprojection was never actually necessary there either
+  (the sliver symptom it was built against had already been resolved
+  by something else in this session's broader, independent work, or
+  never genuinely existed at these 2 call sites).
+  **Verified end to end**: `rrc21.stp`/`rrc22.stp` both 1.2 sigma, 0
+  lost particles, SD4 exact (unchanged from the already-documented
+  baseline). Full `tests/geo` + `test_cadtocsg.py` green on ocp (260
+  passed, 7 skipped). A full, real `test_models` corpus run (175
+  files, both GEOUNED conversion AND a real d1suned check, not a
+  structural proxy) against the pre-session baseline: a written-MCNP-
+  text diff now shows exactly 1 file differing
+  (`Mixed/base_all8_to_cylinder.stp` itself, whose own already-
+  documented, already-pre-existing wrong tally -- see
+  `project_next_session_rrc21_2026_10_30` -- is bit-identical before
+  and after, 0.843226, confirming the text change there is behavior-
+  neutral); the full corpus d1suned bucket is back to the project's
+  own established baseline: 93.8% of 225 solid-cell tallies within 2
+  sigma, 12 marginal (ordinary MC noise, same files as previously
+  documented), exactly 2 beyond 3 sigma -- `Mixed/
+  base_all8_to_cylinder.stp` (116.20 sigma, the known, already-flagged
+  pre-existing bug, untouched by this session) and `RoundCorners/
+  shed_solid.stp` (3.04 sigma, the already-documented MC-noise-on-a-
+  small-cell case) -- 0 lost particles anywhere.
+
 - **`get_roundcorner_surfaces`'s own `dir1`/`dir2` sign bug fixed (a
   non-convex plane face could send the "farthest boundary point from
   this tangent edge" search in the wrong direction), and
