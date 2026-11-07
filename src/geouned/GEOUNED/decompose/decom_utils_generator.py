@@ -10,7 +10,7 @@ from geouned.geo.vector_geometry import GMatrix
 
 from ..utils.data_constants import twoPi
 from ..utils.geouned_classes import GeounedSurface
-from ..utils.geometry_gu import other_face_edge, is_same_surface
+from ..utils.geometry_gu import other_face_edge, is_same_surface, ShellFaceGu
 from ...geo import (
     GPlane,
     GCylinder,
@@ -294,7 +294,26 @@ def tangent_cut_plane(face, solidFaces, *, tolerances, roundCorner=False):
     cks_edge_plane, which was designed for cks_bound_planes' own
     narrower role (a hardcoded dim1=dim2=1, a sign flip from `face`'s
     own material_direction, an un-trimmed edge.Curve.value(0) sample)
-    and isn't verified safe for this different one."""
+    and isn't verified safe for this different one.
+
+    `face` may also be a `ShellFaceGu` -- several contiguous fragments of
+    the same analytic surface, merged by merge_same_surface_faces when a
+    boolean cut left a feature split into pieces (confirmed live,
+    Mixed/base_all8_to_cylinder.stp). A ShellFaceGu has no single
+    OuterWire of its own (see geometry_gu.ShellFaceGu), so the search
+    fans out over each real fragment in turn, the same pattern as
+    get_adjacent_cylplane's own is_shell branch: any edge shared BETWEEN
+    two fragments of the merged shell is skipped naturally by the
+    is_same_surface check below (both fragments carry the identical
+    surface), so no extra filtering is needed here -- the first fragment
+    with a genuine tangent neighbor wins."""
+    if type(face) is ShellFaceGu:
+        for f in face.Faces:
+            plane = tangent_cut_plane(f, solidFaces, tolerances=tolerances, roundCorner=roundCorner)
+            if plane is not None:
+                return plane
+        return None
+
     for e in face.OuterWire.Edges:
         adjacent_face = other_face_edge(e, face, solidFaces)
         if adjacent_face is None:

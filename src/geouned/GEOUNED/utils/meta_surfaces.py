@@ -545,7 +545,20 @@ def get_roundcorner_surfaces(cylinder, Faces, cylinders_set, level=0, solid=None
         # exact touching edge/face get_adjacent_cylplane already found,
         # not cyl's own (possibly non-touching) edge.
         gpa = get_additional_corner_plane(cyl_shell)
-    rc_list.append((cylinder, p1, p2, gpa, corner_points, (configuration, fwd_cyl)))
+    # cyl_shell (not the bare `cylinder`) is what every other consumer in
+    # this function already uses (U_parameter_range, get_adjacent_cylplane,
+    # axis, get_additional_corner_plane) -- passing the bare fragment here
+    # instead left RoundCornerParams.Edge1/Edge2 silently None whenever the
+    # real tangent edge with p1/p2 sits on a DIFFERENT fragment than the one
+    # `cylinder` happens to be, which in turn forced makeRoundCorner's own
+    # sewn-construction dispatch to fall back to build_complex_shape,
+    # producing a malformed, disconnected multi-shell tool. Confirmed live,
+    # Mixed/base_all8_to_cylinder.stp (a cylinder split into 2 unfused
+    # same-surface fragments by an earlier cut). Every downstream consumer
+    # of this tuple (build_roundC_params, next_roundCorner's own
+    # tangent_cut_plane call) is made ShellFaceGu-aware instead of carrying
+    # the stale bare face around as a second object.
+    rc_list.append((cyl_shell, p1, p2, gpa, corner_points, (configuration, fwd_cyl)))
 
     for newplane in (p1, p2):
         for edge in newplane.OuterWire.Edges:
