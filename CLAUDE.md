@@ -327,6 +327,252 @@ instruction).
 
 ### GEOUNED (`CadToCsg`, the forward STEP -> CSG pipeline)
 
+- **`Mixed/ConeSphere.stp`'s own `ShapeUpgrade_UnifySameDomain`
+  access-violation crash -- RESOLVED AT THE ROOT, 2026-11-07, branch
+  `unified_healing`, superseding every earlier "accepted permanent
+  limitation" reference to this file in this document (including the
+  "Status as of 2026-09-18" line just above, and "Current status"'s own
+  2026-09-14 snapshot further up -- both describe a crash that is now
+  fixed, not merely avoided).** Per direct user instruction, after a
+  proposal to wire `Gcheck_and_repair`'s own healing cascade into
+  `cell_definition.py`'s entry point was challenged on principle --
+  "no podemos asumir solidos con 'validez distinta' segun la parte
+  donde se usa... tenemos que ir sobre una base que siempre tratar con
+  el mismo solido 'valido' en todos los casos" -- re-investigated this
+  long-standing crash from scratch instead of continuing to design
+  around it, per the user's own suggestion that a different tool or
+  angle might resolve it.
+  **Root cause, found by direct bisection (not guessed)**: isolated the
+  crash to exactly `UnifyFaces=True` among `ShapeUpgrade_
+  UnifySameDomain`'s 3 boolean flags (confirmed on BOTH occ/ocp, OCCT
+  7.9.3 -- `UnifyEdges`/`ConcatBSplines` alone or together never crash,
+  matching the ALREADY-documented `envelope_structure.stp`/
+  `find_degenerate_plane_faces` signature, not the older, now-confirmed-
+  stale "isolated to UnifyEdges" note this same investigation had
+  carried since 2026-08-23, likely from an earlier OCCT build). A
+  minimal reproducer needs no solid at all -- `ShapeUpgrade_
+  UnifySameDomain` works on any `TopoDS_Shape` -- so bisecting a
+  2-face COMPOUND of just the suspect faces (built directly from the
+  raw STEP-read shape, no `GSolid` involved) narrowed the real fixture
+  (a cored spherical shell, 2 concentric spheres R=17.53/21.08, exactly
+  tangent to a coaxial R=17.53 cylinder -- this project's own founding
+  motivating tangency bug, on a sphere/cylinder pair) down to exactly 2
+  faces: the outer sphere's own largest wedge (no native OCCT
+  *degenerate* edge -- a pole placeholder, see `find_degenerate_plane_
+  faces`'s own docstring) merging into either of 2 smaller wedges of the
+  SAME physical sphere that EACH carry one. A pair where BOTH or
+  NEITHER face has a degenerate edge merges safely (confirmed: the
+  inner sphere's own 2-wedge pair, both degenerate; another outer-
+  sphere 2-wedge pair, also both degenerate) -- so the crash is
+  specifically "one degenerate-pole face merging into one non-
+  degenerate same-surface neighbor", not "any sphere-fragment merge".
+  **The fix, not a workaround**: `ShapeUpgrade_UnifySameDomain` has a
+  `KeepShape(edge)` method -- "Sets the shape for avoid merging of the
+  faces/edges... If the shape is an edge it forbids merging of
+  connected faces" (its own header's exact words) -- that an earlier
+  investigation's own exhaustive knob list (`SetSafeInputMode`,
+  `AllowInternalEdges`, `SetAngularTolerance`, `SetLinearTolerance`, a
+  fresh `BRepBuilderAPI_Copy`, `ConcatBSplines=False`, `UnifyEdges=
+  False` alone -- all tried, all still crashed, see `GSolid.refine()`'s
+  own docstring for the full list) never actually tried. Passing it the
+  TWO crashing faces' own shared edge lets `Build()` complete safely
+  while still merging everything else that IS safe to merge (verified
+  on the real fixture: 6 faces -> 4, exact volume match, `BRepCheck`
+  valid) -- confirmed on both engines via a minimal compound first,
+  then end to end through the real `Gload_and_process_step` ->
+  `_native_fix` -> `GSolid.refine()` path.
+  **New shared primitive, `geo/{occ,ocp}/_native_utils.py::
+  _degenerate_pole_keep_edges(shape)`** (pure native OCCT/OCP code --
+  `BRepAdaptor_Surface`/`gp_Sphere`/`gp_Cone`/`gp_Torus`/`BRep_Tool.
+  Degenerated` -- no `GSolid`/`GFace` dependency, since this must run
+  on a bare shape before any `GSolid` wrapper can exist, e.g.
+  `_native_fix`'s own call from `Gload_and_process_step`): finds every
+  adjacent same-surface (sphere/cone/torus -- the 3 types that can
+  carry a degenerate pole/apex edge, a plane never can) face pair where
+  exactly one has a degenerate edge, generically, not hardcoded to this
+  one fixture's own geometry. `_unify_same_domain_safe(shape,
+  unify_edges, unify_faces, concat_bsplines, linear_tolerance=None)`
+  wraps the `KeepShape` wiring once, used by ALL 3 real call sites in
+  each engine (`_native_fix`, `GSolid.refine()`, `repair.py::
+  Gsliver_heal`'s own re-sew-and-unify step) -- a "valid, healed solid"
+  now means the same thing regardless of which call site produced it,
+  rather than each one separately risking (or separately working around)
+  the same crash.
+  **A second, historically-reported "Standard_Failure: Courbes non
+  jointives" crash on `Complex_cell/SCDR_90.stp`, re-investigated the
+  same session per the same instruction, found to be ALREADY resolved
+  by an unrelated, earlier fix -- not a remaining gap.** That crash was
+  originally reported (2026-09-29, the `GCompound` entry further down)
+  as a side effect of a since-fully-replaced mechanism -- wrapping
+  touching decomposed pieces into a real native `TopoDS_Compound` and
+  re-extracting them, which the `GCompound` redesign eliminated
+  entirely (plain Python container, no native wrap/re-extract at all).
+  Verified directly: decomposing `SCDR_90.stp` today and then forcibly
+  calling `.fix()` unconditionally on every piece at EVERY level of the
+  recursion (reproducing the exact removed "unconditional `.fix()` at
+  every recursive leaf" pattern via a monkeypatch of `generic_split`
+  itself, matching `decom_one_generators.py`'s own comment describing
+  what that removed code did) raises/crashes NOTHING, identically with
+  or without this session's own `ConeSphere.stp` fix applied (a direct
+  `git stash` A/B check) -- confirming this second crash's real root
+  cause was always the `GCompound` one, already closed out, and has no
+  remaining connection to the degenerate-pole-pair mechanism above.
+  **Verified**: full `tests/geo` + `test_cadtocsg.py` green on both
+  engines after the fix (ocp 260 passed/7 skipped, occ 260 passed/6
+  skipped, zero regressions). `ConeSphere.stp` now converts end to end
+  through the real production path (`Gload_and_process_step` ->
+  `decompose_solids()`), previously a hard, uncatchable process crash.
+  A full `Solidos/test_models` corpus differential (181 unique files,
+  excluding `Big_*`, load + `decompose_solids()`, per-solid piece count
+  and volume compared via a `git stash` before/after on the exact same
+  file set) found **exactly 1 real difference across the whole
+  corpus**: `Mixed/ConeSphere.stp` itself, `status: crash -> ok` --
+  every other file's own piece counts and volumes are bit-for-bit
+  unchanged, confirming the fix is precisely scoped to the signature it
+  targets and introduces no side effect anywhere else. A real,
+  end-to-end d1suned MCNP stochastic-volume check on the newly-
+  converting cell (`verify_one_solid.py`, the project's own canonical
+  single-file recipe): `SD4` (the written reference volume) matches
+  the true CAD volume exactly (11697.0980 vs 11697.0981 mm^3), tally
+  `0.99493 +/-0.28%` (1.8 sigma from 1.0, ordinary MC noise), 0 lost
+  particles -- the fix produces a genuinely correct cell, not just a
+  non-crashing one.
+
+- **`geo.ensure_healed` -- one shared entry point for "is this `GSolid`
+  safe to process", wired into `build_definition`'s own per-piece loop,
+  2026-11-07, branch `unified_healing` -- CLOSES a long-standing,
+  previously-unexplained bug (`Mixed/base_all8_to_cylinder.stp`'s own
+  ~15.7% missing-volume gap, see that file's own entry further down
+  and the `project_next_session_rrc21_2026_10_30` memory) as a direct,
+  understood side effect, not a lucky coincidence.**
+  Per direct user design, after the `ConeSphere.stp` crash fix above
+  made native healing genuinely safe everywhere it's already used:
+  `geo/solid_ops.py::ensure_healed(solid, tolerances) ->
+  (result, ok, changed)` is a thin, engine-agnostic dispatch to
+  `Gcheck_and_repair` (already engine-dispatched by `geo/__init__.py`)
+  -- not a reimplementation, just a shared, documented name and a
+  `changed` convenience (`result is not solid`) so a caller knows
+  whether it must stop trusting any face-index bookkeeping computed
+  against the original object. Deliberately only the "full" tier for
+  now -- the cheap `is_valid()` pre-check `docs/planning/
+  solid_healing_compilation.md` §6b's own two-tier design describes for
+  use inside `generic_split`'s own hot recursive loop is NOT wired in:
+  per direct user decision, that loop's own existing, heavily-tuned ad
+  hoc mechanism (tolerance reset + `.fix()` before every candidate)
+  stays untouched, absent a demonstrated bug -- see §6d/§8 of that same
+  doc for the full reasoning.
+  **Wired into exactly one real call site, per direct user scope
+  decision**: `cell_definition.py::build_definition`'s own per-solid
+  loop, right before `simple_solid_definition` reads a piece's faces to
+  reproduce its own boolean expression. Void generation was
+  deliberately NOT given its own separate call site (per direct user
+  choice, after reviewing the alternative): void generation's own
+  real work (`VoidBox`/`get_void_complementary`) reads each solid's
+  already-built `.Definition`, never its raw topology directly, so it
+  benefits automatically, for free, from healing done once here --
+  the one place void DOES touch raw `CADSolid` geometry directly
+  (`check_intersection`/`piece_enclosure_split`, enclosure-containment
+  only) was explicitly left out of scope this session, a narrower,
+  separate decision to revisit if a real enclosure-specific bug ever
+  points at it. Heals LOCALLY, for this one read -- `meta_obj.Solids`
+  itself and the exported `CADSolid`/STEP output are NOT re-pointed at
+  the healed result, by design (a caller that also needs that stays
+  responsible for it, not an oversight).
+  **The `base_all8_to_cylinder.stp` fix, found while verifying this
+  wiring against the whole corpus (not sought out deliberately)**: a
+  181-file `Solidos/test_models` differential (decompose +
+  `build_solid_definition`, comparing each solid's own written
+  `Definition` text, `git stash`-isolated to JUST this wiring, the
+  already-landed `ConeSphere.stp` fix kept in both runs) found
+  **exactly 1 real difference across the whole corpus** -- this file,
+  and only this file. Traced directly: piece#20 of its own
+  decomposition (14 faces) carries a genuine "sliver face" (the
+  `find_sliver_faces` check `check_solid_defects` gained earlier the
+  same session) that `Gcheck_and_repair`'s cascade resolves via
+  `Gsliver_heal` (14 -> 10 faces, volume conserved to ~4e-6 relative,
+  120682 -> 120678 mm^3) -- a defect that existed at this stage on
+  every prior session's own attempt at this file (the `tangent_cut_
+  plane`/`spline_2D` work from 2026-10-30 fixed a real, different bug
+  on this same fixture, but never this one, since neither of those
+  fixes had anything to do with sliver-face detection). A real,
+  same-NPS d1suned before/after comparison (`verify_one_solid.py`,
+  `git stash`-isolated the same way) confirms this is the actual root
+  cause, not a coincidental correlation: tally `0.84856 +/-0.16%`
+  (94.7 sigma, 1 lost particle) WITHOUT this wiring -> `0.99925
+  +/-0.15%` (0.5 sigma, 0 lost particles) WITH it -- matching the
+  already-documented `0.84323`/116.20-sigma figure closely enough
+  (same bug, ordinary run-to-run MC variation) to confirm this closes
+  that exact, previously-unexplained, multi-session-old open item.
+  **Verified**: full `tests/geo` + `test_cadtocsg.py` green on both
+  engines (ocp 260 passed/7 skipped, occ 260 passed/6 skipped) after
+  adding `ensure_healed` itself and after wiring it into
+  `build_definition`; the 181-file corpus differential above found
+  zero OTHER differences anywhere (every other file's own written
+  `Definition` text is identical before/after, confirming the wiring
+  is inert everywhere this exact defect doesn't occur).
+  **No single integrated healing function exists yet, confirmed
+  directly when asked** ("¿es en `_raw_bop_split` que se hace el
+  saneamiento?... ¿es por los test que ahora hace dentro de
+  `_raw_bop_split` que antes no hacias?"): `geo/{occ,ocp}/split.py`
+  (`_raw_bop_split`'s own, separate, independently-tuned cascade --
+  phantom-cut separation -> non-manifold repair -> `Gsliver_heal` ->
+  `Gheal_topology`, running DURING decomposition) was NOT touched this
+  session at all (`git log` on that file stops at the pre-session
+  commit `4d25795`) -- `base_all8_to_cylinder.stp`'s piece#20 passes
+  through it completely unaffected, same as every prior session. The
+  real fix is the NEW post-decomposition pass this entry describes:
+  `find_sliver_faces` only exists inside `check_solid_defects` (and
+  therefore inside `Gcheck_and_repair`/`ensure_healed`) since this same
+  session (§6e.3 of the planning doc) -- `_raw_bop_split` already had
+  its own, older, independent `find_sliver_faces` check at a different
+  line, untouched. So `Gsliver_heal` is a genuinely shared kernel
+  primitive called from TWO separate orchestrating cascades that never
+  call each other -- confirmed left as-is, explicit scope decision, see
+  `docs/planning/solid_healing_compilation.md` §6g for the full
+  exchange and reasoning.
+  **Cost of extending this to `_raw_bop_split` is one of 6 documented
+  reasons it wasn't done, not the dominant one -- confirmed when asked
+  directly** ("¿por qué check_solid_defects no se hace dentro de
+  `_raw_bop_split`? ¿es porque consume mucho tiempo?"): a real, measured
+  precedent exists (`BC.stp`'s own decomposition time, 69.7s -> 23.6s,
+  from avoiding exactly this kind of per-candidate expensive check), but
+  native-crash risk, unmeasured volume gates, and face-index invalidation
+  on repair are equally real blockers -- see `docs/planning/
+  solid_healing_compilation.md` §6d for the full 6-reason analysis and
+  §6h for this exact exchange. A two-tier cheap/full design already
+  exists on paper (§6b) for the cost problem specifically but was never
+  implemented or wired into `generic_split`. **User's decision: leave
+  as-is for now** -- "por ahora funciona y lo dejamos así. A lo mejor en
+  el futuro habrá que retomar estos puntos de saneamiento."
+  **Full `Solidos/test_models` corpus, both engines, real d1suned run
+  (not just the cheap decompose+build_solid_definition differential
+  above), 2026-11-07, requested directly** ("¿has pasado el corpus
+  completo geouned + d1suned para todos los solidos que solemos
+  chequear?") -- warranted because the `ConeSphere.stp` fix changes
+  `_native_fix`, which runs unconditionally on EVERY solid at load time
+  on both engines, not just the one fixture. Full pipeline
+  (`run_all_conversions_{ocp,occ}_parallel.py` -> `run_test_models_
+  {ocp,occ}_d1suned.sh` -> `analyze_test_models_{ocp,occ}.py`), 175
+  files (excluding `Big_*`). Conversion: 163/175 on BOTH engines (the
+  same 9 `base_identified_faces` non-solid fixtures + 3 pre-existing
+  failures -- `SCDR_90_piece2`, `modelcell_cut1_v2_piece66`, `SCDR_90_
+  hollow` -- `ConeSphere.stp` now converts on both, up from the prior
+  162/175 baseline with 4 known failures). d1suned: **identical buckets
+  on both engines** -- 226 solid-cell tallies, 213 (94.2%) within 2
+  sigma, 11 marginal (same already-documented files: `fwd_pipe`,
+  `rc24`/`rrc1`/`rrc4`/`rrc12`/`rrc5`, 4 `Torus/*`, `SCDR_solid19_
+  solid26`), exactly 2 beyond 3 sigma (`RoundCorners/shed_solid.stp`,
+  3.04 sigma, the already-documented MC-noise-on-a-small-cell case;
+  `Complex_cell/modelcell_cut1_1.stp`, 3.30 sigma -- previously recorded
+  as marginal/2-3-sigma in earlier corpus runs elsewhere in this file,
+  so this is the same file sitting right at the historical marginal/
+  fail boundary across independent MC runs, not a new defect), **0 lost
+  particles anywhere (175/175 on both engines)**. Neither `ConeSphere.
+  stp` nor `base_all8_to_cylinder.stp` appears in either bucket -- both
+  land cleanly within 2 sigma, on both engines, confirming the two
+  fixes hold at the real, full-corpus d1suned level, not just the
+  structural differential.
+
 - **`makeMultiRoundCorner` (`build_shape_functions.py`) rewritten to sew
   a 3+-corner MultiRoundCorner's own cutting-tool shell directly (same
   "sewing composite surface" family as `makeRoundCorner`/`makeCan`/
@@ -574,7 +820,14 @@ instruction).
   gap, not MC noise). Flagged, per direct user instruction, as the
   priority item for a future session (see the same
   `project_next_session_rrc21_2026_10_30` memory) -- not investigated
-  further this session.
+  further this session. **CLOSED 2026-11-07 -- see the `ensure_healed`
+  entry at the top of this section: the real cause was a sliver face
+  on one decomposed piece (piece#20), never detected at this stage
+  before `check_solid_defects` gained a `find_sliver_faces` check the
+  same day. Tally 0.84856 -> 0.99925 (0.5 sigma), 1 -> 0 lost particles,
+  same NPS, direct before/after comparison -- not a coincidental side
+  effect of the tangency/BSpline mechanisms this entry's own
+  `tangent_cut_plane`/`spline_2D` hypotheses guessed at.**
 
 - **MultiRoundCorner convexity determined from real boundary points
   instead of bounding planes, and a torus-tangent-cut infinite loop

@@ -57,7 +57,6 @@ from OCP.gp import (
     gp_Trsf,
     gp_Vec,
 )
-from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
@@ -101,6 +100,7 @@ from ._native_utils import (
     _surface_props,
     _to_gmatrix_3x3,
     _to_gvector,
+    _unify_same_domain_safe,
     _volume_props,
     to_native_vector,
 )
@@ -1167,7 +1167,58 @@ class GSolid:
     def refine(self, rel_tol: float = NATIVE_VOL_RATIO_TOL) -> "GSolid":
         """See the freecad engine's GSolid.refine docstring -- same
         volume-invariance guard (`rel_tol`, default 1e-6), using
-        ShapeUpgrade_UnifySameDomain as the removeSplitter() equivalent.
+        `_unify_same_domain_safe` (`_native_utils.py`) as the
+        removeSplitter() equivalent.
+
+        **`ConeSphere.stp`'s own access-violation crash -- RESOLVED AT
+        THE ROOT, 2026-11-07, branch `unified_healing`, superseding the
+        "accepted permanent limitation" framing this docstring used to
+        carry** (the extensive history below is kept for the record,
+        not because the crash is still open). Per direct user
+        instruction ("volver a investigar el crash... a lo mejor hay
+        que considerar otra herramienta"), re-investigated from scratch
+        rather than continuing to work around it: isolated, via direct
+        bisection (minimal reproducer: a 2-face compound, no solid
+        needed), to EXACTLY `UnifyFaces=True` (confirmed under BOTH
+        occ/ocp, OCCT 7.9.3 -- `UnifyEdges`/`ConcatBSplines` alone or
+        together never crash, matching the already-documented
+        `envelope_structure.stp`/`find_degenerate_plane_faces` signature,
+        not the OLDER, pre-OCCT-7.9 "isolated to UnifyEdges" note this
+        docstring used to carry, itself already flagged below as likely
+        stale). The real mechanism: `ConeSphere.stp`'s one solid is a
+        cored spherical shell (2 concentric spheres, R=17.53/21.08)
+        whose inner sphere is EXACTLY tangent to a coaxial R=17.53
+        cylinder -- the project's own founding motivating tangency bug,
+        just on a sphere/cylinder pair instead of the original cube-
+        corner/cylinder one. The outer sphere (R=21.08) is split into 3
+        wedge faces; bisecting pairs of them found the crash fires
+        EXACTLY when `UnifyFaces` tries to merge a face with NO native
+        OCCT *degenerate* edge (a pole placeholder, see
+        `find_degenerate_plane_faces`'s own docstring) into an ADJACENT
+        face on the SAME analytic sphere that DOES carry one -- a pair
+        where BOTH or NEITHER face has a degenerate edge merges safely
+        (confirmed: the inner sphere's own 2 wedges, both degenerate,
+        merge fine; 2 of the outer sphere's 3 wedges, both degenerate,
+        merge fine too). The prior investigation's own exhaustive knob
+        list (below) never actually tried `ShapeUpgrade_
+        UnifySameDomain.KeepShape(edge)` -- "Sets the shape for avoid
+        merging of the faces/edges... If the shape is an edge it
+        forbids merging of connected faces" (the header's own exact
+        words) -- which is precisely the surgical tool for this
+        signature: pass it the two faces' own SHARED edge, and
+        `UnifyFaces=True` completes safely while still merging
+        everything else that's actually safe to merge (confirmed on the
+        real fixture: 6 faces -> 4, exact volume match, `BRepCheck`
+        valid). `_native_utils.py::_degenerate_pole_keep_edges` finds
+        every such pair generically (any sphere/cone/torus, not just
+        this one fixture's spheres) and `_unify_same_domain_safe` wires
+        `KeepShape` in automatically for every `UnifyFaces=True` call in
+        this package -- see both functions' own docstrings.
+
+        **Everything below this point is the now-superseded investigation
+        history, kept for the record (what was tried, in what order, and
+        why each attempt looked reasonable at the time) -- not a
+        currently-accurate account of this crash's status.**
 
         UnifyFaces=True is a confirmed native-crash source (access
         violation, not a catchable Python exception -- no try/except
@@ -1193,17 +1244,20 @@ class GSolid:
         merging and had already been individually fixed and verified
         earlier in this project's history. Trading 4 known-good files
         for 1 known-bad one is the wrong direction; UnifyFaces=True
-        stays on unconditionally, and ConeSphere.stp is accepted as a
-        known, unresolved crash under this engine instead (every
-        documented `ShapeUpgrade_UnifySameDomain` configuration knob
-        exposed by OCP -- SetSafeInputMode, AllowInternalEdges,
-        SetAngularTolerance tight/loose, SetLinearTolerance, running on
-        a BRepBuilderAPI_Copy first, ConcatBSplines=False, UnifyEdges=False
-        alone -- was tried and still crashes; confirmed the crash occurs
-        inside Build() itself, before Shape() is ever called, so no
-        Python-level recovery is possible; the FreeCAD engine converts
-        ConeSphere.stp cleanly, since it uses Part.Shape.removeSplitter()
-        rather than this OCCT-7.9.x-specific function).
+        stays on unconditionally (now, as of the fix above, genuinely
+        safely -- not merely "unconditionally despite the crash risk").
+        Every documented `ShapeUpgrade_UnifySameDomain` configuration
+        knob exposed by OCP OTHER than `KeepShape` -- SetSafeInputMode,
+        AllowInternalEdges, SetAngularTolerance tight/loose,
+        SetLinearTolerance, running on a BRepBuilderAPI_Copy first,
+        ConcatBSplines=False, UnifyEdges=False alone -- was tried by an
+        earlier investigation and still crashed; confirmed the crash
+        occurs inside Build() itself, before Shape() is ever called, so
+        no Python-level recovery was possible without avoiding the
+        dangerous merge BEFORE calling Build() at all (the FreeCAD
+        engine was unaffected throughout, since it uses
+        Part.Shape.removeSplitter() rather than this OCCT-7.9.x-specific
+        function -- freecad itself is now retired, see CLAUDE.md).
 
         KNOWN GAP: a hang (not a crash) under UnifyEdges=True was also
         historically reported for this same file under pythonocc-core
@@ -1268,10 +1322,8 @@ class GSolid:
         native = source_native
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
-        unify = ShapeUpgrade_UnifySameDomain(copy, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
         try:
-            unify.Build()
-            refined = unify.Shape()
+            refined = _unify_same_domain_safe(copy, True, True, True)
             refined_volume = _volume_props(refined).Mass()
         except Exception:
             if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:

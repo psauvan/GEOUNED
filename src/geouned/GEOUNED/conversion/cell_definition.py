@@ -16,6 +16,7 @@ from ..utils.functions import (
     get_box,
 )
 from ...boolean_utils.boolean_function import BoolSequence
+from ...geo import ensure_healed
 from ..utils.meta_surfaces_utils import merge_same_surface_faces
 from ..decompose.decom_utils_generator import omit_isolated_planes
 from .cell_definition_functions import (
@@ -76,10 +77,25 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
 
     solid_definition = BoolSequence(operator="OR")
     for basic_solid in meta_obj.Solids:
-        comp = simple_solid_definition(basic_solid, Surfaces, meta_surfaces=Surfaces.options.meta_surfaces)
+        # `ensure_healed` (geo/solid_ops.py) -- make sure `basic_solid` can
+        # be correctly walked to reproduce its own boolean expression
+        # before `simple_solid_definition` reads its faces. Per direct
+        # user design (2026-11-07, docs/planning/solid_healing_
+        # compilation.md §6b/§6c): this heals LOCALLY, for this one
+        # read, not by re-pointing `meta_obj.Solids` itself -- the
+        # exported CADSolid/STEP output is a separate concern, handled
+        # (or not) by its own caller.
+        healed_solid, ok, _changed = ensure_healed(basic_solid, Surfaces.tolerances)
+        if not ok:
+            logger.warning(
+                f"build_definition: a solid of {meta_obj.StepLabel} has a known CAD defect "
+                "ensure_healed could not resolve -- proceeding with the original, unrepaired "
+                "geometry; the written boolean expression may be missing a real bounding condition."
+            )
+        comp = simple_solid_definition(healed_solid, Surfaces, meta_surfaces=Surfaces.options.meta_surfaces)
         comp.expand_regions_to_boolVar()
         comp.simplify()
-        solid_definition.append(comp)     
+        solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
     if len(meta_obj.Definition.elements) != len(meta_obj.Solids):
          raise RuntimeError(f"At leat one component of the solid {meta_obj.StepLabel} has a boolean value")

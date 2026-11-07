@@ -57,7 +57,6 @@ from OCC.Core.gp import (
     gp_Trsf,
     gp_Vec,
 )
-from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCC.Core.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
@@ -100,6 +99,7 @@ from ._native_utils import (
     _surface_props,
     _to_gmatrix_3x3,
     _to_gvector,
+    _unify_same_domain_safe,
     _volume_props,
     to_native_vector,
 )
@@ -1180,7 +1180,27 @@ class GSolid:
     def refine(self, rel_tol: float = NATIVE_VOL_RATIO_TOL) -> "GSolid":
         """See the freecad engine's GSolid.refine docstring -- same
         volume-invariance guard (`rel_tol`, default 1e-6), using
-        ShapeUpgrade_UnifySameDomain as the removeSplitter() equivalent.
+        `_unify_same_domain_safe` (`_native_utils.py`) as the
+        removeSplitter() equivalent.
+
+        **`ConeSphere.stp`'s own access-violation crash -- RESOLVED AT
+        THE ROOT, 2026-11-07, branch `unified_healing`, superseding the
+        "accepted permanent limitation" framing this docstring used to
+        carry (see the ocp engine's own `refine()` docstring for the
+        full investigation -- reproduced and fixed identically under
+        both engines).** In short: the crash is `UnifyFaces=True`
+        merging a face with no native OCCT degenerate (pole) edge into
+        an adjacent face on the SAME analytic sphere/cone/torus that
+        DOES carry one; `ShapeUpgrade_UnifySameDomain.KeepShape(edge)`
+        on their shared edge -- never tried by the earlier
+        investigation below -- lets the merge be skipped surgically
+        while everything else still simplifies normally.
+        `_native_utils.py::_degenerate_pole_keep_edges` finds every such
+        pair generically and `_unify_same_domain_safe` wires it in for
+        every `UnifyFaces=True` call in this package.
+
+        **Everything below is the now-superseded investigation history,
+        kept for the record.**
 
         unify_edges=True is a confirmed native-crash source under this
         engine (access violation, not a catchable Python exception -- no
@@ -1196,8 +1216,8 @@ class GSolid:
         Disabling unify_edges here (2026-08-23) was reverted the next
         day (2026-08-24), matching fix()'s own reversal -- see its
         docstring for the full account. unify_edges=True is restored
-        unconditionally; ConeSphere.stp is accepted as a known,
-        unresolved crash/hang under this engine.
+        unconditionally, now genuinely safely (see the fix above, not
+        merely "despite the crash risk").
 
         A second, distinct failure mode of the same underlying fragility
         -- unify.Build() outright raising a native OCCT StdFail_NotDone
@@ -1255,10 +1275,8 @@ class GSolid:
         native = source_native
         original_volume = _volume_props(native).Mass()
         copy = BRepBuilderAPI_Copy(native).Shape()
-        unify = ShapeUpgrade_UnifySameDomain(copy, True, True, True)
         try:
-            unify.Build()
-            refined = unify.Shape()
+            refined = _unify_same_domain_safe(copy, True, True, True)
             refined_volume = _volume_props(refined).Mass()
         except RuntimeError:
             if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:

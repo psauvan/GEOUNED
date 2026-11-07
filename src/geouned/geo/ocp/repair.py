@@ -54,7 +54,6 @@ from OCP.TColStd import TColStd_HArray1OfReal
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.ShapeBuild import ShapeBuild_ReShape
 from OCP.ShapeFix import ShapeFix_Face, ShapeFix_Shape, ShapeFix_Solid
-from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.STEPControl import (
     STEPControl_AsIs,
     STEPControl_Reader,
@@ -104,6 +103,7 @@ from ..constants import (
 )
 from ..io_utils import suppress_native_stdout
 from ..surface_geometry import is_same_plane_surface
+from ._native_utils import _unify_same_domain_safe
 from .topology import GEdge, GFace, GPlane, GSolid, Gclassify_surface
 from .boolean import _exploded_solids
 from ._native_utils import _volume_props
@@ -581,10 +581,7 @@ def Gsliver_heal(solid: "GSolid", tolerances) -> "GSolid | None":
         fixer = ShapeFix_Shape(built_solid)
         fixer.SetPrecision(OCCT_FIX_TOLERANCE)
         fixer.Perform()
-        unify = ShapeUpgrade_UnifySameDomain(fixer.Shape(), UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
-        unify.SetLinearTolerance(OCCT_FIX_TOLERANCE)
-        unify.Build()
-        healed = unify.Shape()
+        healed = _unify_same_domain_safe(fixer.Shape(), True, True, True, linear_tolerance=OCCT_FIX_TOLERANCE)
         # ShapeUpgrade_UnifySameDomain (and, more rarely, ShapeFix_Shape)
         # can degrade a genuine TopoDS_Solid to a bare TopoDS_Shell/
         # Compound that stays BRepCheck-valid (closed) but is never
@@ -1817,6 +1814,30 @@ def Gtrim_overlapping_coplanar_faces(solid: "GSolid") -> "GSolid | None":
     return result
 
 
+def _scaled_min_face_width(tolerances, volume: float) -> float:
+    """`tolerances.min_face_width`, scaled down for a small solid via
+    `Tolerances.scaled()` when available -- duck-typed via `getattr`
+    (matching `surface_geometry.py`'s own `getattr(tolerances,
+    "relativeTol", False)` convention), so this module never hard-depends
+    on anything outside `geo`: `.scaled()` only exists on GEOUNED-level
+    `Tolerances`, not the base `GeoTolerances`. Falls back to the bare,
+    unscaled value when `tolerances` has no `.scaled` method -- never
+    raises.
+
+    Added 2026-11-07 (branch `unified_healing`) once `check_solid_defects`
+    gained a `find_sliver_faces` check (a per-face `CharacteristicWidth`
+    test with no short-edge prerequisite): confirmed live,
+    `Reversed_Cyl_Cones/clamp.stp`, that the bare `min_face_width`
+    wrongly flags this solid's own 2 real, legitimate corner-forming
+    planes (`CharacteristicWidth=0.0811mm`, between the bare default
+    `0.1` and this solid's own correctly-scaled `0.068`, Volume=314.6mm^3)
+    -- see `check_solid_defects`'s own docstring for the full story."""
+    scaled = getattr(tolerances, "scaled", None)
+    if scaled is None:
+        return tolerances.min_face_width
+    return scaled(volume).min_face_width
+
+
 def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     """Load-time CAD-defect check + repair cascade -- `GSolid` in,
     `GSolid` out (2026-08-28, per direct user request: this is
@@ -1863,7 +1884,7 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     (no native-kernel ambiguity like `Gsliver_heal`'s near-pair search),
     and -- being a plain re-trim, never a sew-driven collapse -- has no
     interaction with the other 3 repairs' own defect classes."""
-    defects = check_solid_defects(solid, tolerances.sliver_edge_rel_tol, tolerances.min_face_width)
+    defects = check_solid_defects(solid, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, solid.Volume))
     if not defects:
         return solid, True
 
@@ -1882,7 +1903,7 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     degenerate_faces = find_short_edges(solid, tolerances.sliver_edge_rel_tol)
     if degenerate_faces:
         healed = Gdefeature(solid, degenerate_faces, tolerances.sliver_edge_rel_tol)
-        if healed is not None and not check_solid_defects(healed, tolerances.sliver_edge_rel_tol, tolerances.min_face_width):
+        if healed is not None and not check_solid_defects(healed, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, healed.Volume)):
             return healed, True
 
     return solid, False

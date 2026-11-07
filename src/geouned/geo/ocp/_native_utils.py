@@ -12,10 +12,12 @@ import OCP
 
 from OCP.Bnd import Bnd_Box
 from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
+from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Sphere, GeomAbs_Torus
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from OCP.GProp import GProp_GProps
 from OCP.gp import (
@@ -26,8 +28,10 @@ from OCP.gp import (
 )
 from OCP.ShapeFix import ShapeFix_Shape
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
-from OCP.TopAbs import TopAbs_SOLID
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
+from OCP.TopoDS import TopoDS
+from ..constants import NUMERIC_TOL, POINT_POINT_TOL
 from ..vector_geometry import (
     GBoundBox,
     GMatrix,
@@ -181,22 +185,192 @@ def _bnd_box(shape) -> GBoundBox:
     return GBoundBox(xmin, ymin, zmin, xmax, ymax, zmax)
 
 
+def _degenerate_pole_surface_signature(face):
+    """`(kind, *params)` for `face`'s own analytic surface if it is a
+    sphere/cone/torus (the 3 types that can carry a native OCCT
+    *degenerate* edge -- a pole/apex, see `find_degenerate_plane_faces`'s
+    own docstring for why a plane never has one), else `None`. Pure
+    native OCCT/OCP (`BRepAdaptor_Surface`/`gp_Sphere`/`gp_Cone`/
+    `gp_Torus`), no `GSolid`/`GFace` dependency -- this helper must run
+    on a bare native shape before any `GSolid` wrapper can exist (this
+    module's own `_native_fix` is called from `Gload_and_process_step`
+    before `GSolid.__init__` ever runs)."""
+    adaptor = BRepAdaptor_Surface(face, True)
+    kind = adaptor.GetType()
+    if kind == GeomAbs_Sphere:
+        s = adaptor.Sphere()
+        return ("sphere", s.Location(), s.Radius())
+    if kind == GeomAbs_Cone:
+        c = adaptor.Cone()
+        return ("cone", c.Apex(), c.Position().Direction(), c.SemiAngle())
+    if kind == GeomAbs_Torus:
+        t = adaptor.Torus()
+        return ("torus", t.Location(), t.Position().Direction(), t.MajorRadius(), t.MinorRadius())
+    return None
+
+
+def _same_degenerate_pole_surface(sig_a, sig_b) -> bool:
+    """Loose, intrinsic-tolerance equality between two
+    `_degenerate_pole_surface_signature` results -- deliberately generous
+    (a false positive here only costs a little lost simplification, via
+    `KeepShape` forbidding a merge that would have been safe anyway; a
+    false negative risks the real, confirmed crash this whole mechanism
+    exists to avoid), so plain `POINT_POINT_TOL`/`NUMERIC_TOL` suffice --
+    no need for the full per-surface `Tolerances` machinery
+    `geo.surface_geometry.is_same_sphere_surface`/`is_same_cone_surface`/
+    `is_same_torus_surface` use, which needs an already-built `GFace`
+    this module's own callers don't have yet."""
+    if sig_a is None or sig_b is None or sig_a[0] != sig_b[0]:
+        return False
+    kind = sig_a[0]
+    if kind == "sphere":
+        _, center_a, radius_a = sig_a
+        _, center_b, radius_b = sig_b
+        return center_a.Distance(center_b) < POINT_POINT_TOL and abs(radius_a - radius_b) < POINT_POINT_TOL
+    if kind == "cone":
+        _, apex_a, axis_a, angle_a = sig_a
+        _, apex_b, axis_b, angle_b = sig_b
+        return (
+            apex_a.Distance(apex_b) < POINT_POINT_TOL
+            and abs(abs(axis_a.Dot(axis_b)) - 1.0) < NUMERIC_TOL
+            and abs(angle_a - angle_b) < NUMERIC_TOL
+        )
+    # torus
+    _, center_a, axis_a, major_a, minor_a = sig_a
+    _, center_b, axis_b, major_b, minor_b = sig_b
+    return (
+        center_a.Distance(center_b) < POINT_POINT_TOL
+        and abs(abs(axis_a.Dot(axis_b)) - 1.0) < NUMERIC_TOL
+        and abs(major_a - major_b) < POINT_POINT_TOL
+        and abs(minor_a - minor_b) < POINT_POINT_TOL
+    )
+
+
+def _has_degenerate_edge(face) -> bool:
+    eexp = TopExp_Explorer(face, TopAbs_EDGE)
+    while eexp.More():
+        if BRep_Tool.Degenerated_s(TopoDS.Edge(eexp.Current())):
+            return True
+        eexp.Next()
+    return False
+
+
+def _degenerate_pole_keep_edges(shape) -> list:
+    """Every native edge that must be passed to
+    `ShapeUpgrade_UnifySameDomain.KeepShape(...)` before `Build()`, to
+    avoid a confirmed native access-violation crash in OCCT 7.9.3's own
+    `UnifyFaces()` internals (`Mixed/ConeSphere.stp`, 2026-11-07,
+    reproduced identically under both `occ` and `ocp`): merging a face
+    with NO degenerate edge into an ADJACENT face on the SAME analytic
+    sphere/cone/torus surface that DOES carry one (a pole/apex)
+    reliably crashes -- confirmed by direct bisection down to a minimal
+    2-face reproducer (`ConeSphere.stp`'s own face#1, a full sphere
+    wedge with no degenerate edge, merging into face#4/face#5, each
+    carrying one). A pair where BOTH or NEITHER face has a degenerate
+    edge merges safely (confirmed: the same file's face#2/face#3 pair,
+    both degenerate, and face#4/face#5 pair, both degenerate, each
+    merge without incident) and is never protected here -- so this
+    still lets `UnifyFaces=True` fully simplify everything that IS safe
+    to merge, rather than disabling it for the whole shape.
+
+    `KeepShape` on an edge "forbids merging of connected faces" per its
+    own documented contract -- passing the pair's own SHARED edge is
+    exactly the surgical exclusion needed, confirmed live to let the
+    rest of the shape's own safe merges (e.g. that same face#2/face#3
+    and face#4/face#5 pair) proceed normally.
+
+    "Same surface" is checked loosely (`_same_degenerate_pole_surface`,
+    plain intrinsic tolerances) -- a false positive here only costs a
+    little unnecessary protection (safe), never risks missing a real
+    one. No `GSolid`/`GFace` needed (see `_degenerate_pole_surface_
+    signature`'s own docstring); works directly on a bare `TopoDS_Shape`
+    via `TopExp_Explorer`, so this can run before `_native_fix` builds
+    anything, or be reused by any other `ShapeUpgrade_UnifySameDomain`
+    call site in this package (`repair.py`'s own `Gsliver_heal`,
+    `GSolid.refine()` in `topology.py`)."""
+    faces = []
+    fexp = TopExp_Explorer(shape, TopAbs_FACE)
+    while fexp.More():
+        faces.append(TopoDS.Face(fexp.Current()))
+        fexp.Next()
+
+    signatures = [_degenerate_pole_surface_signature(f) for f in faces]
+    degenerate_flags = [_has_degenerate_edge(f) for f in faces]
+
+    keep_edges = []
+    for i in range(len(faces)):
+        if signatures[i] is None:
+            continue
+        for j in range(i + 1, len(faces)):
+            if signatures[j] is None or degenerate_flags[i] == degenerate_flags[j]:
+                continue
+            if not _same_degenerate_pole_surface(signatures[i], signatures[j]):
+                continue
+            eexp_i = TopExp_Explorer(faces[i], TopAbs_EDGE)
+            edges_i = []
+            while eexp_i.More():
+                edges_i.append(TopoDS.Edge(eexp_i.Current()))
+                eexp_i.Next()
+            eexp_j = TopExp_Explorer(faces[j], TopAbs_EDGE)
+            while eexp_j.More():
+                edge_j = TopoDS.Edge(eexp_j.Current())
+                if any(edge_j.IsSame(e) for e in edges_i):
+                    keep_edges.append(edge_j)
+                eexp_j.Next()
+    return keep_edges
+
+
+def _unify_same_domain_safe(
+    shape,
+    unify_edges: bool,
+    unify_faces: bool,
+    concat_bsplines: bool,
+    linear_tolerance: float | None = None,
+):
+    """`ShapeUpgrade_UnifySameDomain(shape, unify_edges, unify_faces,
+    concat_bsplines)`, pre-protected via `_degenerate_pole_keep_edges`
+    against the confirmed `UnifyFaces=True` crash (see that function's
+    own docstring) -- the single place every `ShapeUpgrade_
+    UnifySameDomain` call in this package should go through, so a
+    "valid, healed solid" means the same thing regardless of which call
+    site produced it, instead of each one carrying its own ad hoc
+    crash-avoidance (or none at all). `linear_tolerance`, when given,
+    is set via `SetLinearTolerance` before `Build()` -- the one real
+    per-call-site customization the 3 existing call sites need (`repair.
+    py::Gsliver_heal` sets it to `OCCT_FIX_TOLERANCE`; the other 2 keep
+    the native default). Returns the resulting `TopoDS_Shape`
+    (``.Shape()`` already called) -- never raises on its own account;
+    the native `Build()` call itself can still raise or (in principle,
+    for an unrelated signature) crash, exactly as before."""
+    unify = ShapeUpgrade_UnifySameDomain(shape, unify_edges, unify_faces, concat_bsplines)
+    if linear_tolerance is not None:
+        unify.SetLinearTolerance(linear_tolerance)
+    if unify_faces:
+        for edge in _degenerate_pole_keep_edges(shape):
+            unify.KeepShape(edge)
+    unify.Build()
+    return unify.Shape()
+
+
 def _native_fix(native, tolerance: float):
     """Native-in/native-out extraction of `GSolid.fix()`'s own body --
     see that method's docstring for the full, hard-won history of why
     every step here is exactly what it is (UnifyEdges-only-when-already-
-    valid, UnifyFaces' own confirmed native-crash risk kept on
-    unconditionally per explicit user decision, the fallback repair
-    running on the original `native` rather than UnifyEdges' own
-    possibly-corrupted output). `GSolid.fix()` itself is a thin wrapper
-    around this (`GSolid(_native_fix(self.__native__, tolerance))`) --
-    single source of this fragile logic, not two copies to keep in sync,
-    while still letting `Gload_and_process_step` call it directly on the
-    raw loaded shape, before that loop builds its own `GSolid`."""
+    valid, the fallback repair running on the original `native` rather
+    than UnifyEdges' own possibly-corrupted output). `GSolid.fix()`
+    itself is a thin wrapper around this (`GSolid(_native_fix(self.
+    __native__, tolerance))`) -- single source of this fragile logic,
+    not two copies to keep in sync, while still letting
+    `Gload_and_process_step` call it directly on the raw loaded shape,
+    before that loop builds its own `GSolid`.
+
+    `UnifyFaces=True`'s own confirmed native-crash risk (`Mixed/
+    ConeSphere.stp`) is no longer just "kept on unconditionally per
+    explicit user decision" -- `_unify_same_domain_safe` resolves the
+    real mechanism directly (see its own docstring), so this call is
+    both safe AND still gets the full simplification benefit."""
     if BRepCheck_Analyzer(native).IsValid():
-        unify = ShapeUpgrade_UnifySameDomain(native, UnifyEdges=True, UnifyFaces=True, ConcatBSplines=True)
-        unify.Build()
-        unified = unify.Shape()
+        unified = _unify_same_domain_safe(native, True, True, True)
         # ShapeUpgrade_UnifySameDomain can degrade a genuine TopoDS_Solid
         # to a bare TopoDS_Shell that stays BRepCheck-valid (closed) but
         # is never re-wrapped as a solid -- the same class of bug

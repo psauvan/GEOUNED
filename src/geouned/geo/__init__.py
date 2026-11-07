@@ -139,6 +139,7 @@ from .solid_ops import (
     Gfuse_solids,
     SplitBase,
     SplitSolid,
+    ensure_healed,
     filterparts,
     getPart,
     is_sliver_solid,

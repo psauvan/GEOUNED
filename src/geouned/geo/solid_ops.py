@@ -76,6 +76,63 @@ class GCompound:
         Gmake_compound(self.Solids).export_step(filename)
 
 
+def ensure_healed(solid: "GSolid", tolerances) -> "tuple[GSolid, bool, bool]":
+    """The ONE entry point for "is this `GSolid` safe to process" --
+    see `docs/planning/solid_healing_compilation.md` §6b/§6c for the
+    full invariant-contract framing this formalizes. A thin,
+    engine-agnostic dispatch to `Gcheck_and_repair` (already
+    engine-dispatched by `geo/__init__.py`), not a reimplementation:
+    the "full" tier this project's own `ensure_healed` design discussion
+    describes IS `check_solid_defects` + `Gcheck_and_repair`'s repair
+    cascade, called through exactly as-is.
+
+    Returns `(result, ok, changed)`:
+      - `result`: `solid` itself when nothing needed fixing (or nothing
+        could fix it); a NEW `GSolid` when a repair actually ran and
+        succeeded. Never a defensive copy made "just in case" -- plain
+        identity (`result is solid`) is what `changed` reports.
+      - `ok`: `False` only when real defects were found and nothing in
+        the repair cascade resolved them (`Gcheck_and_repair`'s own
+        second return value, unchanged) -- the caller is holding a
+        `result` that still carries the defect.
+      - `changed`: `True` when `result` is a genuinely different object
+        than `solid` -- the caller must not reuse any face-index
+        bookkeeping (`omitFaces`, a cached `GFace` reference, ...)
+        computed against the original `solid`, the same "rebuild
+        candidates against the fixed geometry, with a fresh omitfaces"
+        discipline `generic_split` already applies after its own
+        `.fix()` calls.
+
+    **Deliberately only one tier, for now** -- `docs/planning/
+    solid_healing_compilation.md` §6b's own two-tier design (a cheap
+    `is_valid()` pre-check before every single `Gsplit` candidate
+    attempt, this full battery only on first entry / pre-check
+    failure) is NOT wired in here: nothing calls this function from
+    inside `generic_split`'s own hot recursive loop, which already
+    has its own, separately-verified, heavily-tuned cheap-check-and-
+    retry mechanism (tolerance reset + `.fix()` before every
+    candidate) -- per direct user decision, 2026-11-07, that mechanism
+    stays as-is, not replaced, absent a demonstrated bug. If a future
+    caller genuinely needs the cheap tier, add it as an explicit
+    `scope` parameter then, against a real measured need -- not
+    speculatively now.
+
+    Real call sites, per direct user design (2026-11-07): right before
+    a solid is PROCESSED to reproduce its own boolean expression
+    (`simple_solid_definition`) or walked for void-generation point
+    classification -- in both cases "healed" means "can be read
+    correctly for this one purpose", not "is now the one canonical,
+    permanently-propagated geometry for every consumer" (the exported
+    `CADSolid`/STEP output is deliberately NOT re-pointed at `result`
+    by this function -- a caller that also needs that stays responsible
+    for it, by design, not as an oversight)."""
+    from . import Gcheck_and_repair
+
+    result, ok = Gcheck_and_repair(solid, tolerances)
+    changed = result is not solid
+    return result, ok, changed
+
+
 def Gfuse_solids(parts, tolerances=None):
     """Boolean-union `parts` (a list of `GSolid`) into one `GSolid`, or
     `None` if `parts` is empty.

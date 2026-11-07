@@ -786,6 +786,361 @@ full cost on every single split attempt (hence the two-tier split).
    corpus, the same discipline already used for every tolerance change
    in this project — never merge gates "by eye".
 
+## 6e. Empirical measurement, 2026-11-07 (branch `unified_healing`) — do the
+4 missing detectors produce false positives on real, currently-clean
+load-time solids?
+
+Per the user's own explicit instruction before any code change
+("primero medir. Y antes de hacer cualquier modificacion crear una
+nueva branch 'unified healing'"), measured directly against the real
+`Solidos/test_models` corpus (`C:\Users\Patrick\Work\Taller\
+GEOUNED_workshop\Solidos\test_models`, excluding `Big_*`) before writing
+any production code, on a dedicated `unified_healing` branch.
+
+**Method**: a throwaway probe script (`ocpenv`, scratchpad, not
+committed) ran `Gload_and_process_step` on every STEP file (172 unique
+files found, 362 raw glob hits before de-duplicating a Windows
+case-insensitive double-glob artifact; 1 subprocess per file to isolate
+native crashes), and for every resulting `GSolid` recorded both the
+CURRENT `check_solid_defects` result and the 4 detectors that function
+does *not* call today (`find_sliver_faces`, `find_split_ring_faces`,
+`find_degenerate_plane_faces`, `count_split_ring_pairs`).
+
+**Headline numbers**: 232 real solids loaded (1 file, `Mixed/
+ConeSphere.stp`, crashed exactly as already documented and accepted —
+`exit=0xC0000005`, the known `UnifyFaces` access violation; 3 files
+already load as `corrupted` today, unrelated to this check). **0** of
+the 232 are flagged by today's `check_solid_defects` at all (at this
+load-time, pre-decomposition stage, in this corpus, the gate never
+fires — consistent with the project's own repeated finding that the
+interesting defects mostly appear mid-decomposition on *fragments*, not
+on a file's original raw solids; see the limitation note at the end).
+Of those 232 "clean today" solids, **8 (3.45%, across 6 files)** would
+trigger at least one of the 4 missing detectors if it were added
+naively.
+
+**Digging into those 8 — confirmed false positives, not just
+theoretical risk:**
+
+- **`find_sliver_faces` — one confirmed false positive.**
+  `Reversed_Cyl_Cones/clamp.stp` solid 0: flags the same 4 corner planes
+  (`CharacteristicWidth=0.0811`) that this exact file's own entry
+  earlier in this document (the `add_reversedCC` / `generic_split`
+  fixes) already states, in the user's own words, are real: *"estas
+  caras son reales no son sliver. Es una parte de las dos plano que
+  forman una esquina"*. This fixture is already fixed and verified
+  (d1suned tally 0.99275, SD4 exact). Adding `find_sliver_faces` to a
+  discard/repair gate unfiltered would risk "fixing" (removing) a face
+  this project already proved must stay — reproducing the exact defect
+  class it took real effort to understand.
+
+- **`count_split_ring_pairs` — several distinct false-positive
+  patterns, confirming its own documented caveat
+  ("not a standalone defect flag", §3) empirically rather than just by
+  design intent.** Re-derived every flagged pair by hand (face type,
+  `CharacteristicWidth`, radii, gap) for all 7 hits:
+  - `Mixed/sleeve.stp` (13 pairs, face is a `GCylinder` with
+    `CharacteristicWidth=153` — nowhere near sliver-scale) and
+    `Mixed/ring.stp` (most of its 28 pairs) and `Mixed/
+    base_all8_to_cylinder.stp` (5 pairs, `CharacteristicWidth=21`):
+    gaps of **1e-13 to 1e-9 mm** — pure floating-point noise from a
+    periodic surface's own duplicated seam edges, not a riser defect at
+    all.
+  - `esfera/Barrel_bottom.stp` (the *historical motivating fixture* for
+    `find_split_ring_faces`/`Gcollapse_split_rings` — already repaired
+    in this corpus copy, now only 5 faces): 12 pairs, gap≈0.0223mm,
+    between a plane (`CharacteristicWidth=103`) and a sphere
+    (`CharacteristicWidth=3100`) — ordinary, non-sliver geometry; a
+    small real radius difference (1880.01 vs 1879.6mm), not a
+    duplicated trim.
+  - `Torus/example.stp` (3 solids): gaps of ~5mm on `CharacteristicWidth
+    ~9mm` faces — small enough to possibly be a genuine residual
+    artifact on this already-known-fragile fixture, but would need its
+    own dedicated investigation, not a blind count-based gate.
+
+- **`find_split_ring_faces` and `find_degenerate_plane_faces`: 0 hits,
+  0 false positives** across all 232 solids — look safe to add to an
+  exhaustive *diagnostic* (not yet the discard gate) as-is, at least at
+  this load-time stage.
+
+**Conclusion — directly validates §6d's own caution, with real
+numbers**: a naive "throw every detector into one function, call it
+everywhere" would have shipped at least 2 concrete, confirmed
+regressions (clamp.stp's real corner planes misread as slivers;
+Barrel_bottom.stp's own already-fixed geometry re-flagged by a count
+that never should have been read as a boolean "defect present").
+`count_split_ring_pairs` must stay a *before/after comparator* for a
+specific repair, never a standalone yes/no signal. `find_sliver_faces`
+needs either a refinement (e.g. excluding small-but-load-bearing
+junction planes somehow) or must never be wired into anything that can
+discard/remove a face without a second, independent confirmation that
+removing it is geometrically safe — which is exactly what `Gdefeature`
+already tries to be, separately from detection.
+
+**Known limitation of this measurement, important for the next step**:
+this only covers the *load-time* layer (§1's layer 1) — raw solids as
+read from a file, before `decompose_solids()` ever runs. Per §5's own
+case study, the genuinely interesting defects (redundant surface
+fragments, extra slivers) mostly show up on *intermediate fragments*
+produced mid-recursion by `generic_split`, which this probe never
+touches. The 0% baseline hit rate for the existing gate at this stage,
+and the low (but non-zero, and partly false-positive) hit rate for the
+4 new detectors, should not be read as "the whole corpus is this safe"
+— only as "the load-time layer specifically is this safe, for these 4
+detectors". A second measurement pass inside `generic_split`'s own
+recursion (instrumenting it to run the same 4 detectors on every
+fragment it produces, before any repair) is the natural next
+measurement, not yet done.
+
+### 6e.1 Follow-up, same session: are the 2 reported false positives real bugs?
+
+Verified both of §6e's flagged issues directly before touching any code,
+per the user's own explicit instruction to investigate before fixing.
+
+**`find_sliver_faces` on `clamp.stp` — confirmed NOT a detector bug, a
+tolerance-usage mistake in the probe.** `solid.Volume = 314.646mm^3` ->
+`tolerances.scaled(volume).min_face_width = 0.068015` (vs. the bare,
+unscaled `0.1` the probe used). `find_sliver_faces(solid, 0.1)` -> 4
+hits; `find_sliver_faces(solid, 0.068015)` -> **0 hits**. Exactly
+matches this fixture's own already-documented numbers elsewhere in this
+file (`generic_split`'s own 2026-10-05/06 entry: "CharacteristicWidth
+=0.081115... sitting strictly between the default min_face_width=0.1
+... and this solid's own scaled 0.068015"). **Lesson for the unified
+design**: any width-based detector MUST be called with
+`tolerances.scaled(solid.Volume)`, never the bare field — this is not
+optional polish, it's the difference between a real false positive and
+none at all.
+
+**`count_split_ring_pairs` — one confirmed, fixable, generalizable bug;
+one confirmed real (not false-positive) finding on closer inspection.**
+
+- **Pure floating-point noise (fixable)**: `sleeve.stp` (13 pairs) and
+  `base_all8_to_cylinder.stp` (5 pairs) have gaps of `1e-13` to `2e-11`
+  mm — literal duplicate-edge-representation noise. Raising the gap's
+  lower bound from exactly `0.0` to `POINT_POINT_TOL` (1e-5mm) drops
+  both to **0**, with zero effect on every other file's real gaps
+  (which sit 3-6 orders of magnitude above that floor).
+
+- **`ring.stp` — a real, generalizable, fixable false positive, root
+  cause identified.** After the floor fix, 28 pairs collapse to 4,
+  all on face#0 (a plain `GCylinder`, `CharacteristicWidth=9.15mm` --
+  nowhere near sliver-scale), gap=0.27mm. Dumped the face's full edge
+  list: it's a genuine, intentional notched/grooved real feature (one
+  full 540mm-circumference circle at axial position +0.135mm, several
+  partial arcs at -0.135mm and -5.135mm, connected by perfectly
+  ordinary **5mm**-long straight edges -- the slot walls). `find_split_
+  ring_faces` (the sibling detector) already requires the circle pair
+  be bridged by a *pathologically short* connecting edge
+  (`max(diag*rel_tol, MIN_SLIVER_EDGE_LENGTH)` = 0.028mm for this
+  solid) before calling it a defect; `count_split_ring_pairs` has no
+  such guard at all -- it only checks circle geometry (coaxial, same
+  radius, close centers), so any real, intentional small groove/step
+  whose two ends happen to share a radius trips it. **The fix**: add
+  the same "bridged by a genuinely short edge" requirement
+  `count_split_ring_pairs` is missing, matching its own sibling's
+  already-validated convention.
+
+- **`esfera/Barrel_bottom.stp` — re-examined, confirmed a GENUINE
+  finding, not a false positive.** Dumped all 5 faces' full edge lists:
+  face#1 (the plane, `CharacteristicWidth=103`) and face#4 (the sphere,
+  `CharacteristicWidth=3100`) each carry 4 `GLine` edges of length
+  **exactly 0.0362817mm** -- genuinely pathologically short (threshold
+  for this solid is 0.56mm) -- directly bridging the near-duplicate
+  `R=1880.011859`/`R=1880.0`/`R=1879.6` circles. This is the real
+  "split boundary ring" signature (a short connector between
+  near-coincident circles), just not currently flagged by
+  `check_solid_defects` because of the deliberate `L4_pipes.stp` rule
+  (2026-08-29): *"a short edge whose faces are all otherwise normal is
+  NOT a defect"* -- the host faces here (103mm/3100mm wide) are not
+  sliver-scale, so the composite "degenerate/sliver geometry" reason
+  correctly stays silent. In other words: this fixture, already
+  "repaired" and already converting correctly (d1suned tally 0.9997, 0
+  lost particles, per its own earlier entry in this file), still
+  carries a **genuine, if currently harmless, microscopic residual**
+  of the original defect (2 small `CharacteristicWidth=0.41mm` planes
+  bridging the radius change, not the original 6 big risers, but not
+  zero either). The proposed "bridged by a short edge" fix above would
+  **NOT** suppress this one (the 0.036mm edges genuinely qualify as
+  short) -- confirming the fix is a real improvement, not a blanket
+  that happens to hide everything.
+
+- **`Torus/example.stp` (solids 5/7/8) -- resolved, same session,
+  same method.** Dumped all 3 solids' full face/edge lists. The
+  circle pairs are bridged by `GBSpline` edges of 5-38mm -- a torus's
+  own real meridian curve between two slightly-different-radius
+  latitude circles (solid#5, face#3) or a cylinder-to-torus transition
+  (solid#7/#8) -- comfortably above every one of these solids' own
+  "pathologically short" thresholds (0.55-0.60mm). Confirmed a false
+  positive, same root cause and same fix as `ring.stp`.
+
+**Net effect of the proposed `count_split_ring_pairs` fix (floor +
+short-bridging-edge guard), as a pure diagnostic reading**: eliminates
+`sleeve.stp`/`base_all8_to_cylinder.stp` (noise), `ring.stp` and all 3
+`Torus/example.stp` solids (legitimate geometry) entirely; correctly
+KEEPS `Barrel_bottom.stp`'s genuine residual finding. **This conclusion
+held up only as a standalone diagnostic -- see the follow-up
+immediately below, where applying the exact same fix to the function
+`Gcollapse_split_rings` actually calls broke that real repair's own
+gate on this exact fixture.**
+
+### 6e.2 Follow-up, same session: the fix was applied, verified against
+unit tests, then found to break the REAL repair gate on
+`Barrel_bottom.stp` itself -- reverted
+
+Per the user's explicit instruction ("sí termina" -- finish the
+`example.stp` investigation first), §6e.1's open item was closed (see
+above), and the fix (gap floor `0.0` -> `POINT_POINT_TOL`, plus the
+"host face must carry a genuinely short edge" guard) was then applied
+to `geo/solid_defects.py::count_split_ring_pairs`. `tests/geo` +
+`test_cadtocsg.py` passed clean on `ocp` (260 passed, 7 skipped, zero
+regressions) -- but per this project's own standing lesson ("a unit
+suite passing is not the same as verifying against the real corpus/
+real use", restated explicitly in §6d point 4), a direct re-run of the
+real `Gload_and_process_step` pipeline on `Barrel_bottom.stp` was ALSO
+done, not just the unit suite -- and it failed: the file no longer
+loads at all (`corrupted_indices=[0]`, `gsolids=[None]`).
+
+**Root cause, traced by temporarily instrumenting `Gcollapse_split_rings`
+itself (not guessed)**: the fix's OWN standalone-diagnostic reading
+(§6e.1, "correctly KEEPS Barrel_bottom.stp's genuine residual finding")
+was true in isolation but irrelevant to how the function is actually
+*used* -- `Gcollapse_split_rings` calls it twice, as a strict
+`pairs_after >= pairs_before -> reject` gate, not as a one-shot reading.
+Direct comparison, real numbers, both logics, on the real raw (11-face)
+solid and the real repaired (5-face) result:
+
+| | OLD (gap floor 0.0, no guard) | NEW (floor+guard) |
+|---|---|---|
+| RAW (11 faces), `pairs_before` | **18** (12 real `0.0223mm`-gap pairs on the 6 risers + the sphere, **+ 6 pure noise pairs at `gap=4e-17` on the plane face**) | **12** (the noise pairs correctly dropped) |
+| REPAIRED (5 faces), `pairs_after` | **12** (same 12 real pairs, risers now gone) | **12** (same 12 real pairs -- *and the plane face's own 6 pairs, which were noise-level `4e-17` on the RAW solid, are now a real, non-noise `0.0223mm` gap*, because the resewing operation itself changed how that one discrepancy is represented) |
+| `pairs_after < pairs_before`? | `12 < 18` -> **True, accepted** | `12 < 12` -> **False, rejected** |
+
+The key, non-obvious finding: the SAME underlying geometric
+discrepancy (face#1's own `R=1880.011859` vs `R=1879.6`/`R=1880.0`
+boundary mismatch) is numerically **invisible as noise** (`4e-17`) in
+the RAW, pre-repair solid, and becomes **visible as a real small gap**
+(`0.0223mm`) only *after* `Gcollapse_split_rings`' own resewing step
+changes its representation -- it is not that the defect got worse, it's
+that the SAME fact got re-expressed differently by the repair itself.
+A single shared numeric floor cannot consistently classify both
+snapshots of the same fact as "noise" or "real" at once, and the
+before/after `<` comparison this repair's own accept-gate depends on
+breaks exactly because of that inconsistency. This is a confirmed,
+traced, understood mechanism, not a mystery -- see the updated
+docstring in `count_split_ring_pairs` itself for the full account.
+
+**Action taken: fully reverted.** `count_split_ring_pairs` is back to
+its original form (gap floor `0.0`, no short-edge guard) -- re-verified
+`Barrel_bottom.stp` loads correctly again (`check_solid_defects` clean,
+5-face result, matching the original, already-documented state) and
+the full `tests/geo` + `test_cadtocsg.py` suite is green (260 passed, 7
+skipped) on the unchanged code. The function's own docstring now
+records this whole attempt-and-revert, including the exact mechanism,
+as a permanent warning against re-attempting the same fix the same way.
+
+**The real lesson for the redesign, stated precisely**: `count_split_ring_pairs`'s
+real role (a before/after comparator for ONE specific repair call) and
+a hypothetical general-purpose "is there a split-ring-like pattern
+here" diagnostic are **not the same function**, even though they look
+identical in isolation on 6 of 7 test cases. A safe path forward, if
+this is revisited, is a genuinely SEPARATE function for the diagnostic
+reading (never wired into `Gcollapse_split_rings`' own gate), verified
+independently -- not a shared implementation with an added guard. More
+broadly, this is a second, concrete, costly-in-investigation-time
+confirmation of §6d's own point 4 ("verify every merge of behavior
+against the full corpus... never merge gates by eye") and point 5
+("volume gates are individually measured, not interchangeable" --
+generalizes here to "detector logic is individually measured against
+its own real call site, not interchangeable either, even when a
+standalone reading looks clean").
+
+### 6e.3 Follow-up, same session: the other 2 "missing" detectors were
+checked against their real call site too, with a different outcome for
+each -- one wired in safely, one deliberately left out, 2026-11-07
+(branch `unified_healing`, commit pending).
+
+Continuing from §6e.1's own measurement (`find_sliver_faces`: 1 hit,
+`clamp.stp`; `find_split_ring_faces`/`find_degenerate_plane_faces`: 0
+hits each, across the whole 232-solid corpus), the same "verify against
+the real call site, not a standalone reading" discipline §6e.2 just
+re-learned the hard way was applied to these two before touching
+`check_solid_defects`:
+
+- **`find_split_ring_faces`** already has a working repair in the exact
+  cascade `check_solid_defects` gates (`Gcollapse_split_rings` calls it
+  internally) -- adding it as a named reason only widens WHEN that
+  repair gets tried (to a solid with risers but none of the 3 existing
+  reasons), with a repair step already there to catch it. Safe.
+
+- **`find_sliver_faces`**'s one real hit, `clamp.stp`, was confirmed to
+  be a tolerance-scaling artifact, not a real defect: `tolerances.
+  min_face_width` (bare, 0.1) flags its 2 real corner-forming planes
+  (`CharacteristicWidth=0.0811mm`); `tolerances.scaled(clamp_volume).
+  min_face_width` (0.068, the correctly-calibrated value for this
+  314.6mm^3 solid) does not. But tracing this to its real call site
+  found something more consequential than "this one solid is a false
+  positive": **`Gcheck_and_repair` (occ + ocp) was already passing the
+  BARE `tolerances.min_face_width` into `check_solid_defects`, at both
+  of its own call sites** -- a pre-existing gap, not something this
+  session introduced. It caused no live false positive YET only because
+  the one check that reads `min_face_width` today (`degenerate/sliver
+  geometry`) additionally requires the same face to touch a
+  pathologically short edge, which `clamp.stp`'s own narrow planes
+  don't -- `find_sliver_faces` has no such extra requirement, so wiring
+  it in without first fixing the scaling would have reintroduced
+  exactly the false positive already investigated and explained in
+  §6e.1's hypothesis 1. `Gcheck_and_repair` now scales via a new,
+  duck-typed `_scaled_min_face_width(tolerances, volume)` helper in each
+  engine's own `repair.py` (`getattr(tolerances, "scaled", None)`,
+  matching `surface_geometry.py`'s own established `getattr(tolerances,
+  "relativeTol", False)` convention for an optional, GEOUNED-only field
+  -- `geo` itself has no dependency on `geouned.Tolerances`, and this
+  degrades to the bare value if a caller ever passes a bare
+  `GeoTolerances` with no `.scaled` method). Safe, once scaled.
+
+- **`find_degenerate_plane_faces`**, by contrast, was confirmed to have
+  **no corresponding repair step anywhere in `Gcheck_and_repair`'s own
+  cascade** (`Gtrim_overlapping_coplanar_faces`/`Gcollapse_split_rings`/
+  `Gsliver_heal`/`find_short_edges`+`Gdefeature` -- none target a
+  degenerate edge on a plane face; `find_short_edges` explicitly
+  EXCLUDES edges below `DEGENERATE_EDGE_LENGTH_FLOOR`, which is exactly
+  what this detector looks for). Its own docstring already says why:
+  it was built specifically for `GSolid.refine()`'s own pre-heal gate
+  (a different code path entirely, reached during `generic_split`'s
+  recursion, not load time), where it correctly triggers a STEP
+  round-trip heal before a crash-prone native call. Wiring it into
+  `check_solid_defects` would cost nothing on today's corpus (0 hits)
+  but would silently convert any FUTURE solid that does trip it into a
+  guaranteed load-time discard (`Gcheck_and_repair` returns `(solid,
+  False)` the moment no cascade step resolves a flagged defect) --
+  trading a currently-correct, working repair path for a worse one, for
+  zero present-day benefit. **Deliberately left out of
+  `check_solid_defects`**, with the reasoning recorded in that
+  function's own docstring so it isn't re-attempted blindly later.
+
+**Result**: `check_solid_defects` gained 2 new reasons ("split boundary
+ring", "sliver face"); `count_split_ring_pairs` and
+`find_degenerate_plane_faces` stay out, each for its own
+independently-verified reason. `Gcheck_and_repair` (both engines) now
+scales `min_face_width` to the solid's own volume before calling in,
+closing the latent gap `find_sliver_faces` would otherwise have
+reopened.
+
+**Verified against the real production path** (`Gload_and_process_step`
+-> `Gcheck_and_repair`, not a standalone diagnostic reading), the whole
+`Solidos/test_models` corpus (181 unique files, excluding `Big_*`): the
+SAME 3 pre-existing load-time discards (`Decomposed/
+modelcell_cut1_v2_piece66.stp`, `Decomposed/SCDR_90_piece2.stp`,
+`Mixed/SCDR_90_hollow.stp`) and the SAME 1 pre-existing native crash
+(`Mixed/ConeSphere.stp`, `ShapeUpgrade_UnifySameDomain`'s own documented
+access violation) -- **zero new discards anywhere**. `clamp.stp` (3
+solids), `esfera/Barrel_bottom.stp`, `Mixed/sleeve.stp`, `Mixed/
+base_all8_to_cylinder.stp`, `Mixed/ring.stp`, and `Torus/example.stp`
+(12 solids) -- every fixture this whole investigation touched -- all
+load with an empty `corrupted_indices` and unchanged face counts. Full
+`tests/geo` + `test_cadtocsg.py` green on both engines (ocp: 260
+passed/7 skipped; occ: 260 passed/6 skipped), zero regressions.
+
 ## 6c. Invariant set — draft
 
 **A `GSolid` must satisfy, at every one of the boundaries in §6b above
@@ -843,6 +1198,256 @@ C. **Routine point-sampling verification as a pipeline step, not just
    final (today this is only ever reached for, ad hoc, after a bug is
    already suspected — see §5's own methodology, which should become
    routine instrumentation rather than a one-off investigation tool).
+
+## 6f. `ensure_healed` built and wired in -- a first real step of the
+unification, 2026-11-07, branch `unified_healing`
+
+Picks up directly from §6e's own measurement work and §6d's "concrete
+remaining work" list. Two user corrections shaped the final shape of
+this step, both worth keeping verbatim for the reasoning:
+
+- After a first proposal to heal `meta_obj.Solids` upstream of both the
+  cell definition AND the exported CAD (in `core.py::_decompose_target`,
+  before `set_cad_solid()`), the user pushed back on the premise, not
+  just the placement: *"no podemos asumir solidos con 'validez
+  distinta' segun la parte donde se usa... tenemos que ir sobre una
+  base que siempre tratar con el mismo solido 'valido' en todos los
+  casos. Para esto primero vamos a volver a investigar el crash de
+  ConeSphere.stp"* -- i.e. fix the thing that made native healing
+  genuinely unsafe in some contexts FIRST, before deciding how broadly
+  to apply it. That investigation (see CLAUDE.md's own `ConeSphere.stp`
+  entry) found and fixed the real root cause (`ShapeUpgrade_
+  UnifySameDomain`'s `KeepShape`, never tried before), not a workaround
+  -- closing the strongest argument against applying healing more
+  broadly.
+- With that resolved, the user revised the placement decision itself:
+  *"Antes de simple_solid_definition (y tambien parra la generacion de
+  void) es suficiente que el solid se pueda procesar correctamente para
+  repoducir la expresion booleana"* -- i.e. the bar is narrower than
+  "one canonical healed geometry propagated everywhere": each consumer
+  that needs to WALK a solid's topology to reproduce a boolean
+  expression just needs ITS OWN read of that solid to succeed. The
+  exported `CADSolid`/STEP output is a separate concern, not something
+  this step needs to re-point.
+
+**What got built**: `geo/solid_ops.py::ensure_healed(solid, tolerances)
+-> (result, ok, changed)` -- a thin, engine-agnostic dispatch to
+`Gcheck_and_repair` (itself already more complete after §6e.3's own 2
+new detectors), re-exported from `geo/__init__.py`. Deliberately only
+one tier: the cheap `is_valid()` pre-check §6b's own two-tier design
+describes for `generic_split`'s hot loop is not implemented, since
+nothing calls it there (see below).
+
+**Where it's wired, and where it deliberately ISN'T**:
+- `cell_definition.py::build_definition`'s own per-solid loop, right
+  before `simple_solid_definition` reads a piece's faces. This is the
+  ONE real call site for now, confirmed with the user directly (asked
+  explicitly whether void generation also needed its own call site,
+  given it's named in the same instruction) -- investigated first:
+  void's own real work (`VoidBox`/`get_void_complementary`) reads each
+  solid's already-built `.Definition`, never raw topology, so it
+  benefits automatically from healing done once here. The one place
+  void DOES touch raw `CADSolid` directly (`check_intersection`/
+  `piece_enclosure_split`, enclosure-containment only) was confirmed
+  out of scope for this pass.
+- `generic_split`'s own recursive `Gsplit` loop -- untouched, per
+  direct user decision earlier the same session (see §6d/§8): its
+  existing ad hoc mechanism (tolerance reset + `.fix()` before every
+  candidate) already does the job, heavily tuned, with a real
+  historical crash precedent (`SCDR_90.stp`, re-investigated the same
+  session per the user's own request and confirmed to be a DIFFERENT,
+  already-closed bug -- the `GCompound` wrap/re-extract corruption, not
+  a UnifyFaces signature at all) warning against replacing it without a
+  demonstrated need.
+
+**A real, previously-unexplained bug closed as a direct side effect,
+found while verifying the wiring against the whole corpus (not sought
+out)**: a 181-file differential (decompose + `build_solid_definition`,
+comparing each solid's own written `Definition` text) found exactly 1
+real difference anywhere in the corpus -- `Mixed/
+base_all8_to_cylinder.stp`. Traced directly: piece#20 of its own
+decomposition carries a genuine sliver face that `find_sliver_faces`
+(added to `check_solid_defects` earlier the same session, §6e.3) now
+catches and `Gsliver_heal` resolves (14 -> 10 faces, volume conserved
+to ~4e-6 relative). A real, same-NPS d1suned before/after (`git
+stash`-isolated to just this wiring) confirms it's the real cause, not
+correlation: tally `0.84856` (94.7 sigma, 1 lost particle) -> `0.99925`
+(0.5 sigma, 0 lost particles) -- matching the project's own
+already-documented `0.84323`/116.20-sigma figure for this exact,
+long-flagged "priority item for a future session" (see CLAUDE.md and
+the now-closed `project_next_session_rrc21_2026_10_30` memory). Neither
+of that memory's own 2 standing hypotheses for the cause
+(`tangent_cut_plane`'s torus-tangency mechanism; the `spline_2D`
+tolerance change) was right -- a concrete reminder that tracing beats
+guessing even when a plausible-looking "most recently touched" culprit
+is sitting right there.
+
+**Verified**: `tests/geo` + `test_cadtocsg.py` green on both engines
+after each step (ocp 260 passed/7 skipped, occ 260 passed/6 skipped);
+the 181-file corpus differential found zero OTHER differences anywhere
+-- the wiring is inert everywhere this exact defect class doesn't
+occur, and a real, independently-measured win where it does.
+
+**What this step does NOT claim**: it is not "check_solid_defects is
+now exhaustive" (§6c's own invariant set still has 3 uncovered gaps --
+malformed boundary wire, a degenerate edge with a corrupted tolerance,
+"one physical region = one connected component" -- each needing its
+own detector + its own corpus-measured false-positive check before
+being added, same discipline as `find_sliver_faces`/`find_split_ring_
+faces` this session). It's one real, measured, narrowly-scoped step,
+not the finished redesign.
+
+## 6g. Confirmed: there is still NO single integrated healing function
+-- `_raw_bop_split` keeps its own, separate, untouched cascade
+
+Asked directly by the user, same session, after seeing `Gsliver_heal`
+called from `geo/{occ,ocp}/split.py` (IDE selection on that exact line):
+*"al final no has hecho una funcion de saneamiento integrada... es en
+_raw_bop_split que se hace el saneamiento de los solidos, ¿es asi?"* --
+and, once confirmed, a direct follow-up: *"las modificaciones hechas
+ahora hacen que ahora base_all8_to_cylinder.stp traduce bien. ¿Es por
+los test sobre solidos que ahora hace dentro de _raw_bop_split que
+antes no hacias?"*
+
+**Both questions answered by reading the code directly, not by
+inference**: `git log` on `geo/{occ,ocp}/split.py` shows its last real
+commit is `4d25795`, from before this session started -- confirmed also
+absent from `git status`'s own modified-file list for the whole
+`unified_healing` branch. **`_raw_bop_split` was not touched at all this
+session.** Its own `Gsliver_heal` call (line 161 occ / equivalent ocp)
+and its own `find_sliver_faces` check earlier in the same function
+(line 138, gating whether a `BRepCheck`-valid raw BOP piece still needs
+healing) both already existed before `unified_healing` started -- this
+is `_raw_bop_split`'s own independent, long-standing, heavily-tuned
+cascade (phantom-cut separation -> non-manifold repair ->
+`Gsliver_heal` -> `Gheal_topology` round-trip), running DURING
+decomposition, on BOP-split fragments -- not the thing this session
+built or changed.
+
+**So the `base_all8_to_cylinder.stp` fix is confirmed NOT to come from
+`_raw_bop_split`.** It comes from a NEW healing pass that did not exist
+before today, running AFTER decomposition is already finished: `check_
+solid_defects` (`geo/solid_defects.py`) gained a `find_sliver_faces`
+check this session (§6e.3), and `ensure_healed` (§6f, this same day)
+wires `Gcheck_and_repair` -- which now runs that check -- into `cell_
+definition.py::build_definition`'s own per-piece loop. Piece#20 of this
+file's own decomposition passes through `_raw_bop_split` completely
+unaffected (same as every prior session), carrying its sliver face all
+the way to `m.Solids`; the fix happens one stage later, the first time
+anything calls `Gcheck_and_repair` on that already-decomposed piece at
+all.
+
+**Net picture, confirmed with the user and left as-is for now (explicit
+scope decision, not an oversight)**: `Gsliver_heal` and the other repair
+primitives in `repair.py` are genuinely SHARED kernel-level functions,
+but they are orchestrated by **two separate, independently-tuned
+cascades** that never call into each other: `_raw_bop_split`'s own (post-
+split, inside `generic_split`'s recursion) and `Gcheck_and_repair`'s
+(load time, and now also post-decomposition via `ensure_healed`). This
+is exactly the state §6f's own "what this step does NOT claim" section
+already flagged -- `generic_split`/`_raw_bop_split` was deliberately left
+out of `ensure_healed`'s wiring, per the user's own standing decision not
+to touch that loop's existing ad hoc mechanism without a demonstrated
+bug. The §6b "invariant boundary is `Gsplit`'s own input contract, not a
+pipeline stage" framing describes what a true unification would need to
+look like; this session did not attempt it, and the user confirmed
+leaving it as documented, scoped future work rather than acting on it
+now.
+
+## 6h. Follow-up, same session: is cost the real reason
+`check_solid_defects` isn't run inside `_raw_bop_split`?
+
+Direct follow-up question from the user, right after §6g: *"¿por qué
+check_solid_defects no se hace dentro de `_raw_bop_split`? ¿Es porque
+consume mucho tiempo y ralentizaría la decomposicion?"*
+
+**Answer: cost is one of 6 documented reasons (§6d above), not the only
+one, and arguably not the dominant one.** Restated directly from §6d
+for this specific question, since it already analyzes exactly this
+"why not just merge everything into `generic_split`'s loop" question:
+
+1. The detectors are alternative diagnoses feeding their own repair's
+   own gate, not a general-purpose battery -- merging means building a
+   real dispatcher, not concatenating calls.
+2. **Cost, the thing asked about** -- real, measured precedent:
+   `generic_split` was already optimized once specifically to avoid
+   paying an expensive check on every candidate
+   (`_some_real_candidate_should_have_split`'s own `.fix()`-first
+   short-circuit cut `BC.stp`'s decomposition from 69.7s to 23.6s).
+   Running the full detector battery before every single `Gsplit`
+   candidate attempt (not once per fragment) would multiply that cost
+   by the candidate count.
+3. Confirmed native-crash risk if any strong repair runs
+   unconditionally (`UnifyFaces=True`, now fixed at the root for
+   `ConeSphere.stp`'s own specific signature, but the general
+   "never blind" rule still holds for any future signature).
+4. Direct historical precedent (`Gfuse_solids.refine()`) that an
+   unconditional repair call has already, concretely, mangled geometry
+   in production before.
+5. Volume-conservation gates are individually measured per repair, not
+   interchangeable.
+6. A repair that changes topology invalidates the caller's own
+   face-index bookkeeping -- not a transparent drop-in call.
+
+**What already exists for the cost problem specifically, but is not yet
+built**: §6b's own two-tier design -- a cheap `BRepCheck_Analyzer`-only
+pre-check before every `Gsplit` attempt, promoting to the full,
+expensive `check_solid_defects` + repair cascade only when the fragment
+is new to the recursion or the cheap check itself flags something. This
+is designed, not implemented; `ensure_healed` today is ONLY the full
+tier, wired ONLY into `build_definition` (§6f) -- never into
+`generic_split`.
+
+**Decision, confirmed directly by the user: leave as-is.** *"vale
+documenta esto. Por ahora funciona y lo dejamos así. A lo mejor en el
+futuro habra que retomar estos puntos de saneamiento."* No code change
+from this exchange -- `_raw_bop_split` keeps its own independent
+cascade, the two-tier design from §6b remains unimplemented, and this
+whole area (§6b/§6d/§6g/§6h together) is the concrete starting point if
+a future session resumes the "solid healing" unification -- read these
+four sections first, in order, before writing any new code there.
+
+**Immediate follow-up, same session: a full corpus + d1suned run,
+requested directly** ("¿has pasado el corpus completo geouned +
+d1suned para todos los solidos que solemos chequear?") -- not yet done
+up to this point; only the cheap 181-file decompose+build_solid_
+definition differential (§6f) and two single-file d1suned checks
+(`ConeSphere.stp`, `base_all8_to_cylinder.stp`) had been run. Warranted
+specifically because the `ConeSphere.stp` fix touches `_native_fix`,
+which every solid passes through unconditionally at load time, on both
+engines -- a change with corpus-wide reach, not scoped to one fixture.
+
+Run via the established pipeline (`run_all_conversions_{ocp,occ}_
+parallel.py` -> `run_test_models_{ocp,occ}_d1suned.sh` ->
+`analyze_test_models_{ocp,occ}.py`, both engines launched in parallel
+per the user's own instruction), 175 files of `Solidos/test_models`
+excluding `Big_*`:
+
+- **Conversion**: 163/175 on BOTH engines -- the 9 `base_identified_
+  faces` non-solid fixtures plus 3 pre-existing failures (`SCDR_90_
+  piece2`, `modelcell_cut1_v2_piece66`, `SCDR_90_hollow`). Up from the
+  project's own prior 162/175 baseline (4 known failures, `ConeSphere.
+  stp` among them) -- `ConeSphere.stp` now converts on both engines.
+- **d1suned**: identical buckets on both engines -- 226 solid-cell
+  tallies, 213 (94.2%) within 2 sigma, 11 marginal (the same files this
+  project has repeatedly documented elsewhere: `fwd_pipe`, `rc24`/
+  `rrc1`/`rrc4`/`rrc12`/`rrc5`, 4 `Torus/*`, `SCDR_solid19_solid26`),
+  exactly 2 beyond 3 sigma (`shed_solid.stp`, 3.04 sigma, the
+  already-documented MC-noise-on-a-small-cell case; `modelcell_cut1_
+  1.stp`, 3.30 sigma -- previously recorded as marginal in other corpus
+  runs in this same project, i.e. the same file sitting right at the
+  historical marginal/fail boundary across independent MC runs, not a
+  new defect introduced this session), **0 lost particles anywhere
+  (175/175, both engines)**.
+- Neither `ConeSphere.stp` nor `base_all8_to_cylinder.stp` shows up in
+  either bucket -- both land cleanly within 2 sigma, on both engines.
+
+**Conclusion**: the full, real, corpus-wide verification this project's
+own established discipline calls for (not just the cheap structural
+differential) confirms both of this session's fixes hold with zero
+collateral regression anywhere in the usual test corpus, on both
+engines. This closes the outstanding "has the full corpus+d1suned check
+actually been run" gap this section started from.
 
 ## 7. A related, explicitly abandoned prior attempt (cautionary precedent)
 

@@ -288,6 +288,51 @@ def count_split_ring_pairs(solid, rel_tol: float = SPLIT_RING_REL_TOL) -> int:
     pair count stays at 2 before and after, vs. barrel bottom.stp's
     18 -> 12).
 
+    **Deliberately NOT given a tighter gap floor or a "host face must
+    have a short edge" guard -- tried and reverted, 2026-11-07, branch
+    `unified_healing`.** Measuring this function standalone against the
+    whole `Solidos/test_models` corpus found it flagging several
+    currently-clean, real, non-defective solids with pairs that are
+    either pure floating-point noise (`Mixed/sleeve.stp`/`Mixed/
+    base_all8_to_cylinder.stp`, gaps of `1e-13` to `2e-11` mm) or
+    legitimate, intentional geometry (`Mixed/ring.stp`'s own real
+    notched cylindrical band; `Torus/example.stp`'s own torus meridian
+    curve) wrongly matching the bare coaxial/same-radius/close-gap test.
+    A fix (raise the gap floor from `0.0` to `POINT_POINT_TOL`, and
+    require the host face to also carry a genuinely pathologically short
+    edge, matching `find_split_ring_faces`' own convention) correctly
+    eliminated all 4 of those false positives -- but broke this
+    function's own real, historical use as `Gcollapse_split_rings`' own
+    before/after success gate on `esfera/Barrel_bottom.stp` itself (the
+    *motivating* fixture for this whole detector, confirmed by direct
+    trace): the RAW, pre-repair solid's plane face (face#1) carries its
+    own 6 near-duplicate-circle pairs at a literal floating-point-noise
+    gap (`4e-17`mm, from a near-exact degenerate duplicate boundary
+    representation) -- correctly stripped by the tighter floor -- but
+    after `Gcollapse_split_rings`' own resewing, that SAME underlying
+    geometric discrepancy becomes a real, non-noise `0.0223mm` gap (the
+    resewn plane face now has its own genuine short connecting edges,
+    exactly the "residual sub-sew-tolerance connector edges... HARMLESS"
+    case this repair's own docstring already documents and explicitly
+    accepts). The before/after comparison this repair's accept-gate
+    relies on then compares 12 (post-fix, noise-stripped `before`)
+    against 12 (post-fix, now-correctly-counted-as-real `after`) --
+    `12 >= 12`, a false rejection, where the ORIGINAL (unguarded)
+    function correctly saw `18 -> 12` (a real decrease) because its own
+    noise pairs on the `before` side happened to inflate that count
+    enough to still register a decrease. In short: the "noise" and the
+    "real residual" for this one fixture are the same underlying
+    geometric fact, just represented differently before vs. after the
+    repair -- a single shared numeric floor cannot classify both
+    snapshots consistently. **Any future improvement here must verify
+    directly against `Gcollapse_split_rings`' own real before/after
+    call on `Barrel_bottom.stp` (not just a standalone diagnostic
+    reading), per this project's own "measure against the real use,
+    not just the detector in isolation" lesson.** If a cleaner, purely
+    diagnostic reading of this pattern is needed (e.g. for a future
+    `ensure_healed`), it must be a SEPARATE function from this one, not
+    a change to the one real repair gate already depends on.
+
     Duck-typed on `GSolid.Faces` / `GFace.Edges` / `GEdge.Curve` (a
     `GCircle` with `.Radius` / `.Axis` / `.Center`) / `GSolid.BoundBox` --
     identical across all 3 engines."""
@@ -459,6 +504,27 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_
     ``Gcheck_and_repair`` cascade, GEOUNED's own reporting) picks it up
     automatically, instead of several separate, differently-gated checks.
 
+    **Not every detector in this file belongs here, though** -- the rule,
+    settled 2026-11-07 (branch `unified_healing`) while auditing which of
+    the 4 detectors `check_solid_defects` did NOT yet call were safe to
+    add: a check only belongs in this function if ``Gcheck_and_repair``'s
+    own cascade (``Gtrim_overlapping_coplanar_faces`` ->
+    ``Gcollapse_split_rings`` -> ``Gsliver_heal`` -> ``find_short_edges``
+    + ``Gdefeature``) can actually RESOLVE what it flags -- this function
+    is also the literal load-time discard gate (a defect that nothing in
+    the cascade fixes makes `Gcheck_and_repair` return ``(solid, False)``,
+    which `Gload_and_process_step` then drops as corrupted), so adding a
+    detector with no matching repair converts a solid that is fine today
+    into a guaranteed future discard the first time it ever fires.
+    ``find_degenerate_plane_faces`` and ``count_split_ring_pairs`` were
+    both measured and deliberately kept OUT for exactly this reason (see
+    their own docstrings: the former has no repair step in this cascade
+    at all and is used correctly elsewhere, ``GSolid.refine()``'s own
+    pre-heal gate; the latter is `Gcollapse_split_rings`' own internal
+    before/after success comparator, not a standalone yes/no signal, and
+    was shown live to misclassify when used as one -- see its own
+    docstring for the full regression story).
+
     Checks currently implemented:
       - topological validity (BRepCheck_Analyzer / equivalent, via
         ``GSolid.is_valid()``).
@@ -487,11 +553,42 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_
         correctly trimmed into e.g. an annulus (confirmed live,
         Solidos/working_solids/version1_bug2.stp).
 
+      - a "split boundary ring" (``find_split_ring_faces``) -- the thin
+        riser faces of a duplicated micro-trim (see that function's own
+        docstring). Added 2026-11-07: ``Gcollapse_split_rings`` already
+        repairs exactly this pattern, so flagging it here only widens
+        WHEN that repair gets tried, to a solid that has risers but none
+        of the other 3 reasons above. Measured zero false positives
+        across the whole ``Solidos/test_models`` corpus (232 solids, 172
+        files) before adding it -- the real historical riser fixture,
+        ``esfera/Barrel_bottom.stp``, never reaches this check at all in
+        practice: `_native_fix`'s own opportunistic
+        `ShapeUpgrade_UnifySameDomain` call, run unconditionally at load
+        time before `Gcheck_and_repair` ever sees the solid, already
+        collapses its 11 raw faces down to 5 on its own.
+
+      - a sliver face (``find_sliver_faces``) -- any face whose own
+        ``CharacteristicWidth < min_face_width``, with NO short-edge
+        prerequisite (unlike the "degenerate/sliver geometry" check
+        above) -- the same per-face criterion `Gsliver_heal` already
+        repairs. Added 2026-11-07, alongside the "split boundary ring"
+        check: measured zero false positives across the same corpus
+        PROVIDED the caller passes a `min_face_width` already scaled to
+        the solid's own volume (`Tolerances.scaled()`) -- confirmed live,
+        `Reversed_Cyl_Cones/clamp.stp`: 2 real, legitimate corner-forming
+        planes (`CharacteristicWidth=0.0811mm`) sit strictly between the
+        bare default `min_face_width=0.1` (flags them, a false positive)
+        and this solid's own correctly-scaled `0.068` (Volume=314.6mm^3,
+        does not flag them) -- see `Gcheck_and_repair`'s own
+        `_scaled_min_face_width` helper, which is why this function's own
+        call sites there now scale before calling in.
+
     Takes raw tolerance values, not a `Tolerances` object -- this file
     has no dependency on anything outside `geo`, GEOUNED's own
     `Tolerances` class included; callers read
     `tolerances.sliver_edge_rel_tol` / `.min_face_width` themselves
-    before calling in."""
+    (scaled to the solid's own volume where that matters, see the
+    `find_sliver_faces` check above) before calling in."""
     reasons = []
     if not solid.is_valid():
         reasons.append("invalid topology")
@@ -500,4 +597,8 @@ def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_
         reasons.append("degenerate/sliver geometry")
     if find_overlapping_coplanar_faces(solid, sliver_edge_rel_tol):
         reasons.append("overlapping coplanar faces")
+    if find_split_ring_faces(solid, min_face_width, sliver_edge_rel_tol):
+        reasons.append("split boundary ring")
+    if find_sliver_faces(solid, min_face_width):
+        reasons.append("sliver face")
     return reasons
