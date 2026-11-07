@@ -1312,7 +1312,9 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     degenerate_faces = find_short_edges(solid, tolerances.sliver_edge_rel_tol)
     if degenerate_faces:
         healed = Gdefeature(solid, degenerate_faces, tolerances.sliver_edge_rel_tol)
-        if healed is not None and not check_solid_defects(healed, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, healed.Volume)):
+        if healed is not None and not check_solid_defects(
+            healed, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, healed.Volume)
+        ):
             return healed, True
 
     return solid, False

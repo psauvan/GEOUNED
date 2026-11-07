@@ -191,7 +191,9 @@ def find_degenerate_plane_faces(solid) -> list:
 _SPLIT_RING_SURFACE_TYPES = ("GCylinder", "GCone", "GSphere", "GTorus")
 
 
-def find_split_ring_faces(solid, min_face_width: float = DEFAULT_MIN_FACE_WIDTH, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL) -> list:
+def find_split_ring_faces(
+    solid, min_face_width: float = DEFAULT_MIN_FACE_WIDTH, rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL
+) -> list:
     """Faces that are the parasitic "riser" walls of a *duplicated
     micro-trim* -- the "split boundary ring" CAD defect (a.k.a. collapsed
     micro-step). A single trimming surface (a plane, or a cylinder)
@@ -254,7 +256,7 @@ def find_sliver_faces(solid, min_face_width: float) -> list:
     return sliver_faces
 
 
-def is_sliver_face(face, min_face_width: float) -> bool :
+def is_sliver_face(face, min_face_width: float) -> bool:
     """GEOUNED's own face-sliver criteria: Area < Tolerances.min_area OR
     CharacteristicWidth < Tolerances.min_face_width (the metric
     find_split_ring_faces / cell_definition use)."""
@@ -266,6 +268,7 @@ def is_sliver_face(face, min_face_width: float) -> bool :
         if STRICT_EXCEPTIONS & STRICT_LEVEL_REPAIR:
             raise
     return False
+
 
 def count_split_ring_pairs(solid, rel_tol: float = SPLIT_RING_REL_TOL) -> int:
     """Number of *near-coincident concentric circular-edge pairs* on the
@@ -496,7 +499,9 @@ def find_overlapping_coplanar_faces(solid, rel_tol: float = DEFAULT_SLIVER_EDGE_
     return pairs
 
 
-def check_solid_defects(solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL, min_face_width: float = DEFAULT_MIN_FACE_WIDTH) -> list:
+def check_solid_defects(
+    solid, sliver_edge_rel_tol: float = DEFAULT_SLIVER_EDGE_REL_TOL, min_face_width: float = DEFAULT_MIN_FACE_WIDTH
+) -> list:
     """Run every known corrupted/degenerate-geometry check against a
     loaded solid and return the reasons it currently fails (empty list
     if the solid is clean). One function, one place to extend: any

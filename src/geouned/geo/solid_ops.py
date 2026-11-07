@@ -16,6 +16,7 @@ a CAD kernel directly -- every name it uses (`Gfuse`, `Gmake_compound`,
 `geo/__init__.py`. The imports are function-local to keep this module
 free of an import cycle with `geo/__init__.py`.
 """
+
 from . import STRICT_EXCEPTIONS, STRICT_LEVEL_CANDIDATE, STRICT_LEVEL_REPAIR
 from .constants import (
     DEFAULT_FIX_TOLERANCE,
@@ -635,7 +636,11 @@ def BuildSolidParts(cell, base, tolerances, classify):
 
     if base:
         boundBox = base.base.BoundBox
-        if boundBox.XLength < NUMERIC_DOUBLE_TOL or boundBox.YLength < NUMERIC_DOUBLE_TOL or boundBox.ZLength < NUMERIC_DOUBLE_TOL:
+        if (
+            boundBox.XLength < NUMERIC_DOUBLE_TOL
+            or boundBox.YLength < NUMERIC_DOUBLE_TOL
+            or boundBox.ZLength < NUMERIC_DOUBLE_TOL
+        ):
             return [], []
     else:
         # GEOUNED's CellObj has no build_BoundBox at all (its single,

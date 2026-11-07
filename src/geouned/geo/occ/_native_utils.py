@@ -376,5 +376,3 @@ def _native_fix(native, tolerance: float):
     if TopExp_Explorer(fixed, TopAbs_SOLID).More():
         return fixed
     return native
-
-

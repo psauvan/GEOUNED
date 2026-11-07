@@ -1190,7 +1190,9 @@ def _project_curve_2d_exact_cylinder(edge, first: float, last: float, cylinder_s
     return interpolator.Curve()
 
 
-def _attach_pcurves_for_leftover_b(face_a: "GFace", leftover_b: "list[GEdge]", chain_ends: tuple, native_surf) -> "list[GEdge] | None":
+def _attach_pcurves_for_leftover_b(
+    face_a: "GFace", leftover_b: "list[GEdge]", chain_ends: tuple, native_surf
+) -> "list[GEdge] | None":
     """Build a FRESH `BRepBuilderAPI_Copy` of every one of `leftover_b`'s
     own native edges, and attach a fresh pcurve to each copy on
     `native_surf` (`face_a`'s OWN, already-valid native surface object
@@ -1903,7 +1905,9 @@ def Gcheck_and_repair(solid: "GSolid", tolerances) -> "tuple[GSolid, bool]":
     degenerate_faces = find_short_edges(solid, tolerances.sliver_edge_rel_tol)
     if degenerate_faces:
         healed = Gdefeature(solid, degenerate_faces, tolerances.sliver_edge_rel_tol)
-        if healed is not None and not check_solid_defects(healed, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, healed.Volume)):
+        if healed is not None and not check_solid_defects(
+            healed, tolerances.sliver_edge_rel_tol, _scaled_min_face_width(tolerances, healed.Volume)
+        ):
             return healed, True
 
     return solid, False

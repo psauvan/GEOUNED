@@ -98,7 +98,7 @@ def build_definition(meta_obj, Surfaces, simplifyComp=True):
         solid_definition.append(comp)
     meta_obj.set_definition(solid_definition)
     if len(meta_obj.Definition.elements) != len(meta_obj.Solids):
-         raise RuntimeError(f"At leat one component of the solid {meta_obj.StepLabel} has a boolean value")
+        raise RuntimeError(f"At leat one component of the solid {meta_obj.StepLabel} has a boolean value")
 
 
 def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
@@ -187,7 +187,9 @@ def simple_solid_definition(solid, Surfaces, meta_surfaces=True):
         # non-convexity this mechanism compensates for, nor has an exposed
         # plane for anything outside the group to actually border.
         open_multi_round_corners = [
-            rc for rc in roundCorner if rc.Type == "MultiRoundCorner" and rc.Surf.Orientation == "Reversed" and not rc.Surf.ClosedSet
+            rc
+            for rc in roundCorner
+            if rc.Type == "MultiRoundCorner" and rc.Surf.Orientation == "Reversed" and not rc.Surf.ClosedSet
         ]
 
     else:
